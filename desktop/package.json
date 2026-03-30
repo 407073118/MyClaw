@@ -1,0 +1,13 @@
+{
+  "name": "myclaw-desktop-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.11.0",
+  "scripts": {
+    "dev:desktop": "pnpm --dir apps/desktop dev",
+    "dev:runtime": "pnpm --dir apps/runtime dev",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "build:desktop-exe": "pnpm --dir apps/desktop tauri:build"
+  }
+}

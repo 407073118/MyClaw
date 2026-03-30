@@ -1,0 +1,32 @@
+
+> openclaw-cloud@0.1.0 dev:api F:\rust-ai-project\cloud
+> pnpm --dir apps/cloud-api dev
+
+
+> @openclaw-cloud/api@0.1.0 predev F:\rust-ai-project\cloud\apps\cloud-api
+> pnpm run sync:shared
+
+
+> @openclaw-cloud/api@0.1.0 sync:shared F:\rust-ai-project\cloud\apps\cloud-api
+> pnpm --dir ../../packages/shared build
+
+
+> @openclaw-cloud/shared@0.1.0 build F:\rust-ai-project\cloud\packages\shared
+> tsc -p tsconfig.json
+
+
+> @openclaw-cloud/api@0.1.0 dev F:\rust-ai-project\cloud\apps\cloud-api
+> nest start --watch
+
+[2J[3J[H[[90m10:41:35[0m] Starting compilation in watch mode...
+
+[[90m10:41:41[0m] Found 0 errors. Watching for file changes.
+
+[2J[3J[H[[90m11:15:04[0m] File change detected. Starting incremental compilation...
+
+[[90m11:15:06[0m] Found 0 errors. Watching for file changes.
+
+[2J[3J[H[[90m11:15:08[0m] File change detected. Starting incremental compilation...
+
+ ELIFECYCLE  Command failed with exit code 1.
+ ELIFECYCLE  Command failed with exit code 1.

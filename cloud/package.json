@@ -1,0 +1,15 @@
+{
+  "name": "myclaw-cloud",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.11.0",
+  "scripts": {
+    "dev:db": "docker compose -f infra/docker-compose.yml up -d",
+    "dev:db:down": "docker compose -f infra/docker-compose.yml down",
+    "dev:api": "pnpm --dir apps/cloud-api dev",
+    "dev:web": "pnpm --dir apps/cloud-web dev",
+    "setup:api": "pnpm --dir apps/cloud-api prisma:generate && pnpm --dir apps/cloud-api prisma:push && pnpm --dir apps/cloud-api prisma:seed",
+    "build": "pnpm -r --workspace-concurrency=1 build",
+    "test": "node tests/workspace.test.mjs && node tests/infrastructure.test.mjs && node tests/shared-package-consumption.test.mjs && node tests/cloud-api-runtime-format.test.mjs && node tests/prisma-seed.test.mjs"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep:*)",
+      "Bash(find apps/desktop/src/views -name \"*.vue\" -exec head -30 {})"
+    ]
+  }
+}

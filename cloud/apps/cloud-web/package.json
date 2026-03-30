@@ -1,0 +1,20 @@
+{
+  "name": "@myclaw-cloud/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "nuxt build",
+    "test": "node tests/pages.test.mjs"
+  },
+  "dependencies": {
+    "@myclaw-cloud/shared": "workspace:*",
+    "nuxt": "^3.16.1",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}

@@ -1,0 +1,463 @@
+﻿<template>
+  <section data-testid="workflow-canvas" class="canvas-shell">
+    <header class="canvas-header">
+      <div>
+        <h3>Workflow Canvas</h3>
+        <p class="subtitle">鐢诲竷涓昏鍥捐礋璐ｅ浘缁撴瀯鎰熺煡锛屽睘鎬х紪杈戜笌璋冭瘯鐢变晶鏍忓拰搴曟爮鎵挎帴銆?/p>
+      </div>
+      <div class="stats">
+        <span>{{ definition.nodes.length }} nodes</span>
+        <span>{{ definition.edges.length }} edges</span>
+        <span>entry: {{ definition.entryNodeId }}</span>
+      </div>
+    </header>
+
+    <section class="canvas-grid">
+      <aside class="palette" data-testid="workflow-canvas-palette">
+        <h4>Node Palette</h4>
+        <ul class="palette-list">
+          <li v-for="kind in paletteKinds" :key="kind">
+            <button
+              :data-testid="`workflow-canvas-add-node-${kind}`"
+              type="button"
+              class="palette-button"
+              :disabled="isAddDisabled(kind)"
+              @click="handleAddNode(kind)"
+            >
+              <span class="palette-chip">{{ kind }}</span>
+              <span class="palette-copy">{{ selectedNodeId ? "Add from selected" : "Add node" }}</span>
+            </button>
+          </li>
+        </ul>
+      </aside>
+
+      <section class="graph-stage">
+        <div class="stage-toolbar">
+          <div class="stage-copy-block">
+            <p class="stage-title">Graph Overview</p>
+            <p class="stage-copy">
+              鍏堢敤鍙鍖栭€変腑鏇夸唬鍒楄〃椹卞姩锛屽悗缁啀鎶婃柊澧炶妭鐐广€佽繛绾垮拰鎷栨嫿绉诲姩杩佸叆鐢诲竷銆?            </p>
+          </div>
+          <div class="stage-actions">
+            <button
+              v-if="selectedEdgeId"
+              data-testid="workflow-canvas-delete-edge"
+              type="button"
+              class="stage-button stage-button-danger"
+              @click="handleDeleteEdge"
+            >
+              Delete Edge
+            </button>
+            <button
+              v-if="selectedNodeId"
+              data-testid="workflow-canvas-delete-node"
+              type="button"
+              class="stage-button stage-button-danger"
+              :disabled="isDeleteNodeDisabled"
+              @click="handleDeleteNode"
+            >
+              Delete Node
+            </button>
+          </div>
+        </div>
+
+        <div class="node-lane">
+          <article
+            v-for="node in definition.nodes"
+            :key="node.id"
+            class="node-card"
+            :data-active="node.id === selectedNodeId ? 'true' : 'false'"
+          >
+            <button
+              :data-testid="`workflow-canvas-node-${node.id}`"
+              type="button"
+              class="node-select"
+              @click="handleNodeSelect(node.id)"
+            >
+              <span class="node-kind">{{ node.kind }}</span>
+              <strong>{{ node.label }}</strong>
+              <span class="node-meta">{{ node.id }}</span>
+              <span v-if="node.id === definition.entryNodeId" class="entry-badge">entry</span>
+            </button>
+            <button
+              v-if="canConnectToNode(node.id)"
+              :data-testid="`workflow-canvas-connect-node-${node.id}`"
+              type="button"
+              class="node-connect"
+              @click="handleConnectNode(node.id)"
+            >
+              Connect Here
+            </button>
+          </article>
+        </div>
+
+        <section class="edge-panel">
+          <header class="edge-header">
+            <h4>Edges</h4>
+            <p class="subtitle">褰撳墠鍏堝睍绀烘樉寮忚繛绾垮叧绯伙紝骞舵妸閫変腑鍚屾缁?inspector銆?/p>
+          </header>
+
+          <p v-if="definition.edges.length === 0" class="empty-copy">No edges yet.</p>
+
+          <ul v-else class="edge-list">
+            <li v-for="edge in definition.edges" :key="edge.id">
+              <button
+                :data-testid="`workflow-canvas-edge-${edge.id}`"
+                type="button"
+                class="edge-row"
+                :data-active="edge.id === selectedEdgeId ? 'true' : 'false'"
+                @click="handleEdgeSelect(edge.id)"
+              >
+                <span>{{ edge.fromNodeId }} 鈫?{{ edge.toNodeId }}</span>
+                <span class="edge-kind">{{ edge.kind }}</span>
+              </button>
+            </li>
+          </ul>
+        </section>
+      </section>
+    </section>
+  </section>
+</template>
+
+<script setup lang="ts">
+import type { WorkflowDefinition, WorkflowNodeKind } from "@openclaw-desktop/shared";
+import { computed } from "vue";
+
+const props = defineProps<{
+  definition: WorkflowDefinition;
+  selectedNodeId?: string | null;
+  selectedEdgeId?: string | null;
+}>();
+
+const emit = defineEmits<{
+  (event: "select:node", nodeId: string): void;
+  (event: "select:edge", edgeId: string): void;
+  (event: "add:node", kind: WorkflowNodeKind): void;
+  (event: "connect:node", payload: { fromNodeId: string; toNodeId: string }): void;
+  (event: "delete:node", nodeId: string): void;
+  (event: "delete:edge", edgeId: string): void;
+}>();
+
+const selectedNodeId = computed(() => props.selectedNodeId ?? null);
+const selectedEdgeId = computed(() => props.selectedEdgeId ?? null);
+const isDeleteNodeDisabled = computed(() => selectedNodeId.value === props.definition.entryNodeId);
+const paletteKinds = computed<WorkflowNodeKind[]>(() => [
+  "start",
+  "llm",
+  "tool",
+  "human-input",
+  "condition",
+  "subgraph",
+  "join",
+  "end",
+]);
+
+/** 灏嗚妭鐐归€変腑浜嬩欢鎶涚粰 studio 瑙嗗浘锛屼繚鎸佺敾甯冧綔涓轰富浜や簰鍏ュ彛銆?*/
+function handleNodeSelect(nodeId: string) {
+  console.info("[workflow-canvas] 閫夋嫨鑺傜偣", { nodeId });
+  emit("select:node", nodeId);
+}
+
+/** 灏嗚竟閫変腑浜嬩欢鎶涚粰 studio 瑙嗗浘锛屼究浜庝晶鏍忓垏鎹㈠埌 edge inspector銆?*/
+function handleEdgeSelect(edgeId: string) {
+  console.info("[workflow-canvas] 閫夋嫨杩炵嚎", { edgeId });
+  emit("select:edge", edgeId);
+}
+
+/** 浠庤妭鐐瑰簱鍙戣捣鏂板鑺傜偣鍔ㄤ綔锛屽叿浣?definition 鎸佷箙鍖栦氦缁?studio 灞傚鐞嗐€?*/
+function handleAddNode(kind: WorkflowNodeKind) {
+  if (isAddDisabled(kind)) {
+    console.info("[workflow-canvas] 璺宠繃涓嶅彲鐢ㄧ殑鑺傜偣搴撳姩浣?, {
+      kind,
+      selectedNodeId: selectedNodeId.value,
+    });
+    return;
+  }
+  console.info("[workflow-canvas] 浠庤妭鐐瑰簱鏂板鑺傜偣", {
+    kind,
+    selectedNodeId: selectedNodeId.value,
+  });
+  emit("add:node", kind);
+}
+
+/** 鍒ゆ柇褰撳墠鑺傜偣绫诲瀷鏄惁鍏佽浠庣敾甯冭妭鐐瑰簱鐩存帴鍒涘缓銆?*/
+function isAddDisabled(kind: WorkflowNodeKind): boolean {
+  return kind === "join" && !selectedNodeId.value;
+}
+
+/** 鍒ゆ柇褰撳墠鏄惁鍏佽浠庡凡閫夎妭鐐硅繛鎺ュ埌鐩爣鑺傜偣銆?*/
+function canConnectToNode(targetNodeId: string): boolean {
+  if (!selectedNodeId.value || selectedNodeId.value === targetNodeId) {
+    return false;
+  }
+
+  return !props.definition.edges.some((edge) => (
+    edge.fromNodeId === selectedNodeId.value && edge.toNodeId === targetNodeId
+  ));
+}
+
+/** 浠庡綋鍓嶉€変腑婧愯妭鐐瑰悜宸叉湁鑺傜偣鍙戣捣杩炵嚎銆?*/
+function handleConnectNode(targetNodeId: string) {
+  if (!selectedNodeId.value || !canConnectToNode(targetNodeId)) {
+    return;
+  }
+
+  console.info("[workflow-canvas] 浠庡凡閫夎妭鐐硅繛鎺ュ埌宸叉湁鑺傜偣", {
+    fromNodeId: selectedNodeId.value,
+    toNodeId: targetNodeId,
+  });
+  emit("connect:node", {
+    fromNodeId: selectedNodeId.value,
+    toNodeId: targetNodeId,
+  });
+}
+
+/** 鍒犻櫎褰撳墠閫変腑杩炵嚎銆?*/
+function handleDeleteEdge() {
+  if (!selectedEdgeId.value) {
+    return;
+  }
+
+  console.info("[workflow-canvas] 鍒犻櫎宸查€夎繛绾?, { edgeId: selectedEdgeId.value });
+  emit("delete:edge", selectedEdgeId.value);
+}
+
+/** 鍒犻櫎褰撳墠閫変腑鑺傜偣锛屽叆鍙ｈ妭鐐逛細琚鐢ㄣ€?*/
+function handleDeleteNode() {
+  if (!selectedNodeId.value || isDeleteNodeDisabled.value) {
+    return;
+  }
+
+  console.info("[workflow-canvas] 鍒犻櫎宸查€夎妭鐐?, { nodeId: selectedNodeId.value });
+  emit("delete:node", selectedNodeId.value);
+}
+</script>
+
+<style scoped>
+.canvas-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.canvas-header,
+.edge-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+h3,
+h4,
+.stage-title {
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.subtitle,
+.stage-copy,
+.node-meta,
+.empty-copy {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.stats span,
+.palette-chip,
+.entry-badge,
+.node-kind,
+.edge-kind {
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+}
+
+.canvas-grid {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.32fr) minmax(0, 1fr);
+  gap: 18px;
+}
+
+.palette,
+.graph-stage,
+.edge-row,
+.node-card {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-base);
+}
+
+.palette,
+.graph-stage {
+  padding: 16px;
+}
+
+.palette-list,
+.edge-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.palette-button {
+  width: 100%;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.palette-button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.palette-copy {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.graph-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--accent-primary) 10%, transparent), transparent 40%),
+    var(--bg-card);
+}
+
+.stage-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stage-copy-block,
+.stage-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.stage-actions {
+  align-items: flex-end;
+}
+
+.node-lane {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.node-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+}
+
+.node-card[data-active="true"],
+.edge-row[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, var(--glass-border));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary) 20%, transparent);
+}
+
+.node-select,
+.node-connect,
+.stage-button {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.node-select {
+  width: 100%;
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  text-align: left;
+  background: transparent;
+}
+
+.node-connect,
+.stage-button {
+  padding: 8px 10px;
+}
+
+.stage-button-danger {
+  border-color: color-mix(in srgb, #b83333 35%, var(--glass-border));
+  color: #b83333;
+}
+
+.stage-button[disabled] {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.edge-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.edge-row {
+  width: 100%;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+@media (max-width: 960px) {
+  .canvas-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .canvas-header,
+  .edge-header,
+  .stage-toolbar {
+    flex-direction: column;
+  }
+
+  .stats {
+    justify-content: flex-start;
+  }
+
+  .stage-actions {
+    align-items: flex-start;
+  }
+}
+</style>
+

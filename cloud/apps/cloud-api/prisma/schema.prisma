@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model LoginSession {
+  id                   String   @id @default(cuid())
+  account              String
+  displayName          String?
+  rolesJson            Json?
+  accessTokenHash      String?
+  accessTokenExpiresAt DateTime?
+  refreshTokenHash     String
+  refreshTokenExpiresAt DateTime @map("expiresAt")
+  revokedAt            DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([account])
+  @@index([accessTokenHash])
+}
+
+model HubItem {
+  id            String       @id
+  /// Allowed values: mcp | employee-package | workflow-package
+  type          String
+  name          String
+  summary       String
+  description   String
+  latestVersion String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  releases      HubRelease[]
+}
+
+model HubRelease {
+  id                      String   @id
+  itemId                  String
+  version                 String
+  releaseNotes            String
+  manifestJson            Json
+  artifactFileName        String   @default("")
+  artifactFileSize        Int      @default(0)
+  artifactStoragePath     String   @default("")
+  artifactDownloadUrl     String   @default("")
+  artifactDownloadExpires Int      @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  item                    HubItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
+
+model Skill {
+  id              String         @id
+  name            String
+  summary         String
+  description     String
+  latestVersion   String?
+  latestReleaseId String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  releases        SkillRelease[]
+}
+
+model SkillRelease {
+  id                      String   @id
+  skillId                 String
+  version                 String
+  releaseNotes            String
+  manifestJson            Json
+  artifactFileName        String   @default("")
+  artifactFileSize        Int      @default(0)
+  artifactStoragePath     String   @default("")
+  artifactDownloadUrl     String   @default("")
+  artifactDownloadExpires Int      @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  skill                   Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+}
+
+model McpItem {
+  id            String       @id
+  name          String
+  summary       String
+  description   String
+  latestVersion String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  releases      McpRelease[]
+}
+
+model McpRelease {
+  id                      String   @id
+  itemId                  String
+  version                 String
+  releaseNotes            String
+  manifestJson            Json
+  artifactFileName        String   @default("")
+  artifactFileSize        Int      @default(0)
+  artifactStoragePath     String   @default("")
+  artifactDownloadUrl     String   @default("")
+  artifactDownloadExpires Int      @default(0)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  item                    McpItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
+
+model InstallLog {
+  id           String   @id @default(cuid())
+  account      String
+  itemId       String
+  releaseId    String
+  action       String
+  status       String
+  errorMessage String?
+  createdAt    DateTime @default(now())
+}

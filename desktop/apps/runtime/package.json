@@ -1,0 +1,27 @@
+{
+  "name": "@myclaw-desktop/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "build:bundle": "esbuild src/index.ts --bundle --platform=node --format=cjs --target=node18 --outfile=dist/runtime.cjs",
+    "build:sidecar:win": "pnpm run build:bundle && pkg dist/runtime.cjs --targets node18-win-x64 --output ../desktop/src-tauri/binaries/myclaw-runtime-x86_64-pc-windows-msvc.exe",
+    "build:sidecar": "pnpm run build:sidecar:win"
+  },
+  "dependencies": {
+    "@myclaw-desktop/shared": "workspace:*",
+    "sql.js": "^1.14.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/sql.js": "^1.4.9",
+    "esbuild": "^0.25.12",
+    "pkg": "^5.8.1",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}

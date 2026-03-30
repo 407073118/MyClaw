@@ -1,0 +1,78 @@
+node:internal/modules/esm/resolve:274
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'F:\rust-ai-project\cloud\apps\cloud-api\dist\app.module' imported from F:\rust-ai-project\cloud\apps\cloud-api\dist\main.js
+    at finalizeResolution (node:internal/modules/esm/resolve:274:11)
+    at moduleResolve (node:internal/modules/esm/resolve:864:10)
+    at defaultResolve (node:internal/modules/esm/resolve:990:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:755:20)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:732:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:317:38)
+    at #link (node:internal/modules/esm/module_job:208:49) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///F:/rust-ai-project/cloud/apps/cloud-api/dist/app.module'
+}
+
+Node.js v24.9.0
+node:internal/modules/esm/resolve:274
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module 'F:\rust-ai-project\cloud\apps\cloud-api\dist\app.module' imported from F:\rust-ai-project\cloud\apps\cloud-api\dist\main.js
+    at finalizeResolution (node:internal/modules/esm/resolve:274:11)
+    at moduleResolve (node:internal/modules/esm/resolve:864:10)
+    at defaultResolve (node:internal/modules/esm/resolve:990:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:755:20)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:732:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:317:38)
+    at #link (node:internal/modules/esm/module_job:208:49) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///F:/rust-ai-project/cloud/apps/cloud-api/dist/app.module'
+}
+
+Node.js v24.9.0
+´íÎó: Ã»ÓÐÕÒµ½½ø³Ì "40148"¡£
+´íÎó: Ã»ÓÐÕÒµ½½ø³Ì "40148"¡£
+node:child_process:1000
+    throw err;
+    ^
+
+Error: Command failed: taskkill /pid 40148 /T /F
+ï¿½ï¿½ï¿½ï¿½: Ã»ï¿½ï¿½ï¿½Òµï¿½ï¿½ï¿½ï¿½ï¿½ "40148"ï¿½ï¿½
+
+    at genericNodeError (node:internal/errors:985:15)
+    at wrappedFn (node:internal/errors:539:14)
+    at checkExecSyncError (node:child_process:925:11)
+    at execSync (node:child_process:997:15)
+    at treeKillSync (F:\rust-ai-project\cloud\node_modules\.pnpm\@nestjs+cli@11.0.16_@types+node@22.19.15\node_modules\@nestjs\cli\lib\utils\tree-kill.js:7:38)
+    at F:\rust-ai-project\cloud\node_modules\.pnpm\@nestjs+cli@11.0.16_@types+node@22.19.15\node_modules\@nestjs\cli\actions\start.action.js:68:46
+    at Object.onWatchStatusChange (F:\rust-ai-project\cloud\node_modules\.pnpm\@nestjs+cli@11.0.16_@types+node@22.19.15\node_modules\@nestjs\cli\lib\compiler\watch-compiler.js:83:17)
+    at F:\rust-ai-project\cloud\node_modules\.pnpm\typescript@5.9.3\node_modules\typescript\lib\typescript.js:133916:30
+    at emitFilesAndReportErrors (F:\rust-ai-project\cloud\node_modules\.pnpm\typescript@5.9.3\node_modules\typescript\lib\typescript.js:133737:5)
+    at result.afterProgramCreate (F:\rust-ai-project\cloud\node_modules\.pnpm\typescript@5.9.3\node_modules\typescript\lib\typescript.js:133912:5) {
+  status: 128,
+  signal: null,
+  output: [
+    null,
+    Buffer(0) [Uint8Array] [],
+    Buffer(30) [Uint8Array] [
+      180, 237, 206, 243,  58,  32, 195,
+      187, 211, 208, 213, 210, 181, 189,
+      189, 248, 179, 204,  32,  34,  52,
+       48,  49,  52,  56,  34, 161, 163,
+       13,  10
+    ]
+  ],
+  pid: 12120,
+  stdout: Buffer(0) [Uint8Array] [],
+  stderr: Buffer(30) [Uint8Array] [
+    180, 237, 206, 243,  58,  32, 195,
+    187, 211, 208, 213, 210, 181, 189,
+    189, 248, 179, 204,  32,  34,  52,
+     48,  49,  52,  56,  34, 161, 163,
+     13,  10
+  ]
+}
+
+Node.js v24.9.0

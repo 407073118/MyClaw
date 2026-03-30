@@ -1,0 +1,29 @@
+{
+  "models": [
+    {
+      "id": "model-default",
+      "name": "Default OpenAI-Compatible",
+      "provider": "openai-compatible",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "apiKey": "replace-me",
+      "model": "gpt-4.1-mini"
+    },
+    {
+      "id": "model-951fc201-5853-4810-bf5f-1fd2f694c7c5",
+      "name": "Moonshot Primary",
+      "provider": "openai-compatible",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "apiKey": "sk-test",
+      "model": "moonshot-v1-8k"
+    },
+    {
+      "id": "model-6d9136a9-3f48-4d77-b78d-ed768315b3be",
+      "name": "Moonshot Primary",
+      "provider": "openai-compatible",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "apiKey": "sk-test",
+      "model": "moonshot-v1-8k"
+    }
+  ],
+  "defaultModelProfileId": "model-6d9136a9-3f48-4d77-b78d-ed768315b3be"
+}
