@@ -1,8 +1,16 @@
 import type { ModelProfile } from "@myclaw-desktop/shared";
 
 import { ANTHROPIC_API_VERSION, buildRequestBody } from "../shared";
-import { normalizeBaseUrl, readProviderErrorMessage } from "../shared/http";
-import type { ModelConversationDelta, ModelConversationToolDefinition, ProfileConnectivityInput, ProfileConnectivityOutput } from "../types";
+import { resolveProviderApiBaseUrl } from "../shared/endpoint";
+import { readModelIds, readProviderErrorMessage } from "../shared/http";
+import type {
+  ModelConversationDelta,
+  ModelConversationToolDefinition,
+  ProfileConnectivityInput,
+  ProfileConnectivityOutput,
+  ProfileModelCatalogInput,
+  ProfileModelCatalogOutput,
+} from "../types";
 import { createAnthropicToolsPayload } from "./messages";
 import { parseAnthropicStep } from "./parser";
 import { parseAnthropicStepFromSse } from "./sse";
@@ -47,7 +55,7 @@ export async function requestAnthropicStep(input: {
     body.tool_choice = { type: "auto" };
   }
 
-  const response = await fetch(`${normalizeBaseUrl(input.profile.baseUrl)}/messages`, {
+  const response = await fetch(`${resolveProviderApiBaseUrl(input.profile)}/messages`, {
     method: "POST",
     headers: createAnthropicHeaders(input.profile),
     body: JSON.stringify(body),
@@ -85,7 +93,7 @@ export async function performAnthropicConnectivityTest(
   const startedAt = Date.now();
 
   try {
-    const response = await fetch(`${normalizeBaseUrl(input.profile.baseUrl)}/messages`, {
+    const response = await fetch(`${resolveProviderApiBaseUrl(input.profile)}/messages`, {
       method: "POST",
       headers: createAnthropicHeaders(input.profile),
       signal: controller.signal,
@@ -116,4 +124,24 @@ export async function performAnthropicConnectivityTest(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** 拉取 Anthropic 的模型目录，并统一返回模型 id 列表。 */
+export async function listAnthropicModelIds(
+  input: ProfileModelCatalogInput,
+): Promise<ProfileModelCatalogOutput> {
+  const response = await fetch(`${resolveProviderApiBaseUrl(input.profile)}/models`, {
+    method: "GET",
+    headers: createAnthropicHeaders(input.profile),
+  });
+
+  if (!response.ok) {
+    const detail = await readProviderErrorMessage(response);
+    throw new Error(`Provider returned ${response.status}: ${detail}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  return {
+    modelIds: readModelIds(payload),
+  };
 }

@@ -213,7 +213,7 @@ describe("runtime server", () => {
     expect(payload.services).toContain("runtime-api");
     expect(payload.defaultModelProfileId).toBe("model-default");
     expect(payload.runtimeStateFilePath).toBe(stateFilePath);
-    expect(payload.requiresInitialSetup).toBe(true);
+    expect(payload.requiresInitialSetup).toBe(false);
     expect(payload.isFirstLaunch).toBe(true);
     expect(payload.approvalRequests).toHaveLength(1);
     expect(payload.approvalRequests[0].sessionId).toBe("session-default");
@@ -260,6 +260,162 @@ describe("runtime server", () => {
     expect(manifestPayload.kind).toBe("skill");
     expect(tokenResponse.status).toBe(200);
     expect(tokenPayload.downloadUrl).toBe("https://example.com/security-audit.zip");
+  });
+
+  it("proxies cloud auth requests and forwards authorization headers to cloud APIs", async () => {
+    const seenAuthorizationHeaders: string[] = [];
+    const cloudApiServer = createServer((request, response) => {
+      const url = new URL(request.url ?? "/", "http://127.0.0.1");
+
+      if (request.headers.authorization) {
+        seenAuthorizationHeaders.push(request.headers.authorization);
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/auth/login") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            accessToken: "access-1",
+            refreshToken: "refresh-1",
+            expiresIn: 7200,
+            user: {
+              account: "zhangjianing",
+              displayName: "张建宁",
+              roles: ["admin"],
+            },
+          }),
+        );
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/auth/refresh") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            accessToken: "access-2",
+            expiresIn: 7200,
+          }),
+        );
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/auth/introspect") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            active: true,
+            expiresAt: "2026-03-30T12:00:00.000Z",
+            user: {
+              account: "zhangjianing",
+              displayName: "张建宁",
+              roles: ["admin"],
+            },
+          }),
+        );
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/api/hub/items") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ items: [] }));
+        return;
+      }
+
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "not_found" }));
+    });
+
+    const cloudApi = await new Promise<{
+      baseUrl: string;
+      close: () => Promise<void>;
+    }>((resolve, reject) => {
+      cloudApiServer.listen(0, "127.0.0.1", () => {
+        const address = cloudApiServer.address();
+        if (!address || typeof address === "string") {
+          reject(new Error("Failed to bind cloud auth proxy test server"));
+          return;
+        }
+
+        resolve({
+          baseUrl: `http://127.0.0.1:${address.port}`,
+          close: () =>
+            new Promise<void>((resolveClose, rejectClose) => {
+              cloudApiServer.close((error) => {
+                if (error) {
+                  rejectClose(error);
+                  return;
+                }
+                resolveClose();
+              });
+            }),
+        });
+      });
+    });
+
+    const app = await createRuntimeApp({
+      port: 0,
+      stateFilePath,
+      cloudHubBaseUrl: cloudApi.baseUrl,
+    });
+    dispose = async () => {
+      await app.close();
+      await cloudApi.close();
+    };
+
+    const loginResponse = await fetch(`${app.baseUrl}/api/cloud-auth/login`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        account: "zhangjianing",
+        password: "secret",
+      }),
+    });
+    const refreshResponse = await fetch(`${app.baseUrl}/api/cloud-auth/refresh`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        refreshToken: "refresh-1",
+      }),
+    });
+    const introspectResponse = await fetch(`${app.baseUrl}/api/cloud-auth/introspect`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer access-2",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const logoutResponse = await fetch(`${app.baseUrl}/api/cloud-auth/logout`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        refreshToken: "refresh-1",
+      }),
+    });
+    const hubResponse = await fetch(`${app.baseUrl}/api/cloud-hub/items`, {
+      headers: {
+        authorization: "Bearer access-2",
+      },
+    });
+
+    expect(loginResponse.status).toBe(200);
+    expect(refreshResponse.status).toBe(200);
+    expect(introspectResponse.status).toBe(200);
+    expect(logoutResponse.status).toBe(200);
+    expect(hubResponse.status).toBe(200);
+    expect(seenAuthorizationHeaders).toContain("Bearer access-2");
   });
 
   it("reports app-private storage roots and materializes the default session on disk", async () => {
@@ -787,7 +943,7 @@ describe("runtime server", () => {
       .find((message: { role: string }) => message.role === "assistant");
 
     expect(lastUserMessage?.content).toBe("你能在这个工作区里帮我做什么？");
-    expect(lastAssistantMessage?.content).toContain("默认 OpenAI 兼容模型");
+    expect(lastAssistantMessage?.content).toContain("默认 Qwen 3.5 Plus");
   });
 
   it("parses A2UI form payload from assistant response", async () => {
@@ -917,7 +1073,7 @@ describe("runtime server", () => {
   it("tests model profile connectivity and returns latency metrics", async () => {
     const connectivityCheck = async ({ profile }: { profile: { id: string; model: string } }) => {
       expect(profile.id).toBe("model-default");
-      expect(profile.model).toBe("gpt-4.1-mini");
+      expect(profile.model).toBe("qwen3.5-plus");
       return { latencyMs: 123 };
     };
     const app = await createRuntimeApp({
@@ -938,6 +1094,60 @@ describe("runtime server", () => {
     expect(response.status).toBe(200);
     expect(payload.ok).toBe(true);
     expect(payload.latencyMs).toBe(123);
+  });
+
+  it("lists model ids for an unsaved provider configuration", async () => {
+    const app = await createRuntimeApp({
+      port: 0,
+      stateFilePath,
+      profileModelCatalog: async ({ profile }) => {
+        expect(profile.provider).toBe("openai-compatible");
+        expect(profile.baseUrl).toBe("https://platform.minimaxi.com");
+        expect(profile.baseUrlMode).toBe("provider-root");
+        expect(profile.apiKey).toBe("sk-minimax");
+        return { modelIds: ["MiniMax-M1", "MiniMax-Text-01"] };
+      },
+    });
+    dispose = app.close;
+
+    const response = await fetch(`${app.baseUrl}/api/model-profiles/catalog`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "openai-compatible",
+        baseUrl: "https://platform.minimaxi.com",
+        baseUrlMode: "provider-root",
+        apiKey: "sk-minimax",
+        model: "",
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.modelIds).toEqual(["MiniMax-M1", "MiniMax-Text-01"]);
+  });
+
+  it("rejects model catalog requests without provider credentials", async () => {
+    const app = await createRuntimeApp({ port: 0, stateFilePath });
+    dispose = app.close;
+
+    const response = await fetch(`${app.baseUrl}/api/model-profiles/catalog`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        provider: "openai-compatible",
+        baseUrl: "",
+        apiKey: "",
+      }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(payload.error).toBe("baseUrl_required");
   });
 
   it("returns not found when testing connectivity for a missing profile", async () => {
@@ -1232,10 +1442,11 @@ describe("runtime server", () => {
     expect(deleteProfilePayload.models).toHaveLength(1);
     expect(deleteProfilePayload.models[0]).toMatchObject({
       id: "model-default",
-      name: "默认 OpenAI 兼容模型",
-      baseUrl: "http://127.0.0.1:11434/v1",
-      apiKey: "replace-me",
-      model: "gpt-4.1-mini",
+      name: "默认 Qwen 3.5 Plus",
+      baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+      baseUrlMode: "manual",
+      apiKey: "sk-sp-df8f797f71dc49e2a9de118ad90d62b9",
+      model: "qwen3.5-plus",
     });
 
     const bootstrapResponse = await fetch(`${app.baseUrl}/api/bootstrap`);
@@ -1244,10 +1455,11 @@ describe("runtime server", () => {
     expect(bootstrapPayload.models).toHaveLength(1);
     expect(bootstrapPayload.models[0]).toMatchObject({
       id: "model-default",
-      name: "默认 OpenAI 兼容模型",
-      baseUrl: "http://127.0.0.1:11434/v1",
-      apiKey: "replace-me",
-      model: "gpt-4.1-mini",
+      name: "默认 Qwen 3.5 Plus",
+      baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+      baseUrlMode: "manual",
+      apiKey: "sk-sp-df8f797f71dc49e2a9de118ad90d62b9",
+      model: "qwen3.5-plus",
     });
   });
 

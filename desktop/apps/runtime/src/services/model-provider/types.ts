@@ -23,6 +23,14 @@ export type ProfileConnectivityOutput = {
   latencyMs: number;
 };
 
+export type ProfileModelCatalogInput = {
+  profile: ModelProfile;
+};
+
+export type ProfileModelCatalogOutput = {
+  modelIds: string[];
+};
+
 export type ModelToolCall = {
   id: string;
   name: string;

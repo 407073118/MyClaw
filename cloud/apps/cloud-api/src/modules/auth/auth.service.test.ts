@@ -5,6 +5,34 @@ import { MockInternalAuthProvider } from "./mock-internal-auth.provider";
 import { AuthService } from "./auth.service";
 
 describe("auth service", () => {
+  it("allows the built-in mock admin account with the expected password", async () => {
+    const sessionRepository = createSessionRepository();
+    const service = new AuthService(new MockInternalAuthProvider(), sessionRepository.repo);
+
+    const result = await service.login({
+      account: "admin",
+      password: "123456",
+    });
+
+    expect(result.user.account).toBe("admin");
+    expect(result.user.displayName).toBe("管理员");
+    expect(result.user.roles).toContain("admin");
+  });
+
+  it("rejects the built-in mock admin account when the password is incorrect", async () => {
+    const sessionRepository = createSessionRepository();
+    const service = new AuthService(new MockInternalAuthProvider(), sessionRepository.repo);
+
+    await expect(
+      service.login({
+        account: "admin",
+        password: "wrong-password",
+      }),
+    ).rejects.toMatchObject({
+      message: "account_or_password_invalid",
+    });
+  });
+
   it("returns account-based login payload and persists access/refresh session", async () => {
     const sessionRepository = createSessionRepository();
     const service = new AuthService(new MockInternalAuthProvider(), sessionRepository.repo);

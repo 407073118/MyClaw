@@ -13,6 +13,7 @@ export type ModelProfile = {
   name: string;
   provider: ProviderKind;
   baseUrl: string;
+  baseUrlMode?: "manual" | "provider-root";
   apiKey: string;
   model: string;
   headers?: Record<string, string>;

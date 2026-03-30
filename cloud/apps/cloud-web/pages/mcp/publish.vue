@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { CreateMcpReleaseResponse } from "@myclaw-cloud/shared";
+
 const router = useRouter();
 
 const form = reactive({
@@ -7,9 +9,7 @@ const form = reactive({
   summary: "",
   description: "",
   version: "0.1.0",
-  releaseNotes: "Initial release",
-  entryFile: "SKILL.md",
-  readme: ""
+  releaseNotes: "初始版本"
 });
 
 const isPending = ref(false);
@@ -17,61 +17,53 @@ const errorMsg = ref("");
 const artifactFile = ref<File | null>(null);
 
 async function handlePublish() {
-  // 中文日志：记录发布 Skill 流程开始。
-  console.info("[Skills 发布] 开始提交 Skill 发布请求", { id: form.id, version: form.version });
+  // 中文日志：记录创建 MCP 流程开始。
+  console.info("[MCP 创建] 开始提交 MCP 创建请求", { id: form.id, version: form.version });
   errorMsg.value = "";
   isPending.value = true;
 
   try {
-    const result = await $fetch<{ skill: { id: string } }>("/api/skills", {
-      method: "POST",
-      body: {
-        id: form.id,
-        name: form.name,
-        summary: form.summary,
-        description: form.description
-      }
-    });
-
     if (!artifactFile.value) {
-      throw new Error("请先选择 ZIP 包后再发布。");
+      throw new Error("请先选择 ZIP 包后再创建。");
     }
 
     const formData = new FormData();
+    formData.append("id", form.id);
+    formData.append("name", form.name);
+    formData.append("summary", form.summary);
+    formData.append("description", form.description);
     formData.append("version", form.version);
     formData.append("releaseNotes", form.releaseNotes);
-    formData.append("entryFile", form.entryFile);
-    formData.append("readme", form.readme || `# ${form.name}\n\n${form.description}`);
     formData.append("file", artifactFile.value);
 
-    await $fetch(`/api/skills/${result.skill.id}/releases`, {
+    const result = await $fetch<CreateMcpReleaseResponse>("/api/mcp/items", {
       method: "POST",
       body: formData
     });
 
-    // 中文日志：记录 Skill 发布成功并准备跳转详情页。
-    console.info("[Skills 发布] Skill 发布成功，准备跳转详情页", { id: result.skill.id, version: form.version });
-    await router.push(`/skills/${result.skill.id}`);
+    // 中文日志：记录 MCP 创建成功并准备跳转列表页。
+    console.info("[MCP 创建] MCP 创建成功，准备跳转管理页", { id: result.item.id, releaseId: result.releaseId });
+    await router.push("/mcp");
   } catch (error: any) {
-    // 中文日志：记录 Skill 发布失败原因。
-    console.error("[Skills 发布] Skill 发布失败", error);
-    errorMsg.value = error?.data?.statusMessage || error?.statusMessage || error?.message || "创建 Skill 失败。";
+    // 中文日志：记录 MCP 创建失败原因。
+    console.error("[MCP 创建] MCP 创建失败", error);
+    errorMsg.value = error?.data?.statusMessage || error?.statusMessage || error?.message || "创建 MCP 失败。";
   } finally {
-    // 中文日志：记录发布 Skill 流程结束。
-    console.info("[Skills 发布] 发布流程结束", { id: form.id, pending: false });
+    // 中文日志：记录 MCP 创建流程结束。
+    console.info("[MCP 创建] 创建流程结束", { id: form.id, pending: false });
     isPending.value = false;
   }
 }
 
 function handleFileChange(event: Event) {
-  // 中文日志：记录产物文件选择结果。
+  // 中文日志：记录 MCP 产物文件选择结果。
   const input = event.target as HTMLInputElement;
   artifactFile.value = input.files?.[0] ?? null;
-  console.info("[Skills 发布] 已选择产物文件", { fileName: artifactFile.value?.name ?? null });
+  console.info("[MCP 创建] 已选择产物文件", { fileName: artifactFile.value?.name ?? null });
 }
 
 useHead({
-  title: "发布 Skill | MyClaw Cloud"
+  title: "创建 MCP | MyClaw Cloud"
 });
 </script>
 
@@ -79,13 +71,13 @@ useHead({
   <main class="nuxt-publish-web-page">
     <div class="publish-container-nx">
       <div class="publish-header-nx">
-        <NuxtLink class="back-link-nx" to="/skills">
+        <NuxtLink class="back-link-nx" to="/mcp">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-          返回 Skills
+          返回 MCP
         </NuxtLink>
         <div class="title-area">
-          <h2>发布 <span class="dim">Skill</span></h2>
-          <p class="subtitle">将云端 Skill 发布到平台仓库。</p>
+          <h2>创建 <span class="dim">MCP</span></h2>
+          <p class="subtitle">将新的 MCP 上传到平台仓库。</p>
         </div>
       </div>
 
@@ -94,39 +86,22 @@ useHead({
           <section class="form-card-nx glass-card-nx">
             <header class="section-head">
               <h3>基础信息</h3>
-              <p>填写 Skills 列表中展示的核心信息。</p>
+              <p>填写 MCP 在列表中展示的核心信息。</p>
             </header>
-            
+
             <div class="form-group mb-xl">
-              <label>Skill 名称</label>
-              <input v-model="form.name" type="text" placeholder="例如：Data Analyzer" required />
+              <label>MCP 名称</label>
+              <input v-model="form.name" type="text" placeholder="例如：Filesystem MCP" required />
             </div>
 
             <div class="form-group mb-xl">
               <label>简短摘要</label>
-              <input v-model="form.summary" type="text" placeholder="用于 Skills 列表的一句话摘要" required />
+              <input v-model="form.summary" type="text" placeholder="用于 MCP 列表的一句话摘要" required />
             </div>
 
             <div class="form-group">
               <label>详细说明</label>
-              <textarea v-model="form.description" rows="4" placeholder="这个 Skill 的用途、能力和适用场景..." required></textarea>
-            </div>
-          </section>
-
-          <section class="form-card-nx glass-card-nx">
-            <header class="section-head">
-              <h3>文档与说明</h3>
-              <p>补充发布说明和 README 内容。</p>
-            </header>
-
-            <div class="form-group mb-xl">
-              <label>发布说明</label>
-              <textarea v-model="form.releaseNotes" rows="3" placeholder="说明这个版本的更新内容" required></textarea>
-            </div>
-
-            <div class="form-group">
-              <label>README (Markdown)</label>
-              <textarea v-model="form.readme" rows="12" class="mono-font" placeholder="# Skill 名称&#10;&#10;使用说明..."></textarea>
+              <textarea v-model="form.description" rows="5" placeholder="这个 MCP 的用途、连接方式和适用场景..." required></textarea>
             </div>
           </section>
         </div>
@@ -134,15 +109,12 @@ useHead({
         <aside class="layout-sidebar">
           <section class="form-card-nx glass-card-nx config-panel">
             <header class="section-head">
-              <h3>配置项</h3>
+              <h3>发布信息</h3>
             </header>
 
             <div class="form-group mb-lg">
-              <label>Skill ID <span class="req">*</span></label>
-              <div class="input-wrapper">
-                <span class="prefix">@myclaw/</span>
-                <input v-model="form.id" type="text" placeholder="example-skill" required />
-              </div>
+              <label>MCP ID</label>
+              <input v-model="form.id" type="text" placeholder="example-mcp" required />
             </div>
 
             <div class="row-inputs mb-lg">
@@ -150,17 +122,18 @@ useHead({
                 <label>版本</label>
                 <input v-model="form.version" type="text" placeholder="0.1.0" required />
               </div>
-              <div class="form-group flex-1">
-                <label>入口文件</label>
-                <input v-model="form.entryFile" type="text" placeholder="SKILL.md" required />
-              </div>
+            </div>
+
+            <div class="form-group">
+              <label>发布说明</label>
+              <textarea v-model="form.releaseNotes" rows="4" placeholder="说明这个版本的更新内容" required></textarea>
             </div>
           </section>
 
           <section class="form-card-nx glass-card-nx artifact-panel">
             <header class="section-head">
               <h3>上传产物包</h3>
-              <p>上传 Skill 的 ZIP 包。</p>
+              <p>上传 MCP 的 ZIP 包。</p>
             </header>
 
             <div class="form-group">
@@ -182,7 +155,7 @@ useHead({
           <div class="publish-actions-nx glass-card-nx">
             <button type="submit" class="submit-btn-nx" :disabled="isPending || !artifactFile">
               <span v-if="isPending" class="spinner"></span>
-              {{ isPending ? "正在发布..." : "发布到仓库" }}
+              {{ isPending ? "正在创建..." : "创建 MCP" }}
             </button>
           </div>
         </aside>
@@ -221,16 +194,9 @@ useHead({
 .flex-1 { flex: 1; }
 
 .form-group label { font-size: 0.8rem; font-weight: 900; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; display: flex; align-items: center; justify-content: space-between; }
-.req { color: #ef4444; }
 
 .form-group input, .form-group textarea { width: 100%; padding: 14px 18px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 12px; color: var(--text-main); font-family: inherit; font-size: 0.95rem; transition: 0.2s; box-sizing: border-box; }
 .form-group input:focus, .form-group textarea:focus { outline: none; border-color: var(--nuxt-green); box-shadow: 0 0 0 3px rgba(var(--nuxt-green-rgb), 0.1); background: rgba(var(--nuxt-green-rgb), 0.02); }
-.mono-font { font-family: 'Fira Code', monospace !important; font-size: 0.85rem !important; line-height: 1.6; }
-
-.input-wrapper { display: flex; align-items: center; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 12px; overflow: hidden; transition: 0.2s; }
-.input-wrapper:focus-within { border-color: var(--nuxt-green); box-shadow: 0 0 0 3px rgba(var(--nuxt-green-rgb), 0.1); background: rgba(var(--nuxt-green-rgb), 0.02); }
-.input-wrapper .prefix { padding-left: 16px; color: var(--text-dim); font-family: 'Fira Code', monospace; font-size: 0.9rem; user-select: none; }
-.input-wrapper input { border: none !important; background: transparent !important; box-shadow: none !important; padding-left: 8px; }
 
 .config-panel { padding: 24px; }
 .artifact-panel { padding: 24px; }

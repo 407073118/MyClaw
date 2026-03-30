@@ -128,9 +128,9 @@ describe("SettingsView", () => {
         id: "model-default",
         name: "Updated Default",
         provider: "openai-compatible",
-        baseUrl: "http://127.0.0.1:11434/v1",
+        baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
         apiKey: "sk-updated",
-        model: "gpt-4.1",
+        model: "qwen3.5-plus",
       },
     });
 
@@ -143,18 +143,18 @@ describe("SettingsView", () => {
     await wrapper.get("[data-testid='edit-model-profile-model-default']").trigger("click");
     const inputs = wrapper.findAll("input");
     await inputs[0].setValue("Updated Default");
-    await inputs[1].setValue("http://127.0.0.1:11434/v1");
+    await inputs[1].setValue("https://coding.dashscope.aliyuncs.com/v1");
     await inputs[2].setValue("sk-updated");
-    await inputs[3].setValue("gpt-4.1");
+    await inputs[3].setValue("qwen3.5-plus");
     await wrapper.get("[data-testid='save-model-profile']").trigger("click");
     await flushPromises();
 
     expect(updateSpy).toHaveBeenCalledWith("http://127.0.0.1:43110", "model-default", {
       name: "Updated Default",
       provider: "openai-compatible",
-      baseUrl: "http://127.0.0.1:11434/v1",
+      baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
       apiKey: "sk-updated",
-      model: "gpt-4.1",
+      model: "qwen3.5-plus",
       headers: {},
       requestBody: {},
     });
@@ -277,11 +277,12 @@ describe("SettingsView", () => {
     const updateSpy = vi.spyOn(runtimeClient, "updateModelProfile").mockResolvedValue({
       profile: {
         id: "model-default",
-        name: "默认 OpenAI 兼容模型",
+        name: "默认 Qwen 3.5 Plus",
         provider: "openai-compatible",
-        baseUrl: "http://127.0.0.1:11434/v1",
-        apiKey: "replace-me",
-        model: "gpt-4.1-mini",
+        baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+        baseUrlMode: "manual",
+        apiKey: "sk-sp-df8f797f71dc49e2a9de118ad90d62b9",
+        model: "qwen3.5-plus",
         headers: {
           "x-tool-mode": "required",
           "x-reasoning-mode": "visible",
@@ -338,11 +339,11 @@ describe("SettingsView", () => {
     await flushPromises();
 
     expect(updateSpy).toHaveBeenCalledWith("http://127.0.0.1:43110", "model-default", {
-      name: "默认 OpenAI 兼容模型",
+      name: "默认 Qwen 3.5 Plus",
       provider: "openai-compatible",
-      baseUrl: "http://127.0.0.1:11434/v1",
-      apiKey: "replace-me",
-      model: "gpt-4.1-mini",
+      baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+      apiKey: "sk-sp-df8f797f71dc49e2a9de118ad90d62b9",
+      model: "qwen3.5-plus",
       headers: {
         "x-tool-mode": "required",
         "x-reasoning-mode": "visible",

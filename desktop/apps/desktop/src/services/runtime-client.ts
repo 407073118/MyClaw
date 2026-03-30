@@ -110,6 +110,10 @@ export type TestModelProfilePayload = {
   detail?: string;
 };
 
+export type ListAvailableModelIdsPayload = {
+  modelIds: string[];
+};
+
 export type ListBuiltinToolsPayload = {
   items: ResolvedBuiltinTool[];
 };
@@ -732,6 +736,26 @@ export async function testModelProfile(
   }
 
   return response.json() as Promise<TestModelProfilePayload>;
+}
+
+/** 根据当前 provider 表单配置拉取模型目录。 */
+export async function fetchAvailableModelIds(
+  baseUrl: string,
+  payload: Pick<ModelProfile, "provider" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
+): Promise<ListAvailableModelIdsPayload> {
+  const response = await fetch(`${baseUrl}/api/model-profiles/catalog`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    await throwHttpError(response, "Load model catalog failed");
+  }
+
+  return response.json() as Promise<ListAvailableModelIdsPayload>;
 }
 
 /** 更新单个内置工具的启用、暴露和审批覆盖状态。 */

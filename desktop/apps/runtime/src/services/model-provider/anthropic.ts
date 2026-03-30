@@ -1,2 +1,2 @@
 export { runAnthropicConversation } from "./anthropic/conversation";
-export { performAnthropicConnectivityTest } from "./anthropic/client";
+export { listAnthropicModelIds, performAnthropicConnectivityTest } from "./anthropic/client";

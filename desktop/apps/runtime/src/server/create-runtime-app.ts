@@ -38,6 +38,7 @@ import {
   type ChatCompletionOutput,
   ModelToolCall,
   ModelToolCallResult,
+  listAvailableModelIds,
   runModelConversation,
   testModelProfileConnectivity,
 } from "../services/model-provider";
@@ -107,6 +108,7 @@ type RuntimeOptions = {
     availableTools: ModelConversationToolDefinition[];
   }) => Promise<ChatCompletionOutput | string>;
   profileConnectivityCheck?: (input: { profile: ModelProfile }) => Promise<{ latencyMs: number }>;
+  profileModelCatalog?: (input: { profile: ModelProfile }) => Promise<{ modelIds: string[] }>;
   workspaceRoot?: string;
   skillsRootPath?: string;
   executeIntent?: (input: {
@@ -155,6 +157,17 @@ async function readJsonBody(request: import("node:http").IncomingMessage): Promi
   } catch {
     return {};
   }
+}
+
+/** 以 UTF-8 文本形式读取请求体，供 cloud auth/hub 代理原样透传。 */
+async function readRequestBodyText(request: import("node:http").IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+
+  for await (const chunk of request) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+
+  return chunks.length === 0 ? "" : Buffer.concat(chunks).toString("utf8");
 }
 
 function isApprovalDecision(value: unknown): value is ApprovalDecision {
@@ -216,6 +229,10 @@ function shouldRequireInitialSetup(models: ModelProfile[]): boolean {
 
 function isProviderKind(value: unknown): value is ModelProfile["provider"] {
   return value === "openai-compatible" || value === "anthropic" || value === "local-gateway";
+}
+
+function isBaseUrlMode(value: unknown): value is NonNullable<ModelProfile["baseUrlMode"]> {
+  return value === "manual" || value === "provider-root";
 }
 
 function isBuiltinToolApprovalMode(value: unknown): value is BuiltinToolApprovalMode {
@@ -1194,6 +1211,11 @@ export async function createRuntimeApp(options: RuntimeOptions): Promise<Runtime
     (async ({ profile }) => {
       return testModelProfileConnectivity({ profile });
     });
+  const profileModelCatalog =
+    options.profileModelCatalog ??
+    (async ({ profile }) => {
+      return listAvailableModelIds({ profile });
+    });
   const mcpService = new McpService({
     adapter: options.mcpAdapter ?? new NoopMCPorterAdapter(),
     initialConfigs: mcpServerConfigs,
@@ -1948,110 +1970,152 @@ export async function createRuntimeApp(options: RuntimeOptions): Promise<Runtime
     runConversation: runSessionConversation,
   });
 
+  /** 复制桌面请求中的鉴权与内容类型头，确保 cloud 看到的请求上下文与前端一致。 */
+  function buildCloudProxyHeaders(request: import("node:http").IncomingMessage): Record<string, string> {
+    const headers: Record<string, string> = {};
+    if (typeof request.headers.authorization === "string" && request.headers.authorization.trim()) {
+      headers.authorization = request.headers.authorization.trim();
+    }
+    if (typeof request.headers["content-type"] === "string" && request.headers["content-type"].trim()) {
+      headers["content-type"] = request.headers["content-type"].trim();
+    }
+    return headers;
+  }
+
+  /** 将 desktop 请求代理到 cloud API，并把上游状态码与响应体原样返回给桌面前端。 */
+  async function proxyCloudApiRequest(input: {
+    request: import("node:http").IncomingMessage;
+    response: import("node:http").ServerResponse;
+    relativePath: string;
+    searchParams?: URLSearchParams;
+  }) {
+    try {
+      const body = input.request.method === "GET" || input.request.method === "HEAD"
+        ? undefined
+        : await readRequestBodyText(input.request);
+      const proxied = await cloudHubProxy.forward(input.relativePath, {
+        method: input.request.method ?? "GET",
+        searchParams: input.searchParams,
+        headers: buildCloudProxyHeaders(input.request),
+        body,
+      });
+      input.response.writeHead(proxied.status, { "content-type": proxied.contentType });
+      input.response.end(proxied.body);
+    } catch (error) {
+      input.response.writeHead(502, { "content-type": "application/json" });
+      input.response.end(
+        JSON.stringify({
+          error: "cloud_api_proxy_failed",
+          detail: error instanceof Error ? error.message : "Unknown cloud api proxy failure",
+        }),
+      );
+    }
+  }
+
   const server = createServer(
     createRuntimeHttpRequestHandler({
       router,
       runtimeContext,
       fallbackHandler: async ({ request, response, requestUrl }) => {
+        if (request.method === "POST" && requestUrl.pathname === "/api/cloud-auth/login") {
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: "/api/auth/login",
+          });
+          return;
+        }
+
+        if (request.method === "POST" && requestUrl.pathname === "/api/cloud-auth/refresh") {
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: "/api/auth/refresh",
+          });
+          return;
+        }
+
+        if (request.method === "POST" && requestUrl.pathname === "/api/cloud-auth/introspect") {
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: "/api/auth/introspect",
+          });
+          return;
+        }
+
+        if (request.method === "POST" && requestUrl.pathname === "/api/cloud-auth/logout") {
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: "/api/auth/logout",
+          });
+          return;
+        }
 
         if (request.method === "GET" && requestUrl.pathname === "/api/cloud-hub/items") {
-      try {
-        const proxied = await cloudHubProxy.forward("/api/hub/items", requestUrl.searchParams);
-        response.writeHead(proxied.status, { "content-type": proxied.contentType });
-        response.end(proxied.body);
-      } catch (error) {
-        response.writeHead(502, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            error: "cloud_hub_proxy_failed",
-            detail: error instanceof Error ? error.message : "Unknown cloud hub proxy failure",
-          }),
-        );
-      }
-      return;
-    }
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: "/api/hub/items",
+            searchParams: requestUrl.searchParams,
+          });
+          return;
+        }
 
-    const cloudHubItemMatch =
-      request.method === "GET" ? requestUrl.pathname.match(/^\/api\/cloud-hub\/items\/([^/]+)$/) : null;
-    if (cloudHubItemMatch) {
-      try {
-        const itemId = decodeURIComponent(cloudHubItemMatch[1] ?? "");
-        const proxied = await cloudHubProxy.forward(`/api/hub/items/${encodeURIComponent(itemId)}`);
-        response.writeHead(proxied.status, { "content-type": proxied.contentType });
-        response.end(proxied.body);
-      } catch (error) {
-        response.writeHead(502, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            error: "cloud_hub_proxy_failed",
-            detail: error instanceof Error ? error.message : "Unknown cloud hub proxy failure",
-          }),
-        );
-      }
-      return;
-    }
+        const cloudHubItemMatch =
+          request.method === "GET" ? requestUrl.pathname.match(/^\/api\/cloud-hub\/items\/([^/]+)$/) : null;
+        if (cloudHubItemMatch) {
+          const itemId = decodeURIComponent(cloudHubItemMatch[1] ?? "");
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: `/api/hub/items/${encodeURIComponent(itemId)}`,
+          });
+          return;
+        }
 
-    const cloudHubManifestMatch =
-      request.method === "GET"
-        ? requestUrl.pathname.match(/^\/api\/cloud-hub\/releases\/([^/]+)\/manifest$/)
-        : null;
-    if (cloudHubManifestMatch) {
-      try {
-        const releaseId = decodeURIComponent(cloudHubManifestMatch[1] ?? "");
-        const proxied = await cloudHubProxy.forward(
-          `/api/hub/releases/${encodeURIComponent(releaseId)}/manifest`,
-        );
-        response.writeHead(proxied.status, { "content-type": proxied.contentType });
-        response.end(proxied.body);
-      } catch (error) {
-        response.writeHead(502, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            error: "cloud_hub_proxy_failed",
-            detail: error instanceof Error ? error.message : "Unknown cloud hub proxy failure",
-          }),
-        );
-      }
-      return;
-    }
+        const cloudHubManifestMatch =
+          request.method === "GET"
+            ? requestUrl.pathname.match(/^\/api\/cloud-hub\/releases\/([^/]+)\/manifest$/)
+            : null;
+        if (cloudHubManifestMatch) {
+          const releaseId = decodeURIComponent(cloudHubManifestMatch[1] ?? "");
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: `/api/hub/releases/${encodeURIComponent(releaseId)}/manifest`,
+          });
+          return;
+        }
 
-    const cloudHubDownloadTokenMatch =
-      request.method === "GET"
-        ? requestUrl.pathname.match(/^\/api\/cloud-hub\/releases\/([^/]+)\/download-token$/)
-        : null;
-    if (cloudHubDownloadTokenMatch) {
-      try {
-        const releaseId = decodeURIComponent(cloudHubDownloadTokenMatch[1] ?? "");
-        const proxied = await cloudHubProxy.forward(
-          `/api/hub/releases/${encodeURIComponent(releaseId)}/download-token`,
-        );
-        response.writeHead(proxied.status, { "content-type": proxied.contentType });
-        response.end(proxied.body);
-      } catch (error) {
-        response.writeHead(502, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            error: "cloud_hub_proxy_failed",
-            detail: error instanceof Error ? error.message : "Unknown cloud hub proxy failure",
-          }),
-        );
-      }
-      return;
-    }
+        const cloudHubDownloadTokenMatch =
+          request.method === "GET"
+            ? requestUrl.pathname.match(/^\/api\/cloud-hub\/releases\/([^/]+)\/download-token$/)
+            : null;
+        if (cloudHubDownloadTokenMatch) {
+          const releaseId = decodeURIComponent(cloudHubDownloadTokenMatch[1] ?? "");
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: `/api/hub/releases/${encodeURIComponent(releaseId)}/download-token`,
+          });
+          return;
+        }
 
-    const skillDetailMatch =
-      request.method === "GET" ? request.url.match(/^\/api\/skills\/([^/]+)$/) : null;
-    if (skillDetailMatch) {
-      const skillId = decodeURIComponent(skillDetailMatch[1] ?? "");
-      console.info("[skills-api] 加载 Skill 详情", { skillId });
-      const skill = await skillManager.getDetail(skillId);
+        const skillDetailMatch =
+          request.method === "GET" ? request.url.match(/^\/api\/skills\/([^/]+)$/) : null;
+        if (skillDetailMatch) {
+          const skillId = decodeURIComponent(skillDetailMatch[1] ?? "");
+          console.info("[skills-api] 加载 Skill 详情", { skillId });
+          const skill = await skillManager.getDetail(skillId);
 
-      if (!skill) {
-        console.warn("[skills-api] Skill 详情不存在", { skillId });
-        response.writeHead(404, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: "skill_not_found" }));
-        return;
-      }
+          if (!skill) {
+            console.warn("[skills-api] Skill 详情不存在", { skillId });
+            response.writeHead(404, { "content-type": "application/json" });
+            response.end(JSON.stringify({ error: "skill_not_found" }));
+            return;
+          }
 
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ skill }));
@@ -2748,6 +2812,9 @@ export async function createRuntimeApp(options: RuntimeOptions): Promise<Runtime
         apiKey: String(payload.apiKey),
         model: String(payload.model).trim(),
       };
+      if (isBaseUrlMode(payload.baseUrlMode)) {
+        profile.baseUrlMode = payload.baseUrlMode;
+      }
       if (headers && Object.keys(headers).length > 0) {
         profile.headers = headers;
       }
@@ -2802,6 +2869,11 @@ export async function createRuntimeApp(options: RuntimeOptions): Promise<Runtime
         apiKey: String(payload.apiKey),
         model: String(payload.model).trim(),
       };
+      if (isBaseUrlMode(payload.baseUrlMode)) {
+        profile.baseUrlMode = payload.baseUrlMode;
+      } else {
+        delete profile.baseUrlMode;
+      }
       if (headers && Object.keys(headers).length > 0) {
         profile.headers = headers;
       } else {
@@ -2857,6 +2929,88 @@ export async function createRuntimeApp(options: RuntimeOptions): Promise<Runtime
           sessions: sessions.sessions,
         }),
       );
+      return;
+    }
+
+    if (request.method === "POST" && request.url === "/api/model-profiles/catalog") {
+      const payload = await readJsonBody(request);
+      const baseUrl = typeof payload.baseUrl === "string" ? String(payload.baseUrl).trim() : "";
+      const apiKey = typeof payload.apiKey === "string" ? String(payload.apiKey) : "";
+      const headers = readStringMap(payload.headers);
+      const requestBody = readJsonRecord(payload.requestBody);
+
+      if (!baseUrl) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "baseUrl_required" }));
+        return;
+      }
+
+      if (!apiKey.trim()) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "apiKey_required" }));
+        return;
+      }
+
+      if (!isProviderKind(payload.provider) || headers === null || requestBody === null) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: !isProviderKind(payload.provider)
+              ? "provider_required"
+              : headers === null
+                ? "invalid_profile_headers"
+                : "invalid_profile_request_body",
+          }),
+        );
+        return;
+      }
+
+      const profile: ModelProfile = {
+        id: "model-catalog-preview",
+        name: "模型目录预览",
+        provider: payload.provider,
+        baseUrl,
+        apiKey,
+        model: typeof payload.model === "string" ? payload.model.trim() : "",
+      };
+      if (isBaseUrlMode(payload.baseUrlMode)) {
+        profile.baseUrlMode = payload.baseUrlMode;
+      }
+      if (headers && Object.keys(headers).length > 0) {
+        profile.headers = headers;
+      }
+      if (requestBody && Object.keys(requestBody).length > 0) {
+        profile.requestBody = requestBody;
+      }
+
+      console.info("[runtime] 开始拉取模型目录", {
+        provider: profile.provider,
+        baseUrl: profile.baseUrl,
+        baseUrlMode: profile.baseUrlMode ?? "manual",
+      });
+
+      try {
+        const result = await profileModelCatalog({ profile });
+        console.info("[runtime] 模型目录拉取完成", {
+          provider: profile.provider,
+          count: result.modelIds.length,
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ modelIds: result.modelIds }));
+      } catch (error) {
+        console.warn("[runtime] 模型目录拉取失败", {
+          provider: profile.provider,
+          detail: error instanceof Error ? error.message : "Unknown catalog failure",
+        });
+        response.writeHead(502, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            error: "model_catalog_failed",
+            detail: error instanceof Error ? error.message : "Unknown catalog failure",
+          }),
+        );
+      }
+
       return;
     }
 

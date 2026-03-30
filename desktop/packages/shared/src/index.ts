@@ -1,4 +1,5 @@
 export * from "./contracts/approval";
+export * from "./contracts/auth";
 export * from "./contracts/builtin-tool";
 export * from "./contracts/employee";
 export * from "./contracts/events";

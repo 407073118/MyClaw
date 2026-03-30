@@ -6,6 +6,13 @@ type CloudHubProxyResponse = {
   body: string;
 };
 
+type CloudHubForwardOptions = {
+  method?: string;
+  searchParams?: URLSearchParams;
+  headers?: Record<string, string>;
+  body?: string;
+};
+
 function normalizeCloudHubBaseUrl(explicitBaseUrl?: string): string {
   return explicitBaseUrl?.trim() || process.env.MYCLAW_CLOUD_HUB_BASE_URL?.trim() || DEFAULT_CLOUD_HUB_BASE_URL;
 }
@@ -22,22 +29,23 @@ export class CloudHubProxy {
     return this.baseUrl;
   }
 
-  /** 转发 Hub GET 请求并保留上游 JSON 响应，供 runtime API 原样返回。 */
-  async forward(relativePath: string, searchParams?: URLSearchParams): Promise<CloudHubProxyResponse> {
+  /** 转发云端 API 请求，并保留上游状态码与响应体，供 runtime 原样回传给桌面前端。 */
+  async forward(relativePath: string, options: CloudHubForwardOptions = {}): Promise<CloudHubProxyResponse> {
     const targetUrl = new URL(relativePath, this.baseUrl);
-    if (searchParams) {
-      for (const [key, value] of searchParams.entries()) {
+    if (options.searchParams) {
+      for (const [key, value] of options.searchParams.entries()) {
         if (value.trim()) {
           targetUrl.searchParams.set(key, value);
         }
       }
     }
 
-    const response = await fetch(targetUrl);
+    const response = await fetch(targetUrl, {
+      method: options.method ?? "GET",
+      headers: options.headers,
+      body: options.body,
+    });
     const body = await response.text();
-    if (!response.ok) {
-      throw new Error(`Cloud hub request failed: ${response.status}`);
-    }
 
     return {
       status: response.status,

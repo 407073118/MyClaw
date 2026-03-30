@@ -52,7 +52,7 @@
             <label class="field">
               <span class="label">服务商预设</span>
               <div class="select-wrapper">
-                <select v-model="selectedPresetId" @change="applyPreset">
+                <select v-model="selectedPresetId" data-testid="model-preset-select" @change="applyPreset">
                   <option v-for="preset in providerPresets" :key="preset.id" :value="preset.id">
                     {{ preset.label }}
                   </option>
@@ -66,16 +66,45 @@
             </label>
             <label class="field">
               <span class="label">模型 ID</span>
-              <input v-model="profile.model" placeholder="gpt-4o, claude-3-5-sonnet..." />
+              <input
+                v-model="profile.model"
+                data-testid="model-id-input"
+                placeholder="gpt-4o, claude-3-5-sonnet..."
+              />
+              <div v-if="availableModelIds.length > 0" class="field-inline">
+                <div class="select-wrapper">
+                  <select :value="profile.model" data-testid="model-id-select" @change="applySelectedModelId">
+                    <option v-for="modelId in availableModelIds" :key="modelId" :value="modelId">
+                      {{ modelId }}
+                    </option>
+                  </select>
+                  <div class="select-arrow">
+                    <svg viewBox="0 0 24 24" width="16" height="16">
+                      <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </div>
+                </div>
+              </div>
             </label>
             <label class="field">
               <span class="label">接口地址 (Base URL)</span>
-              <input v-model="profile.baseUrl" placeholder="https://api.openai.com/v1" />
+              <input
+                v-model="profile.baseUrl"
+                data-testid="model-base-url-input"
+                :placeholder="baseUrlPlaceholder"
+              />
+              <input type="hidden" :value="profile.baseUrlMode ?? 'manual'" data-testid="model-base-url-mode" />
+              <div class="field-hint">{{ baseUrlHint }}</div>
             </label>
             <label class="field full-width">
               <span class="label">API Key / Token</span>
               <div class="password-input-wrapper">
-                <input :type="showPassword ? 'text' : 'password'" v-model="profile.apiKey" placeholder="sk-..." />
+                <input
+                  :type="showPassword ? 'text' : 'password'"
+                  v-model="profile.apiKey"
+                  data-testid="model-api-key-input"
+                  placeholder="sk-..."
+                />
                 <button type="button" class="toggle-password" @click="showPassword = !showPassword" :title="showPassword ? '隐藏' : '显示'">
                   <svg v-if="showPassword" viewBox="0 0 24 24" width="16" height="16">
                     <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24M1 1l22 22"/>
@@ -85,6 +114,18 @@
                   </svg>
                 </button>
               </div>
+              <div class="field-inline">
+                <button
+                  type="button"
+                  class="secondary-action-btn"
+                  data-testid="model-fetch-list"
+                  :disabled="isFetchingModels"
+                  @click="loadModelCatalog"
+                >
+                  {{ isFetchingModels ? "加载中..." : "获取模型列表" }}
+                </button>
+              </div>
+              <div v-if="modelCatalogError" class="field-hint error-hint">{{ modelCatalogError }}</div>
             </label>
           </div>
         </section>
@@ -126,7 +167,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { providerPresets } from "@/settings/provider-presets";
+import { providerPresets, resolveProviderPresetId } from "@/settings/provider-presets";
 import { useWorkspaceStore } from "@/stores/workspace";
 import type { ModelProfile } from "@myclaw-desktop/shared";
 
@@ -141,7 +182,8 @@ const profile = reactive<ModelProfile>({
   id: "",
   name: "",
   provider: "openai-compatible",
-  baseUrl: "https://api.openai.com/v1",
+  baseUrl: "https://api.openai.com",
+  baseUrlMode: "provider-root",
   apiKey: "",
   model: "",
   headers: {},
@@ -154,6 +196,19 @@ const requestBodyText = ref("");
 const isBusy = ref(false);
 const error = ref("");
 const showPassword = ref(false);
+const isFetchingModels = ref(false);
+const modelCatalogError = ref("");
+const availableModelIds = ref<string[]>([]);
+
+const baseUrlPlaceholder = computed(() =>
+  profile.baseUrlMode === "provider-root" ? "https://platform.minimaxi.com" : "https://gateway.example.com/v1",
+);
+
+const baseUrlHint = computed(() =>
+  profile.baseUrlMode === "provider-root"
+    ? "当前预设只需填写服务根地址，系统会自动补全对应厂商接口路径。"
+    : "Custom 模式需要填写完整兼容地址，例如 https://gateway.example.com/v1。",
+);
 
 onMounted(() => {
   if (!isNew.value) {
@@ -162,9 +217,8 @@ onMounted(() => {
       Object.assign(profile, existing);
       headersText.value = existing.headers ? JSON.stringify(existing.headers, null, 2) : "";
       requestBodyText.value = existing.requestBody ? JSON.stringify(existing.requestBody, null, 2) : "";
-      
-      const preset = providerPresets.find(p => p.provider === existing.provider);
-      if (preset) selectedPresetId.value = preset.id;
+
+      selectedPresetId.value = resolveProviderPresetId(existing);
     } else {
       router.push("/settings");
     }
@@ -178,10 +232,19 @@ function applyPreset() {
   if (preset) {
     profile.provider = preset.provider;
     profile.baseUrl = preset.baseUrl;
+    profile.baseUrlMode = preset.baseUrlMode;
+    availableModelIds.value = [];
+    modelCatalogError.value = "";
     if (isNew.value) {
        profile.name = `New ${preset.label} Config`;
     }
   }
+}
+
+/** 将候选下拉中的模型 id 同步回输入框，便于继续手工调整。 */
+function applySelectedModelId(event: Event) {
+  const target = event.target as HTMLSelectElement | null;
+  profile.model = target?.value ?? "";
 }
 
 function handleBack() {
@@ -220,6 +283,7 @@ async function upsertProfile() {
       ...profile,
       name: profile.name.trim() || "未命名配置",
       baseUrl: profile.baseUrl.trim(),
+      baseUrlMode: profile.baseUrlMode,
       apiKey: profile.apiKey.trim(),
       model: profile.model.trim(),
       headers: parsedHeaders,
@@ -237,6 +301,39 @@ async function upsertProfile() {
     error.value = e.message;
   } finally {
     isBusy.value = false;
+  }
+}
+
+/** 基于当前表单配置拉取模型目录，并将首个结果回填到模型输入框。 */
+async function loadModelCatalog() {
+  modelCatalogError.value = "";
+  availableModelIds.value = [];
+  isFetchingModels.value = true;
+
+  try {
+    const parsedHeaders = headersText.value.trim() ? JSON.parse(headersText.value) : {};
+    const parsedBody = requestBodyText.value.trim() ? JSON.parse(requestBodyText.value) : {};
+    const modelIds = await workspace.fetchAvailableModelIds({
+      provider: profile.provider,
+      baseUrl: profile.baseUrl.trim(),
+      baseUrlMode: profile.baseUrlMode,
+      apiKey: profile.apiKey.trim(),
+      model: profile.model.trim(),
+      headers: parsedHeaders,
+      requestBody: parsedBody
+    });
+
+    availableModelIds.value = modelIds;
+    if (!profile.model && modelIds.length > 0) {
+      profile.model = modelIds[0]!;
+    }
+    if (modelIds.length === 0) {
+      modelCatalogError.value = "当前服务未返回可用模型，请确认接口地址、权限与服务商兼容性。";
+    }
+  } catch (e: any) {
+    modelCatalogError.value = e?.message ?? "模型列表获取失败";
+  } finally {
+    isFetchingModels.value = false;
   }
 }
 </script>
@@ -521,6 +618,29 @@ textarea {
   font-size: 11px;
   color: #52525b;
   margin-top: 4px;
+}
+
+.field-inline {
+  margin-top: 10px;
+}
+
+.secondary-action-btn {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid #303038;
+  background: #1b1b1f;
+  color: #f4f4f5;
+  cursor: pointer;
+}
+
+.secondary-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.error-hint {
+  color: #fca5a5;
 }
 
 .flex-fill {

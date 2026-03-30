@@ -70,11 +70,12 @@ export function createWorkspaceFixture(): WorkspaceFixture {
     models: [
       {
         id: "model-default",
-        name: "默认 OpenAI 兼容模型",
+        name: "默认 Qwen 3.5 Plus",
         provider: "openai-compatible",
-        baseUrl: "http://127.0.0.1:11434/v1",
-        apiKey: "replace-me",
-        model: "gpt-4.1-mini",
+        baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+        baseUrlMode: "manual",
+        apiKey: "sk-sp-df8f797f71dc49e2a9de118ad90d62b9",
+        model: "qwen3.5-plus",
       },
     ],
     builtinTools: [

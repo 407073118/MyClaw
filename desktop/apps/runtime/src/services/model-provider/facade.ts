@@ -1,6 +1,11 @@
-import { runAnthropicConversation, performAnthropicConnectivityTest } from "./anthropic";
+import {
+  listAnthropicModelIds,
+  runAnthropicConversation,
+  performAnthropicConnectivityTest,
+} from "./anthropic";
 import {
   createOpenAiCompatibleReply as createOpenAiCompatibleReplyInternal,
+  listOpenAiCompatibleModelIds,
   performOpenAiConnectivityTest,
   runOpenAiCompatibleConversation,
   testOpenAiCompatibleProfile as testOpenAiCompatibleProfileInternal,
@@ -13,6 +18,8 @@ import type {
   ModelConversationInput,
   ProfileConnectivityInput,
   ProfileConnectivityOutput,
+  ProfileModelCatalogInput,
+  ProfileModelCatalogOutput,
 } from "./types";
 
 export { MYCLAW_MODEL_TOOLS };
@@ -47,6 +54,19 @@ export async function testModelProfileConnectivity(
   }
 
   return performOpenAiConnectivityTest(input);
+}
+
+/** 稳定门面：根据 provider 拉取可选模型目录。 */
+export async function listAvailableModelIds(
+  input: ProfileModelCatalogInput,
+): Promise<ProfileModelCatalogOutput> {
+  assertProfileHasApiKey(input.profile);
+
+  if (input.profile.provider === "anthropic") {
+    return listAnthropicModelIds(input);
+  }
+
+  return listOpenAiCompatibleModelIds(input);
 }
 
 /** 稳定门面：OpenAI-compatible 连通性测试兼容别名。 */

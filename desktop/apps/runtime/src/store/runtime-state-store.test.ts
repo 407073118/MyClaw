@@ -129,6 +129,7 @@ describe("runtime state store", () => {
           name: "Model A",
           provider: "openai-compatible",
           baseUrl: "https://api.example.com/v1",
+          baseUrlMode: "manual",
           apiKey: "sk-test",
           model: "gpt-4.1-mini",
           requestBody: {
@@ -238,10 +239,12 @@ describe("runtime state store", () => {
     const initSqlJsAsm = (await import("sql.js/dist/sql-asm.js")).default as typeof initSqlJsType;
     const sql = await initSqlJsAsm();
     const db = new sql.Database(readFileSync(stateFilePath));
+    const modelColumns = db.exec("PRAGMA table_info(model_profiles)")[0]?.values?.map((row) => String(row[1])) ?? [];
     const workflowColumns = db.exec("PRAGMA table_info(workflows)")[0]?.values?.map((row) => String(row[1])) ?? [];
     const workflowRows = db.exec("SELECT * FROM workflows");
     db.close();
 
+    expect(modelColumns).toContain("base_url_mode");
     expect(workflowColumns).toEqual([
       "position",
       "id",

@@ -3,4 +3,4 @@ export {
   runOpenAiCompatibleConversation,
   testOpenAiCompatibleProfile,
 } from "./conversation";
-export { performOpenAiConnectivityTest, requestOpenAiStep } from "./client";
+export { listOpenAiCompatibleModelIds, performOpenAiConnectivityTest, requestOpenAiStep } from "./client";

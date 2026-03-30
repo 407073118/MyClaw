@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type {
-  CreateMcpReleaseResponse,
   McpItemDetail,
   McpItemSummary,
   McpManifest,
@@ -44,7 +43,6 @@ const { data: selectedManifest } = await useAsyncData<McpManifest | null>(
 );
 
 const showPublishModal = ref(false);
-const isNewMcp = ref(false);
 const publishForm = reactive({
   id: "",
   name: "",
@@ -58,33 +56,36 @@ const publishPending = ref(false);
 const publishStatus = ref({ type: "" as "success" | "error" | "", message: "" });
 
 function handleFileChange(event: Event) {
+  // 中文日志：记录 MCP 版本包文件选择结果。
   const input = event.target as HTMLInputElement;
   publishFile.value = input.files?.[0] ?? null;
+  console.info("[MCP 发布版本] 已选择版本包文件", { fileName: publishFile.value?.name ?? null });
 }
 
-function openPublish(newMcp = false) {
-  isNewMcp.value = newMcp;
-  if (!newMcp && selectedConnector.value) {
-    publishForm.id = selectedConnector.value.id;
-    publishForm.name = selectedConnector.value.name;
-    publishForm.summary = selectedConnector.value.summary;
-    publishForm.description = selectedConnector.value.description;
-  } else {
-    publishForm.id = "";
-    publishForm.name = "";
-    publishForm.summary = "";
-    publishForm.description = "";
+function openPublish() {
+  // 中文日志：记录打开 MCP 新版本发布弹窗。
+  if (!selectedConnector.value) {
+    console.warn("[MCP 发布版本] 当前没有可发布的 MCP");
+    publishStatus.value = { type: "error", message: "当前没有可发布版本的 MCP。" };
+    return;
   }
+  publishForm.id = selectedConnector.value.id;
+  publishForm.name = selectedConnector.value.name;
+  publishForm.summary = selectedConnector.value.summary;
+  publishForm.description = selectedConnector.value.description;
   publishForm.version = "";
   publishForm.releaseNotes = "";
   publishFile.value = null;
   publishStatus.value = { type: "", message: "" };
   showPublishModal.value = true;
+  console.info("[MCP 发布版本] 已打开版本发布弹窗", { id: publishForm.id });
 }
 
 async function handlePublish() {
+  // 中文日志：记录 MCP 新版本发布流程开始。
   if (!publishFile.value) {
-    publishStatus.value = { type: "error", message: "Please choose a ZIP package." };
+    publishStatus.value = { type: "error", message: "请先选择 ZIP 包。" };
+    console.warn("[MCP 发布版本] 缺少 ZIP 包，无法提交");
     return;
   }
 
@@ -93,37 +94,34 @@ async function handlePublish() {
   formData.append("releaseNotes", publishForm.releaseNotes);
   formData.append("file", publishFile.value);
 
-  if (isNewMcp.value) {
-    formData.append("id", publishForm.id);
-    formData.append("name", publishForm.name);
-    formData.append("summary", publishForm.summary);
-    formData.append("description", publishForm.description);
-  }
-
   publishPending.value = true;
   try {
-    const result = isNewMcp.value
-      ? await $fetch<CreateMcpReleaseResponse>("/api/mcp/items", { method: "POST", body: formData })
-      : await $fetch<McpReleaseUploadResponse>(`/api/mcp/items/${publishForm.id}/releases`, { method: "POST", body: formData });
+    const result = await $fetch<McpReleaseUploadResponse>(`/api/mcp/items/${publishForm.id}/releases`, {
+      method: "POST",
+      body: formData
+    });
 
     publishStatus.value = {
       type: "success",
-      message: isNewMcp.value ? `MCP created: ${result.releaseId}` : `Release published: ${result.releaseId}`
+      message: `新版本发布成功：${result.releaseId}`
     };
+    console.info("[MCP 发布版本] 新版本发布成功", { id: publishForm.id, releaseId: result.releaseId });
     await refresh();
     await refreshDetail();
     setTimeout(() => {
       showPublishModal.value = false;
     }, 900);
   } catch (error: any) {
-    publishStatus.value = { type: "error", message: error?.data?.statusMessage || error?.statusMessage || "Publish failed." };
+    publishStatus.value = { type: "error", message: error?.data?.statusMessage || error?.statusMessage || "发布新版本失败。" };
+    console.error("[MCP 发布版本] 新版本发布失败", error);
   } finally {
     publishPending.value = false;
+    console.info("[MCP 发布版本] 版本发布流程结束", { id: publishForm.id, pending: false });
   }
 }
 
 useHead({
-  title: "MCP Registry | MyClaw Cloud"
+  title: "MCP 管理 | MyClaw Cloud"
 });
 </script>
 
@@ -132,24 +130,24 @@ useHead({
     <div class="content-container">
       <section class="compact-header-nx">
         <div class="header-main">
-          <h2>MCP <span class="dim">Registry</span></h2>
+          <h2>MCP <span class="dim">管理</span></h2>
         </div>
 
         <div class="header-right">
-          <button class="action-btn-primary" @click="openPublish(true)">Register MCP</button>
+          <NuxtLink class="action-btn-primary" to="/mcp/publish">创建 MCP</NuxtLink>
         </div>
       </section>
 
       <div v-if="pending" class="state-container">
         <div class="pulse-loader-nx"></div>
-        <p>Loading MCP assets...</p>
+        <p>正在加载 MCP 列表...</p>
       </div>
 
       <div v-else class="master-detail-nx">
         <aside class="sidebar-nx glass-card-nx">
           <div class="sidebar-head-nx">
-            <h3>Connectors</h3>
-            <span class="status-nx">{{ connectors.length }} Active</span>
+            <h3>连接器</h3>
+            <span class="status-nx">{{ connectors.length }} 个有效 MCP</span>
           </div>
           <div class="catalog-list-nx">
             <button
@@ -161,7 +159,7 @@ useHead({
             >
               <div class="mcp-card-head-nx">
                 <span class="type-nx">MCP</span>
-                <span class="v-nx">v{{ connector.latestVersion }}</span>
+                <span class="v-nx">{{ connector.latestVersion ? `v${connector.latestVersion}` : "草稿" }}</span>
               </div>
               <h4>{{ connector.name }}</h4>
               <p class="text-truncate">{{ connector.summary }}</p>
@@ -178,7 +176,7 @@ useHead({
               <header class="connector-header-nx">
                 <div class="head-top">
                   <span class="id-tag-nx">ID: {{ selectedConnector.id }}</span>
-                  <button class="update-btn-nx" @click="openPublish(false)">Publish Release</button>
+                  <button class="update-btn-nx" @click="openPublish">发布新版本</button>
                 </div>
                 <h2>{{ selectedConnector.name }}</h2>
                 <p class="description">{{ selectedConnector.description }}</p>
@@ -186,28 +184,28 @@ useHead({
 
               <div class="spec-grid-nx">
                 <div class="spec-box-nx">
-                  <span class="l">Transport</span>
+                  <span class="l">传输方式</span>
                   <span class="v nx-green">{{ selectedManifest?.transport ?? "stdio" }}</span>
                 </div>
                 <div class="spec-box-nx">
-                  <span class="l">Latest Version</span>
+                  <span class="l">最新版本</span>
                   <span class="v">v{{ selectedConnector.latestVersion }}</span>
                 </div>
                 <div class="spec-box-nx">
-                  <span class="l">Releases</span>
+                  <span class="l">版本数</span>
                   <span class="v">{{ selectedConnector.releases.length }}</span>
                 </div>
               </div>
 
               <div class="manifest-nx">
                 <div class="title-nx">
-                  <span>Connection Manifest</span>
+                  <span>连接配置清单</span>
                   <div class="dot-nx"></div>
                 </div>
                 <div class="code-viewport-nx">
                   <div class="code-header-nx">
                     <span class="fn">manifest.json</span>
-                    <span class="st">Ready</span>
+                    <span class="st">就绪</span>
                   </div>
                   <pre><code>{{
 JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
@@ -217,7 +215,7 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
             </div>
           </template>
           <div v-else class="viewport-empty-nx">
-            <p>Select an MCP from the left to inspect its configuration.</p>
+            <p>请选择左侧 MCP 查看配置。</p>
           </div>
         </article>
       </div>
@@ -227,48 +225,27 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
       <div v-if="showPublishModal" class="modal-overlay">
         <div class="modal-content glass-card-nx">
           <header class="modal-header">
-            <h3>{{ isNewMcp ? "Register New MCP" : "Publish New Release" }}</h3>
+            <h3>发布新版本</h3>
             <button class="close-btn" @click="showPublishModal = false">&times;</button>
           </header>
 
           <form class="publication-form" @submit.prevent="handlePublish">
-            <div v-if="isNewMcp" class="form-section">
-              <div class="form-row">
-                <div class="form-group flex-1">
-                  <label>Unique ID</label>
-                  <input v-model="publishForm.id" type="text" placeholder="mcp-server-id" required />
-                </div>
-                <div class="form-group flex-1">
-                  <label>Name</label>
-                  <input v-model="publishForm.name" type="text" placeholder="MCP Server Name" required />
-                </div>
-              </div>
-              <div class="form-group">
-                <label>Summary</label>
-                <input v-model="publishForm.summary" type="text" placeholder="Short summary" required />
-              </div>
-              <div class="form-group">
-                <label>Description</label>
-                <textarea v-model="publishForm.description" rows="3" placeholder="Detailed description"></textarea>
-              </div>
-            </div>
-
             <div class="form-row">
               <div class="form-group flex-1">
-                <label>Version</label>
+                <label>版本</label>
                 <input v-model="publishForm.version" type="text" placeholder="1.0.0" required />
               </div>
               <div class="form-group flex-2">
-                <label>Release Notes</label>
-                <input v-model="publishForm.releaseNotes" type="text" placeholder="What changed in this release?" required />
+                <label>发布说明</label>
+                <input v-model="publishForm.releaseNotes" type="text" placeholder="说明这个版本的更新内容" required />
               </div>
             </div>
 
             <div class="form-group">
-              <label>Package (ZIP)</label>
+              <label>版本包（ZIP）</label>
               <div class="drop-zone-nx" :class="{ active: publishFile }">
                 <input type="file" accept=".zip" @change="handleFileChange" />
-                <span>{{ publishFile ? publishFile.name : "Choose ZIP package" }}</span>
+                <span>{{ publishFile ? publishFile.name : "选择 ZIP 包" }}</span>
               </div>
             </div>
 
@@ -277,7 +254,7 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
             </div>
 
             <button type="submit" class="submit-modal-btn" :disabled="publishPending">
-              {{ publishPending ? "Submitting..." : "Submit" }}
+              {{ publishPending ? "正在提交..." : "提交发布" }}
             </button>
           </form>
         </div>

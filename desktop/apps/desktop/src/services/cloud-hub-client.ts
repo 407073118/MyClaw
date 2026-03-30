@@ -78,8 +78,19 @@ function buildRuntimeProxyUrl(runtimeBaseUrl: string, path: string, configure?: 
   return url.toString();
 }
 
-async function readJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+function buildProxyHeaders(accessToken?: string): HeadersInit | undefined {
+  if (!accessToken?.trim()) {
+    return undefined;
+  }
+
+  return {
+    authorization: `Bearer ${accessToken.trim()}`,
+  };
+}
+
+async function readJson<T>(url: string, accessToken?: string): Promise<T> {
+  const headers = buildProxyHeaders(accessToken);
+  const response = headers ? await fetch(url, { headers }) : await fetch(url);
 
   if (!response.ok) {
     throw new Error(`Cloud hub request failed: ${response.status}`);
@@ -92,6 +103,7 @@ async function readJson<T>(url: string): Promise<T> {
 export async function fetchCloudHubItems(
   runtimeBaseUrl: string,
   type: "all" | CloudHubItemType,
+  accessToken?: string,
 ): Promise<CloudHubItem[]> {
   const payload = await readJson<{ items: CloudHubItem[] }>(
     buildRuntimeProxyUrl(runtimeBaseUrl, "/api/cloud-hub/items", (url) => {
@@ -99,30 +111,43 @@ export async function fetchCloudHubItems(
         url.searchParams.set("type", type);
       }
     }),
+    accessToken,
   );
   return payload.items;
 }
 
-export async function fetchCloudHubDetail(runtimeBaseUrl: string, itemId: string): Promise<CloudHubItemDetail> {
+export async function fetchCloudHubDetail(
+  runtimeBaseUrl: string,
+  itemId: string,
+  accessToken?: string,
+): Promise<CloudHubItemDetail> {
   return readJson<CloudHubItemDetail>(
     buildRuntimeProxyUrl(runtimeBaseUrl, `/api/cloud-hub/items/${encodeURIComponent(itemId)}`),
+    accessToken,
   );
 }
 
-export async function fetchCloudHubManifest(runtimeBaseUrl: string, releaseId: string): Promise<CloudHubManifest> {
+export async function fetchCloudHubManifest(
+  runtimeBaseUrl: string,
+  releaseId: string,
+  accessToken?: string,
+): Promise<CloudHubManifest> {
   return readJson<CloudHubManifest>(
     buildRuntimeProxyUrl(runtimeBaseUrl, `/api/cloud-hub/releases/${encodeURIComponent(releaseId)}/manifest`),
+    accessToken,
   );
 }
 
 export async function fetchCloudHubDownloadToken(
   runtimeBaseUrl: string,
   releaseId: string,
+  accessToken?: string,
 ): Promise<CloudDownloadToken> {
   return readJson<CloudDownloadToken>(
     buildRuntimeProxyUrl(
       runtimeBaseUrl,
       `/api/cloud-hub/releases/${encodeURIComponent(releaseId)}/download-token`,
     ),
+    accessToken,
   );
 }

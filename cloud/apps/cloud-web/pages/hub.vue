@@ -41,27 +41,33 @@ const workflowPackageCount = computed(() => items.value.filter((item) => item.ty
 
 const downloadPendingId = ref("");
 const downloadError = ref("");
+const HUB_TYPE_LABELS: Record<HubFilterType, string> = {
+  all: "全部",
+  mcp: "MCP",
+  "employee-package": "员工包",
+  "workflow-package": "工作流包"
+};
 
-function hubTypeLabel(type: HubFilterType): string {
-  if (type === "all") return "All";
-  if (type === "mcp") return "MCP";
-  if (type === "employee-package") return "Employee Package";
-  return "Workflow Package";
-}
-
+/**
+ * 中文说明：下载指定版本的发布包，并在浏览器中打开下载链接。
+ */
 async function handleDownloadRelease(releaseId: string) {
   downloadError.value = "";
   downloadPendingId.value = releaseId;
+  console.info("[Hub] 开始下载发布包", { releaseId });
 
   try {
     const token = await $fetch<DownloadTokenResponse>(`/api/hub/releases/${releaseId}/download-token`);
     if (import.meta.client) {
+      console.info("[Hub] 已获取下载链接，准备打开新窗口", { releaseId });
       window.open(token.downloadUrl, "_blank", "noopener,noreferrer");
     }
   } catch {
-    downloadError.value = "Download failed. Please try again later.";
+    downloadError.value = "下载失败，请稍后重试。";
+    console.warn("[Hub] 下载发布包失败", { releaseId });
   } finally {
     downloadPendingId.value = "";
+    console.info("[Hub] 下载流程结束", { releaseId });
   }
 }
 
@@ -76,8 +82,8 @@ useHead({
       <header class="hub-header glass-card-nx">
         <div>
           <p class="eyebrow">Hub</p>
-          <h1>Cloud Assets</h1>
-          <p class="summary">Browse MCP connectors, employee packages, and workflow packages from one shared registry view.</p>
+          <h1>云端资源总览</h1>
+          <p class="summary">统一查看 MCP、员工包和工作流包。</p>
         </div>
         <div class="stats-grid">
           <div class="stat-card">
@@ -85,11 +91,11 @@ useHead({
             <strong>{{ mcpCount }}</strong>
           </div>
           <div class="stat-card">
-            <span class="stat-label">Employee</span>
+            <span class="stat-label">员工包</span>
             <strong>{{ employeePackageCount }}</strong>
           </div>
           <div class="stat-card">
-            <span class="stat-label">Workflow</span>
+            <span class="stat-label">工作流包</span>
             <strong>{{ workflowPackageCount }}</strong>
           </div>
         </div>
@@ -98,7 +104,7 @@ useHead({
       <section class="hub-body">
         <aside class="hub-sidebar glass-card-nx">
           <div class="toolbar">
-            <input v-model="keyword" type="text" placeholder="Search hub assets" />
+            <input v-model="keyword" type="text" placeholder="搜索 Hub 资源" />
             <div class="filter-row">
               <button
                 v-for="type in ['all', 'mcp', 'employee-package', 'workflow-package'] as const"
@@ -107,12 +113,12 @@ useHead({
                 :class="{ active: selectedType === type }"
                 @click="selectedType = type"
               >
-                {{ hubTypeLabel(type) }}
+                {{ HUB_TYPE_LABELS[type] }}
               </button>
             </div>
           </div>
 
-          <div v-if="pending" class="empty-state">Loading assets…</div>
+          <div v-if="pending" class="empty-state">正在加载资源列表...</div>
           <div v-else class="item-list">
             <button
               v-for="item in items"
@@ -121,7 +127,7 @@ useHead({
               :class="{ active: item.id === selectedItemId }"
               @click="selectedItemId = item.id"
             >
-              <span class="item-type">{{ hubTypeLabel(item.type) }}</span>
+              <span class="item-type">{{ HUB_TYPE_LABELS[item.type] }}</span>
               <strong>{{ item.name }}</strong>
               <span class="item-id">{{ item.id }}</span>
               <span class="item-version">v{{ item.latestVersion }}</span>
@@ -130,10 +136,10 @@ useHead({
         </aside>
 
         <section class="hub-detail glass-card-nx">
-          <div v-if="selectedItemPending && selectedItemId" class="empty-state">Loading details…</div>
+          <div v-if="selectedItemPending && selectedItemId" class="empty-state">正在加载详情...</div>
           <template v-else-if="selectedItem">
             <header class="detail-header">
-              <span class="detail-type">{{ hubTypeLabel(selectedItem.type) }}</span>
+              <span class="detail-type">{{ HUB_TYPE_LABELS[selectedItem.type] }}</span>
               <h2>{{ selectedItem.name }}</h2>
               <p>{{ selectedItem.description }}</p>
             </header>
@@ -144,7 +150,7 @@ useHead({
                 <strong>{{ selectedItem.id }}</strong>
               </div>
               <div>
-                <span class="meta-label">Latest</span>
+                <span class="meta-label">最新版本</span>
                 <strong>v{{ selectedItem.latestVersion }}</strong>
               </div>
             </div>
@@ -158,12 +164,12 @@ useHead({
                   <p>{{ release.releaseNotes }}</p>
                 </div>
                 <button class="download-btn" :disabled="downloadPendingId === release.id" @click="handleDownloadRelease(release.id)">
-                  {{ downloadPendingId === release.id ? "Loading…" : "Download" }}
+                  {{ downloadPendingId === release.id ? "正在下载..." : "下载" }}
                 </button>
               </article>
             </div>
           </template>
-          <div v-else class="empty-state">Select an asset from the left to view its details.</div>
+          <div v-else class="empty-state">选择左侧资源查看详细信息。</div>
         </section>
       </section>
     </div>

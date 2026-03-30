@@ -37,6 +37,7 @@ import {
 import {
   createEmployee as createEmployeeRequest,
   createWorkflow as createWorkflowRequest,
+  fetchAvailableModelIds as fetchAvailableModelIdsRequest,
   createModelProfile as createModelProfileRequest,
   createSession as createSessionRequest,
   createMcpServer as createMcpServerRequest,
@@ -78,6 +79,7 @@ import {
   type UpdateEmployeeInput,
   type UpdateWorkflowInput,
 } from "@/services/runtime-client";
+import { useDesktopAuthStore } from "@/stores/auth";
 import { useShellStore } from "@/stores/shell";
 
 function isConfiguredModelProfile(profile: ModelProfile): boolean {
@@ -508,6 +510,23 @@ export const useWorkspaceStore = defineStore("workspace", {
       const shell = useShellStore();
       return testModelProfileRequest(shell.runtimeBaseUrl, profileId);
     },
+    /** 根据当前模型表单配置拉取厂商可用模型目录。 */
+    async fetchAvailableModelIds(
+      input: Pick<ModelProfile, "provider" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
+    ) {
+      const shell = useShellStore();
+      console.info("[workspace] 开始拉取模型目录", {
+        provider: input.provider,
+        baseUrl: input.baseUrl,
+        baseUrlMode: input.baseUrlMode ?? "manual",
+      });
+      const payload = await fetchAvailableModelIdsRequest(shell.runtimeBaseUrl, input);
+      console.info("[workspace] 模型目录拉取完成", {
+        provider: input.provider,
+        count: payload.modelIds.length,
+      });
+      return payload.modelIds;
+    },
     async sendMessage(content: string) {
       const session = this.currentSession;
       if (!session || !content.trim()) {
@@ -759,7 +778,8 @@ export const useWorkspaceStore = defineStore("workspace", {
     },
     async loadCloudHubItems(type: "all" | CloudHubItemType = "all") {
       const shell = useShellStore();
-      const items = await fetchCloudHubItems(shell.runtimeBaseUrl, type);
+      const auth = useDesktopAuthStore();
+      const items = await fetchCloudHubItems(shell.runtimeBaseUrl, type, auth.session.accessToken);
       this.cloudHubItems = items;
       if (type !== "all") {
         this.cloudHubDetail =
@@ -771,19 +791,22 @@ export const useWorkspaceStore = defineStore("workspace", {
     },
     async loadCloudHubDetail(itemId: string) {
       const shell = useShellStore();
-      const detail = await fetchCloudHubDetail(shell.runtimeBaseUrl, itemId);
+      const auth = useDesktopAuthStore();
+      const detail = await fetchCloudHubDetail(shell.runtimeBaseUrl, itemId, auth.session.accessToken);
       this.cloudHubDetail = detail;
       return detail;
     },
     async loadCloudHubManifest(releaseId: string) {
       const shell = useShellStore();
-      const manifest = await fetchCloudHubManifest(shell.runtimeBaseUrl, releaseId);
+      const auth = useDesktopAuthStore();
+      const manifest = await fetchCloudHubManifest(shell.runtimeBaseUrl, releaseId, auth.session.accessToken);
       this.cloudHubManifest = manifest;
       return manifest;
     },
     async loadCloudHubDownloadToken(releaseId: string): Promise<CloudDownloadToken> {
       const shell = useShellStore();
-      return fetchCloudHubDownloadToken(shell.runtimeBaseUrl, releaseId);
+      const auth = useDesktopAuthStore();
+      return fetchCloudHubDownloadToken(shell.runtimeBaseUrl, releaseId, auth.session.accessToken);
     },
     /** 加载本地 Skill 详情，供 Skills 页面查看完整 SKILL.md。 */
     async loadSkillDetail(skillId: string) {

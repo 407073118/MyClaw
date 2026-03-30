@@ -1,5 +1,7 @@
 <template>
-  <main v-if="showBootstrapScreen" data-testid="app-bootstrap-splash" class="bootstrap-shell">
+  <RouterView v-if="isLoginRoute" />
+
+  <main v-else-if="showBootstrapScreen" data-testid="app-bootstrap-splash" class="bootstrap-shell">
     <section class="bootstrap-card">
       <div class="bootstrap-brand">
         <div class="bootstrap-logo">
@@ -71,6 +73,10 @@
             <span class="model-name">{{ defaultModelName }}</span>
           </div>
         </div>
+        <div class="account-summary">
+          <strong>{{ currentUserDisplayName }}</strong>
+          <span>{{ currentUserAccount }}</span>
+        </div>
         <RouterLink
           data-testid="nav-settings"
           to="/settings"
@@ -87,6 +93,9 @@
           </div>
           <span class="nav-label">Settings</span>
         </RouterLink>
+        <button data-testid="auth-logout" type="button" class="logout-button" @click="handleLogout">
+          退出登录
+        </button>
       </footer>
     </aside>
 
@@ -102,14 +111,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, onMounted } from "vue";
+import { computed, h, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
 
+import { useDesktopAuthStore } from "@/stores/auth";
+import { useShellStore } from "@/stores/shell";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const workspace = useWorkspaceStore();
+const auth = useDesktopAuthStore();
+const shell = useShellStore();
 const route = useRoute();
 const router = useRouter();
+const isLoginRoute = computed(() => route.name === "login");
 const showBootstrapSplash = computed(() => workspace.loading || (!workspace.ready && !workspace.error));
 const showBootstrapError = computed(() => !workspace.ready && Boolean(workspace.error));
 const showBootstrapScreen = computed(() => showBootstrapSplash.value || showBootstrapError.value);
@@ -190,6 +204,8 @@ const defaultModelName = computed(() => {
   const profileId = workspace.defaultModelProfileId;
   return workspace.models.find((model) => model.id === profileId)?.name ?? "Offline";
 });
+const currentUserDisplayName = computed(() => auth.session.user?.displayName ?? "未登录用户");
+const currentUserAccount = computed(() => auth.session.user?.account ?? "未绑定账号");
 
 function isNavItemActive(targetPath: string): boolean {
   if (targetPath === "/") {
@@ -201,6 +217,14 @@ function isNavItemActive(targetPath: string): boolean {
 
 /** 加载桌面端启动引导数据，并在首次启动缺少配置时跳转到设置页。 */
 async function loadWorkspaceBootstrap() {
+  if (isLoginRoute.value || !auth.isAuthenticated) {
+    console.info("[app-shell] 当前处于登录态路由或尚未通过鉴权，跳过 workspace bootstrap", {
+      routePath: route.fullPath,
+      isAuthenticated: auth.isAuthenticated,
+    });
+    return;
+  }
+
   if (workspace.ready) {
     if (workspace.requiresInitialSetup && workspace.isFirstLaunch && route.path !== "/settings") {
       console.info("[app-shell] 使用现有工作区状态命中首次启动条件，跳转设置页");
@@ -241,9 +265,24 @@ function handleBootstrapRetry() {
   void loadWorkspaceBootstrap();
 }
 
-onMounted(() => {
-  void loadWorkspaceBootstrap();
-});
+/** 退出当前桌面登录态并返回登录页，保留本地 workspace 数据但隐藏所有功能入口。 */
+async function handleLogout() {
+  console.info("[app-shell] 用户请求退出当前账号", {
+    account: auth.session.user?.account ?? null,
+  });
+  await auth.logout(shell.runtimeBaseUrl);
+  await router.replace("/login");
+}
+
+watch(
+  () => [route.fullPath, auth.isAuthenticated],
+  () => {
+    void loadWorkspaceBootstrap();
+  },
+  {
+    immediate: true,
+  },
+);
 </script>
 
 <style scoped>
@@ -483,6 +522,27 @@ onMounted(() => {
   border: 1px solid var(--glass-border);
 }
 
+.account-summary {
+  padding: 12px;
+  background: rgba(15, 23, 42, 0.72);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-summary strong {
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.account-summary span {
+  font-size: 12px;
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
 .status-indicator {
   display: flex;
   align-items: center;
@@ -507,6 +567,21 @@ onMounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.logout-button {
+  height: 40px;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.18);
+  color: #fecaca;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.logout-button:hover {
+  background: rgba(127, 29, 29, 0.3);
 }
 
 .shell-content {

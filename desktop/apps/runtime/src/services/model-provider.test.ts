@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MYCLAW_MODEL_TOOLS,
   createOpenAiCompatibleReply,
+  listAvailableModelIds,
   runModelConversation,
   testModelProfileConnectivity,
 } from "./model-provider";
@@ -39,9 +40,30 @@ const minimaxProfile: ModelProfile = {
   id: "model-minimax",
   name: "MiniMax",
   provider: "openai-compatible",
-  baseUrl: "https://api.minimaxi.com/v1",
+  baseUrl: "https://platform.minimaxi.com",
+  baseUrlMode: "provider-root",
   apiKey: "sk-minimax-test",
   model: "MiniMax-M1",
+};
+
+const presetRootOpenAiProfile: ModelProfile = {
+  id: "model-openai-root",
+  name: "OpenAI Root",
+  provider: "openai-compatible",
+  baseUrl: "https://api.openai.com",
+  baseUrlMode: "provider-root",
+  apiKey: "sk-openai-root",
+  model: "gpt-4.1-mini",
+};
+
+const presetRootAnthropicProfile: ModelProfile = {
+  id: "model-anthropic-root",
+  name: "Anthropic Root",
+  provider: "anthropic",
+  baseUrl: "https://api.anthropic.com",
+  baseUrlMode: "provider-root",
+  apiKey: "sk-anthropic-root",
+  model: "claude-3-5-sonnet-latest",
 };
 
 const messages: ChatMessage[] = [
@@ -270,6 +292,24 @@ describe("createOpenAiCompatibleReply", () => {
     const requestInit = fetchSpy.mock.calls[0]?.[1];
     const body = JSON.parse(String(requestInit?.body)) as Record<string, unknown>;
     expect(body.reasoning_effort).toBe("low");
+  });
+
+  it("appends the provider default version path for provider-root OpenAI profiles", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    await createOpenAiCompatibleReply({ profile: presetRootOpenAiProfile, messages });
+
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.openai.com/v1/chat/completions");
   });
 });
 
@@ -766,6 +806,85 @@ describe("runModelConversation", () => {
       type: "enabled",
       budget_tokens: 1024,
     });
+  });
+
+  it("appends the provider default version path for provider-root Anthropic profiles", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "msg_2",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+          stop_reason: "end_turn",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    await runModelConversation({
+      profile: presetRootAnthropicProfile,
+      messages,
+      onToolCall: vi.fn(),
+    });
+
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.anthropic.com/v1/messages");
+  });
+
+  it("lists available model ids from OpenAI-compatible providers using the resolved endpoint root", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            { id: "gpt-4.1-mini" },
+            { id: "gpt-4.1" },
+            { id: "gpt-4.1-mini" },
+            { id: "" },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    const result = await listAvailableModelIds({ profile: presetRootOpenAiProfile });
+
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.openai.com/v1/models");
+    expect(result.modelIds).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
+  });
+
+  it("keeps manual custom base urls unchanged when listing available model ids", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "custom-model" }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    const result = await listAvailableModelIds({
+      profile: {
+        id: "model-custom-manual",
+        name: "Custom Manual",
+        provider: "openai-compatible",
+        baseUrl: "https://gateway.example.com/openai/v42",
+        baseUrlMode: "manual",
+        apiKey: "sk-custom",
+        model: "",
+      },
+    });
+
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://gateway.example.com/openai/v42/models");
+    expect(result.modelIds).toEqual(["custom-model"]);
   });
 
   it("uses caller supplied tool definitions when provided", async () => {

@@ -1,11 +1,12 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import { createRouter, createWebHistory } from "vue-router";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import AppShell from "@/layouts/AppShell.vue";
-import { routes } from "@/router";
+import { createAppRouter, routes } from "@/router";
 import * as runtimeClient from "@/services/runtime-client";
+import { useDesktopAuthStore } from "@/stores/auth";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { createWorkspaceFixture } from "@/test-utils/workspace-fixture";
 
@@ -55,16 +56,37 @@ function createBootstrapPayload(
   };
 }
 
+function authenticateDesktopSession() {
+  const fixture = createWorkspaceFixture();
+  useDesktopAuthStore().applyLoginSession({
+    accessToken: "access-1",
+    refreshToken: "refresh-1",
+    expiresIn: 7200,
+    user: {
+      account: "zhangjianing",
+      displayName: "张建宁",
+      roles: ["admin"],
+    },
+  });
+  return fixture;
+}
+
 beforeAll(() => {
   if (!HTMLElement.prototype.scrollTo) {
     HTMLElement.prototype.scrollTo = vi.fn();
   }
 });
 
+afterEach(() => {
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
+
 describe("AppShell", () => {
   it("shows a startup splash before bootstrap data is ready", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
+    authenticateDesktopSession();
 
     const deferredBootstrap = createDeferred<runtimeClient.BootstrapPayload>();
     vi.spyOn(runtimeClient, "fetchBootstrap").mockReturnValue(deferredBootstrap.promise);
@@ -99,6 +121,7 @@ describe("AppShell", () => {
   it("shows a bootstrap error state when startup data loading fails", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
+    authenticateDesktopSession();
 
     vi.spyOn(runtimeClient, "fetchBootstrap").mockRejectedValue(new Error("Runtime bootstrap failed"));
 
@@ -159,6 +182,7 @@ describe("AppShell", () => {
   it("redirects to settings on first launch when initial setup is required", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
+    authenticateDesktopSession();
     vi.spyOn(runtimeClient, "fetchBootstrap").mockResolvedValue(createBootstrapPayload({
       requiresInitialSetup: true,
       isFirstLaunch: true,
@@ -427,5 +451,27 @@ describe("AppShell", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("Still running after navigation.");
+  });
+
+  it("redirects unauthenticated users to login before workspace bootstrap starts", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const fetchBootstrapSpy = vi.spyOn(runtimeClient, "fetchBootstrap").mockResolvedValue(createBootstrapPayload());
+
+    const router = createAppRouter();
+    router.push("/hub");
+    await router.isReady();
+
+    const wrapper = mount(AppShell, {
+      global: {
+        plugins: [pinia, router],
+      },
+    });
+
+    await flushPromises();
+
+    expect(router.currentRoute.value.path).toBe("/login");
+    expect(fetchBootstrapSpy).not.toHaveBeenCalled();
+    expect(wrapper.find("[data-testid='desktop-login-view']").exists()).toBe(true);
   });
 });

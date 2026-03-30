@@ -14,6 +14,7 @@ export function initializeRuntimeStateSchema(db: SqlDatabase): void {
       name TEXT NOT NULL,
       provider TEXT NOT NULL,
       base_url TEXT NOT NULL,
+      base_url_mode TEXT,
       api_key TEXT NOT NULL,
       model TEXT NOT NULL,
       headers_json TEXT,
@@ -158,6 +159,7 @@ export function initializeRuntimeStateSchema(db: SqlDatabase): void {
 
   ensureTableColumn(db, "messages", "ui_json", "TEXT");
   ensureTableColumn(db, "messages", "reasoning", "TEXT");
+  ensureTableColumn(db, "model_profiles", "base_url_mode", "TEXT");
   ensureTableColumn(db, "model_profiles", "request_body_json", "TEXT");
   ensureTableColumn(db, "approval_requests", "arguments_json", "TEXT");
   ensureTableColumn(db, "approval_requests", "resume_conversation", "INTEGER NOT NULL DEFAULT 0");

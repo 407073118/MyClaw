@@ -21,7 +21,7 @@ const filteredSkills = computed(() => {
 });
 
 useHead({
-  title: "Skills | MyClaw Cloud"
+  title: "Skills 管理 | MyClaw Cloud"
 });
 </script>
 
@@ -30,28 +30,28 @@ useHead({
     <div class="content-container">
       <section class="compact-header-nx">
         <div class="header-main">
-          <h2>Cloud <span class="dim">Skills</span></h2>
+          <h2>云端 <span class="dim">Skills</span></h2>
         </div>
         <div class="header-right">
           <div class="search-bar-nx">
             <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.3-4.3"/></svg>
-            <input v-model="keyword" type="text" placeholder="Search cloud skills..." />
+            <input v-model="keyword" type="text" placeholder="搜索云端 Skills..." />
           </div>
           <div class="view-toggle-nx">
-            <button :class="{ active: viewMode === 'grid' }" @click="viewMode = 'grid'">Grid</button>
-            <button :class="{ active: viewMode === 'list' }" @click="viewMode = 'list'">List</button>
+            <button :class="{ active: viewMode === 'grid' }" @click="viewMode = 'grid'">网格</button>
+            <button :class="{ active: viewMode === 'list' }" @click="viewMode = 'list'">列表</button>
           </div>
-          <NuxtLink class="action-btn-primary" to="/skills/publish">Publish Skill</NuxtLink>
+          <NuxtLink class="action-btn-primary" to="/skills/publish">发布 Skill</NuxtLink>
         </div>
       </section>
 
       <div class="stats-row-nx">
-        <span class="status-nx">{{ filteredSkills.length }} Active Skills</span>
+        <span class="status-nx">{{ filteredSkills.length }} 个有效 Skills</span>
       </div>
 
       <div v-if="pending" class="state-container">
         <div class="pulse-loader-nx"></div>
-        <p>Loading registry...</p>
+        <p>正在加载 Skills 列表...</p>
       </div>
 
       <div v-else-if="viewMode === 'grid'" class="skills-grid-nx">
@@ -63,12 +63,12 @@ useHead({
         >
           <div class="skill-card-head-nx">
             <span class="type-nx">SKILL</span>
-            <span class="v-nx">{{ skill.latestVersion ? `v${skill.latestVersion}` : "Draft" }}</span>
+            <span class="v-nx">{{ skill.latestVersion ? `v${skill.latestVersion}` : "草稿" }}</span>
           </div>
           <div class="skill-card-body-nx">
             <h4>{{ skill.name }}</h4>
             <span class="id-tag-nx">@myclaw/{{ skill.id }}</span>
-            <p class="text-truncate-multi">{{ skill.summary || skill.description || "No description provided." }}</p>
+            <p class="text-truncate-multi">{{ skill.summary || skill.description || "暂无说明。" }}</p>
           </div>
           <div class="skill-card-foot-nx">
             <span>{{ new Date(skill.updatedAt).toLocaleDateString() }}</span>
@@ -91,14 +91,14 @@ useHead({
             <span class="list-id-nx">@myclaw/{{ skill.id }}</span>
           </div>
           <div class="list-right-nx">
-            <span class="v-nx">{{ skill.latestVersion ? `v${skill.latestVersion}` : "Draft" }}</span>
+            <span class="v-nx">{{ skill.latestVersion ? `v${skill.latestVersion}` : "草稿" }}</span>
             <span class="date-nx">{{ new Date(skill.updatedAt).toLocaleDateString() }}</span>
           </div>
         </NuxtLink>
       </div>
 
       <div v-if="!pending && !filteredSkills.length" class="viewport-empty-nx glass-card-nx">
-        <p>No skills matched your search.</p>
+        <p>没有找到匹配的 Skills。</p>
       </div>
     </div>
   </main>

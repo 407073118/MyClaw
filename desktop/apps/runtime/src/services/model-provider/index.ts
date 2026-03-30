@@ -1,6 +1,7 @@
 export {
   MYCLAW_MODEL_TOOLS,
   createOpenAiCompatibleReply,
+  listAvailableModelIds,
   runModelConversation,
   testModelProfileConnectivity,
   testOpenAiCompatibleProfile,
@@ -12,4 +13,5 @@ export type {
   ModelConversationToolDefinition,
   ModelToolCall,
   ModelToolCallResult,
+  ProfileModelCatalogOutput,
 } from "./types";

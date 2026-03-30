@@ -25,11 +25,12 @@ export function writeModelProfilesToDatabase(db: SqlDatabase, models: ModelProfi
           name,
           provider,
           base_url,
+          base_url_mode,
           api_key,
           model,
           headers_json,
           request_body_json
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         index,
@@ -37,6 +38,7 @@ export function writeModelProfilesToDatabase(db: SqlDatabase, models: ModelProfi
         model.name,
         model.provider,
         model.baseUrl,
+        model.baseUrlMode ?? null,
         model.apiKey,
         model.model,
         model.headers ? JSON.stringify(model.headers) : null,
@@ -66,6 +68,7 @@ export function readModelProfilesFromDatabase(db: SqlDatabase): ModelProfile[] {
         name,
         provider,
         base_url,
+        base_url_mode,
         api_key,
         model,
         headers_json,
@@ -84,6 +87,9 @@ export function readModelProfilesFromDatabase(db: SqlDatabase): ModelProfile[] {
       apiKey: String(row.api_key ?? ""),
       model: String(row.model ?? ""),
     };
+    if (row.base_url_mode === "manual" || row.base_url_mode === "provider-root") {
+      profile.baseUrlMode = row.base_url_mode;
+    }
 
     if (headers) {
       profile.headers = headers;

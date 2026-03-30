@@ -1,8 +1,16 @@
 import type { ModelProfile } from "@myclaw-desktop/shared";
 
 import { buildRequestBody } from "../shared";
-import { normalizeBaseUrl, readProviderErrorMessage } from "../shared/http";
-import type { ModelConversationDelta, ModelConversationToolDefinition, ProfileConnectivityInput, ProfileConnectivityOutput } from "../types";
+import { resolveProviderApiBaseUrl } from "../shared/endpoint";
+import { readModelIds, readProviderErrorMessage } from "../shared/http";
+import type {
+  ModelConversationDelta,
+  ModelConversationToolDefinition,
+  ProfileConnectivityInput,
+  ProfileConnectivityOutput,
+  ProfileModelCatalogInput,
+  ProfileModelCatalogOutput,
+} from "../types";
 import { shouldStreamOpenAiCompatibleStep, resolveOpenAiCompatibleFlavor } from "./flavor";
 import { createOpenAiToolsPayload } from "./messages";
 import { parseOpenAiStep } from "./parser";
@@ -49,7 +57,7 @@ export async function requestOpenAiStep(input: {
     }
   }
 
-  const response = await fetch(`${normalizeBaseUrl(input.profile.baseUrl)}/chat/completions`, {
+  const response = await fetch(`${resolveProviderApiBaseUrl(input.profile)}/chat/completions`, {
     method: "POST",
     headers: createOpenAiCompatibleHeaders(input.profile),
     body: JSON.stringify(body),
@@ -87,7 +95,7 @@ export async function performOpenAiConnectivityTest(
   const startedAt = Date.now();
 
   try {
-    const response = await fetch(`${normalizeBaseUrl(input.profile.baseUrl)}/chat/completions`, {
+    const response = await fetch(`${resolveProviderApiBaseUrl(input.profile)}/chat/completions`, {
       method: "POST",
       headers: createOpenAiCompatibleHeaders(input.profile),
       signal: controller.signal,
@@ -119,4 +127,24 @@ export async function performOpenAiConnectivityTest(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** 拉取 OpenAI-compatible 厂商的模型目录，并统一返回模型 id 列表。 */
+export async function listOpenAiCompatibleModelIds(
+  input: ProfileModelCatalogInput,
+): Promise<ProfileModelCatalogOutput> {
+  const response = await fetch(`${resolveProviderApiBaseUrl(input.profile)}/models`, {
+    method: "GET",
+    headers: createOpenAiCompatibleHeaders(input.profile),
+  });
+
+  if (!response.ok) {
+    const detail = await readProviderErrorMessage(response);
+    throw new Error(`Provider returned ${response.status}: ${detail}`);
+  }
+
+  const payload = (await response.json()) as unknown;
+  return {
+    modelIds: readModelIds(payload),
+  };
 }
