@@ -72,9 +72,11 @@ function buildManifest(item: (typeof HUB_SEED_ITEMS)[number], version: string) {
     name: item.name,
     version,
     description: item.description,
-    transport: "stdio",
-    command: "npx",
-    args: ["@modelcontextprotocol/server-filesystem", "."]
+    config: {
+      transport: "stdio",
+      command: "npx",
+      args: ["@modelcontextprotocol/server-filesystem", "."]
+    }
   };
 }
 

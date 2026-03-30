@@ -3,8 +3,15 @@ import type {
   McpItemDetail,
   McpItemSummary,
   McpManifest,
-  McpReleaseUploadResponse
+  McpServerConfig,
+  PublishMcpReleaseResponse
 } from "@myclaw-cloud/shared";
+
+const transportOptions = [
+  { label: "stdio", value: "stdio" },
+  { label: "SSE", value: "sse" },
+  { label: "Streamable HTTP", value: "streamable-http" }
+] as const;
 
 const { data, pending, refresh } = await useFetch<{ items: McpItemSummary[] }>("/api/mcp/items", {
   default: () => ({ items: [] })
@@ -45,74 +52,174 @@ const { data: selectedManifest } = await useAsyncData<McpManifest | null>(
 const showPublishModal = ref(false);
 const publishForm = reactive({
   id: "",
-  name: "",
-  summary: "",
-  description: "",
   version: "",
-  releaseNotes: ""
+  releaseNotes: "",
+  transport: "stdio" as McpServerConfig["transport"],
+  command: "npx",
+  args: "[\"@playwright/mcp@latest\"]",
+  env: "",
+  url: "",
+  headers: ""
 });
-const publishFile = ref<File | null>(null);
 const publishPending = ref(false);
 const publishStatus = ref({ type: "" as "success" | "error" | "", message: "" });
+const selectedTransport = computed(() => publishForm.transport);
 
-function handleFileChange(event: Event) {
-  // 中文日志：记录 MCP 版本包文件选择结果。
-  const input = event.target as HTMLInputElement;
-  publishFile.value = input.files?.[0] ?? null;
-  console.info("[MCP 发布版本] 已选择版本包文件", { fileName: publishFile.value?.name ?? null });
+/**
+ * 中文说明：解析字符串数组 JSON，用于 stdio 命令参数。
+ */
+function parseStringArray(raw: string): string[] | undefined {
+  const value = raw.trim();
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
+      throw new Error("mcp_args_invalid");
+    }
+    return parsed;
+  } catch (error) {
+    console.error("[MCP 发布版本] 命令参数解析失败", { raw, error });
+    throw new Error("命令参数必须是字符串数组 JSON。");
+  }
 }
 
+/**
+ * 中文说明：解析键值对象 JSON，用于 env 和 headers。
+ */
+function parseStringRecord(raw: string, fieldLabel: string): Record<string, string> | undefined {
+  const value = raw.trim();
+  if (!value) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed) ||
+      !Object.values(parsed).every((entry) => typeof entry === "string")
+    ) {
+      throw new Error(`${fieldLabel}_invalid`);
+    }
+    return parsed as Record<string, string>;
+  } catch (error) {
+    console.error("[MCP 发布版本] 键值配置解析失败", { fieldLabel, raw, error });
+    throw new Error(`${fieldLabel} 必须是 JSON 对象，且值必须为字符串。`);
+  }
+}
+
+/**
+ * 中文说明：把 manifest 中的 config 回填到发布表单。
+ */
+function fillPublishConfig(config?: McpServerConfig | null) {
+  if (!config) {
+    publishForm.transport = "stdio";
+    publishForm.command = "npx";
+    publishForm.args = "[\"@playwright/mcp@latest\"]";
+    publishForm.env = "";
+    publishForm.url = "";
+    publishForm.headers = "";
+    return;
+  }
+
+  publishForm.transport = config.transport;
+  if (config.transport === "stdio") {
+    publishForm.command = config.command;
+    publishForm.args = JSON.stringify(config.args ?? [], null, 2);
+    publishForm.env = config.env ? JSON.stringify(config.env, null, 2) : "";
+    publishForm.url = "";
+    publishForm.headers = "";
+    return;
+  }
+
+  publishForm.command = "npx";
+  publishForm.args = "[\"@playwright/mcp@latest\"]";
+  publishForm.env = "";
+  publishForm.url = config.url;
+  publishForm.headers = config.headers ? JSON.stringify(config.headers, null, 2) : "";
+}
+
+/**
+ * 中文说明：根据发布表单构建 MCP config JSON。
+ */
+function buildPublishConfig(): McpServerConfig {
+  console.info("[MCP 发布版本] 开始构建 config", { transport: publishForm.transport });
+
+  if (publishForm.transport === "stdio") {
+    return {
+      transport: "stdio",
+      command: publishForm.command.trim(),
+      args: parseStringArray(publishForm.args),
+      env: parseStringRecord(publishForm.env, "环境变量")
+    };
+  }
+
+  return {
+    transport: publishForm.transport,
+    url: publishForm.url.trim(),
+    headers: parseStringRecord(publishForm.headers, "请求头")
+  };
+}
+
+/**
+ * 中文说明：打开 MCP 新版本发布弹窗，并回填当前配置。
+ */
 function openPublish() {
-  // 中文日志：记录打开 MCP 新版本发布弹窗。
   if (!selectedConnector.value) {
     console.warn("[MCP 发布版本] 当前没有可发布的 MCP");
     publishStatus.value = { type: "error", message: "当前没有可发布版本的 MCP。" };
     return;
   }
+
   publishForm.id = selectedConnector.value.id;
-  publishForm.name = selectedConnector.value.name;
-  publishForm.summary = selectedConnector.value.summary;
-  publishForm.description = selectedConnector.value.description;
   publishForm.version = "";
   publishForm.releaseNotes = "";
-  publishFile.value = null;
+  fillPublishConfig(selectedManifest.value?.config ?? null);
   publishStatus.value = { type: "", message: "" };
   showPublishModal.value = true;
-  console.info("[MCP 发布版本] 已打开版本发布弹窗", { id: publishForm.id });
+  console.info("[MCP 发布版本] 已打开版本发布弹窗", {
+    id: publishForm.id,
+    transport: publishForm.transport
+  });
 }
 
+/**
+ * 中文说明：提交 MCP 新版本发布请求，并同步刷新列表与详情。
+ */
 async function handlePublish() {
-  // 中文日志：记录 MCP 新版本发布流程开始。
-  if (!publishFile.value) {
-    publishStatus.value = { type: "error", message: "请先选择 ZIP 包。" };
-    console.warn("[MCP 发布版本] 缺少 ZIP 包，无法提交");
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append("version", publishForm.version);
-  formData.append("releaseNotes", publishForm.releaseNotes);
-  formData.append("file", publishFile.value);
-
+  console.info("[MCP 发布版本] 开始提交新版本", {
+    id: publishForm.id,
+    version: publishForm.version,
+    transport: publishForm.transport
+  });
   publishPending.value = true;
+
   try {
-    const result = await $fetch<McpReleaseUploadResponse>(`/api/mcp/items/${publishForm.id}/releases`, {
+    const result = await $fetch<PublishMcpReleaseResponse>(`/api/mcp/items/${publishForm.id}/releases`, {
       method: "POST",
-      body: formData
+      body: {
+        version: publishForm.version,
+        releaseNotes: publishForm.releaseNotes,
+        config: buildPublishConfig()
+      }
     });
 
     publishStatus.value = {
       type: "success",
-      message: `新版本发布成功：${result.releaseId}`
+      message: `新版本发布成功：${result.release.id}`
     };
-    console.info("[MCP 发布版本] 新版本发布成功", { id: publishForm.id, releaseId: result.releaseId });
+    console.info("[MCP 发布版本] 新版本发布成功", { id: publishForm.id, releaseId: result.release.id });
     await refresh();
     await refreshDetail();
     setTimeout(() => {
       showPublishModal.value = false;
     }, 900);
   } catch (error: any) {
-    publishStatus.value = { type: "error", message: error?.data?.statusMessage || error?.statusMessage || "发布新版本失败。" };
+    publishStatus.value = { type: "error", message: error?.data?.statusMessage || error?.statusMessage || error?.message || "发布新版本失败。" };
     console.error("[MCP 发布版本] 新版本发布失败", error);
   } finally {
     publishPending.value = false;
@@ -185,7 +292,7 @@ useHead({
               <div class="spec-grid-nx">
                 <div class="spec-box-nx">
                   <span class="l">传输方式</span>
-                  <span class="v nx-green">{{ selectedManifest?.transport ?? "stdio" }}</span>
+                  <span class="v nx-green">{{ selectedManifest?.config.transport ?? "stdio" }}</span>
                 </div>
                 <div class="spec-box-nx">
                   <span class="l">最新版本</span>
@@ -242,12 +349,64 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
             </div>
 
             <div class="form-group">
-              <label>版本包（ZIP）</label>
-              <div class="drop-zone-nx" :class="{ active: publishFile }">
-                <input type="file" accept=".zip" @change="handleFileChange" />
-                <span>{{ publishFile ? publishFile.name : "选择 ZIP 包" }}</span>
+              <label>传输方式</label>
+              <div class="transport-grid-nx">
+                <button
+                  v-for="option in transportOptions"
+                  :key="option.value"
+                  type="button"
+                  class="transport-pill-nx"
+                  :class="{ active: selectedTransport === option.value }"
+                  @click="publishForm.transport = option.value"
+                >
+                  {{ option.label }}
+                </button>
               </div>
             </div>
+
+            <template v-if="selectedTransport === 'stdio'">
+              <div class="form-group">
+                <label>启动命令</label>
+                <input v-model="publishForm.command" type="text" placeholder="npx" required />
+              </div>
+
+              <div class="form-group">
+                <label>命令参数</label>
+                <textarea
+                  v-model="publishForm.args"
+                  rows="4"
+                  class="mono-font"
+                  placeholder='["@playwright/mcp@latest"]'
+                ></textarea>
+              </div>
+
+              <div class="form-group">
+                <label>环境变量</label>
+                <textarea
+                  v-model="publishForm.env"
+                  rows="4"
+                  class="mono-font"
+                  placeholder='{"PLAYWRIGHT_HEADLESS":"true"}'
+                ></textarea>
+              </div>
+            </template>
+
+            <template v-else>
+              <div class="form-group">
+                <label>远程地址</label>
+                <input v-model="publishForm.url" type="url" placeholder="https://mcp.example.com/sse" required />
+              </div>
+
+              <div class="form-group">
+                <label>请求头</label>
+                <textarea
+                  v-model="publishForm.headers"
+                  rows="4"
+                  class="mono-font"
+                  placeholder='{"Authorization":"Bearer token"}'
+                ></textarea>
+              </div>
+            </template>
 
             <div v-if="publishStatus.message" class="status-msg" :class="publishStatus.type">
               {{ publishStatus.message }}
@@ -266,7 +425,7 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
 <style scoped>
 .nuxt-mcp-page { position: relative; min-height: calc(100vh - 64px); background: var(--bg-main); width: 100%; }
 .content-container { position: relative; z-index: 10; max-width: 1440px; margin: 0 auto; padding: 40px; }
-.compact-header-nx { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
+.compact-header-nx { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; gap: 24px; }
 .header-main { display: flex; align-items: center; gap: 40px; }
 .header-main h2 { font-size: 1.75rem; font-weight: 900; color: var(--text-main); letter-spacing: -0.01em; margin: 0; }
 .header-main h2 .dim { color: var(--text-dim); }
@@ -286,7 +445,7 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
 .mcp-card-nx h4 { margin: 0 0 4px; color: var(--text-main); font-size: 1rem; font-weight: 850; }
 .mcp-card-nx p { margin: 0; font-size: 0.825rem; color: var(--text-muted); line-height: 1.5; }
 .viewport-content-nx { padding: 48px; flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 40px; }
-.head-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+.head-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 16px; }
 .id-tag-nx { font-family: monospace; font-size: 0.75rem; color: var(--nuxt-green); border-bottom: 1px solid var(--selection-bg); padding-bottom: 4px; }
 .update-btn-nx { background: rgba(var(--nuxt-green-rgb), 0.1); color: var(--nuxt-green); border: 1px solid rgba(var(--nuxt-green-rgb), 0.2); border-radius: 6px; padding: 4px 12px; font-size: 0.75rem; font-weight: 800; cursor: pointer; }
 .connector-header-nx h2 { font-size: 2.75rem; font-weight: 950; margin: 4px 0 12px; color: var(--text-main); letter-spacing: -0.01em; }
@@ -304,23 +463,23 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
 .fn { font-size: 0.75rem; font-weight: 850; color: var(--nuxt-green); }
 .st { font-size: 0.7rem; font-weight: 750; color: var(--text-dim); }
 pre { margin: 0; padding: 24px; overflow-x: auto; }
-code { color: var(--text-main); font-family: 'Fira Code', monospace; line-height: 1.6; font-size: 0.9375rem; }
+code { color: var(--text-main); font-family: "SFMono-Regular", "Fira Code", monospace; line-height: 1.6; font-size: 0.9375rem; }
+.mono-font { font-family: "SFMono-Regular", "Fira Code", monospace; font-size: 0.85rem; line-height: 1.6; }
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(8px); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 20px; }
-.modal-content { width: 100%; max-width: 600px; padding: 40px; position: relative; }
+.modal-content { width: 100%; max-width: 720px; padding: 40px; position: relative; }
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; }
 .modal-header h3 { font-size: 1.5rem; font-weight: 900; color: var(--text-main); margin: 0; }
 .close-btn { background: none; border: none; color: var(--text-dim); font-size: 1.5rem; cursor: pointer; }
 .publication-form { display: flex; flex-direction: column; gap: 24px; }
-.form-section { display: flex; flex-direction: column; gap: 20px; }
 .form-row { display: flex; gap: 16px; }
 .flex-1 { flex: 1; }
 .flex-2 { flex: 2; }
 .form-group label { display: block; font-size: 0.75rem; font-weight: 900; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }
-.form-group input, .form-group textarea { width: 100%; padding: 12px 16px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 10px; color: var(--text-main); font-family: inherit; }
+.form-group input, .form-group textarea { width: 100%; padding: 12px 16px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 10px; color: var(--text-main); font-family: inherit; box-sizing: border-box; }
 .form-group input:focus, .form-group textarea:focus { outline: none; border-color: var(--nuxt-green); }
-.drop-zone-nx { height: 100px; border: 2px dashed var(--border-main); border-radius: 12px; display: flex; align-items: center; justify-content: center; position: relative; color: var(--text-dim); transition: 0.2s; }
-.drop-zone-nx input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-.drop-zone-nx.active { border-color: var(--nuxt-green); background: rgba(var(--nuxt-green-rgb), 0.05); color: var(--nuxt-green); }
+.transport-grid-nx { display: flex; flex-wrap: wrap; gap: 12px; }
+.transport-pill-nx { height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-dim); font-weight: 800; cursor: pointer; transition: 0.2s; }
+.transport-pill-nx.active { border-color: rgba(var(--nuxt-green-rgb), 0.35); background: rgba(var(--nuxt-green-rgb), 0.1); color: var(--nuxt-green); }
 .submit-modal-btn { height: 50px; background: var(--nuxt-green); color: var(--btn-text); border: none; border-radius: 12px; font-weight: 900; font-size: 1rem; cursor: pointer; transition: 0.3s; }
 .submit-modal-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(var(--nuxt-green-rgb), 0.3); }
 .submit-modal-btn:disabled { opacity: 0.5; filter: grayscale(1); }
@@ -331,5 +490,5 @@ code { color: var(--text-main); font-family: 'Fira Code', monospace; line-height
 .state-container { padding: 120px 0; display: flex; flex-direction: column; align-items: center; gap: 24px; color: var(--text-dim); }
 .pulse-loader-nx { width: 44px; height: 44px; border: 4px solid var(--border-muted); border-top-color: var(--nuxt-green); border-radius: 50%; animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (max-width: 1024px) { .master-detail-nx { grid-template-columns: 1fr; height: auto; } .sidebar-nx { height: 320px; } }
+@media (max-width: 1024px) { .master-detail-nx { grid-template-columns: 1fr; height: auto; } .sidebar-nx { height: 320px; } .modal-content { max-width: 100%; } }
 </style>

@@ -40,10 +40,20 @@ const minimaxProfile: ModelProfile = {
   id: "model-minimax",
   name: "MiniMax",
   provider: "openai-compatible",
-  baseUrl: "https://platform.minimaxi.com",
+  baseUrl: "https://api.minimaxi.com",
   baseUrlMode: "provider-root",
   apiKey: "sk-minimax-test",
   model: "MiniMax-M1",
+};
+
+const minimaxAnthropicProfile: ModelProfile = {
+  id: "model-minimax-anthropic",
+  name: "MiniMax Anthropic",
+  provider: "anthropic",
+  baseUrl: "https://api.minimaxi.com",
+  baseUrlMode: "provider-root",
+  apiKey: "sk-minimax-anthropic-test",
+  model: "MiniMax-M2.7",
 };
 
 const presetRootOpenAiProfile: ModelProfile = {
@@ -834,6 +844,32 @@ describe("runModelConversation", () => {
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.anthropic.com/v1/messages");
   });
 
+  it("routes MiniMax anthropic provider roots to the official /anthropic/messages endpoint", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "msg_2",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+          stop_reason: "end_turn",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    await runModelConversation({
+      profile: minimaxAnthropicProfile,
+      messages,
+      onToolCall: vi.fn(),
+    });
+
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.minimaxi.com/anthropic/messages");
+  });
+
   it("lists available model ids from OpenAI-compatible providers using the resolved endpoint root", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
@@ -856,6 +892,25 @@ describe("runModelConversation", () => {
 
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.openai.com/v1/models");
     expect(result.modelIds).toEqual(["gpt-4.1", "gpt-4.1-mini"]);
+  });
+
+  it("lists available model ids from MiniMax anthropic roots using the official /anthropic/models endpoint", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: "MiniMax-M1" }, { id: "MiniMax-M2.7" }],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    const result = await listAvailableModelIds({ profile: minimaxAnthropicProfile });
+
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.minimaxi.com/anthropic/models");
+    expect(result.modelIds).toEqual(["MiniMax-M1", "MiniMax-M2.7"]);
   });
 
   it("keeps manual custom base urls unchanged when listing available model ids", async () => {

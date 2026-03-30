@@ -35,6 +35,8 @@ model HubItem {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
   releases      HubRelease[]
+
+  @@index([type])
 }
 
 model HubRelease {
@@ -51,6 +53,8 @@ model HubRelease {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
   item                    HubItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, version])
 }
 
 model Skill {
@@ -79,29 +83,6 @@ model SkillRelease {
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
   skill                   Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
-}
-
-model McpItem {
-  id            String       @id
-  name          String
-  summary       String
-  description   String
-  latestVersion String
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  releases      McpRelease[]
-}
-
-model McpRelease {
-  id           String   @id
-  itemId       String
-  version      String
-  releaseNotes String
-  /// MCP 服务器连接配置，包含 transport/command/args/env 或 url/headers
-  configJson   Json
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  item         McpItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
 }
 
 model InstallLog {

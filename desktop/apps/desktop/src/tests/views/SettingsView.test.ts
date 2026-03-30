@@ -244,6 +244,37 @@ describe("SettingsView", () => {
     );
   });
 
+  it("renders the MiniMax provider label from the concrete preset instead of the generic protocol family", async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const workspace = useWorkspaceStore();
+    const fixture = createWorkspaceFixture();
+    workspace.hydrate({
+      ...fixture,
+      models: [
+        {
+          id: "model-minimax",
+          name: "MiniMax Anthropic",
+          provider: "anthropic",
+          baseUrl: "https://api.minimaxi.com",
+          baseUrlMode: "provider-root",
+          apiKey: "sk-minimax",
+          model: "MiniMax-M2.7",
+        },
+      ],
+      defaultModelProfileId: "model-minimax",
+    });
+
+    const wrapper = mount(SettingsView, {
+      global: {
+        plugins: [pinia],
+      },
+    });
+
+    expect(wrapper.text()).toContain("MiniMax");
+    expect(wrapper.text()).not.toContain("AnthropicMiniMax Anthropic");
+  });
+
   it("describes the approval strategy with skills auto-approved", async () => {
     const wrapper = mount(SettingsView, {
       global: {

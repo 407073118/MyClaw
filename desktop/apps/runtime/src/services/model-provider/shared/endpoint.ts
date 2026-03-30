@@ -1,5 +1,6 @@
 import type { ModelProfile } from "@myclaw-desktop/shared";
 
+import { resolveAnthropicFlavor } from "../anthropic/flavor";
 import { resolveOpenAiCompatibleFlavor } from "../openai-compatible/flavor";
 import { normalizeBaseUrl } from "./http";
 
@@ -11,6 +12,13 @@ export function resolveProviderApiBaseUrl(profile: ModelProfile): string {
   }
 
   if (profile.provider === "anthropic") {
+    const flavor = resolveAnthropicFlavor({
+      ...profile,
+      baseUrl: normalizedBaseUrl,
+    });
+    if (flavor === "minimax") {
+      return appendMiniMaxAnthropicRoot(normalizedBaseUrl);
+    }
     return appendPathSegment(normalizedBaseUrl, "/v1");
   }
 
@@ -37,4 +45,24 @@ function appendPathSegment(baseUrl: string, suffix: string): string {
     return normalizedBaseUrl;
   }
   return `${normalizedBaseUrl}${suffix}`;
+}
+
+/** 将 MiniMax Anthropic 根地址规整到官方 `/anthropic` 路径。 */
+function appendMiniMaxAnthropicRoot(baseUrl: string): string {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const loweredBaseUrl = normalizedBaseUrl.toLowerCase();
+
+  if (loweredBaseUrl.endsWith("/anthropic")) {
+    return normalizedBaseUrl;
+  }
+
+  if (loweredBaseUrl.endsWith("/anthropic/v1")) {
+    return normalizedBaseUrl.slice(0, -3);
+  }
+
+  if (loweredBaseUrl.endsWith("/v1")) {
+    return `${normalizedBaseUrl.slice(0, -3)}/anthropic`;
+  }
+
+  return `${normalizedBaseUrl}/anthropic`;
 }

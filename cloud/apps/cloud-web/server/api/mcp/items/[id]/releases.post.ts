@@ -1,4 +1,4 @@
-import { createError, getRouterParam, readFormData } from "h3";
+import { createError, getRouterParam, readBody } from "h3";
 
 import { proxyCloudApi } from "../../../../utils/cloud-api";
 
@@ -15,6 +15,6 @@ export default defineEventHandler(async (event) => {
   return proxyCloudApi(event, `/api/mcp/items/${id}/releases`, {
     forwardAuth: true,
     method: "POST",
-    body: await readFormData(event)
+    body: await readBody(event)
   });
 });

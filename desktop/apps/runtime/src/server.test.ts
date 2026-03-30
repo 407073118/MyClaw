@@ -1101,8 +1101,8 @@ describe("runtime server", () => {
       port: 0,
       stateFilePath,
       profileModelCatalog: async ({ profile }) => {
-        expect(profile.provider).toBe("openai-compatible");
-        expect(profile.baseUrl).toBe("https://platform.minimaxi.com");
+        expect(profile.provider).toBe("anthropic");
+        expect(profile.baseUrl).toBe("https://api.minimaxi.com");
         expect(profile.baseUrlMode).toBe("provider-root");
         expect(profile.apiKey).toBe("sk-minimax");
         return { modelIds: ["MiniMax-M1", "MiniMax-Text-01"] };
@@ -1116,8 +1116,8 @@ describe("runtime server", () => {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        provider: "openai-compatible",
-        baseUrl: "https://platform.minimaxi.com",
+        provider: "anthropic",
+        baseUrl: "https://api.minimaxi.com",
         baseUrlMode: "provider-root",
         apiKey: "sk-minimax",
         model: "",

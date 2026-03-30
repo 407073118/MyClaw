@@ -26,6 +26,8 @@ assert.match(prismaSchema, /model LoginSession/);
 assert.match(prismaSchema, /model HubItem/);
 assert.match(prismaSchema, /model HubRelease/);
 assert.match(prismaSchema, /model InstallLog/);
+assert.doesNotMatch(prismaSchema, /model McpItem/);
+assert.doesNotMatch(prismaSchema, /model McpRelease/);
 
 const internalAuthPort = readFileSync(
   join(root, "apps/cloud-api/src/modules/auth/internal-auth-provider.ts"),

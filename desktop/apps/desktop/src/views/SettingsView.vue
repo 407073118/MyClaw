@@ -71,7 +71,7 @@
           <div class="card-body">
             <div class="model-info">
               <div class="model-name-row">
-                <span class="provider-tag">{{ getProviderLabel(profile.provider) }}</span>
+                <span class="provider-tag">{{ getProviderLabel(profile) }}</span>
                 <strong>{{ profile.name }}</strong>
               </div>
               <p class="model-id"><span>ID:</span> {{ profile.model }}</p>
@@ -184,7 +184,7 @@ import { createDefaultApprovalPolicy } from "@myclaw-desktop/shared";
 import { computed, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 
-import { providerPresets } from "@/settings/provider-presets";
+import { resolveProviderPreset } from "@/settings/provider-presets";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 const tabs = ["模型", "通用", "审批"] as const;
@@ -241,8 +241,9 @@ const sessionsRootPath = computed(() => {
   return workspace.sessionsRootPath ?? "运行时未返回 Sessions 目录";
 });
 
-function getProviderLabel(provider: string) {
-  return providerPresets.find(p => p.provider === provider)?.label || "Other";
+/** 根据完整 profile 推断供应商标签，避免兼容协议族误显示成首个预设。 */
+function getProviderLabel(profile: ModelProfile) {
+  return resolveProviderPreset(profile)?.label || "Other";
 }
 
 async function testModelProfile(profileId: string) {
@@ -595,4 +596,3 @@ h4 { font-size: 14px; margin-bottom: 12px; }
   font-size: 14px;
 }
 </style>
-

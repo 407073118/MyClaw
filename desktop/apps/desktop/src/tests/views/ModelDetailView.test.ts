@@ -55,14 +55,13 @@ describe("ModelDetailView", () => {
     const fetchSpy = vi.spyOn(workspace, "fetchAvailableModelIds").mockResolvedValue(["MiniMax-M1", "MiniMax-Text-01"]);
 
     await wrapper.get("[data-testid='model-preset-select']").setValue("minimax");
-    await wrapper.get("[data-testid='model-base-url-input']").setValue("https://platform.minimaxi.com");
     await wrapper.get("[data-testid='model-api-key-input']").setValue("sk-minimax");
     await wrapper.get("[data-testid='model-fetch-list']").trigger("click");
     await flushPromises();
 
     expect(fetchSpy).toHaveBeenCalledWith(expect.objectContaining({
-      provider: "openai-compatible",
-      baseUrl: "https://platform.minimaxi.com",
+      provider: "anthropic",
+      baseUrl: "https://api.minimaxi.com",
       baseUrlMode: "provider-root",
       apiKey: "sk-minimax",
     }));

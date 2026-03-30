@@ -21,10 +21,10 @@ export const providerPresets: ProviderPreset[] = [
   {
     id: "minimax",
     label: "MiniMax",
-    baseUrl: "https://api.minimax.io",
+    baseUrl: "https://api.minimaxi.com",
     baseUrlMode: "provider-root",
-    provider: "openai-compatible",
-    docsLabel: "MiniMax OpenAI-compatible API",
+    provider: "anthropic",
+    docsLabel: "MiniMax Anthropic-compatible API",
   },
   {
     id: "moonshot",
@@ -65,6 +65,13 @@ export function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" |
   const normalizedBaseUrl = profile.baseUrl.trim().toLowerCase();
   const normalizedModel = profile.model.trim().toLowerCase();
 
+  if (
+    normalizedBaseUrl.includes("minimax") ||
+    normalizedBaseUrl.includes("minimaxi") ||
+    normalizedModel.startsWith("minimax")
+  ) {
+    return "minimax";
+  }
   if (profile.provider === "anthropic" || normalizedBaseUrl.includes("anthropic")) {
     return "anthropic";
   }
@@ -74,11 +81,16 @@ export function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" |
   if (normalizedBaseUrl.includes("moonshot")) {
     return "moonshot";
   }
-  if (normalizedBaseUrl.includes("minimax") || normalizedBaseUrl.includes("minimaxi")) {
-    return "minimax";
-  }
   if (normalizedBaseUrl.includes("openai.com")) {
     return "openai";
   }
   return "custom";
+}
+
+/** 根据具体 profile 解析最贴近的预设，用于 UI 展示与回填。 */
+export function resolveProviderPreset(
+  profile: Pick<ModelProfile, "provider" | "baseUrl" | "model">,
+): ProviderPreset | undefined {
+  const presetId = resolveProviderPresetId(profile);
+  return providerPresets.find((item) => item.id === presetId);
 }

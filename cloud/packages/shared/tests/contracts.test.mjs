@@ -25,7 +25,11 @@ assert.match(skillsSource, /artifact:/);
 assert.match(mcpSource, /export type McpItemSummary/);
 assert.match(mcpSource, /export type McpItemDetail/);
 assert.match(mcpSource, /export type CreateMcpItemInput/);
-assert.match(mcpSource, /export type McpReleaseUploadResponse/);
+assert.match(mcpSource, /export type CreateMcpItemResponse/);
+assert.match(mcpSource, /export type PublishMcpReleaseResponse/);
+assert.match(mcpSource, /transport: "stdio"/);
+assert.match(mcpSource, /transport: "sse"/);
+assert.match(mcpSource, /transport: "streamable-http"/);
 
 assert.doesNotMatch(source, /"skill"/);
 assert.match(source, /"mcp"/);

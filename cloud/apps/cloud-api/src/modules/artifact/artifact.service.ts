@@ -1,4 +1,4 @@
-import type { DownloadTokenResponse, HubManifest, McpServerConfig } from "@myclaw-cloud/shared";
+import type { DownloadTokenResponse, HubManifest } from "@myclaw-cloud/shared";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 
 import { DatabaseService } from "../database/database.service";
@@ -23,37 +23,7 @@ export class ArtifactService {
   async getManifest(releaseId: string): Promise<HubManifest> {
     this.logger.log(`load manifest for releaseId=${releaseId}`);
 
-    // 先从 McpRelease 查 configJson
-    const mcpReleaseModel = (
-      this.databaseService as unknown as {
-        mcpRelease?: {
-          findUnique: (args: { where: { id: string }; include?: { item: true } }) => Promise<{
-            configJson?: unknown;
-            version?: string;
-            item?: { name?: string; description?: string };
-          } | null>;
-        };
-      }
-    ).mcpRelease;
-
-    if (mcpReleaseModel?.findUnique) {
-      const mcpRelease = await mcpReleaseModel.findUnique({
-        where: { id: releaseId },
-        include: { item: true }
-      });
-
-      if (mcpRelease?.configJson && typeof mcpRelease.configJson === "object") {
-        return {
-          kind: "mcp",
-          name: mcpRelease.item?.name ?? "MCP Server",
-          version: mcpRelease.version ?? "0.0.0",
-          description: mcpRelease.item?.description ?? "",
-          config: mcpRelease.configJson as McpServerConfig
-        };
-      }
-    }
-
-    // 再从 HubRelease 查 manifestJson
+    // 统一从 HubRelease 查 manifestJson，MCP 也走同一套表。
     const hubReleaseModel = (
       this.databaseService as unknown as {
         hubRelease?: {

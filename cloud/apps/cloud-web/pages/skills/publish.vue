@@ -90,8 +90,8 @@ useHead({
       </div>
 
       <form class="desktop-form-layout" @submit.prevent="handlePublish">
-        <div class="layout-main">
-          <section class="form-card-nx glass-card-nx">
+        <div class="layout-main form-card-nx glass-card-nx">
+          <section class="inner-section">
             <header class="section-head">
               <h3>基础信息</h3>
               <p>填写 Skills 列表中展示的核心信息。</p>
@@ -113,7 +113,7 @@ useHead({
             </div>
           </section>
 
-          <section class="form-card-nx glass-card-nx">
+          <section class="inner-section">
             <header class="section-head">
               <h3>文档与说明</h3>
               <p>补充发布说明和 README 内容。</p>
@@ -131,8 +131,8 @@ useHead({
           </section>
         </div>
 
-        <aside class="layout-sidebar">
-          <section class="form-card-nx glass-card-nx config-panel">
+        <aside class="layout-sidebar form-card-nx glass-card-nx">
+          <section class="inner-section">
             <header class="section-head">
               <h3>配置项</h3>
             </header>
@@ -157,7 +157,7 @@ useHead({
             </div>
           </section>
 
-          <section class="form-card-nx glass-card-nx artifact-panel">
+          <section class="inner-section">
             <header class="section-head">
               <h3>上传产物包</h3>
               <p>上传 Skill 的 ZIP 包。</p>
@@ -179,7 +179,7 @@ useHead({
             {{ errorMsg }}
           </div>
 
-          <div class="publish-actions-nx glass-card-nx">
+          <div class="publish-actions-flat">
             <button type="submit" class="submit-btn-nx" :disabled="isPending || !artifactFile">
               <span v-if="isPending" class="spinner"></span>
               {{ isPending ? "正在发布..." : "发布到仓库" }}
@@ -232,9 +232,6 @@ useHead({
 .input-wrapper .prefix { padding-left: 16px; color: var(--text-dim); font-family: 'Fira Code', monospace; font-size: 0.9rem; user-select: none; }
 .input-wrapper input { border: none !important; background: transparent !important; box-shadow: none !important; padding-left: 8px; }
 
-.config-panel { padding: 24px; }
-.artifact-panel { padding: 24px; }
-
 .drop-zone-nx { height: 140px; border: 2px dashed var(--border-muted); border-radius: 16px; position: relative; transition: 0.2s; background: rgba(255,255,255,0.02); cursor: pointer; overflow: hidden; }
 .drop-zone-nx:hover { border-color: var(--text-dim); background: rgba(255,255,255,0.04); }
 .drop-zone-nx.active { border-color: var(--nuxt-green); background: rgba(var(--nuxt-green-rgb), 0.05); }
@@ -248,7 +245,7 @@ useHead({
 .status-msg { padding: 16px; border-radius: 12px; font-size: 0.875rem; font-weight: 700; display: flex; align-items: center; gap: 8px; margin-top: -16px; }
 .status-msg.error { background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; }
 
-.publish-actions-nx { padding: 24px; border-radius: 20px; background: var(--bg-main); border: 1px solid var(--border-muted); }
+.publish-actions-flat { padding: 0; margin-top: -8px; }
 .submit-btn-nx { width: 100%; height: 52px; background: var(--nuxt-green); color: var(--btn-text); border: none; border-radius: 12px; font-weight: 900; font-size: 1.05rem; cursor: pointer; transition: 0.3s; display: flex; align-items: center; justify-content: center; gap: 12px; box-shadow: 0 4px 15px rgba(var(--nuxt-green-rgb), 0.2); letter-spacing: 0.02em; }
 .submit-btn-nx:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 30px rgba(var(--nuxt-green-rgb), 0.4); }
 .submit-btn-nx:disabled { opacity: 0.5; filter: grayscale(1); cursor: not-allowed; box-shadow: none; transform: none; }

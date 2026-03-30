@@ -72,4 +72,35 @@ describe("provider routing compatibility", () => {
     await runModelConversation({ profile, messages });
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.anthropic.com/v1/messages");
   });
+
+  it("routes MiniMax anthropic preset roots to /anthropic/messages", async () => {
+    const profile: ModelProfile = {
+      id: "minimax-anthropic-profile",
+      name: "MiniMax Anthropic",
+      provider: "anthropic",
+      baseUrl: "https://api.minimaxi.com",
+      baseUrlMode: "provider-root",
+      apiKey: "sk-minimax",
+      model: "MiniMax-M1",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: "msg_2",
+          type: "message",
+          role: "assistant",
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+    );
+
+    await runModelConversation({ profile, messages });
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toBe("https://api.minimaxi.com/anthropic/messages");
+  });
 });

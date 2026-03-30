@@ -14,4 +14,8 @@ assert.equal(
 const packageJson = readFileSync(join(root, "apps/cloud-api/package.json"), "utf8");
 assert.match(packageJson, /"prisma:seed"/);
 
+const seedSource = readFileSync(join(root, "apps/cloud-api/prisma/seed.ts"), "utf8");
+assert.match(seedSource, /kind:\s*"mcp"/);
+assert.match(seedSource, /config:\s*\{/);
+
 console.log("prisma seed scaffold verified");

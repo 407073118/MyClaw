@@ -201,7 +201,7 @@ const modelCatalogError = ref("");
 const availableModelIds = ref<string[]>([]);
 
 const baseUrlPlaceholder = computed(() =>
-  profile.baseUrlMode === "provider-root" ? "https://platform.minimaxi.com" : "https://gateway.example.com/v1",
+  profile.baseUrlMode === "provider-root" ? "https://api.minimaxi.com" : "https://gateway.example.com/v1",
 );
 
 const baseUrlHint = computed(() =>
