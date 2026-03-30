@@ -1,42 +1,38 @@
 import type {
   McpItemDetail,
   McpItemSummary,
-  McpReleaseUploadResponse
+  McpReleaseDetail,
+  McpServerConfig
 } from "@myclaw-cloud/shared";
 import { Injectable } from "@nestjs/common";
 
 import { DatabaseService } from "../database/database.service";
-import type { CreateMcpItemRecordInput, CreateMcpReleaseInput, McpRepository } from "./mcp.repository";
+import type { CreateMcpItemRecordInput, CreateMcpReleaseRecordInput, McpRepository } from "./mcp.repository";
 
 @Injectable()
 export class PrismaMcpRepository implements McpRepository {
   constructor(private readonly databaseService: DatabaseService) {}
 
+  /** 获取所有 MCP 条目列表 */
   async list(): Promise<McpItemSummary[]> {
     const items = await this.databaseService.mcpItem.findMany({
-      orderBy: {
-        updatedAt: "desc"
-      }
+      orderBy: { updatedAt: "desc" }
     });
 
     return items.map((item) => ({
       id: item.id,
       name: item.name,
       summary: item.summary,
-      latestVersion: item.latestVersion,
-      iconUrl: `/api/mcp/items/${item.id}/icon`
+      latestVersion: item.latestVersion
     }));
   }
 
+  /** 根据 ID 查找 MCP 条目详情 */
   async findById(id: string): Promise<McpItemDetail | null> {
     const item = await this.databaseService.mcpItem.findUnique({
       where: { id },
       include: {
-        releases: {
-          orderBy: {
-            createdAt: "desc"
-          }
-        }
+        releases: { orderBy: { createdAt: "desc" } }
       }
     });
 
@@ -58,6 +54,7 @@ export class PrismaMcpRepository implements McpRepository {
     };
   }
 
+  /** 创建 MCP 条目 */
   async createItem(input: CreateMcpItemRecordInput): Promise<McpItemDetail> {
     const item = await this.databaseService.mcpItem.create({
       data: {
@@ -68,11 +65,7 @@ export class PrismaMcpRepository implements McpRepository {
         latestVersion: input.latestVersion
       },
       include: {
-        releases: {
-          orderBy: {
-            createdAt: "desc"
-          }
-        }
+        releases: { orderBy: { createdAt: "desc" } }
       }
     });
 
@@ -90,43 +83,50 @@ export class PrismaMcpRepository implements McpRepository {
     };
   }
 
-  async createRelease(input: CreateMcpReleaseInput): Promise<McpReleaseUploadResponse> {
-    await this.databaseService.$transaction(async (transaction) => {
-      await transaction.mcpRelease.create({
+  /** 创建 MCP 版本，同时更新条目的最新版本号 */
+  async createRelease(input: CreateMcpReleaseRecordInput): Promise<McpReleaseDetail> {
+    const release = await this.databaseService.$transaction(async (tx) => {
+      const created = await tx.mcpRelease.create({
         data: {
           id: input.releaseId,
           itemId: input.itemId,
           version: input.version,
           releaseNotes: input.releaseNotes,
-          manifestJson: input.manifest,
-          artifactFileName: input.artifact.fileName,
-          artifactFileSize: input.artifact.fileSize,
-          artifactStoragePath: input.artifact.storagePath,
-          artifactDownloadUrl: input.artifact.downloadUrl,
-          artifactDownloadExpires: input.artifact.downloadExpiresIn
+          configJson: input.config as any
         }
       });
 
-      await transaction.mcpItem.update({
+      await tx.mcpItem.update({
         where: { id: input.itemId },
-        data: {
-          latestVersion: input.latestVersion
-        }
+        data: { latestVersion: input.latestVersion }
       });
+
+      return created;
     });
 
     return {
-      itemId: input.itemId,
-      releaseId: input.releaseId,
-      version: input.version,
-      latestVersion: input.latestVersion,
-      manifest: input.manifest,
-      artifact: {
-        fileName: input.artifact.fileName,
-        fileSize: input.artifact.fileSize,
-        downloadUrl: input.artifact.downloadUrl,
-        expiresIn: input.artifact.downloadExpiresIn
-      }
+      id: release.id,
+      version: release.version,
+      releaseNotes: release.releaseNotes,
+      config: release.configJson as unknown as McpServerConfig
+    };
+  }
+
+  /** 根据版本 ID 获取版本详情 */
+  async findReleaseById(releaseId: string): Promise<McpReleaseDetail | null> {
+    const release = await this.databaseService.mcpRelease.findUnique({
+      where: { id: releaseId }
+    });
+
+    if (!release) {
+      return null;
+    }
+
+    return {
+      id: release.id,
+      version: release.version,
+      releaseNotes: release.releaseNotes,
+      config: release.configJson as unknown as McpServerConfig
     };
   }
 }

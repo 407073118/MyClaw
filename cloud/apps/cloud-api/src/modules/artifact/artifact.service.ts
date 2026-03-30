@@ -1,4 +1,4 @@
-import type { DownloadTokenResponse, HubManifest } from "@myclaw-cloud/shared";
+import type { DownloadTokenResponse, HubManifest, McpServerConfig } from "@myclaw-cloud/shared";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 
 import { DatabaseService } from "../database/database.service";
@@ -23,13 +23,37 @@ export class ArtifactService {
   async getManifest(releaseId: string): Promise<HubManifest> {
     this.logger.log(`load manifest for releaseId=${releaseId}`);
 
+    // 先从 McpRelease 查 configJson
     const mcpReleaseModel = (
       this.databaseService as unknown as {
         mcpRelease?: {
-          findUnique: (args: { where: { id: string } }) => Promise<{ manifestJson?: unknown } | null>;
+          findUnique: (args: { where: { id: string }; include?: { item: true } }) => Promise<{
+            configJson?: unknown;
+            version?: string;
+            item?: { name?: string; description?: string };
+          } | null>;
         };
       }
     ).mcpRelease;
+
+    if (mcpReleaseModel?.findUnique) {
+      const mcpRelease = await mcpReleaseModel.findUnique({
+        where: { id: releaseId },
+        include: { item: true }
+      });
+
+      if (mcpRelease?.configJson && typeof mcpRelease.configJson === "object") {
+        return {
+          kind: "mcp",
+          name: mcpRelease.item?.name ?? "MCP Server",
+          version: mcpRelease.version ?? "0.0.0",
+          description: mcpRelease.item?.description ?? "",
+          config: mcpRelease.configJson as McpServerConfig
+        };
+      }
+    }
+
+    // 再从 HubRelease 查 manifestJson
     const hubReleaseModel = (
       this.databaseService as unknown as {
         hubRelease?: {
@@ -38,23 +62,16 @@ export class ArtifactService {
       }
     ).hubRelease;
 
-    let release: { manifestJson?: unknown } | null = null;
-    if (mcpReleaseModel?.findUnique) {
-      release = await mcpReleaseModel.findUnique({
-        where: { id: releaseId }
-      });
-    }
-
     if (hubReleaseModel?.findUnique) {
-      release ??= await hubReleaseModel.findUnique({
+      const hubRelease = await hubReleaseModel.findUnique({
         where: { id: releaseId }
       });
+
+      if (hubRelease?.manifestJson && typeof hubRelease.manifestJson === "object") {
+        return hubRelease.manifestJson as HubManifest;
+      }
     } else {
       this.logger.warn(`hubRelease model missing, using fallback manifest for releaseId=${releaseId}`);
-    }
-
-    if (release?.manifestJson && typeof release.manifestJson === "object") {
-      return release.manifestJson as HubManifest;
     }
 
     return {
@@ -62,9 +79,11 @@ export class ArtifactService {
       name: "Filesystem MCP",
       version: "1.0.0",
       description: "Managed MCP configuration.",
-      transport: "stdio",
-      command: "npx",
-      args: ["@modelcontextprotocol/server-filesystem", "."]
+      config: {
+        transport: "stdio",
+        command: "npx",
+        args: ["@modelcontextprotocol/server-filesystem", "."]
+      }
     };
   }
 
@@ -97,38 +116,9 @@ export class ArtifactService {
         };
       }
     ).skillRelease;
-    const mcpReleaseModel = (
-      this.databaseService as unknown as {
-        mcpRelease?: {
-          findUnique: (args: {
-            where: { id: string };
-            select: {
-              artifactFileName: true;
-              artifactFileSize: true;
-              artifactStoragePath: true;
-              artifactDownloadUrl: true;
-            };
-          }) => Promise<{
-            artifactFileName: string;
-            artifactFileSize: number;
-            artifactStoragePath: string;
-            artifactDownloadUrl: string;
-          } | null>;
-        };
-      }
-    ).mcpRelease;
 
     const release =
       (await skillReleaseModel?.findUnique?.({
-        where: { id: releaseId },
-        select: {
-          artifactFileName: true,
-          artifactFileSize: true,
-          artifactStoragePath: true,
-          artifactDownloadUrl: true
-        }
-      })) ??
-      (await mcpReleaseModel?.findUnique?.({
         where: { id: releaseId },
         select: {
           artifactFileName: true,

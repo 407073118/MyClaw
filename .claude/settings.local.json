@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(npx vitest:*)",
+      "Bash(pnpm --dir apps/cloud-api test)",
+      "Bash(pnpm --dir apps/cloud-api build)",
+      "Bash(pnpm prisma:*)",
+      "Bash(grep -r CLOUD_API F:MyClawcloudappscloud-web --include=*.ts --include=*.vue --include=*.json)"
+    ]
+  }
+}

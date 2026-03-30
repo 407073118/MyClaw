@@ -29,7 +29,11 @@ describe("prisma hub repository", () => {
         name: "Filesystem MCP",
         version: "2.2.0",
         description: "Managed filesystem connector",
-        transport: "stdio",
+        config: {
+          transport: "stdio",
+          command: "npx",
+          args: ["@modelcontextprotocol/server-filesystem", "."]
+        },
       },
       artifact: {
         fileName: "release-mcp-filesystem-managed-2.2.0.zip",

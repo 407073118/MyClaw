@@ -93,19 +93,15 @@ model McpItem {
 }
 
 model McpRelease {
-  id                      String   @id
-  itemId                  String
-  version                 String
-  releaseNotes            String
-  manifestJson            Json
-  artifactFileName        String   @default("")
-  artifactFileSize        Int      @default(0)
-  artifactStoragePath     String   @default("")
-  artifactDownloadUrl     String   @default("")
-  artifactDownloadExpires Int      @default(0)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  item                    McpItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  id           String   @id
+  itemId       String
+  version      String
+  releaseNotes String
+  /// MCP 服务器连接配置，包含 transport/command/args/env 或 url/headers
+  configJson   Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  item         McpItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
 }
 
 model InstallLog {

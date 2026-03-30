@@ -1,162 +1,175 @@
 import { BadRequestException, NotFoundException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 
+import type { McpServerConfig } from "@myclaw-cloud/shared";
 import { McpController } from "./mcp.controller";
 import { McpService } from "./mcp.service";
 
+/** 创建 stdio 配置 */
+function stdioConfig(): McpServerConfig {
+  return {
+    transport: "stdio",
+    command: "npx",
+    args: ["@playwright/mcp@latest"]
+  };
+}
+
 describe("mcp controller", () => {
-  it("lists mcp items via dedicated controller", async () => {
+  it("通过专用 controller 列出 MCP 条目", async () => {
     const list = vi.fn(async () => [
       {
-        id: "mcp-filesystem-managed",
-        name: "Filesystem MCP",
-        summary: "Managed filesystem connector",
-        description: "Managed filesystem connector",
-        latestVersion: "1.0.0",
-        updatedAt: "2026-03-27T11:00:00.000Z"
+        id: "playwright",
+        name: "Playwright MCP",
+        summary: "浏览器自动化 MCP 服务",
+        latestVersion: "1.0.0"
       }
     ]);
 
     const controller = new McpController({
       list,
       findById: vi.fn(),
-      publishMcpRelease: vi.fn(),
-      createMcpWithInitialRelease: vi.fn()
+      publishRelease: vi.fn(),
+      createWithInitialRelease: vi.fn(),
+      findReleaseById: vi.fn()
     } as unknown as McpService);
 
     await expect(controller.list()).resolves.toEqual({
-      items: [expect.objectContaining({ id: "mcp-filesystem-managed" })]
+      items: [expect.objectContaining({ id: "playwright" })]
     });
   });
 
-  it("throws not found when mcp detail missing", async () => {
+  it("MCP 详情不存在时抛出 NotFoundException", async () => {
     const controller = new McpController({
       list: vi.fn(),
       findById: vi.fn(async () => null),
-      publishMcpRelease: vi.fn(),
-      createMcpWithInitialRelease: vi.fn()
+      publishRelease: vi.fn(),
+      createWithInitialRelease: vi.fn(),
+      findReleaseById: vi.fn()
     } as unknown as McpService);
 
     await expect(controller.detail("missing")).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it("publishes mcp release via dedicated endpoint", async () => {
-    const publishMcpRelease = vi.fn(async () => ({
-      itemId: "mcp-filesystem-managed",
-      releaseId: "release-mcp-filesystem-managed-1.1.0",
-      version: "1.1.0",
-      latestVersion: "1.1.0",
-      manifest: {
-        kind: "mcp",
-        name: "Filesystem MCP",
+  it("通过 JSON body 发布 MCP 新版本", async () => {
+    const config = stdioConfig();
+    const publishRelease = vi.fn(async () => ({
+      itemId: "playwright",
+      release: {
+        id: "release-playwright-1.1.0",
         version: "1.1.0",
-        description: "Managed filesystem connector",
-        transport: "stdio"
-      },
-      artifact: {
-        fileName: "filesystem.zip",
-        fileSize: 128,
-        downloadUrl: "/api/artifacts/download/release-mcp-filesystem-managed-1.1.0",
-        expiresIn: 300
+        releaseNotes: "升级版本",
+        config
       }
     }));
 
     const controller = new McpController({
       list: vi.fn(),
       findById: vi.fn(),
-      publishMcpRelease,
-      createMcpWithInitialRelease: vi.fn()
+      publishRelease,
+      createWithInitialRelease: vi.fn(),
+      findReleaseById: vi.fn()
     } as unknown as McpService);
 
     await expect(
-      controller.publishRelease(
-        "mcp-filesystem-managed",
-        { version: "1.1.0", releaseNotes: "Managed MCP update" },
-        {
-          buffer: Buffer.from("zip-data"),
-          mimetype: "application/zip",
-          originalname: "filesystem.zip",
-          size: 128
-        }
-      )
+      controller.publishRelease("playwright", {
+        version: "1.1.0",
+        releaseNotes: "升级版本",
+        config
+      })
     ).resolves.toMatchObject({
-      releaseId: "release-mcp-filesystem-managed-1.1.0"
+      release: { id: "release-playwright-1.1.0" }
     });
   });
 
-  it("creates mcp with initial release via dedicated endpoint", async () => {
-    const createMcpWithInitialRelease = vi.fn(async () => ({
+  it("通过 JSON body 创建 MCP 条目（含初始版本）", async () => {
+    const config = stdioConfig();
+    const createWithInitialRelease = vi.fn(async () => ({
       item: {
-        id: "mcp-filesystem-managed",
-        name: "Filesystem MCP",
-        summary: "Managed filesystem connector",
-        description: "Managed filesystem connector",
+        id: "playwright",
+        name: "Playwright MCP",
+        summary: "浏览器自动化 MCP 服务",
+        description: "Playwright 浏览器自动化 MCP 服务器",
         latestVersion: "1.0.0",
-        releases: [],
-        createdAt: "2026-03-27T11:00:00.000Z",
-        updatedAt: "2026-03-27T11:00:00.000Z"
+        releases: []
       },
-      itemId: "mcp-filesystem-managed",
-      releaseId: "release-mcp-filesystem-managed-1.0.0",
-      version: "1.0.0",
-      latestVersion: "1.0.0",
-      manifest: {
-        kind: "mcp",
-        name: "Filesystem MCP",
+      release: {
+        id: "release-playwright-1.0.0",
         version: "1.0.0",
-        description: "Managed filesystem connector",
-        transport: "stdio"
-      },
-      artifact: {
-        fileName: "filesystem.zip",
-        fileSize: 128,
-        downloadUrl: "/api/artifacts/download/release-mcp-filesystem-managed-1.0.0",
-        expiresIn: 300
+        releaseNotes: "初始版本",
+        config
       }
     }));
 
     const controller = new McpController({
       list: vi.fn(),
       findById: vi.fn(),
-      publishMcpRelease: vi.fn(),
-      createMcpWithInitialRelease
+      publishRelease: vi.fn(),
+      createWithInitialRelease,
+      findReleaseById: vi.fn()
     } as unknown as McpService);
 
     await expect(
-      controller.createMcp(
-        {
-          id: "mcp-filesystem-managed",
-          name: "Filesystem MCP",
-          summary: "Managed filesystem connector",
-          description: "Managed filesystem connector",
-          version: "1.0.0",
-          releaseNotes: "Initial release"
-        },
-        {
-          buffer: Buffer.from("zip-data"),
-          mimetype: "application/zip",
-          originalname: "filesystem.zip",
-          size: 128
-        }
-      )
+      controller.createMcp({
+        id: "playwright",
+        name: "Playwright MCP",
+        summary: "浏览器自动化 MCP 服务",
+        description: "Playwright 浏览器自动化 MCP 服务器",
+        version: "1.0.0",
+        releaseNotes: "初始版本",
+        config
+      })
     ).resolves.toMatchObject({
-      releaseId: "release-mcp-filesystem-managed-1.0.0"
+      release: { id: "release-playwright-1.0.0" }
     });
   });
 
-  it("throws when mcp zip is missing", async () => {
+  it("发布时缺少 version 抛出 BadRequestException", async () => {
     const controller = new McpController({
       list: vi.fn(),
       findById: vi.fn(),
-      publishMcpRelease: vi.fn(),
-      createMcpWithInitialRelease: vi.fn()
+      publishRelease: vi.fn(),
+      createWithInitialRelease: vi.fn(),
+      findReleaseById: vi.fn()
     } as unknown as McpService);
 
     await expect(
-      controller.publishRelease("mcp-filesystem-managed", {
-        version: "1.1.0",
-        releaseNotes: "missing file"
+      controller.publishRelease("playwright", {
+        version: "",
+        releaseNotes: "缺少版本号",
+        config: stdioConfig()
       })
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("发布时缺少 config 抛出 BadRequestException", async () => {
+    const controller = new McpController({
+      list: vi.fn(),
+      findById: vi.fn(),
+      publishRelease: vi.fn(),
+      createWithInitialRelease: vi.fn(),
+      findReleaseById: vi.fn()
+    } as unknown as McpService);
+
+    await expect(
+      controller.publishRelease("playwright", {
+        version: "1.0.0",
+        releaseNotes: "缺少配置",
+        config: undefined as any
+      })
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("版本详情不存在时抛出 NotFoundException", async () => {
+    const controller = new McpController({
+      list: vi.fn(),
+      findById: vi.fn(),
+      publishRelease: vi.fn(),
+      createWithInitialRelease: vi.fn(),
+      findReleaseById: vi.fn(async () => null)
+    } as unknown as McpService);
+
+    await expect(
+      controller.releaseDetail("release-missing-1.0.0")
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
