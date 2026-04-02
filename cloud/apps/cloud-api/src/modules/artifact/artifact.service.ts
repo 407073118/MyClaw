@@ -1,4 +1,4 @@
-import type { DownloadTokenResponse, HubManifest } from "@myclaw-cloud/shared";
+import type { DownloadTokenResponse, McpManifest } from "@myclaw-cloud/shared";
 import { Inject, Injectable, Logger } from "@nestjs/common";
 
 import { DatabaseService } from "../database/database.service";
@@ -19,31 +19,28 @@ export class ArtifactService {
     private readonly databaseService: DatabaseService
   ) {}
 
-  /** Return the persisted manifest for a hub release, or a safe MCP fallback. */
-  async getManifest(releaseId: string): Promise<HubManifest> {
+  /** 获取 MCP 版本的连接配置清单 */
+  async getManifest(releaseId: string): Promise<McpManifest> {
     this.logger.log(`load manifest for releaseId=${releaseId}`);
 
-    // 统一从 HubRelease 查 manifestJson，MCP 也走同一套表。
-    const hubReleaseModel = (
-      this.databaseService as unknown as {
-        hubRelease?: {
-          findUnique: (args: { where: { id: string } }) => Promise<{ manifestJson?: unknown } | null>;
-        };
-      }
-    ).hubRelease;
+    // 从 mcp_server_release 读取 configJson
+    const mcpRelease = await this.databaseService.mcpServerRelease.findUnique({
+      where: { id: releaseId },
+      include: { server: true }
+    });
 
-    if (hubReleaseModel?.findUnique) {
-      const hubRelease = await hubReleaseModel.findUnique({
-        where: { id: releaseId }
-      });
-
-      if (hubRelease?.manifestJson && typeof hubRelease.manifestJson === "object") {
-        return hubRelease.manifestJson as HubManifest;
-      }
-    } else {
-      this.logger.warn(`hubRelease model missing, using fallback manifest for releaseId=${releaseId}`);
+    if (mcpRelease) {
+      const config = mcpRelease.configJson as McpManifest["config"];
+      return {
+        kind: "mcp",
+        name: mcpRelease.server.name,
+        version: mcpRelease.version,
+        description: mcpRelease.server.description,
+        config
+      };
     }
 
+    this.logger.warn(`mcp release not found, using fallback manifest for releaseId=${releaseId}`);
     return {
       kind: "mcp",
       name: "Filesystem MCP",
@@ -87,25 +84,15 @@ export class ArtifactService {
       }
     ).skillRelease;
 
-    const release =
-      (await skillReleaseModel?.findUnique?.({
-        where: { id: releaseId },
-        select: {
-          artifactFileName: true,
-          artifactFileSize: true,
-          artifactStoragePath: true,
-          artifactDownloadUrl: true
-        }
-      })) ??
-      (await this.databaseService.hubRelease.findUnique({
-        where: { id: releaseId },
-        select: {
-          artifactFileName: true,
-          artifactFileSize: true,
-          artifactStoragePath: true,
-          artifactDownloadUrl: true
-        }
-      }));
+    const release = await skillReleaseModel?.findUnique?.({
+      where: { id: releaseId },
+      select: {
+        artifactFileName: true,
+        artifactFileSize: true,
+        artifactStoragePath: true,
+        artifactDownloadUrl: true
+      }
+    });
 
     if (!release) {
       this.logger.warn(`release not found, releaseId=${releaseId}`);

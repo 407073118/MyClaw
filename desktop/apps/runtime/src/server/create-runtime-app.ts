@@ -1135,6 +1135,48 @@ function createExecutionIntentFromModelToolCall(call: ModelToolCall): ExecutionI
     };
   }
 
+  if (toolName === "fs_find" || toolName === "find_files" || toolName === "glob") {
+    const pattern = readNonEmptyString(call.input, "pattern");
+    const path = readNonEmptyString(call.input, "path") || ".";
+    if (!pattern) {
+      return null;
+    }
+    return {
+      source: "builtin-tool",
+      toolId: "fs.find",
+      label: `${pattern}\n---\n${path}`,
+      risk: ToolRiskCategory.Read,
+      detail: `模型请求查找文件：${pattern}`,
+    };
+  }
+
+  if (toolName === "web_search" || toolName === "search_web") {
+    const query = readNonEmptyString(call.input, "query");
+    if (!query) {
+      return null;
+    }
+    return {
+      source: "builtin-tool",
+      toolId: "web.search",
+      label: query,
+      risk: ToolRiskCategory.Network,
+      detail: `模型请求网络搜索：${query}`,
+    };
+  }
+
+  if (toolName === "task_manage" || toolName === "manage_tasks" || toolName === "todo") {
+    const action = readNonEmptyString(call.input, "action") || "list";
+    const text = readNonEmptyString(call.input, "text") || "";
+    return {
+      source: "builtin-tool",
+      toolId: "task.manage",
+      label: `${action} ${text}`.trim(),
+      risk: ToolRiskCategory.Read,
+      arguments: { action, text },
+      detail: `模型请求任务管理：${action}${text ? ` ${text}` : ""}`,
+    };
+  }
+
   return null;
 }
 
@@ -1687,7 +1729,7 @@ export async function createRuntimeApp(options: RuntimeOptions): Promise<Runtime
     return mcpService.listTools().map((tool) => {
       const preference = mcpToolPreferences.find((item) => item.toolId === tool.id);
       const enabled = preference?.enabled ?? true;
-      const exposedToModel = enabled ? (preference?.exposedToModel ?? false) : false;
+      const exposedToModel = enabled ? (preference?.exposedToModel ?? true) : false;
 
       return {
         ...tool,
@@ -1888,9 +1930,31 @@ export async function createRuntimeApp(options: RuntimeOptions): Promise<Runtime
         stop: !result.ok,
       };
     } catch (error) {
-      const message = `执行异常：${error instanceof Error ? error.message : "未知错误"}`;
+      const errorMessage = error instanceof Error ? error.message : "未知错误";
+
+      if (errorMessage.includes("路径越界")) {
+        const pathApproval: typeof approvalRequests[number] = {
+          id: `approval-${crypto.randomUUID()}`,
+          sessionId: input.sessionId,
+          source: intent.source,
+          toolId: intent.toolId,
+          label: intent.label,
+          risk: ToolRiskCategory.Exec,
+          detail: `模型请求访问工作区外部路径：${intent.label}`,
+          serverId: intent.serverId,
+          toolName: intent.toolName,
+          arguments: { ...intent.arguments, allowOutOfWorkspace: true },
+          resumeConversation: true,
+        };
+        approvalRequests = [...approvalRequests, pathApproval];
+        const msg = `需要授权：访问工作区外部路径 ${intent.label}`;
+        await recordModelToolLog(input, { role: "system", content: msg });
+        return { content: msg, stop: true };
+      }
+
+      const message = `执行异常：${errorMessage}`;
       await recordModelToolLog(input, { role: "system", content: message });
-      return { content: message };
+      return { content: message, stop: true };
     }
   }
 
@@ -2049,6 +2113,28 @@ export async function createRuntimeApp(options: RuntimeOptions): Promise<Runtime
             request,
             response,
             relativePath: "/api/auth/logout",
+          });
+          return;
+        }
+
+        if (request.method === "GET" && requestUrl.pathname === "/api/cloud-hub/skills") {
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: "/api/skills",
+            searchParams: requestUrl.searchParams,
+          });
+          return;
+        }
+
+        const cloudSkillDetailMatch =
+          request.method === "GET" ? requestUrl.pathname.match(/^\/api\/cloud-hub\/skills\/([^/]+)$/) : null;
+        if (cloudSkillDetailMatch) {
+          const skillId = decodeURIComponent(cloudSkillDetailMatch[1] ?? "");
+          await proxyCloudApiRequest({
+            request,
+            response,
+            relativePath: `/api/skills/${encodeURIComponent(skillId)}`,
           });
           return;
         }

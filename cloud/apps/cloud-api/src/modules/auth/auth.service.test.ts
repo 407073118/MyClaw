@@ -110,7 +110,7 @@ describe("auth service", () => {
     expect(result.user.roles).toContain("user");
   });
 
-  it("preserves upstream auth failure reasons from the provider", async () => {
+  it("normalizes upstream UnauthorizedException to generic account_or_password_invalid", async () => {
     const sessionRepository = createSessionRepository();
     const service = new AuthService(
       {
@@ -127,7 +127,7 @@ describe("auth service", () => {
         password: "wrong",
       }),
     ).rejects.toMatchObject({
-      message: "cas_account_or_password_invalid",
+      message: "account_or_password_invalid",
     });
   });
 

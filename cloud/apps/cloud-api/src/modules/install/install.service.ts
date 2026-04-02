@@ -23,6 +23,9 @@ export class InstallService {
 
   async list(): Promise<InstallLogRequest[]> {
     const logs = await this.installLogRepository.list();
-    return logs.map(({ account: _account, createdAt: _createdAt, id: _id, ...item }) => item);
+    return logs.map(({ account: _account, createdAt: _createdAt, id: _id, ...item }) => ({
+      ...item,
+      itemType: item.itemType as "skill" | "mcp"
+    }));
   }
 }

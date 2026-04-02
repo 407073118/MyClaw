@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Skills 样例 — 操作日志</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0c0c0c; color: #ededed; padding: 20px;
+    }
+    .nav-bar {
+      display: flex; gap: 8px; margin-bottom: 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;
+    }
+    .nav-btn {
+      padding: 6px 14px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);
+      background: transparent; color: #a3a3a3; font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .nav-btn:hover { background: rgba(255,255,255,0.04); color: #ededed; }
+    .nav-btn.active {
+      background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3);
+      color: #fbbf24; font-weight: 600;
+    }
+
+    .header-row {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 16px;
+    }
+    h1 { font-size: 20px; font-weight: 700; }
+    .filter-bar { display: flex; gap: 6px; }
+    .filter-btn {
+      padding: 4px 10px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.06);
+      background: transparent; color: #737373; font-size: 11px; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover { color: #ededed; border-color: rgba(255,255,255,0.12); }
+    .filter-btn.active { background: rgba(255,255,255,0.06); color: #ededed; }
+
+    .log-list { display: flex; flex-direction: column; gap: 2px; }
+
+    .log-item {
+      display: grid; grid-template-columns: 120px 60px 1fr 50px;
+      gap: 12px; align-items: center; padding: 10px 14px; border-radius: 6px;
+      font-size: 13px; transition: background 0.1s; cursor: default;
+    }
+    .log-item:hover { background: rgba(255,255,255,0.02); }
+
+    .log-time { color: #525252; font-size: 12px; font-family: "Cascadia Code", monospace; }
+    .log-user { color: #a3a3a3; font-size: 12px; font-weight: 500; }
+    .log-detail { color: #ededed; }
+    .log-level {
+      font-size: 10px; padding: 2px 6px; border-radius: 4px;
+      text-align: center; font-weight: 600; text-transform: uppercase;
+    }
+    .level-info    { background: rgba(59,130,246,0.12); color: #60a5fa; }
+    .level-success { background: rgba(16,163,127,0.12); color: #10a37f; }
+    .level-warning { background: rgba(245,158,11,0.12); color: #fbbf24; }
+    .level-error   { background: rgba(239,68,68,0.12); color: #f87171; }
+
+    .log-action-tag {
+      display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px;
+      margin-right: 6px; font-weight: 600; vertical-align: middle;
+    }
+    .action-push    { background: rgba(59,130,246,0.1); color: #60a5fa; }
+    .action-deploy  { background: rgba(16,163,127,0.1); color: #10a37f; }
+    .action-bug     { background: rgba(239,68,68,0.1); color: #f87171; }
+    .action-review  { background: rgba(168,85,247,0.1); color: #c084fc; }
+    .action-design  { background: rgba(245,158,11,0.1); color: #fbbf24; }
+    .action-test    { background: rgba(6,182,212,0.1); color: #22d3ee; }
+    .action-meeting { background: rgba(255,255,255,0.06); color: #a3a3a3; }
+    .action-incident { background: rgba(239,68,68,0.15); color: #f87171; }
+
+    .empty { text-align: center; padding: 40px; color: #525252; }
+    .waiting { display: flex; align-items: center; justify-content: center; height: 200px; color: #737373; }
+    .stats-bar {
+      margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06);
+      display: flex; gap: 16px; font-size: 11px; color: #525252;
+    }
+    .stats-bar span b { color: #a3a3a3; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="waiting">等待数据加载...</div>
+  </div>
+
+  <script>
+    let allLogs = [];
+    let currentFilter = 'all';
+
+    const actionLabels = {
+      push: 'Push', deploy: 'Deploy', bug: 'Bug', review: 'Review',
+      design: 'Design', test: 'Test', meeting: 'Meeting', incident: 'Incident'
+    };
+
+    function render() {
+      const filtered = currentFilter === 'all'
+        ? allLogs
+        : allLogs.filter(l => l.level === currentFilter);
+
+      const stats = {
+        total: allLogs.length,
+        info: allLogs.filter(l => l.level === 'info').length,
+        success: allLogs.filter(l => l.level === 'success').length,
+        warning: allLogs.filter(l => l.level === 'warning').length,
+        error: allLogs.filter(l => l.level === 'error').length,
+      };
+
+      document.getElementById('app').innerHTML = `
+        <nav class="nav-bar">
+          <button class="nav-btn" onclick="navigateTo('view.html')">团队总览</button>
+          <button class="nav-btn" onclick="navigateTo('report.html')">数据报表</button>
+          <button class="nav-btn active">操作日志</button>
+        </nav>
+
+        <div class="header-row">
+          <h1>操作日志</h1>
+          <div class="filter-bar">
+            <button class="filter-btn ${currentFilter === 'all' ? 'active' : ''}" onclick="setFilter('all')">全部 (${stats.total})</button>
+            <button class="filter-btn ${currentFilter === 'info' ? 'active' : ''}" onclick="setFilter('info')">信息 (${stats.info})</button>
+            <button class="filter-btn ${currentFilter === 'success' ? 'active' : ''}" onclick="setFilter('success')">成功 (${stats.success})</button>
+            <button class="filter-btn ${currentFilter === 'warning' ? 'active' : ''}" onclick="setFilter('warning')">警告 (${stats.warning})</button>
+            <button class="filter-btn ${currentFilter === 'error' ? 'active' : ''}" onclick="setFilter('error')">错误 (${stats.error})</button>
+          </div>
+        </div>
+
+        <div class="log-list">
+          ${filtered.length === 0 ? '<div class="empty">暂无日志</div>' : filtered.map(log => `
+            <div class="log-item">
+              <span class="log-time">${log.time.split(' ')[1] || log.time}</span>
+              <span class="log-user">${log.user}</span>
+              <span class="log-detail">
+                <span class="log-action-tag action-${log.action}">${actionLabels[log.action] || log.action}</span>
+                ${log.detail}
+              </span>
+              <span class="log-level level-${log.level}">${log.level}</span>
+            </div>
+          `).join('')}
+        </div>
+
+        <div class="stats-bar">
+          <span>共 <b>${filtered.length}</b> 条${currentFilter !== 'all' ? '（已过滤）' : ''}</span>
+          <span>时间范围: <b>${allLogs.length > 0 ? allLogs[allLogs.length-1].time.split(' ')[0] : '-'}</b> ~ <b>${allLogs.length > 0 ? allLogs[0].time.split(' ')[0] : '-'}</b></span>
+        </div>
+      `;
+    }
+
+    function setFilter(level) {
+      currentFilter = level;
+      render();
+    }
+
+    // ============================================================
+    // postMessage 通信
+    // ============================================================
+
+    window.addEventListener("message", (e) => {
+      if (e.data?.type === "skill-data" && e.data.payload) {
+        allLogs = e.data.payload.logs || [];
+        render();
+      }
+      // 增量追加日志（演示 skill-update 用法）
+      if (e.data?.type === "skill-update" && Array.isArray(e.data.payload)) {
+        allLogs = [...e.data.payload, ...allLogs];
+        render();
+      }
+    });
+
+    function navigateTo(page) {
+      window.parent.postMessage({ type: "skill-callback", action: "navigate", data: { page } }, "*");
+    }
+  </script>
+</body>
+</html>

@@ -1,97 +1,121 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
+// ─── 登录会话 ───
+
 model LoginSession {
-  id                   String   @id @default(cuid())
-  account              String
-  displayName          String?
-  rolesJson            Json?
-  accessTokenHash      String?
-  accessTokenExpiresAt DateTime?
-  refreshTokenHash     String
-  refreshTokenExpiresAt DateTime @map("expiresAt")
-  revokedAt            DateTime?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                    String    @id @default(cuid()) @db.VarChar(191)
+  account               String    @db.VarChar(191)
+  displayName           String?   @map("display_name") @db.VarChar(255)
+  rolesJson             Json?     @map("roles_json")
+  accessTokenHash       String?   @map("access_token_hash") @db.VarChar(255)
+  accessTokenExpiresAt  DateTime? @map("access_token_expires_at")
+  refreshTokenHash      String    @map("refresh_token_hash") @db.VarChar(255)
+  refreshTokenExpiresAt DateTime  @map("refresh_token_expires_at")
+  revokedAt             DateTime? @map("revoked_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
 
   @@index([account])
   @@index([accessTokenHash])
+  @@map("login_session")
 }
 
-model HubItem {
-  id            String       @id
-  /// Allowed values: mcp | employee-package | workflow-package
-  type          String
-  name          String
-  summary       String
-  description   String
-  latestVersion String
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  releases      HubRelease[]
+// ─── 安装/下载日志 ───
 
-  @@index([type])
+model InstallLog {
+  id           String   @id @default(cuid()) @db.VarChar(191)
+  account      String   @db.VarChar(191)
+  itemType     String   @map("item_type") @db.VarChar(20)
+  itemId       String   @map("item_id") @db.VarChar(191)
+  releaseId    String   @map("release_id") @db.VarChar(191)
+  action       String   @db.VarChar(50)
+  status       String   @db.VarChar(50)
+  errorMessage String?  @map("error_message") @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([itemType, itemId])
+  @@map("install_log")
 }
 
-model HubRelease {
-  id                      String   @id
-  itemId                  String
-  version                 String
-  releaseNotes            String
-  manifestJson            Json
-  artifactFileName        String   @default("")
-  artifactFileSize        Int      @default(0)
-  artifactStoragePath     String   @default("")
-  artifactDownloadUrl     String   @default("")
-  artifactDownloadExpires Int      @default(0)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  item                    HubItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+// ─── MCP 服务 ───
 
-  @@unique([itemId, version])
+model McpServer {
+  id              String             @id @db.VarChar(191)
+  name            String             @db.VarChar(255)
+  summary         String             @db.Text
+  description     String             @db.Text
+  icon            String             @default("") @db.Text
+  author          String             @default("") @db.VarChar(100)
+  downloadCount   Int                @default(0) @map("download_count")
+  latestVersion   String?            @map("latest_version") @db.VarChar(50)
+  latestReleaseId String?            @map("latest_release_id") @db.VarChar(191)
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+  releases        McpServerRelease[]
+
+  @@map("mcp_server")
 }
+
+model McpServerRelease {
+  id           String    @id @db.VarChar(191)
+  serverId     String    @map("server_id") @db.VarChar(191)
+  version      String    @db.VarChar(50)
+  releaseNotes String    @map("release_notes") @db.Text
+  configJson   Json      @map("config_json")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  server       McpServer @relation(fields: [serverId], references: [id], onDelete: Cascade)
+
+  @@unique([serverId, version])
+  @@index([serverId])
+  @@map("mcp_server_release")
+}
+
+// ─── 技能 ───
 
 model Skill {
-  id              String         @id
-  name            String
-  summary         String
-  description     String
-  latestVersion   String?
-  latestReleaseId String?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id              String         @id @db.VarChar(191)
+  name            String         @db.VarChar(255)
+  summary         String         @db.Text
+  description     String         @db.Text
+  icon            String         @default("") @db.Text
+  category        String         @default("other") @db.VarChar(50)
+  tags            Json           @default("[]")
+  author          String         @default("") @db.VarChar(100)
+  downloadCount   Int            @default(0) @map("download_count")
+  latestVersion   String?        @map("latest_version") @db.VarChar(50)
+  latestReleaseId String?        @map("latest_release_id") @db.VarChar(191)
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
   releases        SkillRelease[]
+
+  @@index([category])
+  @@map("skill")
 }
 
 model SkillRelease {
-  id                      String   @id
-  skillId                 String
-  version                 String
-  releaseNotes            String
-  manifestJson            Json
-  artifactFileName        String   @default("")
-  artifactFileSize        Int      @default(0)
-  artifactStoragePath     String   @default("")
-  artifactDownloadUrl     String   @default("")
-  artifactDownloadExpires Int      @default(0)
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  id                      String   @id @db.VarChar(191)
+  skillId                 String   @map("skill_id") @db.VarChar(191)
+  version                 String   @db.VarChar(50)
+  releaseNotes            String   @map("release_notes") @db.Text
+  manifestJson            Json     @map("manifest_json")
+  artifactFileName        String   @default("") @map("artifact_file_name") @db.VarChar(255)
+  artifactFileSize        Int      @default(0) @map("artifact_file_size")
+  artifactStoragePath     String   @default("") @map("artifact_storage_path") @db.VarChar(500)
+  artifactDownloadUrl     String   @default("") @map("artifact_download_url") @db.VarChar(500)
+  artifactDownloadExpires Int      @default(0) @map("artifact_download_expires")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
   skill                   Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
-}
 
-model InstallLog {
-  id           String   @id @default(cuid())
-  account      String
-  itemId       String
-  releaseId    String
-  action       String
-  status       String
-  errorMessage String?
-  createdAt    DateTime @default(now())
+  @@index([skillId])
+  @@map("skill_release")
 }

@@ -1,0 +1,11 @@
+{
+  "title": "员工数据",
+  "columns": ["id", "name", "department", "status"],
+  "rows": [
+    { "id": "001", "name": "张三", "department": "工程部", "status": "Active" },
+    { "id": "002", "name": "李四", "department": "产品部", "status": "Active" },
+    { "id": "003", "name": "王五", "department": "设计部", "status": "Inactive" },
+    { "id": "004", "name": "赵六", "department": "运营部", "status": "Pending" },
+    { "id": "005", "name": "钱七", "department": "工程部", "status": "Active" }
+  ]
+}

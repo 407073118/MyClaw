@@ -72,6 +72,44 @@
             :style="stageLayerStyle"
           >
             <svg class="edge-overlay" :width="canvasWidth" :height="canvasHeight">
+              <defs>
+                <marker
+                  id="arrowhead"
+                  markerWidth="10" markerHeight="8"
+                  refX="9" refY="4"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M 0 0 L 10 4 L 0 8 Z" fill="rgba(96,165,250,0.55)" />
+                </marker>
+                <marker
+                  id="arrowhead-active"
+                  markerWidth="10" markerHeight="8"
+                  refX="9" refY="4"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M 0 0 L 10 4 L 0 8 Z" fill="#60a5fa" />
+                </marker>
+                <marker
+                  id="arrowhead-conditional-true"
+                  markerWidth="10" markerHeight="8"
+                  refX="9" refY="4"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M 0 0 L 10 4 L 0 8 Z" fill="rgba(16,185,129,0.7)" />
+                </marker>
+                <marker
+                  id="arrowhead-conditional-false"
+                  markerWidth="10" markerHeight="8"
+                  refX="9" refY="4"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M 0 0 L 10 4 L 0 8 Z" fill="rgba(239,68,68,0.7)" />
+                </marker>
+              </defs>
               <g
                 v-for="edge in renderedEdges"
                 :key="edge.edge.id"
@@ -82,19 +120,35 @@
               >
                 <path
                   class="edge-path"
-                  :class="{ active: edge.edge.id === selectedEdgeId }"
+                  :class="{
+                    active: edge.edge.id === selectedEdgeId,
+                    'edge-true': edge.conditionBranch === 'true',
+                    'edge-false': edge.conditionBranch === 'false',
+                  }"
                   :d="edge.path"
+                  :marker-end="edgeMarker(edge)"
                 />
                 <path class="edge-hit" :d="edge.path" />
+                <text
+                  v-if="edge.conditionBranch"
+                  class="edge-label-text"
+                  :x="edge.labelPos.x"
+                  :y="edge.labelPos.y"
+                  text-anchor="middle"
+                >
+                  {{ edge.conditionBranch === 'true' ? 'True' : 'False' }}
+                </text>
               </g>
               <path
                 v-if="previewEdgePath"
                 data-testid="workflow-canvas-preview-edge"
                 class="edge-path edge-path--preview"
                 :d="previewEdgePath"
+                marker-end="url(#arrowhead)"
               />
             </svg>
 
+            <!-- Node cards -->
             <article
               v-for="renderedNode in renderedNodes"
               :key="renderedNode.node.id"
@@ -105,12 +159,15 @@
               :class="{
                 active: renderedNode.node.id === selectedNodeId,
                 dragging: dragState?.nodeId === renderedNode.node.id,
+                'is-terminal': renderedNode.node.kind === 'start' || renderedNode.node.kind === 'end',
               }"
-              :style="getNodeStyle(renderedNode.position)"
+              :style="getNodeStyle(renderedNode)"
               @click.stop="handleNodeSelect(renderedNode.node.id)"
               @mousedown="handleNodePointerDown(renderedNode.node.id, $event)"
             >
+              <!-- Top handle (target) -->
               <button
+                v-if="renderedNode.node.kind !== 'start'"
                 :data-testid="`workflow-canvas-target-handle-${renderedNode.node.id}`"
                 type="button"
                 class="node-handle node-handle--target"
@@ -122,8 +179,10 @@
               </button>
 
               <div class="node-header">
-                <component :is="nodeIconMap[renderedNode.node.kind]" class="node-type-icon" :data-kind="renderedNode.node.kind" :size="14" />
-                <span class="node-type-name">{{ nodeKindMap[renderedNode.node.kind] || renderedNode.node.kind }}</span>
+                <span class="node-kind-badge" :data-kind="renderedNode.node.kind">
+                  <component :is="nodeIconMap[renderedNode.node.kind]" :size="12" />
+                  {{ nodeKindMap[renderedNode.node.kind] || renderedNode.node.kind }}
+                </span>
                 <span
                   v-if="renderedNode.node.id === definition.entryNodeId"
                   class="entry-star"
@@ -135,15 +194,17 @@
               <div class="node-content">
                 <h4 class="node-label">{{ renderedNode.node.label }}</h4>
                 <p
+                  v-if="renderedNode.node.kind !== 'start' && renderedNode.node.kind !== 'end'"
                   class="node-summary"
                   :data-testid="`workflow-canvas-node-summary-${renderedNode.node.id}`"
                 >
                   {{ nodeSummary(renderedNode.node) }}
                 </p>
-                <code class="node-id">{{ renderedNode.node.id }}</code>
               </div>
 
+              <!-- Bottom handle (source) -->
               <button
+                v-if="renderedNode.node.kind !== 'end'"
                 :data-testid="`workflow-canvas-source-handle-${renderedNode.node.id}`"
                 type="button"
                 class="node-handle node-handle--source"
@@ -155,28 +216,6 @@
             </article>
           </div>
         </div>
-
-        <aside class="edges-sidebar">
-          <header class="sidebar-label">
-            <span>连线 ({{ definition.edges.length }})</span>
-          </header>
-          <div class="edge-scroll-list">
-            <button
-              v-for="edge in definition.edges"
-              :key="edge.id"
-              :data-testid="`workflow-canvas-edge-item-${edge.id}`"
-              class="edge-item"
-              :class="{ active: edge.id === selectedEdgeId }"
-              @click="handleEdgeSelect(edge.id)"
-            >
-              <div class="edge-flow">
-                <span class="node-ref">{{ edge.fromNodeId }}</span>
-                <ArrowRight :size="12" class="edge-arrow" />
-                <span class="node-ref">{{ edge.toNodeId }}</span>
-              </div>
-            </button>
-          </div>
-        </aside>
       </div>
 
       <div
@@ -197,7 +236,7 @@
 <script setup lang="ts">
 import type { WorkflowDefinition, WorkflowNode, WorkflowNodeKind } from "@myclaw-desktop/shared";
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { Play, MessageCircle, Wrench, User, GitBranch, Network, Merge, Square, ArrowRight } from "lucide-vue-next";
+import { Play, MessageCircle, Wrench, User, GitBranch, Network, Merge, Square } from "lucide-vue-next";
 
 import {
   buildFallbackNodeLayouts,
@@ -211,11 +250,13 @@ import {
   isGeneratedScopedReference,
 } from "@/components/workflow/workflow-node-factory";
 
-const NODE_WIDTH = 180;
-const NODE_HEIGHT = 96;
+const NODE_WIDTH = 200;
+const NODE_HEIGHT = 80;
+const TERMINAL_NODE_WIDTH = 120;
+const TERMINAL_NODE_HEIGHT = 48;
 const MIN_CANVAS_WIDTH = 1200;
-const MIN_CANVAS_HEIGHT = 720;
-const EDGE_CURVE_OFFSET = 72;
+const MIN_CANVAS_HEIGHT = 800;
+const EDGE_CURVE_OFFSET = 60;
 
 type WorkflowEditorMetadata = NonNullable<WorkflowDefinition["editor"]>;
 
@@ -248,6 +289,13 @@ type WorkflowConditionCarrier = WorkflowNode & {
     trueNodeId?: string;
     falseNodeId?: string;
   };
+};
+
+type RenderedEdge = {
+  edge: WorkflowDefinition["edges"][number];
+  path: string;
+  conditionBranch: "true" | "false" | null;
+  labelPos: WorkflowCanvasPoint;
 };
 
 const props = defineProps<{
@@ -312,35 +360,66 @@ watch(
   { immediate: true, deep: true },
 );
 
+function getNodeDimensions(kind: string) {
+  if (kind === "start" || kind === "end") {
+    return { width: TERMINAL_NODE_WIDTH, height: TERMINAL_NODE_HEIGHT };
+  }
+  return { width: NODE_WIDTH, height: NODE_HEIGHT };
+}
+
 const renderedNodes = computed(() => props.definition.nodes.map((node) => ({
   node,
   position: getNodePosition(node.id),
+  ...getNodeDimensions(node.kind),
 })));
 
-const renderedEdges = computed(() => props.definition.edges.flatMap((edge) => {
+const renderedEdges = computed<RenderedEdge[]>(() => props.definition.edges.flatMap((edge) => {
+  const fromNode = props.definition.nodes.find((n) => n.id === edge.fromNodeId);
+  const toNode = props.definition.nodes.find((n) => n.id === edge.toNodeId);
   const fromPosition = getNodePosition(edge.fromNodeId);
   const toPosition = getNodePosition(edge.toNodeId);
-  if (!fromPosition || !toPosition) {
+  if (!fromPosition || !toPosition || !fromNode || !toNode) {
     return [];
   }
 
+  const fromDim = getNodeDimensions(fromNode.kind);
+  const toDim = getNodeDimensions(toNode.kind);
+
   const anchors = computeEdgeAnchorPoints(
-    { x: fromPosition.x, y: fromPosition.y, width: NODE_WIDTH, height: NODE_HEIGHT },
-    { x: toPosition.x, y: toPosition.y, width: NODE_WIDTH, height: NODE_HEIGHT },
+    { x: fromPosition.x, y: fromPosition.y, width: fromDim.width, height: fromDim.height },
+    { x: toPosition.x, y: toPosition.y, width: toDim.width, height: toDim.height },
   );
 
-  return [{
-    edge,
-    path: buildEdgePath(anchors.start, anchors.end),
-  }];
+  // Detect condition branch
+  let conditionBranch: "true" | "false" | null = null;
+  if (fromNode?.kind === "condition") {
+    const carrier = fromNode as WorkflowConditionCarrier;
+    if (carrier.route?.trueNodeId === edge.toNodeId) conditionBranch = "true";
+    else if (carrier.route?.falseNodeId === edge.toNodeId) conditionBranch = "false";
+  }
+
+  const path = buildEdgePath(anchors.start, anchors.end);
+  const labelPos = {
+    x: (anchors.start.x + anchors.end.x) / 2,
+    y: (anchors.start.y + anchors.end.y) / 2 - 8,
+  };
+
+  return [{ edge, path, conditionBranch, labelPos }];
 }));
 
-const canvasWidth = computed(() => renderedNodes.value.reduce((maxX, renderedNode) => (
-  Math.max(maxX, renderedNode.position.x + NODE_WIDTH + 240)
+function edgeMarker(edge: RenderedEdge) {
+  if (edge.edge.id === selectedEdgeId.value) return "url(#arrowhead-active)";
+  if (edge.conditionBranch === "true") return "url(#arrowhead-conditional-true)";
+  if (edge.conditionBranch === "false") return "url(#arrowhead-conditional-false)";
+  return "url(#arrowhead)";
+}
+
+const canvasWidth = computed(() => renderedNodes.value.reduce((maxX, rn) => (
+  Math.max(maxX, rn.position.x + rn.width + 240)
 ), MIN_CANVAS_WIDTH));
 
-const canvasHeight = computed(() => renderedNodes.value.reduce((maxY, renderedNode) => (
-  Math.max(maxY, renderedNode.position.y + NODE_HEIGHT + 240)
+const canvasHeight = computed(() => renderedNodes.value.reduce((maxY, rn) => (
+  Math.max(maxY, rn.position.y + rn.height + 240)
 ), MIN_CANVAS_HEIGHT));
 
 const stageLayerStyle = computed(() => ({
@@ -354,18 +433,20 @@ const previewEdgePath = computed(() => {
     return "";
   }
 
+  const fromNode = props.definition.nodes.find((n) => n.id === connectionState.value?.fromNodeId);
   const fromPosition = getNodePosition(connectionState.value.fromNodeId);
-  if (!fromPosition) {
+  if (!fromPosition || !fromNode) {
     return "";
   }
 
+  const fromDim = getNodeDimensions(fromNode.kind);
   const anchors = computeEdgeAnchorPoints(
-    { x: fromPosition.x, y: fromPosition.y, width: NODE_WIDTH, height: NODE_HEIGHT },
+    { x: fromPosition.x, y: fromPosition.y, width: fromDim.width, height: fromDim.height },
     {
-      x: connectionState.value.pointer.x,
-      y: connectionState.value.pointer.y - NODE_HEIGHT / 2,
-      width: 0,
-      height: NODE_HEIGHT,
+      x: connectionState.value.pointer.x - NODE_WIDTH / 2,
+      y: connectionState.value.pointer.y,
+      width: NODE_WIDTH,
+      height: 0,
     },
   );
   return buildEdgePath(anchors.start, anchors.end);
@@ -443,7 +524,7 @@ const actionHint = computed(() => {
     return props.feedbackMessage;
   }
   if (connectionState.value) {
-    return "拖到目标节点左侧端口即可创建连线";
+    return "拖到目标节点顶部端口即可创建连线";
   }
   if (!selectedNodeId.value) {
     return "先选择一个节点，再添加 Join 或拖出新连线";
@@ -496,7 +577,7 @@ function getNodePosition(nodeId: string): WorkflowCanvasPoint {
 
   const fallbackLayout = buildFallbackNodeLayouts(props.definition.nodes.map((node) => node.id))
     .find((layout) => layout.nodeId === nodeId);
-  return fallbackLayout?.position ?? { x: 120, y: 180 };
+  return fallbackLayout?.position ?? { x: 300, y: 60 };
 }
 
 /** 读取节点当前出边数量，供连线约束和画布提示复用。 */
@@ -526,16 +607,17 @@ function updateNodePosition(nodeId: string, position: WorkflowCanvasPoint) {
 }
 
 function buildEdgePath(start: WorkflowCanvasPoint, end: WorkflowCanvasPoint): string {
-  const controlOffset = Math.max(EDGE_CURVE_OFFSET, Math.abs(end.x - start.x) * 0.35);
+  const controlOffset = Math.max(EDGE_CURVE_OFFSET, Math.abs(end.y - start.y) * 0.35);
   return [
     `M ${start.x} ${start.y}`,
-    `C ${start.x + controlOffset} ${start.y}, ${end.x - controlOffset} ${end.y}, ${end.x} ${end.y}`,
+    `C ${start.x} ${start.y + controlOffset}, ${end.x} ${end.y - controlOffset}, ${end.x} ${end.y}`,
   ].join(" ");
 }
 
-function getNodeStyle(position: WorkflowCanvasPoint) {
+function getNodeStyle(renderedNode: { position: WorkflowCanvasPoint; width: number; height: number }) {
   return {
-    transform: `translate(${position.x}px, ${position.y}px)`,
+    width: `${renderedNode.width}px`,
+    transform: `translate(${renderedNode.position.x}px, ${renderedNode.position.y}px)`,
   };
 }
 
@@ -851,6 +933,8 @@ onBeforeUnmount(() => {
   outline: none;
 }
 
+/* ── Palette ────────────────────────────────── */
+
 .palette {
   width: 64px;
   background: #121214;
@@ -920,6 +1004,8 @@ onBeforeUnmount(() => {
   color: #a1a1aa;
 }
 
+/* ── Stage layout ────────────────────────────── */
+
 .graph-stage-wrapper {
   flex: 1;
   display: flex;
@@ -945,12 +1031,6 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.edge-arrow {
-  color: #71717a;
-  background: #18181b;
-  border-radius: 50%;
-  padding: 1px;
-}
 .stat-tag {
   font-size: 11px;
   color: #71717a;
@@ -1013,6 +1093,8 @@ onBeforeUnmount(() => {
   transform-origin: top left;
 }
 
+/* ── Edges ────────────────────────────── */
+
 .edge-overlay {
   position: absolute;
   inset: 0;
@@ -1027,11 +1109,21 @@ onBeforeUnmount(() => {
 .edge-path {
   fill: none;
   stroke: rgba(96, 165, 250, 0.55);
-  stroke-width: 2.5px;
+  stroke-width: 2px;
+  transition: stroke 0.2s;
 }
 
 .edge-path.active {
   stroke: #60a5fa;
+  stroke-width: 2.5px;
+}
+
+.edge-path.edge-true {
+  stroke: rgba(16, 185, 129, 0.7);
+}
+
+.edge-path.edge-false {
+  stroke: rgba(239, 68, 68, 0.7);
 }
 
 .edge-path--preview {
@@ -1044,49 +1136,56 @@ onBeforeUnmount(() => {
   stroke-width: 18px;
 }
 
+.edge-label-text {
+  fill: #a1a1aa;
+  font-size: 10px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+/* ── Node cards ────────────────────────────── */
+
 .workflow-node-card {
-  width: 180px;
-  min-height: 96px;
+  min-height: 48px;
   background: #161618;
   border: 1px solid #27272a;
   border-radius: 12px;
-  padding: 12px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   cursor: pointer;
   transition: box-shadow 0.2s ease, border-color 0.2s ease, background 0.2s ease;
   position: absolute;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
 }
 
-.workflow-node-card[data-kind="llm"] {
-  box-shadow: inset 0 1px 0 rgba(16, 185, 129, 0.15), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+/* Terminal nodes (start/end) - pill shape */
+.workflow-node-card.is-terminal {
+  border-radius: 24px;
+  text-align: center;
 }
 
-.workflow-node-card[data-kind="tool"] {
-  box-shadow: inset 0 1px 0 rgba(59, 130, 246, 0.16), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+.workflow-node-card.is-terminal .node-header {
+  justify-content: center;
+  border-bottom: none;
+  padding: 6px 12px;
 }
 
-.workflow-node-card[data-kind="human-input"] {
-  box-shadow: inset 0 1px 0 rgba(249, 115, 22, 0.16), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+.workflow-node-card.is-terminal .node-content {
+  padding: 0 12px 6px;
+  align-items: center;
 }
 
-.workflow-node-card[data-kind="condition"] {
-  box-shadow: inset 0 1px 0 rgba(139, 92, 246, 0.18), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-
-.workflow-node-card[data-kind="subgraph"] {
-  box-shadow: inset 0 1px 0 rgba(20, 184, 166, 0.18), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-
-.workflow-node-card[data-kind="join"] {
-  box-shadow: inset 0 1px 0 rgba(234, 179, 8, 0.18), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
-
-.workflow-node-card[data-kind="end"] {
-  box-shadow: inset 0 1px 0 rgba(239, 68, 68, 0.16), 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-}
+/* Kind-specific top accent */
+.workflow-node-card[data-kind="llm"] { border-top: 2px solid #10b981; }
+.workflow-node-card[data-kind="tool"] { border-top: 2px solid #3b82f6; }
+.workflow-node-card[data-kind="human-input"] { border-top: 2px solid #f97316; }
+.workflow-node-card[data-kind="condition"] { border-top: 2px solid #8b5cf6; }
+.workflow-node-card[data-kind="subgraph"] { border-top: 2px solid #14b8a6; }
+.workflow-node-card[data-kind="join"] { border-top: 2px solid #eab308; }
+.workflow-node-card[data-kind="start"] { border-top: 2px solid #f59e0b; }
+.workflow-node-card[data-kind="end"] { border-top: 2px solid #ef4444; }
 
 .workflow-node-card:hover {
   border-color: #3b82f6;
@@ -1106,58 +1205,34 @@ onBeforeUnmount(() => {
 .node-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  border-bottom: 1px solid #27272a;
-  background: rgba(255, 255, 255, 0.02);
+  justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(39, 39, 42, 0.6);
 }
 
-.node-type-icon {
-  color: #a1a1aa;
-}
-
-.node-type-icon[data-kind="llm"] {
-  color: #10b981;
-}
-
-.node-type-icon[data-kind="tool"] {
-  color: #3b82f6;
-}
-
-.node-type-icon[data-kind="start"] {
-  color: #f59e0b;
-}
-
-.node-type-icon[data-kind="condition"] {
-  color: #8b5cf6;
-}
-
-.node-type-icon[data-kind="human-input"] {
-  color: #f97316;
-}
-
-.node-type-icon[data-kind="subgraph"] {
-  color: #14b8a6;
-}
-
-.node-type-icon[data-kind="join"] {
-  color: #eab308;
-}
-
-.node-type-icon[data-kind="end"] {
-  color: #ef4444;
-}
-
-.node-type-name {
+.node-kind-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  color: #71717a;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
+.node-kind-badge[data-kind="llm"] { color: #10b981; }
+.node-kind-badge[data-kind="tool"] { color: #3b82f6; }
+.node-kind-badge[data-kind="start"] { color: #f59e0b; }
+.node-kind-badge[data-kind="condition"] { color: #8b5cf6; }
+.node-kind-badge[data-kind="human-input"] { color: #f97316; }
+.node-kind-badge[data-kind="subgraph"] { color: #14b8a6; }
+.node-kind-badge[data-kind="join"] { color: #eab308; }
+.node-kind-badge[data-kind="end"] { color: #ef4444; }
+
 .entry-star {
-  margin-left: auto;
   color: #f59e0b;
   font-size: 10px;
 }
@@ -1165,7 +1240,8 @@ onBeforeUnmount(() => {
 .node-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  padding: 6px 12px 8px;
 }
 
 .node-label {
@@ -1173,118 +1249,65 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   color: #f4f4f5;
+  line-height: 1.3;
 }
 
 .node-summary {
   margin: 0;
   font-size: 11px;
-  line-height: 1.4;
-  color: #94a3b8;
+  line-height: 1.3;
+  color: #71717a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.node-id {
-  font-size: 10px;
-  color: #52525b;
-  font-family: ui-monospace, monospace;
-}
+/* ── Handles (top/bottom for vertical flow) ────── */
 
 .node-handle {
   position: absolute;
-  top: 50%;
-  width: 18px;
-  height: 18px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
   border-radius: 999px;
-  border: 1px solid #3f3f46;
+  border: 2px solid #3f3f46;
   background: #18181b;
-  transform: translateY(-50%);
+  transform: translateX(-50%);
   cursor: crosshair;
+  transition: all 0.15s;
+  z-index: 5;
 }
 
 .node-handle--target {
-  left: -9px;
+  top: -7px;
 }
 
 .node-handle--source {
-  right: -9px;
+  bottom: -7px;
 }
 
-.node-handle.ready,
+.node-handle.ready {
+  border-color: #10b981;
+  background: #065f46;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+  width: 18px;
+  height: 18px;
+  top: -9px;
+}
+
 .node-handle.active,
 .workflow-node-card:hover .node-handle {
   border-color: #60a5fa;
   background: #1d4ed8;
 }
 
-.edges-sidebar {
-  width: 180px;
-  background: rgba(13, 13, 15, 0.95);
-  border-left: 1px solid #27272a;
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-label {
-  padding: 10px 16px;
-  font-size: 11px;
-  color: #71717a;
-  font-weight: 700;
-  border-bottom: 1px solid #27272a;
-}
-
-.edge-scroll-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-}
-
-.edge-item {
-  padding: 10px 16px;
-  border: none;
-  border-bottom: 1px solid #1f1f23;
-  background: transparent;
-  color: #a1a1aa;
-  cursor: pointer;
-  transition: all 0.2s;
-  text-align: left;
-}
-
-.edge-item:hover {
-  background: #18181b;
-  color: #f4f4f5;
-}
-
-.edge-item.active {
-  background: rgba(59, 130, 246, 0.1);
-  color: #3b82f6;
-  border-left: 2px solid #3b82f6;
-}
-
-.edge-flow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 10px;
-}
-
-.node-ref {
-  font-family: ui-monospace, monospace;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
-}
-
-.edge-arrow {
-  flex-shrink: 0;
-}
+/* ── Issues & hints ────────────────────────────── */
 
 .graph-issues-banner {
   position: absolute;
   top: 52px;
   left: 84px;
-  right: 200px;
+  right: 20px;
   padding: 8px 12px;
   border-radius: 8px;
   background: rgba(245, 158, 11, 0.12);
@@ -1296,18 +1319,19 @@ onBeforeUnmount(() => {
 
 .hint-toast {
   position: absolute;
-  top: 16px;
+  bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
-  background: #161618;
+  background: rgba(22, 22, 24, 0.95);
   border: 1px solid #3b82f6;
-  color: #3b82f6;
-  padding: 6px 12px;
-  border-radius: 6px;
+  color: #93c5fd;
+  padding: 6px 14px;
+  border-radius: 8px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
   z-index: 100;
+  white-space: nowrap;
 }
 
 .visually-hidden {

@@ -1,0 +1,12 @@
+[
+  { "time": "2026-04-01 15:30", "user": "张三", "action": "push", "detail": "feat: 重构 SkillDetailPage 文件树组件", "level": "info" },
+  { "time": "2026-04-01 14:20", "user": "李四", "action": "deploy", "detail": "cloud-api v0.3.1 部署到 pre 环境", "level": "success" },
+  { "time": "2026-04-01 13:45", "user": "钱七", "action": "bug", "detail": "发现 #142: WebPanel 拖拽在 iframe 上失效", "level": "warning" },
+  { "time": "2026-04-01 11:00", "user": "王五", "action": "review", "detail": "通过 PR #89: 环境配置体系", "level": "info" },
+  { "time": "2026-04-01 10:15", "user": "赵六", "action": "design", "detail": "完成 Skill 详情页 UI 稿", "level": "success" },
+  { "time": "2026-03-31 18:30", "user": "张三", "action": "push", "detail": "fix: 修复模型持久化 stale reference bug", "level": "info" },
+  { "time": "2026-03-31 16:00", "user": "李四", "action": "incident", "detail": "pre 环境数据库连接池耗尽，已恢复", "level": "error" },
+  { "time": "2026-03-31 14:20", "user": "钱七", "action": "test", "detail": "完成 Phase 8 基础设施测试 19/19 通过", "level": "success" },
+  { "time": "2026-03-31 10:00", "user": "王五", "action": "meeting", "detail": "Sprint 12 站会：讨论 WebPanel 方案", "level": "info" },
+  { "time": "2026-03-30 17:45", "user": "赵六", "action": "design", "detail": "交付侧边栏 user-card 组件设计稿", "level": "success" }
+]

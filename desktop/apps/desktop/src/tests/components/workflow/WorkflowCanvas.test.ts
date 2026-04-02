@@ -42,7 +42,8 @@ describe("WorkflowCanvas", () => {
       "translate(120px, 180px)",
     );
     expect(wrapper.get("[data-testid='workflow-canvas-edge-edge-start-end']").exists()).toBe(true);
-    expect(wrapper.get("[data-testid='workflow-canvas-node-summary-node-start']").text()).toContain("入口节点");
+    // Terminal nodes (start/end) don't show summary text
+    expect(wrapper.get("[data-testid='workflow-canvas-node-node-start']").text()).toContain("Start");
     expect(wrapper.get("[data-testid='workflow-canvas-add-node-human-input']").text()).toContain("人工");
   });
 
@@ -103,7 +104,8 @@ describe("WorkflowCanvas", () => {
     expect(wrapper.get("[data-testid='workflow-canvas-node-summary-node-condition']").text()).toContain("F:node-tool");
     expect(wrapper.get("[data-testid='workflow-canvas-node-summary-node-subgraph']").text()).toContain("workflow-escalation");
     expect(wrapper.get("[data-testid='workflow-canvas-node-summary-node-join']").text()).toContain("2 个上游");
-    expect(wrapper.get("[data-testid='workflow-canvas-node-summary-node-end']").text()).toContain("结束节点");
+    // Terminal nodes (start/end) don't render summary elements
+    expect(wrapper.get("[data-testid='workflow-canvas-node-node-end']").text()).toContain("End");
   });
 
   it("shows condition route errors directly on the canvas", () => {

@@ -27,12 +27,17 @@ import type {
   CloudHubItemDetail,
   CloudHubItemType,
   CloudHubManifest,
+  CloudSkillCategory,
+  CloudSkillDetail,
+  CloudSkillSummary,
 } from "@/services/cloud-hub-client";
 import {
   fetchCloudHubDetail,
   fetchCloudHubDownloadToken,
   fetchCloudHubItems,
   fetchCloudHubManifest,
+  fetchCloudSkillDetail,
+  fetchCloudSkills,
 } from "@/services/cloud-hub-client";
 import {
   createEmployee as createEmployeeRequest,
@@ -123,6 +128,8 @@ type WorkspaceState = {
   cloudHubItems: CloudHubItem[];
   cloudHubDetail: CloudHubItemDetail | null;
   cloudHubManifest: CloudHubManifest | null;
+  cloudSkills: CloudSkillSummary[];
+  cloudSkillDetail: CloudSkillDetail | null;
   approvals: ApprovalPolicy | null;
   approvalRequests: ApprovalRequest[];
 };
@@ -320,6 +327,8 @@ export const useWorkspaceStore = defineStore("workspace", {
     workflowRuns: {},
     cloudHubItems: [],
     cloudHubDetail: null,
+    cloudSkills: [],
+    cloudSkillDetail: null,
     cloudHubManifest: null,
     approvals: null,
     approvalRequests: [],
@@ -775,6 +784,20 @@ export const useWorkspaceStore = defineStore("workspace", {
       this.workflowRuns = mergeWorkflowRunMap(this.workflowRuns, payload.items);
       this.workflowRuns[payload.run.id] = payload.run;
       return payload.run;
+    },
+    async loadCloudSkills(query?: { category?: CloudSkillCategory; keyword?: string; sort?: "latest" | "downloads" | "name"; tag?: string }) {
+      const shell = useShellStore();
+      const auth = useDesktopAuthStore();
+      const skills = await fetchCloudSkills(shell.runtimeBaseUrl, query, auth.session.accessToken);
+      this.cloudSkills = skills;
+      return skills;
+    },
+    async loadCloudSkillDetail(skillId: string) {
+      const shell = useShellStore();
+      const auth = useDesktopAuthStore();
+      const detail = await fetchCloudSkillDetail(shell.runtimeBaseUrl, skillId, auth.session.accessToken);
+      this.cloudSkillDetail = detail;
+      return detail;
     },
     async loadCloudHubItems(type: "all" | CloudHubItemType = "all") {
       const shell = useShellStore();

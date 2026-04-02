@@ -5,7 +5,7 @@ const { user, isSessionValid, clearSession } = useCloudSession();
 
 const navigation = [
   { label: "Hub", to: "/hub" },
-  { label: "Skills", to: "/skills" },
+  { label: "Skills 市场", to: "/skills" },
   { label: "MCP", to: "/mcp" }
 ];
 

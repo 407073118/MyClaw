@@ -1,0 +1,80 @@
+{
+  "name": "myclaw-desktop",
+  "version": "0.1.0",
+  "description": "MyClaw Desktop - Electron + React",
+  "main": "dist/src/main/index.js",
+  "scripts": {
+    "dev": "concurrently -n main,renderer \"pnpm run dev:main\" \"pnpm run dev:renderer\"",
+    "dev:main": "tsc -p tsconfig.main.json --watch",
+    "dev:renderer": "vite",
+    "build": "node scripts/set-env.js development && pnpm run build:main && pnpm run build:renderer",
+    "build:pre": "node scripts/set-env.js pre && pnpm run build:main && pnpm run build:renderer",
+    "build:prod": "node scripts/set-env.js production && pnpm run build:main && pnpm run build:renderer",
+    "build:main": "tsc -p tsconfig.main.json && tsc-alias -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "start": "electron dist/src/main/index.js",
+    "pack": "pnpm run build && electron-builder --dir",
+    "dist": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false pnpm run build && electron-builder",
+    "dist:pre": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false pnpm run build:pre && electron-builder",
+    "dist:prod": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false pnpm run build:prod && electron-builder",
+    "typecheck": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.renderer.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "marked": "^17.0.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.0",
+    "sql.js": "^1.11.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.0",
+    "cross-env": "^10.1.0",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "jsdom": "^26.0.0",
+    "sharp": "^0.34.5",
+    "tsc-alias": "^1.8.16",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.1",
+    "vitest": "^3.0.8"
+  },
+  "build": {
+    "appId": "com.myclaw.desktop",
+    "productName": "MyClaw",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*",
+      "builtin-skills/**/*"
+    ],
+    "icon": "build/icon.png",
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false,
+      "sign": null
+    },
+    "mac": {
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "icon": "build/icons"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

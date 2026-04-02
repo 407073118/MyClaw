@@ -36,6 +36,7 @@ assert.ok(existsSync(join(root, "server/api/skills.get.ts")));
 assert.ok(existsSync(join(root, "server/api/skills.post.ts")));
 assert.ok(existsSync(join(root, "server/api/skills/[id].get.ts")));
 assert.ok(existsSync(join(root, "server/api/skills/[id]/releases.post.ts")));
+assert.ok(existsSync(join(root, "server/api/skills/[id].put.ts")));
 assert.ok(existsSync(join(root, "server/api/mcp/items.get.ts")));
 assert.ok(existsSync(join(root, "server/api/mcp/items/[id].get.ts")));
 assert.ok(existsSync(join(root, "server/api/mcp/items.post.ts")));
@@ -123,9 +124,9 @@ assert.match(skills, /NuxtLink/);
 assert.doesNotMatch(skills, /\/api\/hub\//);
 assert.match(skills, /\/skills\/publish/);
 assert.doesNotMatch(skills, /local skills/i);
-assert.match(skills, /搜索云端 Skills/);
+assert.match(skills, /搜索 Skills/);
 assert.match(skills, /发布 Skill/);
-assert.match(skills, /个有效 Skills/);
+assert.match(skills, /个 Skills/);
 assert.match(skills, /正在加载 Skills 列表/);
 assert.match(skills, /没有找到匹配的 Skills/);
 
@@ -151,7 +152,7 @@ assert.match(publishPage, /文档与说明/);
 assert.match(publishPage, /配置项/);
 assert.match(publishPage, /上传产物包/);
 assert.match(publishPage, /请先选择 ZIP 包后再发布/);
-assert.match(publishPage, /创建 Skill 失败/);
+assert.match(publishPage, /发布 Skill 失败/);
 
 assert.match(skillsPost, /proxyCloudApi/);
 assert.doesNotMatch(skillsPost, /mkdirSync/);

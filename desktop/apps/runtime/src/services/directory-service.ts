@@ -1,14 +1,18 @@
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 function normalizeSeparators(value: string): string {
   return value.replace(/\\/g, "/");
 }
 
-function ensurePathInsideRoot(root: string, target: string): void {
+function isPathInsideRoot(root: string, target: string): boolean {
   const normalizedRoot = normalizeSeparators(resolve(root)).toLowerCase();
   const normalizedTarget = normalizeSeparators(resolve(target)).toLowerCase();
-  if (!(normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`))) {
+  return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(`${normalizedRoot}/`);
+}
+
+function ensurePathInsideRoot(root: string, target: string): void {
+  if (!isPathInsideRoot(root, target)) {
     throw new Error("路径越界：仅允许访问工作区目录内文件。");
   }
 }
@@ -22,18 +26,38 @@ export class DirectoryService {
   }
 
   /** 根据会话附加目录计算当前文件操作的根目录。 */
-  getAttachedDirectory(attachedDirectory: string | null): string {
+  getAttachedDirectory(attachedDirectory: string | null, allowUnrestricted = false): string {
     const root = attachedDirectory ? resolve(attachedDirectory) : resolve(this.workspaceRoot);
-    ensurePathInsideRoot(this.workspaceRoot, root);
+    if (!allowUnrestricted) {
+      ensurePathInsideRoot(this.workspaceRoot, root);
+    }
     return root;
   }
 
   /** 将用户输入路径解析为受根目录约束的绝对路径。 */
-  resolvePath(targetPath: string, attachedDirectory: string | null = null): string {
-    const base = this.getAttachedDirectory(attachedDirectory);
+  resolvePath(targetPath: string, attachedDirectory: string | null = null, allowUnrestricted = false): string {
+    const base = this.getAttachedDirectory(attachedDirectory, allowUnrestricted);
     const resolved = resolve(base, targetPath);
-    ensurePathInsideRoot(base, resolved);
+    if (!allowUnrestricted) {
+      ensurePathInsideRoot(base, resolved);
+    }
     return resolved;
+  }
+
+  /** 检查路径是否位于工作区内（不抛出异常）。 */
+  isPathInsideWorkspace(targetPath: string, attachedDirectory: string | null = null): boolean {
+    try {
+      const base = this.getAttachedDirectory(attachedDirectory);
+      const resolved = resolve(base, targetPath);
+      return isPathInsideRoot(base, resolved);
+    } catch {
+      return false;
+    }
+  }
+
+  /** 解析绝对路径，无工作区限制（仅用于用户已授权的外部路径访问）。 */
+  resolveUnrestricted(targetPath: string): string {
+    return resolve(targetPath);
   }
 
   /** 读取文本文件，并在超长时做安全截断。 */
@@ -41,8 +65,9 @@ export class DirectoryService {
     targetPath: string,
     attachedDirectory: string | null = null,
     maxChars = 12000,
+    allowUnrestricted = false,
   ): Promise<string> {
-    const resolved = this.resolvePath(targetPath, attachedDirectory);
+    const resolved = this.resolvePath(targetPath, attachedDirectory, allowUnrestricted);
     const content = await readFile(resolved, "utf8");
     if (content.length <= maxChars) {
       return content;
@@ -81,8 +106,8 @@ export class DirectoryService {
   }
 
   /** 列出目录项，并以稳定顺序返回。 */
-  async listDirectory(targetPath = ".", attachedDirectory: string | null = null): Promise<string[]> {
-    const resolved = this.resolvePath(targetPath, attachedDirectory);
+  async listDirectory(targetPath = ".", attachedDirectory: string | null = null, allowUnrestricted = false): Promise<string[]> {
+    const resolved = this.resolvePath(targetPath, attachedDirectory, allowUnrestricted);
     const entries = await readdir(resolved, { withFileTypes: true });
     return entries
       .map((entry) => `${entry.isDirectory() ? "dir" : "file"} ${entry.name}`)
@@ -90,8 +115,8 @@ export class DirectoryService {
   }
 
   /** 返回文件或目录的基础元信息。 */
-  async statPath(targetPath: string, attachedDirectory: string | null = null): Promise<string> {
-    const resolved = this.resolvePath(targetPath, attachedDirectory);
+  async statPath(targetPath: string, attachedDirectory: string | null = null, allowUnrestricted = false): Promise<string> {
+    const resolved = this.resolvePath(targetPath, attachedDirectory, allowUnrestricted);
     const metadata = await stat(resolved);
     const type = metadata.isDirectory() ? "dir" : "file";
 
@@ -103,15 +128,84 @@ export class DirectoryService {
     ].join("\n");
   }
 
+  /** 按 glob 模式查找文件路径，返回匹配的相对路径列表。 */
+  async findFiles(
+    pattern: string,
+    targetPath = ".",
+    attachedDirectory: string | null = null,
+    maxResults = 200,
+    allowUnrestricted = false,
+  ): Promise<string[]> {
+    const base = this.resolvePath(targetPath, attachedDirectory, allowUnrestricted);
+    const root = this.getAttachedDirectory(attachedDirectory, allowUnrestricted);
+    const matches: string[] = [];
+
+    const parts = pattern.replace(/\\/g, "/").split("/").filter(Boolean);
+
+    const matchSegment = (segment: string, patternPart: string): boolean => {
+      const regex = new RegExp(
+        "^" +
+          patternPart
+            .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+            .replace(/\*/g, ".*")
+            .replace(/\?/g, ".") +
+          "$",
+      );
+      return regex.test(segment);
+    };
+
+    const matchPath = (relPath: string): boolean => {
+      const segments = relPath.replace(/\\/g, "/").split("/");
+      if (pattern.includes("**")) {
+        const regex = new RegExp(
+          "^" +
+            pattern
+              .replace(/\\/g, "/")
+              .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+              .replace(/\*\*/g, "<<GLOBSTAR>>")
+              .replace(/\*/g, "[^/]*")
+              .replace(/\?/g, "[^/]")
+              .replace(/<<GLOBSTAR>>/g, ".*") +
+            "$",
+        );
+        return regex.test(relPath.replace(/\\/g, "/"));
+      }
+      if (parts.length !== segments.length) {
+        return parts.length === 1 && matchSegment(segments[segments.length - 1], parts[0]);
+      }
+      return parts.every((part, i) => matchSegment(segments[i], part));
+    };
+
+    const visit = async (currentPath: string): Promise<void> => {
+      if (matches.length >= maxResults) return;
+      const entries = await readdir(currentPath, { withFileTypes: true });
+      for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+        if (matches.length >= maxResults) break;
+        const fullPath = join(currentPath, entry.name);
+        const relPath = normalizeSeparators(relative(root, fullPath));
+        if (entry.isDirectory()) {
+          if (entry.name === "node_modules" || entry.name === ".git") continue;
+          await visit(fullPath);
+        } else if (matchPath(relPath)) {
+          matches.push(relPath);
+        }
+      }
+    };
+
+    await visit(base);
+    return matches;
+  }
+
   /** 在指定目录树内搜索文本内容，返回命中的相对路径与行号。 */
   async searchText(
     pattern: string,
     targetPath = ".",
     attachedDirectory: string | null = null,
     maxResults = 100,
+    allowUnrestricted = false,
   ): Promise<string[]> {
-    const base = this.resolvePath(targetPath, attachedDirectory);
-    const root = this.getAttachedDirectory(attachedDirectory);
+    const base = this.resolvePath(targetPath, attachedDirectory, allowUnrestricted);
+    const root = this.getAttachedDirectory(attachedDirectory, allowUnrestricted);
     const matches: string[] = [];
 
     const visit = async (currentPath: string): Promise<void> => {

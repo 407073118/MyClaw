@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx prisma:*)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"执行\" npx prisma db push --force-reset)",
+      "Bash(mysql -u root -p123456 -h 192.168.162.82 myclaw_cloud -e \"SHOW TABLE STATUS\\\\G\")",
+      "Bash(mysql -u root -p123456 -h 192.168.162.82 myclaw_cloud -e \"SHOW FULL COLUMNS FROM skill;\")",
+      "Bash(mysql -u root -p123456 -h 192.168.162.82 --default-character-set=utf8mb4 myclaw_cloud -e \"SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA=''myclaw_cloud'';\")",
+      "Bash(mysql -u root -p123456 -h 192.168.162.82 --default-character-set=utf8mb4 myclaw_cloud -e \"SELECT COLUMN_NAME, COLUMN_COMMENT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=''myclaw_cloud'' AND TABLE_NAME=''skill'';\")",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:smithery.ai)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(mysql -u root -p123456 -h 192.168.162.82 --default-character-set=utf8mb4 myclaw_cloud -e \"SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA=''myclaw_cloud'' ORDER BY TABLE_NAME;\")",
+      "Bash(mysql -u root -p123456 -h 192.168.162.82 --default-character-set=utf8mb4 myclaw_cloud -e \"SELECT COLUMN_NAME, COLUMN_COMMENT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=''myclaw_cloud'' AND TABLE_NAME=''mcp_server'' ORDER BY ORDINAL_POSITION;\")",
+      "Bash(mysql -u root -p123456 -h 192.168.162.82 --default-character-set=utf8mb4 myclaw_cloud -e \"SELECT COLUMN_NAME, COLUMN_COMMENT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=''myclaw_cloud'' AND TABLE_NAME=''mcp_server_release'' ORDER BY ORDINAL_POSITION;\")",
+      "Bash(pnpm --dir packages/shared build)",
+      "Bash(npx vitest:*)",
+      "Bash(pnpm --dir apps/cloud-api add -D esbuild)",
+      "Bash(node scripts/bundle.mjs)",
+      "Bash(find F:/MyClaw/cloud -path */node_modules/.prisma/client -type d)",
+      "Bash(du -sh F:/MyClaw/cloud/apps/cloud-api/bundle/node_modules/@prisma/client/*/)",
+      "Bash(bash scripts/pack-deploy.sh)",
+      "Bash(pnpm --dir apps/cloud-web build)",
+      "Bash(pnpm exec:*)",
+      "Bash(tasklist)",
+      "Bash(taskkill //F //PID 35768 //PID 16860 //PID 34692)",
+      "Bash(grep -E \"so\\\\.node|dll|wasm$|index\\\\.js\")",
+      "Bash(tar czf:*)",
+      "Bash(tar tzf:*)",
+      "Read(//f/MyClaw/cloud/**)",
+      "Bash(echo '!!! 缺少 Linux 引擎 !!!' echo __NEW_LINE_83c992ad06cc66da__ echo '=== 4. Prisma index.js - 检查 binaryTargets ===' grep -A5 \"\"binaryTargets\"\" /tmp/deploy-verify/myclaw-cloud/cloud-api/node_modules/.prisma/client/index.js echo __NEW_LINE_83c992ad06cc66da__ echo '=== 5. Prisma index.js - 检查引擎查找路径 ===' grep query_engine /tmp/deploy-verify/myclaw-cloud/cloud-api/node_modules/.prisma/client/index.js)",
+      "Bash(xargs -I{} echo \"  {}\" echo \"\" echo \"模拟解析 cloud-web .env:\" grep -v '^#' /tmp/deploy-verify/myclaw-cloud/cloud-web/.env)",
+      "Bash(xargs -I{} echo \"  {}\" echo \"\" __NEW_LINE_130465c184b5d4af__ echo \"=== 14. 检查 setup.sh 的 Prisma generate 问题 ===\" echo \"setup.sh 会运行 npx prisma generate --schema=schema.prisma\" echo \"但 bundle 已经自带 Linux 引擎了，setup.sh 会额外安装 prisma@6 覆盖\" echo \"这可能导致版本不一致！\" echo \"\" __NEW_LINE_130465c184b5d4af__ echo \"=== 15. 检查 Prisma relativeEnvPaths ===\" grep 'relativeEnvPaths' /tmp/deploy-verify/myclaw-cloud/cloud-api/node_modules/.prisma/client/index.js)",
+      "Bash(ls -lh /f/MyClaw/cloud/node_modules/.pnpm/@prisma+client@6.19.2_prisma@6.19.2_typescript@5.9.3__typescript@5.9.3/node_modules/.prisma/client/libquery_engine*)"
+    ]
+  }
+}

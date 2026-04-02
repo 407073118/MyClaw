@@ -6,13 +6,23 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import { createWorkspaceFixture } from "@/test-utils/workspace-fixture";
 import HubView from "@/views/HubView.vue";
 
-const cloudSkillDetail = {
+const cloudSkillSummary = {
   id: "cloud-skill-security-audit",
-  type: "skill" as const,
   name: "Security Audit",
   summary: "Audit a codebase for security regressions before release.",
   description: "Cloud-hosted audit skill package with curated checks and release metadata.",
+  icon: "",
+  category: "dev-tools" as const,
+  tags: ["security", "audit"],
+  author: "myclaw",
+  downloadCount: 42,
   latestVersion: "1.2.0",
+  latestReleaseId: "release-skill-security-audit-1-2-0",
+  updatedAt: "2026-03-24T00:00:00.000Z",
+};
+
+const cloudSkillDetail = {
+  ...cloudSkillSummary,
   releases: [
     {
       id: "release-skill-security-audit-1-2-0",
@@ -20,6 +30,8 @@ const cloudSkillDetail = {
       releaseNotes: "Adds dependency review and CI guidance.",
     },
   ],
+  readme: "",
+  createdAt: "2026-01-01T00:00:00.000Z",
 };
 
 const cloudMcpDetail = {
@@ -105,15 +117,7 @@ const cloudWorkflowPackageManifest = {
 };
 
 function setupCloudHubMocks(workspace: ReturnType<typeof useWorkspaceStore>) {
-  const allItems = [
-    {
-      id: cloudSkillDetail.id,
-      type: cloudSkillDetail.type,
-      name: cloudSkillDetail.name,
-      summary: cloudSkillDetail.summary,
-      latestVersion: cloudSkillDetail.latestVersion,
-      iconUrl: null,
-    },
+  const hubItems = [
     {
       id: cloudMcpDetail.id,
       type: cloudMcpDetail.type,
@@ -140,32 +144,47 @@ function setupCloudHubMocks(workspace: ReturnType<typeof useWorkspaceStore>) {
     },
   ];
 
+  // Skills tab uses separate API
+  vi.spyOn(workspace, "loadCloudSkills").mockImplementation(async () => {
+    workspace.cloudSkills = [cloudSkillSummary];
+    return [cloudSkillSummary];
+  });
+
+  vi.spyOn(workspace, "loadCloudSkillDetail").mockImplementation(async (skillId) => {
+    if (skillId === cloudSkillSummary.id) {
+      workspace.cloudSkillDetail = cloudSkillDetail;
+      return cloudSkillDetail;
+    }
+    workspace.cloudSkillDetail = cloudSkillDetail;
+    return cloudSkillDetail;
+  });
+
+  // MCP / Employee / Workflow tabs use hub items API
   vi.spyOn(workspace, "loadCloudHubItems").mockImplementation(async (type = "all") => {
-    const items = type === "all" ? allItems : allItems.filter((item) => item.type === type);
+    const items = type === "all" ? hubItems : hubItems.filter((item) => item.type === type);
     workspace.cloudHubItems = items;
     return items;
   });
 
   vi.spyOn(workspace, "loadCloudHubDetail").mockImplementation(async (itemId) => {
-    const detailById = {
-      [cloudSkillDetail.id]: cloudSkillDetail,
+    const detailById: Record<string, typeof cloudMcpDetail> = {
       [cloudMcpDetail.id]: cloudMcpDetail,
       [cloudEmployeePackageDetail.id]: cloudEmployeePackageDetail,
       [cloudWorkflowPackageDetail.id]: cloudWorkflowPackageDetail,
     };
-    const detail = detailById[itemId as keyof typeof detailById] ?? cloudSkillDetail;
+    const detail = detailById[itemId] ?? cloudMcpDetail;
     workspace.cloudHubDetail = detail;
     return detail;
   });
 
   vi.spyOn(workspace, "loadCloudHubManifest").mockImplementation(async (releaseId) => {
-    const manifestByReleaseId = {
+    const manifestByReleaseId: Record<string, typeof cloudSkillManifest | typeof cloudMcpManifest | typeof cloudEmployeePackageManifest | typeof cloudWorkflowPackageManifest> = {
       [cloudSkillDetail.releases[0].id]: cloudSkillManifest,
       [cloudMcpDetail.releases[0].id]: cloudMcpManifest,
       [cloudEmployeePackageDetail.releases[0].id]: cloudEmployeePackageManifest,
       [cloudWorkflowPackageDetail.releases[0].id]: cloudWorkflowPackageManifest,
     };
-    const manifest = manifestByReleaseId[releaseId as keyof typeof manifestByReleaseId] ?? cloudSkillManifest;
+    const manifest = manifestByReleaseId[releaseId] ?? cloudSkillManifest;
     workspace.cloudHubManifest = manifest;
     return manifest;
   });
@@ -180,7 +199,7 @@ describe("HubView", () => {
     vi.useRealTimers();
   });
 
-  it("renders cloud hub tabs and lets users view cloud items", async () => {
+  it("renders cloud hub tabs and lets users view cloud skills", async () => {
     const pinia = createPinia();
     setActivePinia(pinia);
     const workspace = useWorkspaceStore();
@@ -190,24 +209,24 @@ describe("HubView", () => {
     const wrapper = mount(HubView, {
       global: {
         plugins: [pinia],
+        stubs: { teleport: true },
       },
     });
 
     await flushPromises();
 
-    expect(wrapper.text()).toContain("云端Hub");
+    expect(wrapper.text()).toContain("云端");
     expect(wrapper.get("[data-testid='hub-tab-skills']").text()).toContain("技能");
     expect(wrapper.get("[data-testid='hub-tab-mcp']").text()).toContain("MCP");
     expect(wrapper.get("[data-testid='hub-tab-employee-packages']").text()).toContain("员工包");
     expect(wrapper.get("[data-testid='hub-tab-workflow-packages']").text()).toContain("工作流包");
 
+    // Skills tab is default — click on a skill card
     await wrapper.get("[data-testid='hub-item-cloud-skill-security-audit']").trigger("click");
     await flushPromises();
 
-    expect(workspace.cloudHubDetail?.id).toBe("cloud-skill-security-audit");
-    expect(workspace.cloudHubManifest?.kind).toBe("skill");
+    expect(workspace.cloudSkillDetail?.id).toBe("cloud-skill-security-audit");
     expect(wrapper.text()).toContain("安装到本地技能目录");
-    expect(wrapper.text()).toContain("查看详情");
   });
 
   it("imports a cloud skill into local skills", async () => {
@@ -225,9 +244,14 @@ describe("HubView", () => {
     const wrapper = mount(HubView, {
       global: {
         plugins: [pinia],
+        stubs: { teleport: true },
       },
     });
 
+    await flushPromises();
+
+    // Open skill detail
+    await wrapper.get("[data-testid='hub-item-cloud-skill-security-audit']").trigger("click");
     await flushPromises();
 
     await wrapper.get("[data-testid='hub-action-import']").trigger("click");
@@ -235,7 +259,7 @@ describe("HubView", () => {
 
     expect(importCloudSkillSpy).toHaveBeenCalledWith({
       releaseId: cloudSkillDetail.releases[0].id,
-      skillName: cloudSkillManifest.name,
+      skillName: cloudSkillDetail.name,
     });
     expect(wrapper.get("[data-testid='hub-import-feedback']").text()).toContain("已安装到本地技能目录");
   });
@@ -261,12 +285,17 @@ describe("HubView", () => {
     const wrapper = mount(HubView, {
       global: {
         plugins: [pinia],
+        stubs: { teleport: true },
       },
     });
 
     await flushPromises();
 
     await wrapper.get("[data-testid='hub-tab-mcp']").trigger("click");
+    await flushPromises();
+
+    // Open MCP detail
+    await wrapper.get("[data-testid='hub-item-cloud-mcp-docs-gateway']").trigger("click");
     await flushPromises();
 
     await wrapper.get("[data-testid='hub-action-import']").trigger("click");
@@ -303,6 +332,7 @@ describe("HubView", () => {
     const wrapper = mount(HubView, {
       global: {
         plugins: [pinia],
+        stubs: { teleport: true },
       },
     });
 
@@ -310,6 +340,10 @@ describe("HubView", () => {
 
     await wrapper.get("[data-testid='hub-tab-employee-packages']").trigger("click");
     await flushPromises();
+
+    await wrapper.get("[data-testid='hub-item-cloud-employee-package-onboarding-assistant']").trigger("click");
+    await flushPromises();
+
     await wrapper.get("[data-testid='hub-action-import']").trigger("click");
     await flushPromises();
 
@@ -350,6 +384,7 @@ describe("HubView", () => {
     const wrapper = mount(HubView, {
       global: {
         plugins: [pinia],
+        stubs: { teleport: true },
       },
     });
 
@@ -357,6 +392,10 @@ describe("HubView", () => {
 
     await wrapper.get("[data-testid='hub-tab-workflow-packages']").trigger("click");
     await flushPromises();
+
+    await wrapper.get("[data-testid='hub-item-cloud-workflow-package-weekly-review']").trigger("click");
+    await flushPromises();
+
     await wrapper.get("[data-testid='hub-action-import']").trigger("click");
     await flushPromises();
 
@@ -376,11 +415,12 @@ describe("HubView", () => {
     const workspace = useWorkspaceStore();
     workspace.hydrate(createWorkspaceFixture());
 
-    vi.spyOn(workspace, "loadCloudHubItems").mockRejectedValue(new Error("Failed to fetch"));
+    vi.spyOn(workspace, "loadCloudSkills").mockRejectedValue(new Error("Failed to fetch"));
 
     const wrapper = mount(HubView, {
       global: {
         plugins: [pinia],
+        stubs: { teleport: true },
       },
     });
 
@@ -399,31 +439,28 @@ describe("HubView", () => {
     const workspace = useWorkspaceStore();
     workspace.hydrate(createWorkspaceFixture());
 
-    const loadItemsSpy = vi
-      .spyOn(workspace, "loadCloudHubItems")
+    const loadSkillsSpy = vi
+      .spyOn(workspace, "loadCloudSkills")
       .mockRejectedValueOnce(new Error("Failed to fetch"))
-      .mockImplementation(async (type = "all") => {
-        const fixture = createWorkspaceFixture();
-        const items = type === "all" ? fixture.cloudHubItems : fixture.cloudHubItems.filter((item) => item.type === type);
-        workspace.cloudHubItems = items;
-        return items;
+      .mockImplementation(async () => {
+        workspace.cloudSkills = [cloudSkillSummary];
+        return [cloudSkillSummary];
       });
-    vi.spyOn(workspace, "loadCloudHubDetail").mockResolvedValue(cloudSkillDetail);
-    vi.spyOn(workspace, "loadCloudHubManifest").mockResolvedValue(cloudSkillManifest);
 
     mount(HubView, {
       global: {
         plugins: [pinia],
+        stubs: { teleport: true },
       },
     });
 
     await flushPromises();
-    expect(loadItemsSpy).toHaveBeenCalledTimes(1);
+    expect(loadSkillsSpy).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(3000);
     await flushPromises();
 
-    expect(loadItemsSpy).toHaveBeenCalledTimes(2);
+    expect(loadSkillsSpy).toHaveBeenCalledTimes(2);
   });
 
   it("retries immediately when the window regains focus", async () => {
@@ -432,30 +469,27 @@ describe("HubView", () => {
     const workspace = useWorkspaceStore();
     workspace.hydrate(createWorkspaceFixture());
 
-    const loadItemsSpy = vi
-      .spyOn(workspace, "loadCloudHubItems")
+    const loadSkillsSpy = vi
+      .spyOn(workspace, "loadCloudSkills")
       .mockRejectedValueOnce(new Error("Failed to fetch"))
-      .mockImplementation(async (type = "all") => {
-        const fixture = createWorkspaceFixture();
-        const items = type === "all" ? fixture.cloudHubItems : fixture.cloudHubItems.filter((item) => item.type === type);
-        workspace.cloudHubItems = items;
-        return items;
+      .mockImplementation(async () => {
+        workspace.cloudSkills = [cloudSkillSummary];
+        return [cloudSkillSummary];
       });
-    vi.spyOn(workspace, "loadCloudHubDetail").mockResolvedValue(cloudSkillDetail);
-    vi.spyOn(workspace, "loadCloudHubManifest").mockResolvedValue(cloudSkillManifest);
 
     mount(HubView, {
       global: {
         plugins: [pinia],
+        stubs: { teleport: true },
       },
     });
 
     await flushPromises();
-    expect(loadItemsSpy).toHaveBeenCalledTimes(1);
+    expect(loadSkillsSpy).toHaveBeenCalledTimes(1);
 
     window.dispatchEvent(new Event("focus"));
     await flushPromises();
 
-    expect(loadItemsSpy).toHaveBeenCalledTimes(2);
+    expect(loadSkillsSpy).toHaveBeenCalledTimes(2);
   });
 });

@@ -5,6 +5,7 @@ import type {
   AuthMeResponse
 } from "@myclaw-cloud/shared";
 import {
+  ForbiddenException,
   HttpException,
   Inject,
   Injectable,
@@ -38,8 +39,14 @@ export class AuthService {
     try {
       user = await this.internalAuthProvider.validateCredentials(loginAccount, rawPassword);
     } catch (error) {
+      if (error instanceof UnauthorizedException) {
+        throw new UnauthorizedException("account_or_password_invalid");
+      }
+      if (error instanceof ForbiddenException) {
+        throw new ForbiddenException("account_forbidden");
+      }
       if (error instanceof HttpException) {
-        throw error;
+        throw new ServiceUnavailableException("internal_auth_provider_failed");
       }
 
       throw new ServiceUnavailableException("internal_auth_provider_failed");

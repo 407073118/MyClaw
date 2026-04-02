@@ -1,4 +1,4 @@
-import type { CreateSkillInput } from "@myclaw-cloud/shared";
+import type { CreateSkillInput, SkillCategory, UpdateSkillInput } from "@myclaw-cloud/shared";
 import {
   BadRequestException,
   Body,
@@ -7,6 +7,8 @@ import {
   NotFoundException,
   Param,
   Post,
+  Put,
+  Query,
   UploadedFile,
   UseInterceptors
 } from "@nestjs/common";
@@ -33,9 +35,14 @@ export class SkillsController {
   constructor(private readonly skillsService: SkillsService) {}
 
   @Get()
-  async list() {
+  async list(
+    @Query("category") category?: SkillCategory,
+    @Query("keyword") keyword?: string,
+    @Query("sort") sort?: "latest" | "downloads" | "name",
+    @Query("tag") tag?: string
+  ) {
     return {
-      skills: await this.skillsService.list()
+      skills: await this.skillsService.list({ category, keyword, sort, tag })
     };
   }
 
@@ -54,7 +61,23 @@ export class SkillsController {
     this.assertCreateSkillBody(body);
 
     return {
-      skill: await this.skillsService.createSkill(body)
+      skill: await this.skillsService.createSkill({
+        id: body.id,
+        name: body.name,
+        summary: body.summary,
+        description: body.description,
+        icon: body.icon,
+        category: body.category,
+        tags: body.tags,
+        author: body.author
+      })
+    };
+  }
+
+  @Put(":id")
+  async updateSkill(@Param("id") id: string, @Body() body: UpdateSkillInput) {
+    return {
+      skill: await this.skillsService.updateSkill(id, body)
     };
   }
 

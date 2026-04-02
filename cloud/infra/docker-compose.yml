@@ -1,15 +1,18 @@
-services:
-  postgres:
-    image: postgres:16
-    container_name: myclaw-cloud-postgres
-    environment:
-      POSTGRES_DB: myclaw_cloud
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123456
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-
-volumes:
-  postgres-data:
+# PostgreSQL 已移除，改用外部 MySQL (192.168.162.82:3306)
+# 如需本地 MySQL 容器可取消注释以下内容：
+#
+# services:
+#   mysql:
+#     image: mysql:8.0
+#     container_name: myclaw-cloud-mysql
+#     environment:
+#       MYSQL_ROOT_PASSWORD: "123456"
+#       MYSQL_DATABASE: myclaw_cloud
+#     ports:
+#       - "3306:3306"
+#     volumes:
+#       - mysql-data:/var/lib/mysql
+#     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+#
+# volumes:
+#   mysql-data:

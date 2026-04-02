@@ -4,7 +4,7 @@ import { createError, getCookie, getRequestHeader } from "h3";
 type ProxyCloudApiOptions = {
   body?: unknown;
   forwardAuth?: boolean;
-  method?: "GET" | "POST";
+  method?: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
   query?: Record<string, unknown>;
 };
 

@@ -1,15 +1,36 @@
 import { PrismaClient } from "@prisma/client";
 
-import { HUB_SEED_ITEMS } from "../src/modules/hub/hub-seed-data";
-
 const prisma = new PrismaClient();
 
+/** MCP 种子数据 */
+const MCP_SEED_ITEMS = [
+  {
+    id: "mcp-filesystem-managed",
+    name: "Filesystem MCP",
+    summary: "Managed filesystem connector",
+    description: "Injects a managed MCP connector for local filesystem tooling.",
+    latestVersion: "1.0.0",
+    releases: [
+      {
+        id: "release-mcp-filesystem-managed-1.0.0",
+        version: "1.0.0",
+        releaseNotes: "Initial release",
+        config: {
+          transport: "stdio" as const,
+          command: "npx",
+          args: ["@modelcontextprotocol/server-filesystem", "."]
+        }
+      }
+    ]
+  }
+];
+
 async function main() {
-  for (const item of HUB_SEED_ITEMS) {
-    await prisma.hubItem.upsert({
+  // 灌入 MCP 种子数据
+  for (const item of MCP_SEED_ITEMS) {
+    await prisma.mcpServer.upsert({
       where: { id: item.id },
       update: {
-        type: item.type,
         name: item.name,
         summary: item.summary,
         description: item.description,
@@ -17,67 +38,33 @@ async function main() {
       },
       create: {
         id: item.id,
-        type: item.type,
         name: item.name,
         summary: item.summary,
         description: item.description,
-        latestVersion: item.latestVersion
+        latestVersion: item.latestVersion,
+        latestReleaseId: item.releases[0]?.id ?? null
       }
     });
 
     for (const release of item.releases) {
-      await prisma.hubRelease.upsert({
+      await prisma.mcpServerRelease.upsert({
         where: { id: release.id },
         update: {
-          itemId: item.id,
+          serverId: item.id,
           version: release.version,
           releaseNotes: release.releaseNotes,
-          manifestJson: buildManifest(item, release.version),
-          artifactFileName: `${release.id}.zip`,
-          artifactFileSize: 0,
-          artifactStoragePath: `seed://${release.id}.zip`,
-          artifactDownloadUrl: `/api/artifacts/download/${release.id}`,
-          artifactDownloadExpires: 300,
+          configJson: release.config
         },
         create: {
           id: release.id,
-          itemId: item.id,
+          serverId: item.id,
           version: release.version,
           releaseNotes: release.releaseNotes,
-          manifestJson: buildManifest(item, release.version),
-          artifactFileName: `${release.id}.zip`,
-          artifactFileSize: 0,
-          artifactStoragePath: `seed://${release.id}.zip`,
-          artifactDownloadUrl: `/api/artifacts/download/${release.id}`,
-          artifactDownloadExpires: 300,
+          configJson: release.config
         }
       });
     }
   }
-}
-
-function buildManifest(item: (typeof HUB_SEED_ITEMS)[number], version: string) {
-  if (item.type === "skill") {
-    return {
-      kind: "skill",
-      name: item.name,
-      version,
-      description: item.description,
-      entry: "SKILL.md"
-    };
-  }
-
-  return {
-    kind: "mcp",
-    name: item.name,
-    version,
-    description: item.description,
-    config: {
-      transport: "stdio",
-      command: "npx",
-      args: ["@modelcontextprotocol/server-filesystem", "."]
-    }
-  };
 }
 
 main()

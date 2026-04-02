@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "declaration": false,
+    "sourceMap": false,
+    "noEmit": false
+  },
+  "exclude": [
+    "node_modules",
+    "dist",
+    "bundle",
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "prisma/seed.ts",
+    "src/modules/hub/**"
+  ]
+}

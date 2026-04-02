@@ -11,7 +11,7 @@ await navigateTo("/hub", {
         <div>
           <p class="eyebrow">控制台已合并</p>
           <h1>后台操作已迁移到 Hub</h1>
-          <p class="section-copy">新技能上传、已有技能发版和版本下载都已收口到 Hub，这里会自动跳转。</p>
+          <p class="section-copy">Skills 发布、版本管理和下载已迁移到 Skills 市场和 Hub，这里会自动跳转。</p>
         </div>
       </header>
       <NuxtLink class="button button--primary" to="/hub">进入 Hub</NuxtLink>

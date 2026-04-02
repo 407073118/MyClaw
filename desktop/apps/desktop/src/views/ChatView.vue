@@ -189,7 +189,7 @@
               </div>
             </div>
 
-            <!-- Technical Chain Group -->
+            <!-- Technical Chain Group — collapsible inline block -->
             <div v-else class="message-row role-tool">
               <div class="message-avatar">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/></svg>
@@ -198,33 +198,35 @@
                 class="message-body"
                 :data-testid="`execution-chain-group-${(message as any).items[0]?.id ?? message.id}`"
               >
-                <div class="message-header">工具与系统</div>
-                <div class="execution-chain-summary">
-                  <span class="pulse-dot active"></span>
-                  <span>执行链路 ({{ (message as any).items.length }} 步)</span>
-                </div>
-                <ol class="execution-chain-list">
-                  <li
-                    v-for="item in (message as any).items"
-                    :key="item.id"
-                    :data-testid="`execution-chain-step-${item.id}`"
-                    :class="['execution-chain-step', `execution-chain-step--${item.role}`]"
-                  >
-                    <span class="execution-chain-badge">{{ executionChainBadge(item) }}</span>
-                    <div class="execution-chain-main">
-                      <span v-if="item.role !== 'tool'" class="execution-chain-text">{{ executionChainSummary(item) }}</span>
-                      <details v-else class="execution-chain-output">
-                        <summary class="execution-chain-output-summary">{{ executionChainSummary(item) }}</summary>
-                        <div class="execution-chain-output-body">
-                          <ToolLogContent
-                            :message-id="item.id"
-                            :content="item.content"
-                          />
-                        </div>
-                      </details>
-                    </div>
-                  </li>
-                </ol>
+                <details class="tool-chain-details" :open="isLastTechnicalGroup(index)">
+                  <summary class="tool-chain-summary">
+                    <svg class="tool-chain-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                    <span class="tool-chain-title">{{ toolChainTitle((message as any).items) }}</span>
+                    <span class="tool-chain-count">{{ (message as any).items.length }} 步</span>
+                  </summary>
+                  <ol class="execution-chain-list">
+                    <li
+                      v-for="item in (message as any).items"
+                      :key="item.id"
+                      :data-testid="`execution-chain-step-${item.id}`"
+                      :class="['execution-chain-step', `execution-chain-step--${item.role}`]"
+                    >
+                      <span class="execution-chain-badge">{{ executionChainBadge(item) }}</span>
+                      <div class="execution-chain-main">
+                        <span v-if="item.role !== 'tool'" class="execution-chain-text">{{ executionChainSummary(item) }}</span>
+                        <details v-else class="execution-chain-output">
+                          <summary class="execution-chain-output-summary">{{ executionChainSummary(item) }}</summary>
+                          <div class="execution-chain-output-body">
+                            <ToolLogContent
+                              :message-id="item.id"
+                              :content="item.content"
+                            />
+                          </div>
+                        </details>
+                      </div>
+                    </li>
+                  </ol>
+                </details>
               </div>
             </div>
           </template>
@@ -554,6 +556,28 @@ function parseExecutionChainContent(content: string): { tag: string | null; deta
 }
 
 /** 返回链路步骤的标签文案，未结构化的消息继续按原角色显示。 */
+function isLastTechnicalGroup(index: number): boolean {
+  const groups = groupedMessages.value;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (groups[i].isTechnicalGroup) {
+      return i === index;
+    }
+  }
+  return false;
+}
+
+function toolChainTitle(items: ChatMessage[]): string {
+  const firstCall = items.find((m) => m.role === "system" && m.content.includes("调用"));
+  if (firstCall) {
+    const parsed = parseExecutionChainContent(firstCall.content);
+    if (parsed.detail) {
+      const short = parsed.detail.length > 60 ? parsed.detail.slice(0, 57) + "..." : parsed.detail;
+      return short;
+    }
+  }
+  return "工具调用";
+}
+
 function executionChainBadge(message: ChatMessage) {
   if (message.role === "tool") {
     return "输出";
@@ -1316,13 +1340,63 @@ function inferMcpRisk(label: string): ToolRiskCategory {
   background: rgba(0, 0, 0, 0.1);
 }
 
-.execution-chain-summary {
-  display: inline-flex;
+.tool-chain-details {
+  width: 100%;
+}
+
+.tool-chain-summary {
+  display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 12px;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--glass-border);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
+  user-select: none;
+  transition: all 0.2s ease;
+  list-style: none;
+}
+
+.tool-chain-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-chain-summary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+
+.tool-chain-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.tool-chain-details[open] .tool-chain-chevron {
+  transform: rotate(180deg);
+}
+
+.tool-chain-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-chain-count {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--glass-reflection);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.tool-chain-details[open] .execution-chain-list {
+  margin-top: 10px;
 }
 
 .execution-chain-list {
@@ -1331,21 +1405,23 @@ function inferMcpRisk(label: string): ToolRiskCategory {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .execution-chain-step {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 10px;
+  padding: 8px 12px;
   border-radius: var(--radius-md);
-  border: 1px solid var(--glass-border);
+  border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.02);
+  border-left: 2px solid var(--glass-border);
 }
 
 .execution-chain-step--tool {
   background: rgba(45, 212, 191, 0.04);
+  border-left-color: var(--accent-cyan);
 }
 
 .execution-chain-badge {

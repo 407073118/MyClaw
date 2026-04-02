@@ -4,10 +4,12 @@
 
 ## 职责
 
-- `auth`
-- `hub`
-- `artifact`
-- `install`
+- `auth` — 登录认证、会话管理
+- `hub` — Hub 浏览
+- `skills` — 技能发布、版本管理
+- `mcp` — MCP 服务管理
+- `artifact` — 工件存储（FastDFS）
+- `install` — 安装日志留痕
 
 ## 先看什么
 

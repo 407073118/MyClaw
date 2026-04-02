@@ -33,6 +33,8 @@ function toggleTheme() {
 const loginErrorMessageMap: Record<string, string> = {
   account_or_password_required: "请输入账号和密码后再登录。",
   account_or_password_invalid: "账号或密码错误，请重新确认。",
+  account_forbidden: "当前账号没有访问权限，请联系管理员。",
+  internal_auth_provider_failed: "登录服务暂时不可用，请稍后重试。",
   cloud_api_request_failed: "登录失败，请确认 cloud-api 已启动。"
 };
 

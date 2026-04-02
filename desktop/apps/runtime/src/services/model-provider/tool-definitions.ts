@@ -274,6 +274,63 @@ const BUILTIN_MODEL_TOOL_DEFINITIONS: Record<string, ModelConversationToolDefini
       additionalProperties: false,
     },
   },
+  "fs.find": {
+    name: "fs_find",
+    description:
+      "Find files by name pattern (glob) in the current workspace. Returns matching file paths.",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Glob pattern to match file names, e.g. '**/*.ts', 'src/**/*.vue'.",
+        },
+        path: {
+          type: "string",
+          description: "Relative directory to search in. Defaults to '.'.",
+        },
+      },
+      required: ["pattern"],
+      additionalProperties: false,
+    },
+  },
+  "web.search": {
+    name: "web_search",
+    description:
+      "Search the web for information using a text query. Returns a summary of relevant results.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query text.",
+        },
+      },
+      required: ["query"],
+      additionalProperties: false,
+    },
+  },
+  "task.manage": {
+    name: "task_manage",
+    description:
+      "Create, update, or list tasks for tracking multi-step work. Use action 'list' to view, 'add' to create, 'done' to complete, or 'clear' to reset.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["list", "add", "done", "clear"],
+          description: "Action to perform on the task list.",
+        },
+        text: {
+          type: "string",
+          description: "Task description (for 'add') or task number (for 'done').",
+        },
+      },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
 };
 
 const MODEL_EXTRA_TOOL_DEFINITIONS: Record<ModelToolDefinitionId, ModelConversationToolDefinition> = {
@@ -338,9 +395,17 @@ export const DEFAULT_MODEL_TOOL_IDS: readonly ModelToolDefinitionId[] = Object.f
   "fs.read",
   "fs.write",
   "fs.list",
-  "legacy.shell_command",
+  "fs.search",
+  "fs.find",
+  "fs.apply_patch",
+  "exec.command",
+  "git.status",
+  "git.diff",
+  "git.show",
+  "http.fetch",
+  "web.search",
+  "task.manage",
   "legacy.run_skill",
-  "legacy.network_request",
 ]);
 
 /** 克隆模型工具定义，避免调用方原地修改共享引用。 */

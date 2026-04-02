@@ -1,0 +1,30 @@
+import type { RuntimeContext } from "../services/runtime-context";
+import { registerApprovalHandlers } from "./approvals";
+import { registerBootstrapHandlers } from "./bootstrap";
+import { registerCloudHandlers } from "./cloud";
+import { registerEmployeeHandlers } from "./employees";
+import { registerMcpHandlers } from "./mcp";
+import { registerModelHandlers } from "./models";
+import { registerSessionHandlers } from "./sessions";
+import { registerToolHandlers } from "./tools";
+import { registerSkillFileHandlers } from "./skill-files";
+import { registerWebPanelHandlers } from "./web-panel";
+import { registerWorkflowHandlers } from "./workflows";
+
+/**
+ * Register all IPC handlers with the Electron main process.
+ * Call once after the runtime context has been initialized.
+ */
+export function registerAllIpcHandlers(ctx: RuntimeContext): void {
+  registerBootstrapHandlers(ctx);
+  registerSessionHandlers(ctx);
+  registerModelHandlers(ctx);
+  registerToolHandlers(ctx);
+  registerMcpHandlers(ctx);
+  registerApprovalHandlers(ctx);
+  registerWorkflowHandlers(ctx);
+  registerCloudHandlers(ctx);
+  registerEmployeeHandlers(ctx);
+  registerWebPanelHandlers(ctx);
+  registerSkillFileHandlers(ctx);
+}

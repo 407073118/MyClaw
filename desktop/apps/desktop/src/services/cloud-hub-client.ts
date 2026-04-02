@@ -1,5 +1,40 @@
 export type CloudHubItemType = "skill" | "mcp" | "employee-package" | "workflow-package";
 
+export type CloudSkillCategory =
+  | "ai-assistant"
+  | "data-analysis"
+  | "dev-tools"
+  | "writing"
+  | "productivity"
+  | "design"
+  | "education"
+  | "other";
+
+export type CloudSkillSummary = {
+  id: string;
+  name: string;
+  summary: string;
+  description: string;
+  icon: string;
+  category: CloudSkillCategory;
+  tags: string[];
+  author: string;
+  downloadCount: number;
+  latestVersion: string;
+  latestReleaseId: string;
+  updatedAt: string;
+};
+
+export type CloudSkillDetail = CloudSkillSummary & {
+  releases: Array<{
+    id: string;
+    version: string;
+    releaseNotes: string;
+  }>;
+  readme: string;
+  createdAt: string;
+};
+
 export type CloudHubItem = {
   id: string;
   type: CloudHubItemType;
@@ -97,6 +132,36 @@ async function readJson<T>(url: string, accessToken?: string): Promise<T> {
   }
 
   return response.json() as Promise<T>;
+}
+
+/** 通过 runtime 代理读取云端 Skills 列表。 */
+export async function fetchCloudSkills(
+  runtimeBaseUrl: string,
+  query?: { category?: CloudSkillCategory; keyword?: string; sort?: "latest" | "downloads" | "name"; tag?: string },
+  accessToken?: string,
+): Promise<CloudSkillSummary[]> {
+  const payload = await readJson<{ skills: CloudSkillSummary[] }>(
+    buildRuntimeProxyUrl(runtimeBaseUrl, "/api/cloud-hub/skills", (url) => {
+      if (query?.category) url.searchParams.set("category", query.category);
+      if (query?.keyword) url.searchParams.set("keyword", query.keyword);
+      if (query?.sort) url.searchParams.set("sort", query.sort);
+      if (query?.tag) url.searchParams.set("tag", query.tag);
+    }),
+    accessToken,
+  );
+  return payload.skills;
+}
+
+/** 通过 runtime 代理读取云端 Skill 详情。 */
+export async function fetchCloudSkillDetail(
+  runtimeBaseUrl: string,
+  skillId: string,
+  accessToken?: string,
+): Promise<CloudSkillDetail> {
+  return readJson<CloudSkillDetail>(
+    buildRuntimeProxyUrl(runtimeBaseUrl, `/api/cloud-hub/skills/${encodeURIComponent(skillId)}`),
+    accessToken,
+  );
 }
 
 /** 通过 runtime 代理读取云端 Hub 列表，避免桌面前端直接跨域访问外部服务。 */

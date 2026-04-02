@@ -24,33 +24,33 @@ describe("workflow canvas geometry", () => {
   it("builds deterministic fallback positions for legacy definitions without editor layouts", () => {
     const layouts = buildFallbackNodeLayouts(["node-start", "node-end", "node-review"]);
     expect(layouts).toEqual([
-      { nodeId: "node-start", position: { x: 120, y: 180 } },
-      { nodeId: "node-end", position: { x: 400, y: 180 } },
-      { nodeId: "node-review", position: { x: 680, y: 180 } },
+      { nodeId: "node-start", position: { x: 300, y: 60 } },
+      { nodeId: "node-end", position: { x: 300, y: 220 } },
+      { nodeId: "node-review", position: { x: 300, y: 380 } },
     ]);
   });
 
   it("auto-places a new node near the selected upstream node when possible", () => {
     const layouts = [
-      { nodeId: "node-start", position: { x: 120, y: 180 } },
-      { nodeId: "node-end", position: { x: 400, y: 180 } },
+      { nodeId: "node-start", position: { x: 300, y: 60 } },
+      { nodeId: "node-end", position: { x: 300, y: 220 } },
     ];
 
     expect(computeNextNodePosition({
       layouts,
       upstreamNodeId: "node-end",
       fallbackIndex: 5,
-    })).toEqual({ x: 680, y: 180 });
+    })).toEqual({ x: 300, y: 380 });
   });
 
   it("computes edge anchors from node rectangles", () => {
     const anchors = computeEdgeAnchorPoints(
-      { x: 120, y: 180, width: 180, height: 96 },
-      { x: 400, y: 180, width: 180, height: 96 },
+      { x: 120, y: 60, width: 200, height: 80 },
+      { x: 120, y: 220, width: 200, height: 80 },
     );
     expect(anchors).toEqual({
-      start: { x: 300, y: 228 },
-      end: { x: 400, y: 228 },
+      start: { x: 220, y: 140 },
+      end: { x: 220, y: 220 },
     });
   });
 

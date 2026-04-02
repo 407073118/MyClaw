@@ -37,15 +37,23 @@ describe("model-provider tool definitions", () => {
     expect(fresh["fs.read"]?.name).toBe("fs_read_file");
   });
 
-  it("keeps legacy default tools while sourcing shared fs schemas from builtin definitions", () => {
+  it("exposes coding-first default tools including search, git, and exec", () => {
     const toolNames = MYCLAW_MODEL_TOOLS.map((tool) => tool.name);
     expect(toolNames).toEqual([
       "fs_read_file",
       "fs_write_file",
       "fs_list_files",
-      "shell_command",
+      "fs_search",
+      "fs_find",
+      "fs_apply_patch",
+      "exec_command",
+      "git_status",
+      "git_diff",
+      "git_show",
+      "http_fetch",
+      "web_search",
+      "task_manage",
       "run_skill",
-      "network_request",
     ]);
 
     const builtinFsRead = getBuiltinModelToolDefinition("fs.read");

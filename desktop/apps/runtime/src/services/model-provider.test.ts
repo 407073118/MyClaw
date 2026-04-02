@@ -981,13 +981,21 @@ describe("runModelConversation", () => {
     expect(body.tools?.[0]?.function?.name).toBe("git_status");
   });
 
-  it("exposes only builtin tools by default", () => {
+  it("exposes coding-first tools by default", () => {
     const toolNames = MYCLAW_MODEL_TOOLS.map((tool) => tool.name);
     expect(toolNames).toContain("fs_read_file");
     expect(toolNames).toContain("fs_write_file");
     expect(toolNames).toContain("fs_list_files");
-    expect(toolNames).toContain("shell_command");
+    expect(toolNames).toContain("fs_search");
+    expect(toolNames).toContain("fs_find");
+    expect(toolNames).toContain("fs_apply_patch");
+    expect(toolNames).toContain("exec_command");
+    expect(toolNames).toContain("git_status");
+    expect(toolNames).toContain("git_diff");
+    expect(toolNames).toContain("git_show");
+    expect(toolNames).toContain("http_fetch");
+    expect(toolNames).toContain("web_search");
+    expect(toolNames).toContain("task_manage");
     expect(toolNames).toContain("run_skill");
-    expect(toolNames).toContain("network_request");
   });
 });

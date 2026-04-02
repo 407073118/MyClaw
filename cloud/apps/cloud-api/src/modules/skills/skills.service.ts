@@ -2,7 +2,9 @@ import type {
   CreateSkillInput,
   PublishSkillReleaseResponse,
   SkillDetail,
-  SkillSummary
+  SkillListQuery,
+  SkillSummary,
+  UpdateSkillInput
 } from "@myclaw-cloud/shared";
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 
@@ -26,8 +28,8 @@ export class SkillsService {
     private readonly artifactService: ArtifactService
   ) {}
 
-  list(): Promise<SkillSummary[]> {
-    return this.skillsRepository.list();
+  list(query?: SkillListQuery): Promise<SkillSummary[]> {
+    return this.skillsRepository.list(query);
   }
 
   findById(id: string): Promise<SkillDetail | null> {
@@ -45,8 +47,22 @@ export class SkillsService {
       id: input.id.trim(),
       name: input.name.trim(),
       summary: input.summary.trim(),
-      description: input.description.trim()
+      description: input.description.trim(),
+      icon: input.icon,
+      category: input.category,
+      tags: input.tags,
+      author: input.author
     });
+  }
+
+  async updateSkill(id: string, input: UpdateSkillInput): Promise<SkillDetail> {
+    const existing = await this.skillsRepository.findById(id);
+    if (!existing) {
+      throw new NotFoundException("skill_not_found");
+    }
+
+    const updated = await this.skillsRepository.updateSkill(id, input);
+    return updated!;
   }
 
   async publishRelease(skillId: string, input: PublishSkillReleaseInput): Promise<PublishSkillReleaseResponse> {

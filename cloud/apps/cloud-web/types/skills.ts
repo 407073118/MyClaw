@@ -2,7 +2,9 @@ export type {
   CreateSkillInput,
   CreateSkillResponse,
   PublishSkillReleaseResponse,
+  SkillCategory,
   SkillDetail,
+  SkillListQuery,
   SkillReleaseSummary,
   SkillSummary
 } from "@myclaw-cloud/shared";

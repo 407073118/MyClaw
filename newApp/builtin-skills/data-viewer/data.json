@@ -1,0 +1,13 @@
+{
+  "title": "员工数据",
+  "columns": ["id", "name", "department", "role", "status"],
+  "rows": [
+    { "id": "001", "name": "张三", "department": "工程部", "role": "前端工程师", "status": "Active" },
+    { "id": "002", "name": "李四", "department": "产品部", "role": "产品经理", "status": "Active" },
+    { "id": "003", "name": "王五", "department": "设计部", "role": "UI 设计师", "status": "Inactive" },
+    { "id": "004", "name": "赵六", "department": "运营部", "role": "运营专员", "status": "Pending" },
+    { "id": "005", "name": "钱七", "department": "工程部", "role": "后端工程师", "status": "Active" },
+    { "id": "006", "name": "孙八", "department": "工程部", "role": "DevOps", "status": "Active" },
+    { "id": "007", "name": "周九", "department": "产品部", "role": "数据分析师", "status": "Pending" }
+  ]
+}

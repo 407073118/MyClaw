@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Skills 样例 — 数据报表</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0c0c0c; color: #ededed; padding: 20px;
+    }
+    .nav-bar {
+      display: flex; gap: 8px; margin-bottom: 20px;
+      border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;
+    }
+    .nav-btn {
+      padding: 6px 14px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);
+      background: transparent; color: #a3a3a3; font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .nav-btn:hover { background: rgba(255,255,255,0.04); color: #ededed; }
+    .nav-btn.active {
+      background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.3);
+      color: #60a5fa; font-weight: 600;
+    }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 24px; }
+    .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .chart-card {
+      background: #141414; border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px; padding: 16px;
+    }
+    .chart-title { font-size: 13px; font-weight: 600; color: #a3a3a3; margin-bottom: 12px; }
+    canvas { width: 100%; height: 180px; }
+
+    .health-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .health-card {
+      background: #141414; border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px; padding: 16px; text-align: center;
+    }
+    .health-value { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+    .health-label { font-size: 11px; color: #737373; }
+
+    .section-title {
+      font-size: 13px; font-weight: 600; color: #a3a3a3;
+      text-transform: uppercase; letter-spacing: 0.06em; margin: 24px 0 12px;
+    }
+    .waiting { display: flex; align-items: center; justify-content: center; height: 200px; color: #737373; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="waiting">等待数据加载...</div>
+  </div>
+
+  <script>
+    function render(data) {
+      const metrics = data.metrics || {};
+      const weekly = metrics.weeklyData || [];
+      const health = metrics.codeHealth || {};
+
+      document.getElementById('app').innerHTML = `
+        <nav class="nav-bar">
+          <button class="nav-btn" onclick="navigateTo('view.html')">团队总览</button>
+          <button class="nav-btn active">数据报表</button>
+          <button class="nav-btn" onclick="navigateTo('logs.html')">操作日志</button>
+        </nav>
+
+        <h1>数据报表</h1>
+
+        <div class="chart-row">
+          <div class="chart-card">
+            <div class="chart-title">每周提交数</div>
+            <canvas id="chart-commits"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">每周 Bug 数</div>
+            <canvas id="chart-bugs"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-row">
+          <div class="chart-card">
+            <div class="chart-title">代码新增行数</div>
+            <canvas id="chart-lines"></canvas>
+          </div>
+          <div class="chart-card">
+            <div class="chart-title">部署次数</div>
+            <canvas id="chart-deploys"></canvas>
+          </div>
+        </div>
+
+        <div class="section-title">代码健康度</div>
+        <div class="health-grid">
+          <div class="health-card">
+            <div class="health-value" style="color:#10a37f">${health.coverage || 0}%</div>
+            <div class="health-label">测试覆盖率</div>
+          </div>
+          <div class="health-card">
+            <div class="health-value" style="color:${health.techDebt === 'low' ? '#10a37f' : health.techDebt === 'medium' ? '#f59e0b' : '#ef4444'}">${
+              health.techDebt === 'low' ? '低' : health.techDebt === 'medium' ? '中' : '高'
+            }</div>
+            <div class="health-label">技术债务</div>
+          </div>
+          <div class="health-card">
+            <div class="health-value" style="color:#f59e0b">${health.openBugs || 0}</div>
+            <div class="health-label">未关闭 Bug</div>
+          </div>
+          <div class="health-card">
+            <div class="health-value" style="color:#ef4444">${health.criticalBugs || 0}</div>
+            <div class="health-label">严重 Bug</div>
+          </div>
+        </div>
+      `;
+
+      // 绘制图表
+      setTimeout(() => {
+        drawBarChart('chart-commits', weekly.map(w => w.week), weekly.map(w => w.commits), '#3b82f6');
+        drawBarChart('chart-bugs', weekly.map(w => w.week), weekly.map(w => w.bugs), '#ef4444');
+        drawLineChart('chart-lines', weekly.map(w => w.week), weekly.map(w => w.linesAdded), '#10a37f');
+        drawBarChart('chart-deploys', weekly.map(w => w.week), weekly.map(w => w.deploys), '#f59e0b');
+      }, 50);
+    }
+
+    // ============================================================
+    // 简易 Canvas 图表（无第三方依赖）
+    // ============================================================
+
+    function drawBarChart(canvasId, labels, values, color) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * 2;
+      canvas.height = 360;
+      ctx.scale(2, 2);
+
+      const w = rect.width, h = 180;
+      const max = Math.max(...values, 1);
+      const barW = (w - 40) / labels.length * 0.6;
+      const gap = (w - 40) / labels.length;
+      const padL = 30, padB = 24;
+
+      // 网格线
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = padB + ((h - padB - 10) / 4) * i;
+        ctx.beginPath(); ctx.moveTo(padL, h - y); ctx.lineTo(w, h - y); ctx.stroke();
+      }
+
+      // 柱子
+      values.forEach((v, i) => {
+        const barH = ((h - padB - 10) / max) * v;
+        const x = padL + gap * i + (gap - barW) / 2;
+        const y = h - padB - barH;
+
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath();
+        ctx.roundRect(x, y, barW, barH, 3);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        // 标签
+        ctx.fillStyle = '#737373';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(labels[i], x + barW / 2, h - 6);
+
+        // 数值
+        ctx.fillStyle = '#a3a3a3';
+        ctx.fillText(v.toString(), x + barW / 2, y - 4);
+      });
+    }
+
+    function drawLineChart(canvasId, labels, values, color) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * 2;
+      canvas.height = 360;
+      ctx.scale(2, 2);
+
+      const w = rect.width, h = 180;
+      const max = Math.max(...values, 1);
+      const gap = (w - 50) / (labels.length - 1);
+      const padL = 40, padB = 24;
+
+      // 网格线
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      for (let i = 0; i <= 4; i++) {
+        const y = padB + ((h - padB - 10) / 4) * i;
+        ctx.beginPath(); ctx.moveTo(padL, h - y); ctx.lineTo(w, h - y); ctx.stroke();
+      }
+
+      // 填充区域
+      ctx.beginPath();
+      values.forEach((v, i) => {
+        const x = padL + gap * i;
+        const y = h - padB - ((h - padB - 10) / max) * v;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.lineTo(padL + gap * (values.length - 1), h - padB);
+      ctx.lineTo(padL, h - padB);
+      ctx.closePath();
+      ctx.fillStyle = color + '15';
+      ctx.fill();
+
+      // 折线
+      ctx.beginPath();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      values.forEach((v, i) => {
+        const x = padL + gap * i;
+        const y = h - padB - ((h - padB - 10) / max) * v;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // 数据点 + 标签
+      values.forEach((v, i) => {
+        const x = padL + gap * i;
+        const y = h - padB - ((h - padB - 10) / max) * v;
+        ctx.beginPath();
+        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        ctx.fillStyle = '#737373';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(labels[i], x, h - 6);
+      });
+    }
+
+    // ============================================================
+    // postMessage 通信
+    // ============================================================
+
+    window.addEventListener("message", (e) => {
+      if (e.data?.type === "skill-data" && e.data.payload) render(e.data.payload);
+      if (e.data?.type === "skill-update" && e.data.payload) render(e.data.payload);
+    });
+
+    function navigateTo(page) {
+      window.parent.postMessage({ type: "skill-callback", action: "navigate", data: { page } }, "*");
+    }
+  </script>
+</body>
+</html>

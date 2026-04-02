@@ -62,7 +62,7 @@ describe("McpDetailView", () => {
   it("shows empty tools and recent runtime error when the server has no tools", async () => {
     const { wrapper } = await mountDetail("/mcp/mcp-broken-http");
 
-    expect(wrapper.text()).toContain("暂未发现工具。");
+    expect(wrapper.text()).toContain("暂未发现工具");
     expect(wrapper.text()).toContain("connection refused");
   });
 

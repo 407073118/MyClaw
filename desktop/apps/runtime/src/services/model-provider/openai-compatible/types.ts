@@ -21,7 +21,7 @@ export type OpenAiToolCallAccumulator = {
   argumentsJson: string;
 };
 
-export type OpenAiCompatibleFlavor = "generic" | "qwen" | "minimax";
+export type OpenAiCompatibleFlavor = "generic" | "qwen" | "qwen-coding" | "minimax";
 
 export type OpenAiSseState = {
   contentParts: string[];

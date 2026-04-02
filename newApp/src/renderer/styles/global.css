@@ -1,0 +1,321 @@
+:root {
+  color-scheme: dark;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  /* Clean Minimalist Palette - IDE style */
+  --bg-base: #0c0c0c;
+  --bg-sidebar: #121212;
+  --bg-card: #181818;
+
+  --glass-bg: #141414;
+  --glass-bg-heavy: #181818;
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-reflection: rgba(255, 255, 255, 0.04);
+
+  --brand: #EAEAEA;
+  --brand-glow: transparent;
+  --brand-soft: rgba(255, 255, 255, 0.06);
+
+  --accent-purple: #EAEAEA;
+  --accent-cyan: #10a37f; /* Denser, professional green/cyan */
+
+  --text-primary: #ededed;
+  --text-secondary: #a3a3a3;
+  --text-muted: #737373;
+
+  --radius-xl: 12px;
+  --radius-lg: 10px;
+  --radius-md: 6px;
+
+  --blur-std: none; 
+  --shadow-main: 0 4px 12px rgba(0,0,0,0.4);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow: hidden;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Minimalist Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsla(0, 0%, 100%, 0.15);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsla(0, 0%, 100%, 0.3);
+}
+
+button, input, textarea, select {
+  font-family: inherit;
+  outline: none;
+  border: none;
+}
+
+/* Common Page Layout & Typography Utilities */
+.page-container {
+  padding: 40px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  width: 100%;
+}
+
+.header-text {
+  flex: 1;
+  max-width: 800px;
+}
+
+.eyebrow {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 10px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  display: block;
+}
+
+h2.page-title {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 10px;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.page-subtitle {
+  color: var(--text-secondary);
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0;
+  font-weight: 400;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 4px; /* Align with title baseline roughly */
+}
+
+/* Premium Primary Button */
+.btn-premium {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-primary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid var(--text-primary);
+}
+
+.btn-premium:hover {
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 15px rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+}
+
+.btn-premium svg {
+  flex-shrink: 0;
+}
+
+.btn-premium.accent {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.btn-premium.accent:hover {
+  background: rgba(59, 130, 246, 0.1);
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.2);
+  color: var(--accent-cyan);
+}
+
+@media (max-width: 768px) {
+  .page-container {
+    padding: 24px;
+    gap: 24px;
+  }
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* ── App root wrapper (shared by both bootstrap and shell paths) ── */
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-root-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── Bootstrap splash screen ── */
+.bootstrap-shell {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background:
+    radial-gradient(circle at top, rgba(59, 130, 246, 0.22), transparent 42%),
+    linear-gradient(160deg, #05070b 0%, #0b0f17 38%, #090909 100%);
+}
+
+.bootstrap-card {
+  width: min(560px, 100%);
+  padding: 32px;
+  border-radius: 24px;
+  background: rgba(10, 13, 18, 0.88);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.bootstrap-brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+
+.bootstrap-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.95), rgba(14, 165, 233, 0.78));
+  color: #f8fafc;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 16px 40px rgba(37, 99, 235, 0.35);
+  flex-shrink: 0;
+}
+
+.bootstrap-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bootstrap-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.bootstrap-copy h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+  color: #f8fafc;
+}
+
+.bootstrap-copy p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: rgba(226, 232, 240, 0.78);
+}
+
+.bootstrap-progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.bootstrap-progress-bar {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(56, 189, 248, 0.6), rgba(59, 130, 246, 0.95));
+  animation: bootstrap-progress-slide 1.4s ease-in-out infinite;
+}
+
+.bootstrap-error-block {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
+.bootstrap-retry-button {
+  min-width: 148px;
+  height: 40px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.42);
+  background: rgba(37, 99, 235, 0.14);
+  color: #dbeafe;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+}
+
+.bootstrap-retry-button:hover {
+  transform: translateY(-1px);
+  background: rgba(37, 99, 235, 0.22);
+  border-color: rgba(96, 165, 250, 0.6);
+}
+
+@keyframes bootstrap-progress-slide {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(320%); }
+}
+
+@media (max-width: 1024px) {
+  .bootstrap-card {
+    padding: 28px 24px;
+  }
+
+  .bootstrap-brand {
+    flex-direction: column;
+  }
+}

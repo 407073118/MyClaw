@@ -130,14 +130,17 @@ function formatProcessExecutionResult(
 }
 
 export class BuiltinToolExecutor {
+  private sessionTasks: Array<{ text: string; done: boolean }> = [];
+
   constructor(private readonly directoryService: DirectoryService) {}
 
   /** 执行 coding-first 内置工具，并统一返回可展示的摘要与输出。 */
   async execute(intent: ExecutionIntent, session: ChatSession): Promise<ToolExecutionResult> {
     const attachedDirectory = session.attachedDirectory;
+    const unrestricted = Boolean(intent.arguments?.allowOutOfWorkspace);
 
     if (intent.toolId === "fs.read") {
-      const content = await this.directoryService.readTextFile(intent.label, attachedDirectory);
+      const content = await this.directoryService.readTextFile(intent.label, attachedDirectory, 12000, unrestricted);
       return {
         ok: true,
         summary: `已读取文件：${intent.label}`,
@@ -147,7 +150,7 @@ export class BuiltinToolExecutor {
 
     if (intent.toolId === "fs.list") {
       const targetPath = intent.label || ".";
-      const items = await this.directoryService.listDirectory(targetPath, attachedDirectory);
+      const items = await this.directoryService.listDirectory(targetPath, attachedDirectory, unrestricted);
       return {
         ok: true,
         summary: `目录列表：${targetPath}`,
@@ -157,7 +160,7 @@ export class BuiltinToolExecutor {
 
     if (intent.toolId === "fs.search") {
       const parsed = parseSearchPayload(intent.label);
-      const matches = await this.directoryService.searchText(parsed.pattern, parsed.path, attachedDirectory);
+      const matches = await this.directoryService.searchText(parsed.pattern, parsed.path, attachedDirectory, 100, unrestricted);
       return {
         ok: true,
         summary: `搜索完成：${parsed.pattern}`,
@@ -166,7 +169,7 @@ export class BuiltinToolExecutor {
     }
 
     if (intent.toolId === "fs.stat") {
-      const metadata = await this.directoryService.statPath(intent.label, attachedDirectory);
+      const metadata = await this.directoryService.statPath(intent.label, attachedDirectory, unrestricted);
       return {
         ok: true,
         summary: `文件信息：${intent.label}`,
@@ -296,6 +299,18 @@ export class BuiltinToolExecutor {
       return this.executeArchiveExtract(intent.label, attachedDirectory);
     }
 
+    if (intent.toolId === "fs.find") {
+      return this.executeFsFind(intent.label, attachedDirectory);
+    }
+
+    if (intent.toolId === "web.search") {
+      return this.executeWebSearch(intent.label);
+    }
+
+    if (intent.toolId === "task.manage") {
+      return this.executeTaskManage(intent.label, intent.arguments);
+    }
+
     return {
       ok: false,
       summary: `暂未实现的内置工具：${intent.toolId}`,
@@ -423,6 +438,120 @@ export class BuiltinToolExecutor {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** 按 glob 模式查找文件路径。 */
+  private async executeFsFind(
+    label: string,
+    attachedDirectory: string | null,
+  ): Promise<ToolExecutionResult> {
+    const parsed = parseSearchPayload(label);
+    const matches = await this.directoryService.findFiles(parsed.pattern, parsed.path, attachedDirectory);
+    return {
+      ok: true,
+      summary: `查找完成：${parsed.pattern}`,
+      output: matches.length > 0 ? matches.join("\n") : "(无匹配文件)",
+    };
+  }
+
+  /** 网络搜索：通过 DuckDuckGo HTML 接口获取摘要结果。 */
+  private async executeWebSearch(query: string): Promise<ToolExecutionResult> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query.trim())}`;
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { "User-Agent": "MyClaw/1.0" },
+        signal: controller.signal,
+      });
+      const html = await response.text();
+
+      const results: string[] = [];
+      const snippetRegex = /<a[^>]+class="result__a"[^>]*>([^<]*)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+      let match: RegExpExecArray | null;
+      while ((match = snippetRegex.exec(html)) !== null && results.length < 8) {
+        const title = match[1].replace(/<[^>]+>/g, "").trim();
+        const snippet = match[2].replace(/<[^>]+>/g, "").trim();
+        if (title || snippet) {
+          results.push(`${results.length + 1}. ${title}\n   ${snippet}`);
+        }
+      }
+
+      if (results.length === 0) {
+        return {
+          ok: true,
+          summary: `搜索完成：${query}`,
+          output: "(无搜索结果)",
+        };
+      }
+
+      return {
+        ok: true,
+        summary: `搜索完成：${query} (${results.length} 条结果)`,
+        output: results.join("\n\n"),
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        summary: `搜索失败：${query}`,
+        output: error instanceof Error ? error.message : "未知错误",
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** 会话级任务管理：在内存中维护一个简单的任务列表。 */
+  private executeTaskManage(
+    label: string,
+    args?: ExecutionIntent["arguments"],
+  ): ToolExecutionResult {
+    const action = (args?.action as string) || label.trim().split(/\s+/)[0] || "list";
+    const text = (args?.text as string) || label.replace(/^\S+\s*/, "").trim();
+
+    if (action === "add") {
+      if (!text) {
+        return { ok: false, summary: "请提供任务描述。", output: "" };
+      }
+      this.sessionTasks.push({ text, done: false });
+      return {
+        ok: true,
+        summary: `已添加任务 #${this.sessionTasks.length}：${text}`,
+        output: this.formatTasks(),
+      };
+    }
+
+    if (action === "done") {
+      const index = Number.parseInt(text, 10) - 1;
+      if (!Number.isInteger(index) || index < 0 || index >= this.sessionTasks.length) {
+        return { ok: false, summary: `无效的任务编号：${text}`, output: this.formatTasks() };
+      }
+      this.sessionTasks[index].done = true;
+      return {
+        ok: true,
+        summary: `已完成任务 #${index + 1}：${this.sessionTasks[index].text}`,
+        output: this.formatTasks(),
+      };
+    }
+
+    if (action === "clear") {
+      this.sessionTasks = [];
+      return { ok: true, summary: "任务列表已清空。", output: "(空)" };
+    }
+
+    return {
+      ok: true,
+      summary: `当前任务列表（${this.sessionTasks.length} 项）`,
+      output: this.formatTasks() || "(空)",
+    };
+  }
+
+  private formatTasks(): string {
+    return this.sessionTasks
+      .map((t, i) => `${i + 1}. [${t.done ? "x" : " "}] ${t.text}`)
+      .join("\n");
   }
 
   /** 解压 zip 或 tar 系列归档文件到受工作区约束的目标目录。 */

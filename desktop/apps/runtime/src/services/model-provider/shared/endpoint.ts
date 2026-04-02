@@ -12,30 +12,56 @@ export function resolveProviderApiBaseUrl(profile: ModelProfile): string {
   }
 
   if (profile.provider === "anthropic") {
+    const cleanedBaseUrl = stripKnownEndpointSuffixes(normalizedBaseUrl);
     const flavor = resolveAnthropicFlavor({
       ...profile,
-      baseUrl: normalizedBaseUrl,
+      baseUrl: cleanedBaseUrl,
     });
     if (flavor === "minimax") {
-      return appendMiniMaxAnthropicRoot(normalizedBaseUrl);
+      return appendMiniMaxAnthropicRoot(cleanedBaseUrl);
     }
-    return appendPathSegment(normalizedBaseUrl, "/v1");
+    return appendPathSegment(cleanedBaseUrl, "/v1");
   }
 
   if (profile.provider !== "openai-compatible") {
     return normalizedBaseUrl;
   }
 
+  // 用户可能误填了完整端点路径（如 .../v1/chat/completions），先剥离到根。
+  const cleanedBaseUrl = stripKnownEndpointSuffixes(normalizedBaseUrl);
+
   const flavor = resolveOpenAiCompatibleFlavor({
     ...profile,
-    baseUrl: normalizedBaseUrl,
+    baseUrl: cleanedBaseUrl,
   });
 
   if (flavor === "qwen") {
-    return appendPathSegment(normalizedBaseUrl, "/compatible-mode/v1");
+    return appendPathSegment(cleanedBaseUrl, "/compatible-mode/v1");
   }
 
-  return appendPathSegment(normalizedBaseUrl, "/v1");
+  // qwen-coding (coding.dashscope.aliyuncs.com) 走标准 OpenAI 路径，不需要 /compatible-mode。
+  return appendPathSegment(cleanedBaseUrl, "/v1");
+}
+
+/**
+ * 剥离用户可能误填到 baseUrl 中的已知 API 端点路径。
+ * 例如 `https://dashscope.aliyuncs.com/api/v1/chat/completions`
+ * → `https://dashscope.aliyuncs.com/api`
+ */
+function stripKnownEndpointSuffixes(baseUrl: string): string {
+  const suffixes = [
+    "/chat/completions",
+    "/compatible-mode/v1",
+    "/v1/messages",
+    "/v1",
+  ];
+  let url = baseUrl;
+  for (const suffix of suffixes) {
+    if (url.toLowerCase().endsWith(suffix.toLowerCase())) {
+      url = url.slice(0, -suffix.length);
+    }
+  }
+  return normalizeBaseUrl(url) || baseUrl;
 }
 
 /** 仅在路径片段缺失时追加，避免重复拼接 `/v1`。 */

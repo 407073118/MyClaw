@@ -3,6 +3,7 @@ import type { InstallAction, InstallStatus } from "@myclaw-cloud/shared";
 export type InstallLogRecord = {
   id: string;
   account: string;
+  itemType: string;
   itemId: string;
   releaseId: string;
   action: InstallAction;
@@ -13,6 +14,7 @@ export type InstallLogRecord = {
 
 export type CreateInstallLogInput = {
   account: string;
+  itemType: "skill" | "mcp";
   itemId: string;
   releaseId: string;
   action: InstallAction;

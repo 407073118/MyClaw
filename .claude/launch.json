@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cloud-web",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["nuxi", "dev"],
+      "port": 3000,
+      "cwd": "cloud/apps/cloud-web"
+    },
+    {
+      "name": "newapp-renderer",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["run", "dev:renderer"],
+      "port": 1420,
+      "cwd": "newApp"
+    }
+  ]
+}

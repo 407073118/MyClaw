@@ -13,8 +13,7 @@
 1. 本文件
 2. `README.md`
 3. `docs/project-overview.md`
-4. `docs/context-engineering.md`
-5. 目标子目录 `AGENTS.md`
+4. 目标子目录 `AGENTS.md`
 
 ## 这里只管什么
 

@@ -11,7 +11,7 @@ import type {
   ProfileModelCatalogInput,
   ProfileModelCatalogOutput,
 } from "../types";
-import { shouldStreamOpenAiCompatibleStep, resolveOpenAiCompatibleFlavor } from "./flavor";
+import { shouldStreamOpenAiCompatibleStep, resolveOpenAiCompatibleFlavor, isQwenFlavor } from "./flavor";
 import { createOpenAiToolsPayload } from "./messages";
 import { parseOpenAiStep } from "./parser";
 import { parseOpenAiStepFromSse } from "./sse";
@@ -52,7 +52,7 @@ export async function requestOpenAiStep(input: {
 
   if (input.includeTools) {
     body.tools = createOpenAiToolsPayload(input.tools);
-    if (providerFlavor !== "qwen") {
+    if (!isQwenFlavor(providerFlavor)) {
       body.tool_choice = "auto";
     }
   }

@@ -48,6 +48,26 @@
             </select>
           </div>
         </div>
+        <div class="divider"></div>
+        <button
+          class="topbar-icon-btn"
+          :class="{ active: showRunPanel }"
+          title="运行/记录"
+          @click="showRunPanel = !showRunPanel"
+        >
+          <Play :size="15" />
+          <span>运行</span>
+        </button>
+        <button
+          class="topbar-icon-btn"
+          :class="{ active: showInspector }"
+          title="检查面板"
+          @click="showInspector = !showInspector"
+        >
+          <PanelRight :size="15" />
+          <span>侧栏</span>
+        </button>
+        <div class="divider"></div>
         <button
           data-testid="workflow-studio-save"
           class="primary-save-btn"
@@ -55,7 +75,7 @@
           :disabled="isSaving"
         >
           <Save v-if="!isSaving" :size="16" />
-          {{ isSaving ? '保存中...' : '提交保存' }}
+          {{ isSaving ? '保存中...' : '保存' }}
         </button>
       </div>
     </header>
@@ -67,7 +87,7 @@
           <AlertTriangle :size="16" />
           {{ saveError }}
         </div>
-        
+
         <WorkflowCanvas
           v-if="workflowDefinition"
           class="canvas-impl flex-fill"
@@ -91,28 +111,39 @@
           <p>正在加载工作流定义...</p>
         </div>
 
-        <WorkflowRunPanel
-          v-if="workflowDefinition"
-          class="studio-run-panel"
-          :workflow-id="workflowId"
-          :definition="workflowDefinition"
-        />
+        <!-- Run panel slides up from bottom -->
+        <Transition name="slide-up">
+          <div v-if="showRunPanel && workflowDefinition" class="run-panel-drawer">
+            <div class="run-panel-drag-bar" @click="showRunPanel = false">
+              <ChevronDown :size="16" />
+              <span>收起运行面板</span>
+            </div>
+            <WorkflowRunPanel
+              class="studio-run-panel"
+              :workflow-id="workflowId"
+              :definition="workflowDefinition"
+            />
+          </div>
+        </Transition>
       </section>
 
-      <aside class="studio-right-panel">
-        <div class="inspector-content">
-          <WorkflowGraphInspector
-            v-if="workflowDefinition"
-            :workflow-id="workflowId"
-            :definition="workflowDefinition"
-            :selected-node-id="selectedNodeId"
-            :selected-edge-id="selectedEdgeId"
-            :show-graph-list="false"
-          />
-          <p v-else-if="definitionError" class="error-copy" style="padding: 20px;">{{ definitionError }}</p>
-          <p v-else class="subtitle" style="padding: 20px;">加载中...</p>
-        </div>
-      </aside>
+      <!-- Right inspector panel (toggleable) -->
+      <Transition name="slide-right">
+        <aside v-if="showInspector" class="studio-right-panel">
+          <div class="inspector-content">
+            <WorkflowGraphInspector
+              v-if="workflowDefinition"
+              :workflow-id="workflowId"
+              :definition="workflowDefinition"
+              :selected-node-id="selectedNodeId"
+              :selected-edge-id="selectedEdgeId"
+              :show-graph-list="false"
+            />
+            <p v-else-if="definitionError" class="error-copy" style="padding: 20px;">{{ definitionError }}</p>
+            <p v-else class="subtitle" style="padding: 20px;">加载中...</p>
+          </div>
+        </aside>
+      </Transition>
     </main>
   </div>
 </template>
@@ -121,7 +152,7 @@
 import type { WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowNodeKind } from "@myclaw-desktop/shared";
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
-import { ChevronLeft, Save, AlertTriangle } from "lucide-vue-next";
+import { ChevronLeft, ChevronDown, Save, AlertTriangle, Play, PanelRight } from "lucide-vue-next";
 
 import WorkflowCanvas from "@/components/workflow/WorkflowCanvas.vue";
 import WorkflowGraphInspector from "@/components/workflow/WorkflowGraphInspector.vue";
@@ -142,6 +173,8 @@ const definitionError = ref("");
 const selectedNodeId = ref<string | null>(null);
 const selectedEdgeId = ref<string | null>(null);
 const canvasFeedback = ref("");
+const showRunPanel = ref(false);
+const showInspector = ref(true);
 const draft = reactive({
   name: "",
   description: "",
@@ -871,6 +904,37 @@ async function handleCanvasEditorUpdate(editor: NonNullable<WorkflowDefinition["
   cursor: not-allowed;
 }
 
+/* ── Topbar icon buttons ──────────────── */
+
+.topbar-icon-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid #27272a;
+  border-radius: 6px;
+  color: #a1a1aa;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.topbar-icon-btn:hover {
+  background: #27272a;
+  color: #f4f4f5;
+}
+
+.topbar-icon-btn.active {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #60a5fa;
+}
+
+/* ── Main body layout ─────────────────── */
+
 .studio-body {
   display: flex;
   flex: 1;
@@ -886,33 +950,103 @@ async function handleCanvasEditorUpdate(editor: NonNullable<WorkflowDefinition["
   position: relative;
   overflow: hidden;
   min-width: 0;
+  min-height: 0;
   background: #0d0d0f;
 }
 
+.flex-fill {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Right inspector panel ────────────── */
+
 .studio-right-panel {
-  width: 340px;
+  width: 360px;
   border-left: 1px solid #27272a;
   background: #161618;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   z-index: 10;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .inspector-content {
   flex: 1;
   overflow-y: auto;
-  padding: 0;
+  padding: 12px;
+  min-height: 0;
+}
+
+/* Slide right transition */
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: width 0.25s ease, opacity 0.2s ease;
+  overflow: hidden;
+}
+
+.slide-right-enter-from,
+.slide-right-leave-to {
+  width: 0 !important;
+  opacity: 0;
+}
+
+/* ── Run panel drawer (bottom overlay) ── */
+
+.run-panel-drawer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  max-height: 50%;
+  display: flex;
+  flex-direction: column;
+  background: #161618;
+  border-top: 1px solid #27272a;
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+}
+
+.run-panel-drag-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 0;
+  cursor: pointer;
+  color: #52525b;
+  font-size: 11px;
+  font-weight: 500;
+  border-bottom: 1px solid #1f1f23;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.run-panel-drag-bar:hover {
+  color: #a1a1aa;
+  background: #1a1a1d;
 }
 
 .studio-run-panel {
-  flex-shrink: 0;
-  border-top: 1px solid #27272a;
-  background: #161618;
-  max-height: 350px;
-  z-index: 5;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
+
+/* Slide up transition */
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: transform 0.25s ease, opacity 0.2s ease;
+}
+
+.slide-up-enter-from,
+.slide-up-leave-to {
+  transform: translateY(100%);
+  opacity: 0;
+}
+
+/* ── Misc ──────────────────────────────── */
 
 .top-banner {
   position: absolute;
@@ -953,6 +1087,6 @@ async function handleCanvasEditorUpdate(editor: NonNullable<WorkflowDefinition["
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1200px) {
-  .studio-right-panel { width: 300px; }
+  .studio-right-panel { width: 320px; }
 }
 </style>

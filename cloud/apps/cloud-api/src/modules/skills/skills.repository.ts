@@ -2,8 +2,10 @@ import type {
   CreateSkillInput,
   PublishSkillReleaseResponse,
   SkillDetail,
+  SkillListQuery,
   SkillReleaseManifest,
-  SkillSummary
+  SkillSummary,
+  UpdateSkillInput
 } from "@myclaw-cloud/shared";
 
 export type CreateSkillReleaseInput = {
@@ -22,9 +24,10 @@ export type CreateSkillReleaseInput = {
 };
 
 export interface SkillsRepository {
-  list(): Promise<SkillSummary[]>;
+  list(query?: SkillListQuery): Promise<SkillSummary[]>;
   findById(id: string): Promise<SkillDetail | null>;
   createSkill(input: CreateSkillInput): Promise<SkillDetail>;
+  updateSkill(id: string, input: UpdateSkillInput): Promise<SkillDetail | null>;
   createRelease(input: CreateSkillReleaseInput): Promise<PublishSkillReleaseResponse>;
 }
 
