@@ -5,22 +5,22 @@
 ## Tech Debt
 
 **Dual Desktop Implementations (Critical):**
-- Issue: Two complete desktop apps exist side-by-side: `desktop/` (Tauri + Vue 3 + Pinia) and `newApp/` (Electron + React + Zustand). The original has ~49K lines of source across runtime and desktop apps with full functionality. The new one has ~16K lines but most IPC handlers are stubs returning empty arrays or throwing "not found" errors.
-- Files: `desktop/` (entire directory), `newApp/` (entire directory)
-- Impact: Maintaining two desktop apps doubles development effort. The shared contracts are duplicated: `desktop/packages/shared/src/contracts/` (1189 lines, includes tests) vs `newApp/shared/contracts/` (681 lines, no tests). Any contract change must be made in both places or they will drift. The newApp contracts are already missing test files that exist in the desktop shared package.
-- Fix approach: Complete the newApp migration, then archive/remove `desktop/`. Until then, freeze the desktop shared contracts and treat `newApp/shared/contracts/` as the canonical copy for new work. Document which IPC handlers still need real implementations.
+- Issue: Two complete desktop apps exist side-by-side: `desktop/` (Tauri + Vue 3 + Pinia) and `desktop/` (Electron + React + Zustand). The original has ~49K lines of source across runtime and desktop apps with full functionality. The new one has ~16K lines but most IPC handlers are stubs returning empty arrays or throwing "not found" errors.
+- Files: `desktop/` (entire directory), `desktop/` (entire directory)
+- Impact: Maintaining two desktop apps doubles development effort. The shared contracts are duplicated: `desktop/packages/shared/src/contracts/` (1189 lines, includes tests) vs `desktop/shared/contracts/` (681 lines, no tests). Any contract change must be made in both places or they will drift. The desktop contracts are already missing test files that exist in the desktop shared package.
+- Fix approach: Complete the desktop migration, then archive/remove `desktop/`. Until then, freeze the desktop shared contracts and treat `desktop/shared/contracts/` as the canonical copy for new work. Document which IPC handlers still need real implementations.
 
-**newApp IPC Handlers Are Stubs:**
-- Issue: Almost every IPC handler in the newApp main process is a stub. Sessions return synthetic "[stub]" messages, tools log to console and return fake results, MCP server CRUD does not persist, cloud hub endpoints return empty arrays.
-- Files: `newApp/src/main/ipc/sessions.ts` (lines 86-116 - hardcoded stub reply), `newApp/src/main/ipc/tools.ts` (lines 37-43, 56-60), `newApp/src/main/ipc/mcp.ts` (lines 26-43, 55-61, 72-74, 85-88), `newApp/src/main/ipc/cloud.ts` (lines 62-91 - all return empty/throw)
-- Impact: The newApp is not functional beyond UI scaffolding. Users cannot chat, execute tools, manage MCP servers, or interact with the cloud hub. The in-memory state in `newApp/src/main/index.ts` (lines 76-112) has no persistence -- all data is lost on restart.
-- Fix approach: Port the runtime services from `desktop/apps/runtime/src/services/` into the newApp main process or connect newApp to the existing runtime server. Priority order: (1) model provider + chat, (2) state persistence via sql.js, (3) builtin tool execution, (4) MCP server management, (5) cloud hub integration.
+**desktop IPC Handlers Are Stubs:**
+- Issue: Almost every IPC handler in the desktop main process is a stub. Sessions return synthetic "[stub]" messages, tools log to console and return fake results, MCP server CRUD does not persist, cloud hub endpoints return empty arrays.
+- Files: `desktop/src/main/ipc/sessions.ts` (lines 86-116 - hardcoded stub reply), `desktop/src/main/ipc/tools.ts` (lines 37-43, 56-60), `desktop/src/main/ipc/mcp.ts` (lines 26-43, 55-61, 72-74, 85-88), `desktop/src/main/ipc/cloud.ts` (lines 62-91 - all return empty/throw)
+- Impact: The desktop is not functional beyond UI scaffolding. Users cannot chat, execute tools, manage MCP servers, or interact with the cloud hub. The in-memory state in `desktop/src/main/index.ts` (lines 76-112) has no persistence -- all data is lost on restart.
+- Fix approach: Port the runtime services from `desktop/apps/runtime/src/services/` into the desktop main process or connect desktop to the existing runtime server. Priority order: (1) model provider + chat, (2) state persistence via sql.js, (3) builtin tool execution, (4) MCP server management, (5) cloud hub integration.
 
 **Deprecated `pkg` Dependency:**
 - Issue: The desktop runtime uses `pkg` v5.8.1 for building the sidecar binary. `pkg` has been deprecated by Vercel in favor of Node.js SEA (Single Executable Applications) since Node 20.
 - Files: `desktop/apps/runtime/package.json` (line 22), build script at line 11 (`build:sidecar:win`)
 - Impact: `pkg` targets Node 18 (`--targets node18-win-x64`) which is approaching end-of-life. Future Node.js updates will not be supported. The binary packaging approach may break with newer native modules.
-- Fix approach: Migrate to Node.js SEA or use `@vercel/ncc` + a custom entry point. The newApp (Electron) bundles Node.js natively, making `pkg` unnecessary for the new architecture.
+- Fix approach: Migrate to Node.js SEA or use `@vercel/ncc` + a custom entry point. The desktop (Electron) bundles Node.js natively, making `pkg` unnecessary for the new architecture.
 
 **`nothing/` Directory:**
 - Issue: An empty directory `nothing/` exists in the repository root with no apparent purpose.
@@ -30,17 +30,17 @@
 
 ## Known Bugs
 
-**newApp Cloud IPC Uses Wrong Logout Parameter:**
-- Symptoms: The preload API sends `accessToken` to logout (`cloud:auth-logout`), but the IPC handler in `newApp/src/main/ipc/cloud.ts` (line 112) receives it as `accessToken` and sends it as a Bearer header. However, the cloud API's `AuthService.logout()` at `cloud/apps/cloud-api/src/modules/auth/auth.service.ts` (line 111) expects a `refreshToken`, not an access token.
-- Files: `newApp/src/preload/index.ts` (line 131), `newApp/src/main/ipc/cloud.ts` (lines 110-123)
-- Trigger: User clicks logout in the newApp -- the server-side session will NOT be revoked because the wrong token type is sent.
-- Workaround: The desktop (Tauri) version in `newApp/src/renderer/stores/auth.ts` line 294 correctly sends `session.refreshToken` to the logout call, but the preload bridge signature is incorrect.
+**desktop Cloud IPC Uses Wrong Logout Parameter:**
+- Symptoms: The preload API sends `accessToken` to logout (`cloud:auth-logout`), but the IPC handler in `desktop/src/main/ipc/cloud.ts` (line 112) receives it as `accessToken` and sends it as a Bearer header. However, the cloud API's `AuthService.logout()` at `cloud/apps/cloud-api/src/modules/auth/auth.service.ts` (line 111) expects a `refreshToken`, not an access token.
+- Files: `desktop/src/preload/index.ts` (line 131), `desktop/src/main/ipc/cloud.ts` (lines 110-123)
+- Trigger: User clicks logout in the desktop -- the server-side session will NOT be revoked because the wrong token type is sent.
+- Workaround: The desktop (Tauri) version in `desktop/src/renderer/stores/auth.ts` line 294 correctly sends `session.refreshToken` to the logout call, but the preload bridge signature is incorrect.
 
 ## Security Considerations
 
 **Auth Tokens Stored in localStorage (Renderer Process):**
-- Risk: Both desktop implementations store auth sessions (including access and refresh tokens) in `localStorage`. In an Electron app with `sandbox: false` (as set in `newApp/src/main/index.ts` line 38), this means any XSS vulnerability in the renderer could exfiltrate auth tokens. The refresh token has a 180-day lifetime (`cloud/apps/cloud-api/src/modules/auth/auth.service.ts` line 22).
-- Files: `newApp/src/renderer/stores/auth.ts` (lines 130, 143, 187), `newApp/src/main/index.ts` (line 38)
+- Risk: Both desktop implementations store auth sessions (including access and refresh tokens) in `localStorage`. In an Electron app with `sandbox: false` (as set in `desktop/src/main/index.ts` line 38), this means any XSS vulnerability in the renderer could exfiltrate auth tokens. The refresh token has a 180-day lifetime (`cloud/apps/cloud-api/src/modules/auth/auth.service.ts` line 22).
+- Files: `desktop/src/renderer/stores/auth.ts` (lines 130, 143, 187), `desktop/src/main/index.ts` (line 38)
 - Current mitigation: `contextIsolation: true` and `nodeIntegration: false` are set correctly. External links open in system browser.
 - Recommendations: Store tokens in the main process using Electron's `safeStorage` API or the OS keychain. Keep `sandbox: false` only if strictly necessary. Consider encrypting persisted tokens at rest.
 
@@ -74,7 +74,7 @@
 - Problem: The entire runtime HTTP server, all route handlers, state management, session logic, tool execution orchestration, workflow execution, and cloud proxy are defined in a single 3,472-line file.
 - Files: `desktop/apps/runtime/src/server/create-runtime-app.ts`
 - Cause: All mutable state (sessions, models, approvals, workflows) is captured as closures within a single function scope, making extraction difficult.
-- Improvement path: Extract route handlers into separate modules. Pass shared state through a context object (similar to how `newApp/src/main/services/runtime-context.ts` already does it). This is partially what the newApp migration accomplishes by splitting into `newApp/src/main/ipc/*.ts` files.
+- Improvement path: Extract route handlers into separate modules. Pass shared state through a context object (similar to how `desktop/src/main/services/runtime-context.ts` already does it). This is partially what the desktop migration accomplishes by splitting into `desktop/src/main/ipc/*.ts` files.
 
 **Custom Glob Implementation in DirectoryService:**
 - Problem: `DirectoryService.findFiles()` implements a custom recursive directory walker with manual glob matching (180+ lines). It walks the entire directory tree for every search.
@@ -82,24 +82,24 @@
 - Cause: Avoids external dependency for glob matching in the bundled sidecar.
 - Improvement path: Use a lightweight glob library like `picomatch` for pattern matching. Consider caching directory listings for repeated searches within the same session.
 
-**In-Memory State in newApp Has No Persistence:**
-- Problem: The newApp stores all runtime state (sessions, models, approval requests, workflows) in plain JavaScript arrays in the main process. Everything is lost on app restart.
-- Files: `newApp/src/main/index.ts` (lines 76-79)
+**In-Memory State in desktop Has No Persistence:**
+- Problem: The desktop stores all runtime state (sessions, models, approval requests, workflows) in plain JavaScript arrays in the main process. Everything is lost on app restart.
+- Files: `desktop/src/main/index.ts` (lines 76-79)
 - Cause: Stub implementation -- persistence was deferred.
-- Improvement path: Port the sql.js-based `RuntimeStateStore` from `desktop/apps/runtime/src/store/runtime-state-store.ts` into the newApp main process. The dependency `sql.js` is already declared in `newApp/package.json`.
+- Improvement path: Port the sql.js-based `RuntimeStateStore` from `desktop/apps/runtime/src/store/runtime-state-store.ts` into the desktop main process. The dependency `sql.js` is already declared in `desktop/package.json`.
 
 ## Fragile Areas
 
 **Shared Contract Duplication:**
-- Files: `desktop/packages/shared/src/contracts/*.ts`, `newApp/shared/contracts/*.ts`
+- Files: `desktop/packages/shared/src/contracts/*.ts`, `desktop/shared/contracts/*.ts`
 - Why fragile: The two contract sets are copies of each other but not linked. Changes to types in one location (e.g., adding a field to `ChatSession`) will cause type mismatches if the other copy is not updated. The cloud shared package at `cloud/packages/shared/src/contracts/` is a third independent copy for cloud-specific types.
-- Safe modification: When changing contracts, update ALL copies: desktop shared, newApp shared, and (if applicable) cloud shared. Run `pnpm test` in both `desktop/` and `newApp/` workspaces.
+- Safe modification: When changing contracts, update ALL copies: desktop shared, desktop shared, and (if applicable) cloud shared. Run `pnpm test` in both `desktop/` and `desktop/` workspaces.
 - Test coverage: Desktop contracts have 427-line test file + 92-line MCP usage test. NewApp contracts have zero tests.
 
-**newApp Preload API Surface:**
-- Files: `newApp/src/preload/index.ts`
+**desktop Preload API Surface:**
+- Files: `desktop/src/preload/index.ts`
 - Why fragile: The preload bridge exposes 30+ IPC methods to the renderer. The `MyClawAPI` type is derived from the `myClawAPI` constant using `typeof`, which means any rename or signature change in the preload breaks the renderer silently at runtime (TypeScript only catches issues if imports are correctly wired).
-- Safe modification: Always verify the renderer TypeScript compiles after preload changes. The `window.myClawAPI` declaration at `newApp/src/renderer/types/electron.d.ts` must match.
+- Safe modification: Always verify the renderer TypeScript compiles after preload changes. The `window.myClawAPI` declaration at `desktop/src/renderer/types/electron.d.ts` must match.
 - Test coverage: No tests exist for IPC handler registration or preload API coverage.
 
 ## Scaling Limits
@@ -114,7 +114,7 @@
 **`pkg` (v5.8.1):**
 - Risk: Deprecated by Vercel. No longer maintained. Targets Node 18 which is nearing EOL.
 - Impact: Cannot upgrade Node.js runtime for the desktop sidecar binary.
-- Migration plan: Switch to Node.js Single Executable Applications (SEA) or eliminate the sidecar entirely (the newApp/Electron migration embeds Node.js).
+- Migration plan: Switch to Node.js Single Executable Applications (SEA) or eliminate the sidecar entirely (the desktop/Electron migration embeds Node.js).
 
 **`@types/marked` (v6.0.0):**
 - Risk: Since `marked` v5+, types are bundled with the package. The separate `@types/marked` package is outdated and may conflict.
@@ -123,15 +123,15 @@
 
 ## Missing Critical Features
 
-**newApp Has No Model Provider Integration:**
-- Problem: The newApp cannot send messages to any LLM. The session handler returns a hardcoded stub string `"[stub] 模型服务尚未连接。"` for every message.
-- Files: `newApp/src/main/ipc/sessions.ts` (line 89)
+**desktop Has No Model Provider Integration:**
+- Problem: The desktop cannot send messages to any LLM. The session handler returns a hardcoded stub string `"[stub] 模型服务尚未连接。"` for every message.
+- Files: `desktop/src/main/ipc/sessions.ts` (line 89)
 - Blocks: All AI-powered features -- chat, tool execution, workflow runs, employee execution.
 
-**newApp Has No State Persistence:**
+**desktop Has No State Persistence:**
 - Problem: No data survives an app restart. Models, sessions, MCP configs, and workflows are all lost.
-- Files: `newApp/src/main/index.ts` (lines 76-79 -- plain arrays)
-- Blocks: Production use of the newApp.
+- Files: `desktop/src/main/index.ts` (lines 76-79 -- plain arrays)
+- Blocks: Production use of the desktop.
 
 **Cloud API Has No Authorization Layer:**
 - Problem: No endpoint requires authentication. Anyone with network access can create skills, upload artifacts, and manage hub items.
@@ -140,11 +140,11 @@
 
 ## Test Coverage Gaps
 
-**newApp Has Zero Tests:**
-- What's not tested: The entire newApp codebase -- 48 source files across main process, preload, renderer pages, components, stores, and hooks.
-- Files: `newApp/src/` (all files)
+**desktop Has Zero Tests:**
+- What's not tested: The entire desktop codebase -- 48 source files across main process, preload, renderer pages, components, stores, and hooks.
+- Files: `desktop/src/` (all files)
 - Risk: Any refactoring or feature addition could introduce regressions undetected. The IPC handler stubs cannot be verified against the real runtime behavior.
-- Priority: High -- at minimum, test the auth store (`newApp/src/renderer/stores/auth.ts`) and workspace store, as these manage critical application state.
+- Priority: High -- at minimum, test the auth store (`desktop/src/renderer/stores/auth.ts`) and workspace store, as these manage critical application state.
 
 **Cloud API Controller Input Validation Not Fully Tested:**
 - What's not tested: The `SkillsController` has manual validation (`assertCreateSkillBody`, `assertReleaseBody`) but no integration tests that verify HTTP-level request/response behavior with invalid inputs.
@@ -152,9 +152,9 @@
 - Risk: Malformed requests could bypass validation or return unexpected error formats.
 - Priority: Medium
 
-**newApp Shared Contracts Have No Tests:**
-- What's not tested: Type contracts, factory functions, and default value creators in `newApp/shared/contracts/`.
-- Files: `newApp/shared/contracts/*.ts` (all 13 files)
+**desktop Shared Contracts Have No Tests:**
+- What's not tested: Type contracts, factory functions, and default value creators in `desktop/shared/contracts/`.
+- Files: `desktop/shared/contracts/*.ts` (all 13 files)
 - Risk: Type drift from the desktop contracts goes unnoticed. The desktop version has `contracts.test.ts` (427 lines) and `mcp-contracts-usage.test.ts` (92 lines) that catch structural issues.
 - Priority: Medium -- copy and adapt the test files from `desktop/packages/shared/src/contracts/`.
 

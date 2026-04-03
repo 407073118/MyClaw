@@ -1,0 +1,29 @@
+{
+  "dashboard": {
+    "title": "Skill 开发工坊",
+    "version": "1.0.0",
+    "stats": {
+      "totalSkills": 12,
+      "activeSkills": 8,
+      "totalPages": 34,
+      "avgLoadTime": "120ms"
+    },
+    "recentUpdates": [
+      { "skill": "代码审查助手", "action": "更新", "time": "2 小时前", "status": "active" },
+      { "skill": "日报生成器", "action": "创建", "time": "5 小时前", "status": "active" },
+      { "skill": "API 文档查看器", "action": "禁用", "time": "1 天前", "status": "disabled" },
+      { "skill": "数据库监控", "action": "更新", "time": "2 天前", "status": "active" },
+      { "skill": "翻译工具", "action": "创建", "time": "3 天前", "status": "active" }
+    ]
+  },
+  "projects": [
+    { "id": "p1", "name": "代码审查助手", "description": "自动审查 PR 并生成改进建议", "status": "active", "pages": 3, "dataFiles": 2, "author": "张三", "updatedAt": "2025-03-28" },
+    { "id": "p2", "name": "日报生成器", "description": "根据 Git 提交自动生成日报", "status": "active", "pages": 2, "dataFiles": 1, "author": "李四", "updatedAt": "2025-03-27" },
+    { "id": "p3", "name": "API 文档查看器", "description": "渲染 OpenAPI/Swagger 规范文档", "status": "disabled", "pages": 4, "dataFiles": 3, "author": "王五", "updatedAt": "2025-03-25" },
+    { "id": "p4", "name": "数据库监控", "description": "实时展示数据库连接数和慢查询", "status": "active", "pages": 2, "dataFiles": 2, "author": "赵六", "updatedAt": "2025-03-24" },
+    { "id": "p5", "name": "翻译工具", "description": "多语言文案翻译和校对", "status": "active", "pages": 1, "dataFiles": 0, "author": "孙七", "updatedAt": "2025-03-23" },
+    { "id": "p6", "name": "性能分析器", "description": "分析页面加载性能并给出优化建议", "status": "draft", "pages": 3, "dataFiles": 4, "author": "周八", "updatedAt": "2025-03-22" },
+    { "id": "p7", "name": "Redis 缓存面板", "description": "可视化 Redis 键空间和内存分布", "status": "active", "pages": 2, "dataFiles": 1, "author": "吴九", "updatedAt": "2025-03-20" },
+    { "id": "p8", "name": "团队看板", "description": "拖拽式任务管理看板", "status": "active", "pages": 5, "dataFiles": 2, "author": "郑十", "updatedAt": "2025-03-18" }
+  ]
+}

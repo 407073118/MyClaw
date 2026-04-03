@@ -8,7 +8,7 @@
 
 **Key Characteristics:**
 - **Desktop (Tauri):** Two-process model -- Rust shell spawns a Node.js runtime sidecar; Vue 3 frontend communicates with the sidecar over HTTP REST on `127.0.0.1:43110`
-- **Desktop (Electron migration -- newApp):** Three-process model -- Electron main process holds in-memory state, exposes it to renderer via IPC (`contextBridge`); React 18 + Zustand renderer
+- **Desktop (Electron migration -- desktop):** Three-process model -- Electron main process holds in-memory state, exposes it to renderer via IPC (`contextBridge`); React 18 + Zustand renderer
 - **Cloud:** BFF pattern -- Nuxt 3 server routes proxy requests to a NestJS API backend; PostgreSQL via Prisma ORM
 
 **No code is shared across the three subsystems at the repository root level.** Each subsystem has its own `packages/shared` (or `shared/`) with independent contract types.
@@ -113,36 +113,36 @@
 3. Tokens stored in localStorage (`myclaw-desktop-auth-session`) via `auth` Pinia store
 4. Subsequent cloud operations (hub browsing, package install) send token through runtime proxy
 
-## Subsystem 2 -- Desktop (Electron + React -- newApp)
+## Subsystem 2 -- Desktop (Electron + React -- desktop)
 
 ### Process Model
 
 ```
  +------------------------+         IPC (contextBridge)         +------------------------+
  |  Electron Main Process | <---------------------------------> |  React Renderer        |
- |  newApp/src/main       |                                     |  newApp/src/renderer   |
+ |  desktop/src/main       |                                     |  desktop/src/renderer   |
  +------------------------+                                     +------------------------+
          |
          | preload script
          v
  +------------------------+
  |  Preload Bridge        |
- |  newApp/src/preload    |
+ |  desktop/src/preload    |
  +------------------------+
 ```
 
-**Main Process** (`newApp/src/main/index.ts`):
+**Main Process** (`desktop/src/main/index.ts`):
 - Creates `BrowserWindow` with context isolation and preload script
 - Builds a `RuntimeContext` with in-memory state (sessions, models, approvals, workflows)
-- Registers all IPC handlers via `registerAllIpcHandlers(ctx)` in `newApp/src/main/ipc/index.ts`
+- Registers all IPC handlers via `registerAllIpcHandlers(ctx)` in `desktop/src/main/ipc/index.ts`
 - IPC handler modules: bootstrap, sessions, models, tools, mcp, approvals, workflows, cloud
 
-**Preload Bridge** (`newApp/src/preload/index.ts`):
+**Preload Bridge** (`desktop/src/preload/index.ts`):
 - Exposes `window.myClawAPI` via `contextBridge.exposeInMainWorld()`
 - Typed API surface (exported as `MyClawAPI` type) with `ipcRenderer.invoke()` calls
 - Includes event subscription helpers (`onSessionStream`, `onApprovalResolved`) using `ipcRenderer.on()`
 
-**Renderer** (`newApp/src/renderer/`):
+**Renderer** (`desktop/src/renderer/`):
 - React 18 with Zustand state management
 - Pages mirror the desktop Vue views (Chat, Hub, MCP, Skills, Workflows, etc.)
 - `runtime-client.ts` provides typed fetch helpers for workflow run APIs
@@ -150,16 +150,16 @@
 
 ### Key Difference from Tauri Desktop
 
-| Aspect | Tauri Desktop | Electron newApp |
+| Aspect | Tauri Desktop | Electron desktop |
 |--------|---------------|-----------------|
 | Runtime process | Separate Node.js sidecar (HTTP) | In-process (Electron main) |
 | IPC mechanism | HTTP REST + SSE over localhost | Electron IPC (invoke/handle) |
 | Frontend framework | Vue 3 + Pinia | React 18 + Zustand |
 | State persistence | JSON files via runtime store | Stub (in-memory only currently) |
 
-### Shared Contracts (newApp)
+### Shared Contracts (desktop)
 
-- Location: `newApp/shared/contracts/`
+- Location: `desktop/shared/contracts/`
 - Contains: Same domain types as desktop shared -- approval, auth, builtin-tool, employee, events, mcp, model, session, skill, ui, workflow, workflow-run
 - Import alias: `@shared/contracts`
 - These are **duplicated** from `desktop/packages/shared/` -- not symlinked or shared
@@ -208,7 +208,7 @@
 **RuntimeContext:**
 - Purpose: Dependency container for the runtime process, holding state accessors and service references
 - Desktop (Tauri): `desktop/apps/runtime/src/server/runtime-context.ts`
-- Desktop (Electron): `newApp/src/main/services/runtime-context.ts`
+- Desktop (Electron): `desktop/src/main/services/runtime-context.ts`
 - Pattern: Plain object with typed fields; created once at startup, passed to all route/IPC handlers
 
 **ModelProfile:**
@@ -250,7 +250,7 @@
 - Responsibilities: UI rendering, routing, auth hydration, runtime client calls
 
 **Electron Main:**
-- Location: `newApp/src/main/index.ts`
+- Location: `desktop/src/main/index.ts`
 - Triggers: `electron dist/main/index.js`
 - Responsibilities: Window creation, IPC handler registration, runtime context bootstrap
 

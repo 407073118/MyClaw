@@ -29,12 +29,12 @@ started: Has been present since the app was built.
 ## Evidence
 
 - timestamp: 2026-04-02T00:00:01Z
-  checked: newApp/src/renderer/router/index.tsx
+  checked: desktop/src/renderer/router/index.tsx
   found: All 16 page components use React.lazy(). A single Suspense wraps the ENTIRE Routes tree (line 67). The fallback is PageFallback = <div style={{ flex:1 }} /> — an empty div with no sidebar, no layout, just a transparent flex element against the dark background.
   implication: When navigating between sidebar tabs, React unmounts the current lazy component and starts loading the new chunk. During chunk load, Suspense kicks in and replaces the ENTIRE route tree (including AppShell with sidebar) with PageFallback. This empty div against the #0c0c0c background creates the black flash.
 
 - timestamp: 2026-04-02T00:00:01Z
-  checked: newApp/src/renderer/layouts/AppShell.tsx line 334
+  checked: desktop/src/renderer/layouts/AppShell.tsx line 334
   found: AppShell renders <Outlet /> inside shell-content div. The Outlet renders the lazy page component. But since Suspense wraps outside AppShell, when ANY child route suspends, the entire AppShell unmounts too.
   implication: The sidebar disappears during page transitions because Suspense boundary is too high in the tree.
 
@@ -48,4 +48,4 @@ started: Has been present since the app was built.
 root_cause: The Suspense boundary wraps the entire Routes tree (including AppShell layout). When navigating between sidebar tabs, the lazy-loaded page component suspends, causing React to unmount everything inside Suspense (including the sidebar/layout) and show a bare empty div fallback. This creates a momentary black screen until the new page chunk loads. Additionally, for a desktop Electron app with local files, lazy-loading each page provides negligible benefit since all chunks are loaded from local disk — the code-splitting adds latency with no network savings.
 fix: (1) Remove React.lazy() for all in-app page components — use direct imports instead. Since this is an Electron desktop app loading from local filesystem, code-splitting pages is unnecessary overhead. (2) Remove the Suspense wrapper since eager imports eliminate the need for it at the route level.
 verification: Self-verified — no compile errors from the change, all 17 page components confirmed to use default exports (compatible with direct import), no other code references lazy/Suspense/PageFallback. Awaiting human visual verification.
-files_changed: [newApp/src/renderer/router/index.tsx]
+files_changed: [desktop/src/renderer/router/index.tsx]

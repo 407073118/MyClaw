@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skill 开发工坊 — 仪表盘</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{
+    height:100%;
+    background:#0c0c0c;
+    color:#ededed;
+    font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:14px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  body{padding:0 24px 32px}
+
+  /* ── Nav ── */
+  .nav{
+    position:sticky;top:0;z-index:100;
+    display:flex;gap:8px;
+    padding:16px 0 12px;
+    background:#0c0c0c;
+    border-bottom:1px solid rgba(255,255,255,0.08);
+    margin-bottom:24px;
+  }
+  .nav-btn{
+    padding:7px 16px;
+    border-radius:6px;
+    border:1px solid rgba(255,255,255,0.08);
+    background:transparent;
+    color:#a3a3a3;
+    font-size:13px;
+    font-family:inherit;
+    cursor:pointer;
+    transition:all 0.2s;
+  }
+  .nav-btn:hover{
+    border-color:rgba(255,255,255,0.18);
+    color:#ededed;
+  }
+  .nav-btn.active{
+    background:rgba(16,163,127,0.12);
+    border-color:rgba(16,163,127,0.3);
+    color:#10a37f;
+  }
+
+  /* ── Header ── */
+  .header{
+    display:flex;align-items:center;gap:12px;
+    margin-bottom:24px;
+  }
+  .header h1{font-size:22px;font-weight:600;letter-spacing:-0.3px}
+  .version-badge{
+    font-size:11px;font-weight:500;
+    padding:3px 10px;
+    border-radius:6px;
+    background:rgba(59,130,246,0.12);
+    color:#3b82f6;
+    border:1px solid rgba(59,130,246,0.25);
+  }
+
+  /* ── Stats ── */
+  .stats-grid{
+    display:grid;
+    grid-template-columns:repeat(4,1fr);
+    gap:14px;
+    margin-bottom:24px;
+  }
+  .stat-card{
+    background:#141414;
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:10px;
+    padding:18px 20px;
+    transition:all 0.2s;
+  }
+  .stat-card:hover{
+    border-color:rgba(255,255,255,0.15);
+    transform:translateY(-1px);
+  }
+  .stat-label{
+    font-size:12px;color:#737373;
+    margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px;
+  }
+  .stat-value{
+    font-size:28px;font-weight:700;letter-spacing:-0.5px;
+    line-height:1.1;
+  }
+  .stat-value.green{color:#10a37f}
+  .stat-value.blue{color:#3b82f6}
+  .stat-value.orange{color:#f59e0b}
+  .stat-value.primary{color:#ededed}
+
+  /* ── Two Columns ── */
+  .columns{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:16px;
+  }
+  .card{
+    background:#141414;
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:10px;
+    padding:20px 22px;
+    transition:all 0.2s;
+  }
+  .card:hover{border-color:rgba(255,255,255,0.14)}
+  .card-title{
+    font-size:15px;font-weight:600;
+    margin-bottom:16px;
+    padding-bottom:12px;
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+
+  /* ── Recent Updates ── */
+  .update-list{list-style:none}
+  .update-item{
+    display:flex;align-items:flex-start;gap:10px;
+    padding:10px 0;
+    border-bottom:1px solid rgba(255,255,255,0.04);
+    transition:all 0.2s;
+  }
+  .update-item:last-child{border-bottom:none}
+  .update-item:hover{padding-left:4px}
+  .update-dot{
+    width:8px;height:8px;
+    border-radius:50%;
+    margin-top:6px;
+    flex-shrink:0;
+  }
+  .update-dot.created{background:#10a37f}
+  .update-dot.updated{background:#3b82f6}
+  .update-dot.deleted{background:#ef4444}
+  .update-dot.published{background:#f59e0b}
+  .update-info{flex:1;min-width:0}
+  .update-name{font-size:13px;font-weight:500;color:#ededed}
+  .update-meta{
+    font-size:12px;color:#737373;
+    display:flex;gap:8px;margin-top:2px;
+  }
+  .update-action{color:#a3a3a3}
+
+  /* ── Quick Start ── */
+  .steps{list-style:none;counter-reset:steps}
+  .step-item{
+    counter-increment:steps;
+    display:flex;align-items:flex-start;gap:12px;
+    padding:10px 0;
+    border-bottom:1px solid rgba(255,255,255,0.04);
+  }
+  .step-item:last-child{border-bottom:none}
+  .step-num{
+    display:flex;align-items:center;justify-content:center;
+    width:24px;height:24px;
+    border-radius:50%;
+    background:rgba(16,163,127,0.12);
+    color:#10a37f;
+    font-size:12px;font-weight:600;
+    flex-shrink:0;
+    margin-top:1px;
+  }
+  .step-text{font-size:13px;color:#a3a3a3;line-height:1.5}
+  .step-text strong{color:#ededed;font-weight:500}
+
+  /* ── Responsive ── */
+  @media(max-width:720px){
+    .stats-grid{grid-template-columns:repeat(2,1fr)}
+    .columns{grid-template-columns:1fr}
+  }
+  @media(max-width:420px){
+    .stats-grid{grid-template-columns:1fr}
+    body{padding:0 14px 24px}
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <button class="nav-btn active" onclick="navigateTo('view.html')">仪表盘</button>
+  <button class="nav-btn" onclick="navigateTo('guide.html')">开发指南</button>
+  <button class="nav-btn" onclick="navigateTo('explore.html')">数据探索</button>
+  <button class="nav-btn" onclick="navigateTo('playground.html')">实验场</button>
+</nav>
+
+<div class="header">
+  <h1>Skill 开发工坊</h1>
+  <span class="version-badge">v1.0.0</span>
+</div>
+
+<div id="app">
+  <div class="stats-grid" id="statsGrid"></div>
+  <div class="columns">
+    <div class="card">
+      <div class="card-title">最近更新</div>
+      <ul class="update-list" id="updateList"></ul>
+    </div>
+    <div class="card">
+      <div class="card-title">快速开始</div>
+      <ol class="steps">
+        <li class="step-item">
+          <span class="step-num">1</span>
+          <span class="step-text">在 <strong>builtin-skills/</strong> 下新建文件夹，创建 <strong>SKILL.md</strong> 描述文件</span>
+        </li>
+        <li class="step-item">
+          <span class="step-num">2</span>
+          <span class="step-text">编写 YAML frontmatter，声明 <strong>name、version、pages</strong> 等元信息</span>
+        </li>
+        <li class="step-item">
+          <span class="step-num">3</span>
+          <span class="step-text">添加 <strong>view.html</strong> 页面，使用 postMessage 接收宿主数据</span>
+        </li>
+        <li class="step-item">
+          <span class="step-num">4</span>
+          <span class="step-text">实现 <strong>render(data)</strong> 函数，根据数据动态渲染 UI 界面</span>
+        </li>
+        <li class="step-item">
+          <span class="step-num">5</span>
+          <span class="step-text">通过 <strong>skill-callback</strong> 发送回调，与宿主应用交互通信</span>
+        </li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── postMessage Protocol ── */
+window.addEventListener("message", (e) => {
+  if (e.data?.type === "skill-data" && e.data.payload) render(e.data.payload);
+  if (e.data?.type === "skill-update" && e.data.payload) render(e.data.payload);
+});
+
+function navigateTo(page) {
+  window.parent.postMessage({ type: "skill-callback", action: "navigate", data: { page } }, "*");
+}
+
+/* ── Fallback Demo Data ── */
+const DEMO_DATA = {
+  dashboard: {
+    stats: {
+      totalSkills: 12,
+      activeSkills: 8,
+      totalPages: 34,
+      avgLoadTime: "0.4s"
+    },
+    recentUpdates: [
+      { name: "data-viewer", action: "更新", status: "updated", time: "2 分钟前" },
+      { name: "log-analyzer", action: "创建", status: "created", time: "15 分钟前" },
+      { name: "api-tester", action: "发布", status: "published", time: "1 小时前" },
+      { name: "chart-builder", action: "更新", status: "updated", time: "3 小时前" },
+      { name: "old-report", action: "移除", status: "deleted", time: "昨天" }
+    ]
+  }
+};
+
+let fallbackTimer = setTimeout(() => render(DEMO_DATA), 2000);
+
+/* ── Render ── */
+function render(data) {
+  clearTimeout(fallbackTimer);
+
+  const d = data.dashboard || data;
+  const stats = d.stats || {};
+  const updates = d.recentUpdates || [];
+
+  // Stats
+  const statsHTML = [
+    { label: "总技能数", value: stats.totalSkills ?? 0, cls: "green" },
+    { label: "活跃技能", value: stats.activeSkills ?? 0, cls: "blue" },
+    { label: "总页面数", value: stats.totalPages ?? 0, cls: "orange" },
+    { label: "平均加载", value: stats.avgLoadTime ?? "-", cls: "primary" }
+  ].map(s => `
+    <div class="stat-card">
+      <div class="stat-label">${s.label}</div>
+      <div class="stat-value ${s.cls}">${s.value}</div>
+    </div>
+  `).join("");
+
+  document.getElementById("statsGrid").innerHTML = statsHTML;
+
+  // Recent Updates
+  const listHTML = updates.map(u => `
+    <li class="update-item">
+      <span class="update-dot ${u.status || 'updated'}"></span>
+      <div class="update-info">
+        <div class="update-name">${escapeHtml(u.name)}</div>
+        <div class="update-meta">
+          <span class="update-action">${escapeHtml(u.action)}</span>
+          <span>${escapeHtml(u.time)}</span>
+        </div>
+      </div>
+    </li>
+  `).join("");
+
+  document.getElementById("updateList").innerHTML = listHTML || '<li style="color:#737373;font-size:13px;padding:8px 0">暂无更新记录</li>';
+}
+
+function escapeHtml(str) {
+  if (typeof str !== "string") return "";
+  const d = document.createElement("div");
+  d.textContent = str;
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

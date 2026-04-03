@@ -32,8 +32,8 @@ cd cloud && pnpm test                          # node tests/*.test.mjs
 # cloud-web page structure tests
 cd cloud/apps/cloud-web && pnpm test          # node tests/pages.test.mjs
 
-# newApp
-cd newApp && pnpm test                         # vitest run
+# desktop
+cd desktop && pnpm test                         # vitest run
 ```
 
 ## Test File Organization
@@ -65,8 +65,8 @@ cd newApp && pnpm test                         # vitest run
 - `cloud/tests/*.test.mjs` - structural smoke tests (file existence, config shape)
 - `cloud/apps/cloud-web/tests/pages.test.mjs` - page file/route existence verification
 
-**newApp:**
-- No test files detected (no `*.test.ts` or `*.test.tsx` files in `newApp/src/`)
+**desktop:**
+- No test files detected (no `*.test.ts` or `*.test.tsx` files in `desktop/src/`)
 
 ## Vitest Configuration
 
@@ -402,9 +402,9 @@ expect(wrapper.get("[data-testid='workflow-canvas-node-node-start']").text()).to
 
 ### Coverage Gaps
 
-**newApp (Electron/React):**
-- **Zero test files.** The entire `newApp/` directory has no tests. This is the highest-risk gap.
-- No test framework configured (though `vitest` is in `devDependencies` of the root `newApp/package.json`)
+**desktop (Electron/React):**
+- **Zero test files.** The entire `desktop/` directory has no tests. This is the highest-risk gap.
+- No test framework configured (though `vitest` is in `devDependencies` of the root `desktop/package.json`)
 - Stores (`workspace.ts`, `auth.ts`, `shell.ts`), pages, and components are all untested.
 
 **cloud/apps/cloud-web:**

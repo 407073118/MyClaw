@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skill 开发工坊 — 数据探索</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0c0c0c;
+    color: #ededed;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ── Navigation ── */
+  .nav {
+    display: flex;
+    gap: 8px;
+    padding: 16px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: #0c0c0c;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .nav-btn {
+    padding: 7px 16px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: transparent;
+    color: #a3a3a3;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .nav-btn:hover {
+    color: #ededed;
+    border-color: rgba(255,255,255,0.16);
+    background: rgba(255,255,255,0.04);
+  }
+
+  .nav-btn.active {
+    background: rgba(16,163,127,0.12);
+    border-color: rgba(16,163,127,0.3);
+    color: #10a37f;
+  }
+
+  /* ── Container ── */
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 28px 24px;
+  }
+
+  .page-title {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: #ededed;
+  }
+
+  /* ── Search ── */
+  .search-bar {
+    position: relative;
+    margin-bottom: 16px;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #737373;
+    pointer-events: none;
+    font-size: 14px;
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 10px 14px 10px 40px;
+    border-radius: 10px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: #141414;
+    color: #ededed;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: all 0.2s;
+  }
+
+  .search-input::placeholder { color: #737373; }
+
+  .search-input:focus {
+    border-color: #10a37f;
+    box-shadow: 0 0 0 3px rgba(16,163,127,0.14);
+  }
+
+  /* ── Stats ── */
+  .stats-bar {
+    font-size: 13px;
+    color: #737373;
+    margin-bottom: 14px;
+    padding: 0 2px;
+  }
+
+  .stats-bar span { color: #a3a3a3; font-weight: 500; }
+
+  /* ── Table ── */
+  .table-wrapper {
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #141414;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  thead th {
+    text-align: left;
+    padding: 12px 16px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #737373;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: #141414;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    transition: color 0.2s;
+  }
+
+  thead th:hover { color: #a3a3a3; }
+
+  thead th .sort-arrow {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 10px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  thead th.sorted .sort-arrow { opacity: 1; color: #10a37f; }
+  thead th.sorted { color: #10a37f; }
+
+  tbody tr {
+    transition: background 0.15s;
+    cursor: pointer;
+  }
+
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+
+  tbody tr:not(:last-child) td {
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+
+  td {
+    padding: 12px 16px;
+    font-size: 13px;
+    color: #ededed;
+    vertical-align: middle;
+  }
+
+  td.name-cell {
+    font-weight: 500;
+  }
+
+  td.desc-cell {
+    color: #a3a3a3;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  td.num-cell {
+    color: #a3a3a3;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+
+  td.date-cell {
+    color: #737373;
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+  }
+
+  td.author-cell { color: #a3a3a3; }
+
+  /* ── Status badges ── */
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+  }
+
+  .badge-active {
+    background: rgba(16,163,127,0.12);
+    color: #10a37f;
+    border: 1px solid rgba(16,163,127,0.25);
+  }
+
+  .badge-disabled {
+    background: rgba(239,68,68,0.10);
+    color: #ef4444;
+    border: 1px solid rgba(239,68,68,0.20);
+  }
+
+  .badge-draft {
+    background: rgba(245,158,11,0.10);
+    color: #f59e0b;
+    border: 1px solid rgba(245,158,11,0.20);
+  }
+
+  /* ── Empty state ── */
+  .empty-state {
+    text-align: center;
+    padding: 48px 24px;
+    color: #737373;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <button class="nav-btn" onclick="navigateTo('view.html')">仪表盘</button>
+  <button class="nav-btn" onclick="navigateTo('guide.html')">开发指南</button>
+  <button class="nav-btn active" onclick="navigateTo('explorer.html')">数据探索</button>
+  <button class="nav-btn" onclick="navigateTo('playground.html')">实验场</button>
+</nav>
+
+<div class="container">
+  <h1 class="page-title">数据探索</h1>
+
+  <div class="search-bar">
+    <span class="search-icon">&#128269;</span>
+    <input class="search-input" type="text" placeholder="搜索项目名称或描述..." id="searchInput">
+  </div>
+
+  <div class="stats-bar" id="statsBar">显示 <span>0</span> / <span>0</span> 条结果</div>
+
+  <div class="table-wrapper">
+    <table>
+      <thead>
+        <tr>
+          <th data-key="name">名称 <span class="sort-arrow">&#9650;</span></th>
+          <th data-key="description">描述 <span class="sort-arrow">&#9650;</span></th>
+          <th data-key="status">状态 <span class="sort-arrow">&#9650;</span></th>
+          <th data-key="pages">页面数 <span class="sort-arrow">&#9650;</span></th>
+          <th data-key="dataFiles">数据文件 <span class="sort-arrow">&#9650;</span></th>
+          <th data-key="author">作者 <span class="sort-arrow">&#9650;</span></th>
+          <th data-key="updatedAt">更新时间 <span class="sort-arrow">&#9650;</span></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+    <div class="empty-state" id="emptyState" style="display:none;">没有匹配的结果</div>
+  </div>
+</div>
+
+<script>
+/* ── Fallback demo data ── */
+const FALLBACK_PROJECTS = [
+  { id: "p1", name: "代码审查助手", description: "自动审查 PR 并生成改进建议", status: "active", pages: 3, dataFiles: 2, author: "张三", updatedAt: "2025-03-28" },
+  { id: "p2", name: "日报生成器", description: "根据 Git 提交自动生成日报", status: "active", pages: 2, dataFiles: 1, author: "李四", updatedAt: "2025-03-27" },
+  { id: "p3", name: "API 文档查看器", description: "渲染 OpenAPI/Swagger 规范文档", status: "disabled", pages: 4, dataFiles: 3, author: "王五", updatedAt: "2025-03-25" },
+  { id: "p4", name: "数据库监控", description: "实时展示数据库连接数和慢查询", status: "active", pages: 2, dataFiles: 2, author: "赵六", updatedAt: "2025-03-24" },
+  { id: "p5", name: "翻译工具", description: "多语言文案翻译和校对", status: "active", pages: 1, dataFiles: 0, author: "孙七", updatedAt: "2025-03-23" },
+  { id: "p6", name: "性能分析器", description: "分析页面加载性能并给出优化建议", status: "draft", pages: 3, dataFiles: 4, author: "周八", updatedAt: "2025-03-22" },
+  { id: "p7", name: "Redis 缓存面板", description: "可视化 Redis 键空间和内存分布", status: "active", pages: 2, dataFiles: 1, author: "吴九", updatedAt: "2025-03-20" },
+  { id: "p8", name: "团队看板", description: "拖拽式任务管理看板", status: "active", pages: 5, dataFiles: 2, author: "郑十", updatedAt: "2025-03-18" }
+];
+
+let projects = [];
+let sortKey = null;
+let sortAsc = true;
+let dataReceived = false;
+
+/* ── postMessage listener ── */
+window.addEventListener("message", (e) => {
+  if (e.data?.type === "skill-data" && e.data.payload) {
+    dataReceived = true;
+    loadData(e.data.payload);
+  }
+  if (e.data?.type === "skill-update" && e.data.payload) {
+    dataReceived = true;
+    loadData(e.data.payload);
+  }
+});
+
+function navigateTo(page) {
+  window.parent.postMessage({ type: "skill-callback", action: "navigate", data: { page } }, "*");
+}
+
+/* ── Fallback timer ── */
+setTimeout(() => {
+  if (!dataReceived) loadData({ projects: FALLBACK_PROJECTS });
+}, 2000);
+
+/* ── Data loading ── */
+function loadData(payload) {
+  if (payload.projects) {
+    projects = payload.projects;
+  } else if (Array.isArray(payload)) {
+    projects = payload;
+  }
+  renderTable();
+}
+
+/* ── Render ── */
+const tableBody = document.getElementById("tableBody");
+const statsBar = document.getElementById("statsBar");
+const emptyState = document.getElementById("emptyState");
+const searchInput = document.getElementById("searchInput");
+
+function getFiltered() {
+  const q = searchInput.value.trim().toLowerCase();
+  if (!q) return [...projects];
+  return projects.filter(p =>
+    p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q)
+  );
+}
+
+function getSorted(list) {
+  if (!sortKey) return list;
+  return list.sort((a, b) => {
+    let va = a[sortKey], vb = b[sortKey];
+    if (typeof va === "number") return sortAsc ? va - vb : vb - va;
+    va = String(va); vb = String(vb);
+    return sortAsc ? va.localeCompare(vb, "zh") : vb.localeCompare(va, "zh");
+  });
+}
+
+function badgeHTML(status) {
+  const map = { active: "active", disabled: "disabled", draft: "draft" };
+  const labels = { active: "启用", disabled: "停用", draft: "草稿" };
+  const cls = map[status] || "draft";
+  return `<span class="badge badge-${cls}">${labels[status] || status}</span>`;
+}
+
+function renderTable() {
+  const filtered = getSorted(getFiltered());
+  const total = projects.length;
+  const shown = filtered.length;
+
+  statsBar.innerHTML = `显示 <span>${shown}</span> / <span>${total}</span> 条结果`;
+
+  if (shown === 0) {
+    tableBody.innerHTML = "";
+    emptyState.style.display = "block";
+    return;
+  }
+
+  emptyState.style.display = "none";
+  tableBody.innerHTML = filtered.map(p => `
+    <tr data-id="${p.id}" onclick="selectProject('${p.id}')">
+      <td class="name-cell">${esc(p.name)}</td>
+      <td class="desc-cell" title="${esc(p.description)}">${esc(p.description)}</td>
+      <td>${badgeHTML(p.status)}</td>
+      <td class="num-cell">${p.pages}</td>
+      <td class="num-cell">${p.dataFiles}</td>
+      <td class="author-cell">${esc(p.author)}</td>
+      <td class="date-cell">${p.updatedAt}</td>
+    </tr>
+  `).join("");
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function selectProject(id) {
+  window.parent.postMessage({
+    type: "skill-callback",
+    action: "select-project",
+    data: { projectId: id }
+  }, "*");
+}
+
+/* ── Search ── */
+searchInput.addEventListener("input", () => renderTable());
+
+/* ── Sort ── */
+document.querySelectorAll("thead th").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    if (sortKey === key) {
+      sortAsc = !sortAsc;
+    } else {
+      sortKey = key;
+      sortAsc = true;
+    }
+
+    document.querySelectorAll("thead th").forEach(h => {
+      h.classList.remove("sorted");
+      h.querySelector(".sort-arrow").innerHTML = "&#9650;";
+    });
+
+    th.classList.add("sorted");
+    th.querySelector(".sort-arrow").innerHTML = sortAsc ? "&#9650;" : "&#9660;";
+
+    renderTable();
+  });
+});
+</script>
+</body>
+</html>

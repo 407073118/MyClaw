@@ -25,7 +25,6 @@ const form = reactive({
   name: "",
   summary: "",
   description: "",
-  icon: "",
   category: "other" as SkillCategory,
   tags: "",
   author: currentUser.value?.displayName || currentUser.value?.account || "",
@@ -35,62 +34,7 @@ const form = reactive({
   readme: "",
 });
 
-const showIconPicker = ref(false);
 const showCategoryPicker = ref(false);
-const customIconUrl = ref("");
-const selectedIconSvg = ref("");  // 原始 SVG，用于预览时 v-html 展示（自动继承主题颜色）
-
-// ---------- Built-in icon library ----------
-const PRESET_ICONS: { id: string; label: string; svg: string }[] = [
-  { id: "robot", label: "机器人", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="8" width="18" height="12" rx="2"/><circle cx="9" cy="14" r="1.5"/><circle cx="15" cy="14" r="1.5"/><path d="M12 2v4M8 8V6a4 4 0 018 0v2"/><path d="M1 14h2M21 14h2"/></svg>` },
-  { id: "brain", label: "大脑", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a5 5 0 00-4.78 3.56A4 4 0 004 9.5a4.5 4.5 0 00.69 7.41A3.5 3.5 0 008 22h1V12"/><path d="M12 2a5 5 0 014.78 3.56A4 4 0 0120 9.5a4.5 4.5 0 01-.69 7.41A3.5 3.5 0 0116 22h-1V12"/><path d="M12 2v20"/></svg>` },
-  { id: "code", label: "代码", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/><line x1="14" y1="4" x2="10" y2="20"/></svg>` },
-  { id: "chart", label: "图表", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>` },
-  { id: "search", label: "搜索", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>` },
-  { id: "doc", label: "文档", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>` },
-  { id: "pen", label: "写作", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>` },
-  { id: "terminal", label: "终端", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>` },
-  { id: "database", label: "数据库", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>` },
-  { id: "globe", label: "网络", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>` },
-  { id: "zap", label: "闪电", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10"/></svg>` },
-  { id: "puzzle", label: "拼图", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 01-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 10-3.214 3.214c.446.166.855.497.925.968a.98.98 0 01-.276.837l-1.61 1.61a2.404 2.404 0 01-1.705.707 2.402 2.402 0 01-1.704-.706l-1.568-1.568a1.026 1.026 0 00-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 11-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 00-.289-.877l-1.568-1.568A2.402 2.402 0 011.998 12c0-.617.236-1.234.706-1.704L4.315 8.685a.98.98 0 01.837-.276c.47.07.802.48.968.925a2.501 2.501 0 103.214-3.214c-.446-.166-.855-.497-.925-.968a.98.98 0 01.276-.837l1.61-1.61A2.404 2.404 0 0112 2.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 113.237 3.237c-.464.18-.894.527-.967 1.02z"/></svg>` },
-  { id: "palette", label: "调色板", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="13.5" cy="6.5" r="1.5"/><circle cx="17.5" cy="10.5" r="1.5"/><circle cx="8.5" cy="7.5" r="1.5"/><circle cx="6.5" cy="12.5" r="1.5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.04-.23-.29-.38-.63-.38-1.01 0-.83.67-1.5 1.5-1.5H16c3.31 0 6-2.69 6-6 0-5.17-4.49-9-10-9z"/></svg>` },
-  { id: "shield", label: "安全", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>` },
-  { id: "book", label: "教育", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>` },
-  { id: "image", label: "图像", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>` },
-  { id: "mic", label: "语音", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>` },
-  { id: "mail", label: "邮件", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22 6 12 13 2 6"/></svg>` },
-  { id: "clock", label: "时间", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>` },
-  { id: "git", label: "版本控制", svg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>` },
-];
-
-function buildIconDataUri(svg: string): string {
-  // 把 currentColor 替换为具体颜色，否则 <img> 标签中无法继承颜色
-  const coloredSvg = svg
-    .replace(/stroke="currentColor"/g, 'stroke="#6b7280"')
-    .replace(/<svg /, '<svg xmlns="http://www.w3.org/2000/svg" ');
-  return `data:image/svg+xml,${encodeURIComponent(coloredSvg)}`;
-}
-
-function selectPresetIcon(icon: typeof PRESET_ICONS[number]) {
-  form.icon = buildIconDataUri(icon.svg);
-  selectedIconSvg.value = icon.svg;
-  showIconPicker.value = false;
-}
-
-function applyCustomIconUrl() {
-  if (customIconUrl.value.trim()) {
-    form.icon = customIconUrl.value.trim();
-    showIconPicker.value = false;
-    customIconUrl.value = "";
-  }
-}
-
-function clearIcon() {
-  form.icon = "";
-  selectedIconSvg.value = "";
-  showIconPicker.value = false;
-}
 
 const isPending = ref(false);
 const errorMsg = ref("");
@@ -107,7 +51,6 @@ function captureOriginalMeta(skill: SkillDetail) {
     name: skill.name,
     summary: skill.summary,
     description: skill.description,
-    icon: skill.icon || "",
     category: skill.category || "other",
     tags: (skill.tags || []).join(", "),
     author: skill.author || "",
@@ -116,7 +59,7 @@ function captureOriginalMeta(skill: SkillDetail) {
 
 const metadataChanged = computed(() => {
   if (!isEditMode.value) return false;
-  const fields = ["name", "summary", "description", "icon", "category", "tags", "author"] as const;
+  const fields = ["name", "summary", "description", "category", "tags", "author"] as const;
   return fields.some((f) => (form as any)[f] !== originalMeta.value[f]);
 });
 
@@ -135,7 +78,6 @@ watch(
       form.name = skill.name;
       form.summary = skill.summary;
       form.description = skill.description;
-      form.icon = skill.icon || "";
       form.category = skill.category || "other";
       form.tags = (skill.tags || []).join(", ");
       form.author = skill.author || "";
@@ -179,7 +121,6 @@ async function handlePublish() {
             name: form.name,
             summary: form.summary,
             description: form.description,
-            icon: form.icon || undefined,
             category: form.category,
             tags: parseTags(form.tags),
             author: form.author || undefined,
@@ -195,7 +136,6 @@ async function handlePublish() {
         name: form.name,
         summary: form.summary,
         description: form.description,
-        icon: form.icon || undefined,
         category: form.category,
         tags: parseTags(form.tags),
         author: form.author || undefined,
@@ -300,46 +240,6 @@ useHead({
             <div class="form-group mb-xl">
               <label>详细说明</label>
               <textarea v-model="form.description" rows="4" placeholder="这个 Skill 的用途、能力和适用场景..." required></textarea>
-            </div>
-
-            <div class="form-group mb-xl">
-              <label>图标 <span class="optional-tag">可选</span></label>
-              <div class="icon-picker-trigger" @click="showIconPicker = !showIconPicker">
-                <div v-if="form.icon" class="icon-preview">
-                  <span v-if="selectedIconSvg" class="icon-preview-svg" v-html="selectedIconSvg"></span>
-                  <img v-else :src="form.icon" alt="icon" />
-                  <button type="button" class="icon-clear-btn" @click.stop="clearIcon" title="清除图标">×</button>
-                </div>
-                <div v-else class="icon-placeholder">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-                  <span>选择图标</span>
-                </div>
-              </div>
-              <div v-if="showIconPicker" class="icon-picker-panel">
-                <div class="icon-picker-header">
-                  <span class="icon-picker-title">选择预设图标</span>
-                </div>
-                <div class="icon-preset-grid">
-                  <button
-                    v-for="icon in PRESET_ICONS"
-                    :key="icon.id"
-                    type="button"
-                    class="icon-preset-item"
-                    :title="icon.label"
-                    @click="selectPresetIcon(icon)"
-                  >
-                    <span class="icon-preset-svg" v-html="icon.svg"></span>
-                    <span class="icon-preset-label">{{ icon.label }}</span>
-                  </button>
-                </div>
-                <div class="icon-custom-section">
-                  <span class="icon-picker-title">或输入自定义 URL</span>
-                  <div class="icon-custom-row">
-                    <input v-model="customIconUrl" type="text" placeholder="https://example.com/icon.png" @keyup.enter="applyCustomIconUrl" />
-                    <button type="button" class="icon-custom-apply" :disabled="!customIconUrl.trim()" @click="applyCustomIconUrl">确定</button>
-                  </div>
-                </div>
-              </div>
             </div>
 
             <div class="row-inputs mb-xl">
@@ -548,37 +448,4 @@ useHead({
 .spinner.large { width: 32px; height: 32px; border-width: 4px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Icon Picker */
-.icon-picker-trigger { display: flex; align-items: center; padding: 12px 16px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 12px; cursor: pointer; transition: 0.2s; min-height: 56px; }
-.icon-picker-trigger:hover { border-color: rgba(var(--nuxt-green-rgb), 0.4); }
-
-.icon-preview { display: flex; align-items: center; gap: 12px; width: 100%; position: relative; }
-.icon-preview img, .icon-preview-svg { width: 40px; height: 40px; border-radius: 10px; object-fit: contain; background: rgba(255,255,255,0.06); padding: 4px; }
-.icon-preview-svg { display: flex; align-items: center; justify-content: center; color: var(--text-main); }
-.icon-preview-svg :deep(svg) { width: 100%; height: 100%; }
-.icon-clear-btn { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.25); color: #ef4444; width: 28px; height: 28px; border-radius: 8px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: 0.2s; }
-.icon-clear-btn:hover { background: rgba(239,68,68,0.25); }
-
-.icon-placeholder { display: flex; align-items: center; gap: 10px; color: var(--text-dim); }
-.icon-placeholder svg { width: 24px; height: 24px; opacity: 0.5; }
-.icon-placeholder span { font-size: 0.88rem; font-weight: 700; }
-
-.icon-picker-panel { margin-top: 8px; background: var(--bg-main); border: 1px solid var(--border-muted); border-radius: 16px; padding: 20px; box-shadow: 0 12px 40px rgba(0,0,0,0.2); }
-.icon-picker-header { margin-bottom: 14px; }
-.icon-picker-title { font-size: 0.78rem; font-weight: 800; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
-
-.icon-preset-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 20px; }
-.icon-preset-item { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-muted); border-radius: 10px; cursor: pointer; transition: 0.2s; }
-.icon-preset-item:hover { border-color: var(--nuxt-green); background: rgba(var(--nuxt-green-rgb), 0.06); transform: translateY(-1px); }
-.icon-preset-svg { width: 28px; height: 28px; color: var(--text-main); }
-.icon-preset-svg :deep(svg) { width: 100%; height: 100%; }
-.icon-preset-label { font-size: 0.65rem; font-weight: 700; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-
-.icon-custom-section { padding-top: 16px; border-top: 1px solid var(--border-muted); display: flex; flex-direction: column; gap: 10px; }
-.icon-custom-row { display: flex; gap: 8px; }
-.icon-custom-row input { flex: 1; padding: 10px 14px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 10px; color: var(--text-main); font-size: 0.85rem; font-family: inherit; }
-.icon-custom-row input:focus { outline: none; border-color: var(--nuxt-green); }
-.icon-custom-apply { padding: 10px 16px; background: var(--nuxt-green); color: var(--btn-text); border: none; border-radius: 10px; font-weight: 800; font-size: 0.8rem; cursor: pointer; transition: 0.2s; white-space: nowrap; }
-.icon-custom-apply:disabled { opacity: 0.4; cursor: not-allowed; }
-.icon-custom-apply:hover:not(:disabled) { filter: brightness(1.1); }
 </style>

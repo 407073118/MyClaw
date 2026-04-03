@@ -1,6 +1,6 @@
 ---
 status: awaiting_human_verify
-trigger: "Electron app in newApp/ directory builds successfully with npm run build:main (tsc) but when running npm start (electron dist/main/index.js), the app exits immediately with no window and no error output."
+trigger: "Electron app in desktop/ directory builds successfully with npm run build:main (tsc) but when running npm start (electron dist/main/index.js), the app exits immediately with no window and no error output."
 created: 2026-03-31T00:00:00Z
 updated: 2026-03-31T00:01:00Z
 ---
@@ -17,8 +17,8 @@ next_action: Apply fix to package.json start script
 expected: Electron app window should appear
 actual: Process starts and exits immediately, no window, no error messages
 errors: None visible in terminal
-reproduction: cd F:/MyClaw/newApp && npm run build:main && npm start
-started: New app (newApp/ is untracked in git), likely first attempt to run
+reproduction: cd F:/MyClaw/desktop && npm run build:main && npm start
+started: New app (desktop/ is untracked in git), likely first attempt to run
 
 ## Eliminated
 
@@ -43,7 +43,7 @@ started: New app (newApp/ is untracked in git), likely first attempt to run
 
 - timestamp: 2026-03-31T00:01:00Z
   checked: dist/renderer/index.html existence
-  found: File exists at F:/MyClaw/newApp/dist/renderer/index.html
+  found: File exists at F:/MyClaw/desktop/dist/renderer/index.html
   implication: Built renderer is present and can be loaded in production mode
 
 ## Resolution
@@ -51,4 +51,4 @@ started: New app (newApp/ is untracked in git), likely first attempt to run
 root_cause: IS_DEV is computed as (!app.isPackaged), which is always true when running via npm start (unpackaged). This causes the main process to call loadURL("http://localhost:1420") even though the Vite dev server is not running. The BrowserWindow is created with show:false and only becomes visible on ready-to-show, which never fires since the URL load fails. The app has no visible window and exits.
 fix: Added cross-env as a devDependency and changed the start script to "cross-env NODE_ENV=production electron dist/src/main/index.js". This sets IS_DEV=false so the app loads dist/renderer/index.html instead of the unreachable dev server.
 verification: Ran the fixed command directly - ERR_CONNECTION_REFUSED is gone. App no longer tries http://localhost:1420. Window loads the built renderer file.
-files_changed: [newApp/package.json]
+files_changed: [desktop/package.json]

@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skill 开发工坊 — 通信实验场</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0c0c0c;
+    color: #ededed;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ── Navigation ── */
+  .nav {
+    display: flex;
+    gap: 8px;
+    padding: 16px 24px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    background: #0c0c0c;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .nav-btn {
+    padding: 7px 16px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: transparent;
+    color: #a3a3a3;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .nav-btn:hover {
+    color: #ededed;
+    border-color: rgba(255,255,255,0.16);
+    background: rgba(255,255,255,0.04);
+  }
+
+  .nav-btn.active {
+    background: rgba(16,163,127,0.12);
+    border-color: rgba(16,163,127,0.3);
+    color: #10a37f;
+  }
+
+  /* ── Layout ── */
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 28px 24px;
+  }
+
+  .page-title {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: #ededed;
+  }
+
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  @media (max-width: 720px) {
+    .columns { grid-template-columns: 1fr; }
+  }
+
+  /* ── Cards ── */
+  .card {
+    background: #141414;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 10px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #ededed;
+  }
+
+  /* ── Form elements ── */
+  label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: #a3a3a3;
+    margin-bottom: 6px;
+    margin-top: 14px;
+  }
+
+  label:first-of-type { margin-top: 0; }
+
+  select, input[type="text"] {
+    width: 100%;
+    padding: 9px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: #0c0c0c;
+    color: #ededed;
+    font-size: 13px;
+    font-family: inherit;
+    outline: none;
+    transition: all 0.2s;
+  }
+
+  select:focus, input[type="text"]:focus {
+    border-color: #10a37f;
+    box-shadow: 0 0 0 3px rgba(16,163,127,0.14);
+  }
+
+  select { cursor: pointer; }
+  select option { background: #141414; color: #ededed; }
+
+  textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: #0c0c0c;
+    color: #ededed;
+    font-size: 13px;
+    font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+    line-height: 1.6;
+    outline: none;
+    resize: vertical;
+    min-height: 100px;
+    transition: all 0.2s;
+  }
+
+  textarea:focus {
+    border-color: #10a37f;
+    box-shadow: 0 0 0 3px rgba(16,163,127,0.14);
+  }
+
+  /* ── Buttons ── */
+  .btn-send {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 18px;
+    padding: 10px 24px;
+    border-radius: 6px;
+    border: none;
+    background: #10a37f;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-send:hover {
+    filter: brightness(1.12);
+    transform: translateY(-1px);
+  }
+
+  .btn-send:active {
+    transform: translateY(0);
+  }
+
+  .btn-clear {
+    padding: 5px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: transparent;
+    color: #a3a3a3;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .btn-clear:hover {
+    color: #ef4444;
+    border-color: rgba(239,68,68,0.3);
+    background: rgba(239,68,68,0.06);
+  }
+
+  /* ── Preset section ── */
+  .preset-section {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+  }
+
+  .preset-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #737373;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 10px;
+  }
+
+  .preset-btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .preset-btn {
+    padding: 7px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: transparent;
+    color: #a3a3a3;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .preset-btn:hover {
+    color: #ededed;
+    border-color: rgba(255,255,255,0.16);
+    background: rgba(255,255,255,0.04);
+    transform: translateY(-1px);
+  }
+
+  /* ── Log area ── */
+  .log-area {
+    flex: 1;
+    min-height: 380px;
+    max-height: 520px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .log-area::-webkit-scrollbar { width: 5px; }
+  .log-area::-webkit-scrollbar-track { background: transparent; }
+  .log-area::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+  .log-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    color: #737373;
+    font-size: 13px;
+    text-align: center;
+    padding: 40px 20px;
+  }
+
+  .log-entry {
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.02);
+    border-left: 3px solid rgba(255,255,255,0.08);
+    animation: slideIn 0.25s ease-out;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .log-entry.type-skill-data     { border-left-color: #10a37f; }
+  .log-entry.type-skill-update   { border-left-color: #3b82f6; }
+  .log-entry.type-skill-progress { border-left-color: #f59e0b; }
+  .log-entry.type-other          { border-left-color: rgba(255,255,255,0.15); }
+
+  .log-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .log-time {
+    font-size: 11px;
+    color: #737373;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .log-type {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 1px 8px;
+    border-radius: 4px;
+  }
+
+  .log-type.t-skill-data     { background: rgba(16,163,127,0.12); color: #10a37f; }
+  .log-type.t-skill-update   { background: rgba(59,130,246,0.12); color: #3b82f6; }
+  .log-type.t-skill-progress { background: rgba(245,158,11,0.12); color: #f59e0b; }
+  .log-type.t-other          { background: rgba(255,255,255,0.06); color: #a3a3a3; }
+
+  .log-payload {
+    font-family: "SF Mono", "Cascadia Code", "Fira Code", "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    color: #a3a3a3;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: rgba(0,0,0,0.25);
+    padding: 8px 10px;
+    border-radius: 6px;
+  }
+
+  /* ── Info box ── */
+  .info-box {
+    margin-top: 20px;
+    padding: 16px 18px;
+    border-radius: 10px;
+    background: rgba(59,130,246,0.06);
+    border: 1px solid rgba(59,130,246,0.15);
+  }
+
+  .info-box-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #3b82f6;
+    margin-bottom: 10px;
+  }
+
+  .info-box ul {
+    list-style: none;
+    padding: 0;
+  }
+
+  .info-box li {
+    font-size: 13px;
+    color: #a3a3a3;
+    padding: 3px 0;
+    padding-left: 18px;
+    position: relative;
+  }
+
+  .info-box li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 11px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(59,130,246,0.4);
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <button class="nav-btn" onclick="navigateTo('view.html')">仪表盘</button>
+  <button class="nav-btn" onclick="navigateTo('guide.html')">开发指南</button>
+  <button class="nav-btn" onclick="navigateTo('explorer.html')">数据探索</button>
+  <button class="nav-btn active" onclick="navigateTo('playground.html')">实验场</button>
+</nav>
+
+<div class="container">
+  <h1 class="page-title">通信实验场</h1>
+
+  <div class="columns">
+    <!-- ── Left: Send ── -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">发送消息</span>
+      </div>
+
+      <label for="msgType">消息类型</label>
+      <select id="msgType">
+        <option value="skill-callback">skill-callback</option>
+        <option value="custom">custom</option>
+      </select>
+
+      <label for="msgAction">Action</label>
+      <input type="text" id="msgAction" value="my-action" placeholder="输入 action 名称">
+
+      <label for="msgData">Data (JSON)</label>
+      <textarea id="msgData">{ "key": "value" }</textarea>
+
+      <button class="btn-send" onclick="sendMessage()">&#9654; 发送</button>
+
+      <div class="preset-section">
+        <div class="preset-title">预设消息</div>
+        <div class="preset-btns">
+          <button class="preset-btn" onclick="sendPreset('home')">导航到首页</button>
+          <button class="preset-btn" onclick="sendPreset('guide')">导航到指南</button>
+          <button class="preset-btn" onclick="sendPreset('custom')">自定义回调</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Right: Log ── -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">消息日志</span>
+        <button class="btn-clear" onclick="clearLog()">清空日志</button>
+      </div>
+      <div class="log-area" id="logArea">
+        <div class="log-empty" id="logEmpty">暂无消息<br>接收到的 postMessage 会显示在这里</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-box">
+    <div class="info-box-title">提示</div>
+    <ul>
+      <li>这个页面会记录所有通过 postMessage 收到的消息</li>
+      <li>你可以用左侧的表单向宿主发送消息</li>
+      <li>打开浏览器控制台可以看到更详细的信息</li>
+    </ul>
+  </div>
+</div>
+
+<script>
+/* ── Navigation ── */
+function navigateTo(page) {
+  window.parent.postMessage({ type: "skill-callback", action: "navigate", data: { page } }, "*");
+}
+
+/* ── Send ── */
+function sendMessage() {
+  const type = document.getElementById("msgType").value;
+  const action = document.getElementById("msgAction").value.trim();
+  const raw = document.getElementById("msgData").value.trim();
+
+  let data;
+  try {
+    data = JSON.parse(raw);
+  } catch (err) {
+    data = raw;
+    console.warn("[playground] data is not valid JSON, sending as string:", raw);
+  }
+
+  const msg = { type, action, data };
+  window.parent.postMessage(msg, "*");
+  console.log("[playground] sent:", msg);
+
+  addLogEntry("sent", { type, action, data });
+}
+
+function sendPreset(preset) {
+  const presets = {
+    home:   { type: "skill-callback", action: "navigate", data: { page: "view.html" } },
+    guide:  { type: "skill-callback", action: "navigate", data: { page: "guide.html" } },
+    custom: { type: "skill-callback", action: "custom-action", data: { greeting: "hello", ts: Date.now() } }
+  };
+
+  const msg = presets[preset];
+  if (!msg) return;
+
+  window.parent.postMessage(msg, "*");
+  console.log("[playground] preset sent:", msg);
+
+  addLogEntry("sent", msg);
+}
+
+/* ── Receive ── */
+window.addEventListener("message", (e) => {
+  if (!e.data || typeof e.data !== "object") return;
+  const d = e.data;
+
+  /* Process known types for rendering */
+  if (d.type === "skill-data" || d.type === "skill-update" || d.type === "skill-progress") {
+    console.log("[playground] received:", d);
+    addLogEntry(d.type, d.payload ?? d);
+    return;
+  }
+
+  /* Catch any other postMessage */
+  if (d.type) {
+    console.log("[playground] received (other):", d);
+    addLogEntry("other", d);
+  }
+});
+
+/* ── Log ── */
+const logArea = document.getElementById("logArea");
+const logEmpty = document.getElementById("logEmpty");
+let logCount = 0;
+
+function addLogEntry(type, payload) {
+  logEmpty.style.display = "none";
+  logCount++;
+
+  const now = new Date();
+  const ts = [
+    String(now.getHours()).padStart(2, "0"),
+    String(now.getMinutes()).padStart(2, "0"),
+    String(now.getSeconds()).padStart(2, "0")
+  ].join(":") + "." + String(now.getMilliseconds()).padStart(3, "0");
+
+  const typeClass = type.startsWith("skill-") ? `type-${type}` : (type === "sent" ? "type-other" : "type-other");
+  const tagClass  = type.startsWith("skill-") ? `t-${type}` : (type === "sent" ? "t-other" : "t-other");
+  const label     = type === "sent" ? "SENT" : type;
+
+  let formatted;
+  try {
+    formatted = JSON.stringify(payload, null, 2);
+  } catch {
+    formatted = String(payload);
+  }
+
+  const entry = document.createElement("div");
+  entry.className = `log-entry ${typeClass}`;
+  entry.innerHTML = `
+    <div class="log-meta">
+      <span class="log-time">${ts}</span>
+      <span class="log-type ${tagClass}">${esc(label)}</span>
+    </div>
+    <div class="log-payload">${esc(formatted)}</div>
+  `;
+
+  logArea.appendChild(entry);
+  logArea.scrollTop = logArea.scrollHeight;
+}
+
+function clearLog() {
+  logArea.querySelectorAll(".log-entry").forEach(el => el.remove());
+  logEmpty.style.display = "flex";
+  logCount = 0;
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>

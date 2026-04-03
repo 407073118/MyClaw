@@ -9,7 +9,7 @@ The repo contains three top-level products, each with distinct UI frameworks:
 | Product | UI Framework | State Mgmt | Path |
 |---------|-------------|------------|------|
 | desktop (Tauri app) | Vue 3 + SFC | Pinia | `desktop/apps/desktop/` |
-| newApp (Electron app) | React 18 + TSX | Zustand | `newApp/src/renderer/` |
+| desktop (Electron app) | React 18 + TSX | Zustand | `desktop/src/renderer/` |
 | cloud-web (Nuxt 4) | Vue 3 + SFC | Nuxt composables | `cloud/apps/cloud-web/` |
 | cloud-api (NestJS) | N/A | N/A | `cloud/apps/cloud-api/` |
 | runtime (Node service) | N/A | N/A | `desktop/apps/runtime/` |
@@ -28,7 +28,7 @@ Both `desktop/` and `cloud/` are pnpm workspaces with `packages/shared/` sub-pac
 
 **Vue views vs pages:**
 - desktop: `src/views/` with `*View.vue` suffix (`ChatView.vue`, `HubView.vue`, `McpDetailView.vue`)
-- newApp: `src/renderer/pages/` with `*Page.tsx` suffix (`ChatPage.tsx`, `HubPage.tsx`)
+- desktop: `src/renderer/pages/` with `*Page.tsx` suffix (`ChatPage.tsx`, `HubPage.tsx`)
 - cloud-web: `pages/` with lowercase filenames per Nuxt convention (`login.vue`, `console.vue`, `skills/[id].vue`)
 
 **Functions:**
@@ -75,7 +75,7 @@ Both `desktop/` and `cloud/` are pnpm workspaces with `packages/shared/` sub-pac
 
 **Path Aliases:**
 - desktop: `@` maps to `src/` (configured in `desktop/apps/desktop/vite.config.ts`)
-- newApp: `@` maps to `src/renderer/`, `@shared` maps to `shared/` (configured in `newApp/vite.config.ts`)
+- desktop: `@` maps to `src/renderer/`, `@shared` maps to `shared/` (configured in `desktop/vite.config.ts`)
 - cloud-api: `@myclaw-cloud/shared` mapped via tsconfig paths
 - cloud-web: auto-imports via Nuxt (composables, utils)
 
@@ -91,8 +91,8 @@ Both `desktop/` and `cloud/` are pnpm workspaces with `packages/shared/` sub-pac
 - Auth store is separate: `desktop/apps/desktop/src/stores/auth.ts`
 - Shell store holds runtime connection info: `desktop/apps/desktop/src/stores/shell.ts`
 
-**newApp (Zustand):**
-- Stores in `newApp/src/renderer/stores/`
+**desktop (Zustand):**
+- Stores in `desktop/src/renderer/stores/`
 - Use `create<State>()((set, get) => ({ ... }))` pattern
 - Same domain structure mirrored from desktop: `workspace.ts`, `auth.ts`, `shell.ts`
 

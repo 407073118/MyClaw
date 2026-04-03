@@ -191,9 +191,8 @@ useHead({
           class="skill-card-nx"
         >
           <div class="card-top">
-            <div class="skill-avatar" :style="skill.icon ? {} : { background: getAvatarColor(skill.name) }">
-              <img v-if="skill.icon" :src="skill.icon" :alt="skill.name" />
-              <span v-else>{{ skill.name.charAt(0).toUpperCase() }}</span>
+            <div class="skill-avatar" :style="{ background: getAvatarColor(skill.name) }">
+              <span>{{ skill.name.charAt(0).toUpperCase() }}</span>
             </div>
             <div class="card-title-block">
               <h4>{{ skill.name }}</h4>
@@ -580,13 +579,6 @@ useHead({
   flex-shrink: 0;
   overflow: hidden;
   background: rgba(var(--nuxt-green-rgb), 0.15);
-}
-
-.skill-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  padding: 6px;
 }
 
 .skill-avatar span {

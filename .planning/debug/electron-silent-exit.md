@@ -19,8 +19,8 @@ next_action: Fix tsconfig.main.json outDir structure + add tsc-alias to rewrite 
 expected: Electron app window should appear when running `npm start`
 actual: Process starts and exits immediately, returns to PS prompt with no output or errors
 errors: None visible in terminal
-reproduction: `cd F:/MyClaw/newApp && npm run build:main && npm start`
-started: First time running - newApp/ is a new untracked project
+reproduction: `cd F:/MyClaw/desktop && npm run build:main && npm start`
+started: First time running - desktop/ is a new untracked project
 
 ## Eliminated
 

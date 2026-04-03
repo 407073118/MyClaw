@@ -16,7 +16,7 @@ MyClaw/
 │   └── packages/
 │       └── shared/             # Shared TypeScript contracts (@myclaw-desktop/shared)
 │           └── src/contracts/
-├── newApp/                     # Electron + React migration (single package)
+├── desktop/                     # Electron + React migration (single package)
 │   ├── shared/                 # Shared contracts (@shared/contracts)
 │   │   └── contracts/
 │   └── src/
@@ -170,7 +170,7 @@ MyClaw/
   - `events.ts` -- event type definitions
   - `ui.ts` -- UI-specific types
 
-**`newApp/src/main/`**
+**`desktop/src/main/`**
 - Purpose: Electron main process with IPC handlers
 - Contains: App lifecycle, IPC registration, runtime context
 - Key files:
@@ -187,12 +187,12 @@ MyClaw/
   - `services/runtime-context.ts` -- runtime context type and factory
   - `services/builtin-tool-stubs.ts` -- tool definition stubs
 
-**`newApp/src/preload/`**
+**`desktop/src/preload/`**
 - Purpose: Electron preload script exposing typed API to renderer
 - Contains: Single file
 - Key file: `index.ts` -- `contextBridge.exposeInMainWorld("myClawAPI", ...)` with full typed API
 
-**`newApp/src/renderer/`**
+**`desktop/src/renderer/`**
 - Purpose: React 18 SPA for the Electron renderer process
 - Contains: Pages, components, stores, hooks, services
 - Key files:
@@ -205,7 +205,7 @@ MyClaw/
   - `services/runtime-client.ts` -- workflow run fetch helpers
   - `hooks/useAuth.ts` -- auth hook
 
-**`newApp/shared/contracts/`**
+**`desktop/shared/contracts/`**
 - Purpose: TypeScript domain types for the Electron app
 - Contains: Duplicated contract files from desktop shared
 - Key file: `index.ts` -- barrel export
@@ -264,8 +264,8 @@ MyClaw/
 - `desktop/apps/desktop/src/main.ts`: Desktop Vue app bootstrap
 - `desktop/apps/desktop/src-tauri/src/main.rs`: Tauri shell entry
 - `desktop/apps/runtime/src/index.ts`: Runtime sidecar entry
-- `newApp/src/main/index.ts`: Electron main process entry
-- `newApp/src/renderer/main.tsx`: Electron renderer entry
+- `desktop/src/main/index.ts`: Electron main process entry
+- `desktop/src/renderer/main.tsx`: Electron renderer entry
 - `cloud/apps/cloud-api/src/main.ts`: NestJS API bootstrap
 - `cloud/apps/cloud-web/nuxt.config.ts`: Nuxt app config (auto-discovers pages/server)
 
@@ -275,7 +275,7 @@ MyClaw/
 - `cloud/apps/cloud-api/prisma/schema.prisma`: Database schema
 - `cloud/apps/cloud-web/nuxt.config.ts`: Nuxt runtime config (cloudApiBase)
 - `cloud/infra/docker-compose.yml`: Dev database container
-- `newApp/package.json`: Electron app config with electron-builder settings
+- `desktop/package.json`: Electron app config with electron-builder settings
 
 **Core Logic:**
 - `desktop/apps/runtime/src/server/create-runtime-app.ts`: Main runtime server setup (largest file)
@@ -323,14 +323,14 @@ MyClaw/
 - Add route: `desktop/apps/desktop/src/router/index.ts`
 - Add tests: Co-locate `*.test.ts` next to source files
 
-**New Desktop Feature (Electron/newApp):**
-- Add IPC handler module: `newApp/src/main/ipc/[feature-name].ts`
-- Register in `newApp/src/main/ipc/index.ts`
-- Add shared contract types: `newApp/shared/contracts/[feature-name].ts`
-- Add preload API methods: `newApp/src/preload/index.ts`
-- Add renderer page: `newApp/src/renderer/pages/[FeatureName]Page.tsx`
-- Add route: `newApp/src/renderer/router/`
-- Add Zustand store: `newApp/src/renderer/stores/[feature-name].ts`
+**New Desktop Feature (Electron/desktop):**
+- Add IPC handler module: `desktop/src/main/ipc/[feature-name].ts`
+- Register in `desktop/src/main/ipc/index.ts`
+- Add shared contract types: `desktop/shared/contracts/[feature-name].ts`
+- Add preload API methods: `desktop/src/preload/index.ts`
+- Add renderer page: `desktop/src/renderer/pages/[FeatureName]Page.tsx`
+- Add route: `desktop/src/renderer/router/`
+- Add Zustand store: `desktop/src/renderer/stores/[feature-name].ts`
 
 **New Cloud API Module:**
 - Create module directory: `cloud/apps/cloud-api/src/modules/[feature-name]/`
@@ -347,13 +347,13 @@ MyClaw/
 
 **New Desktop UI Component:**
 - Vue component: `desktop/apps/desktop/src/components/[domain]/[ComponentName].vue`
-- React component: `newApp/src/renderer/components/[domain]/[ComponentName].tsx`
+- React component: `desktop/src/renderer/components/[domain]/[ComponentName].tsx`
 
 **New Utility:**
 - Desktop runtime: `desktop/apps/runtime/src/services/[utility-name].ts`
 - Desktop frontend: `desktop/apps/desktop/src/utils/`
 - Cloud web: `cloud/apps/cloud-web/utils/`
-- Electron renderer: `newApp/src/renderer/utils/`
+- Electron renderer: `desktop/src/renderer/utils/`
 
 ## Special Directories
 

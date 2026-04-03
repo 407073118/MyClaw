@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { SkillDetail, SkillCategory } from "@myclaw-cloud/shared";
+import type { SkillDetail, SkillCategory, DownloadTokenResponse } from "@myclaw-cloud/shared";
 
 const SKILL_CATEGORIES: { value: SkillCategory; label: string }[] = [
   { value: "ai-assistant", label: "AI 助手" },
@@ -93,6 +93,40 @@ const iconLetter = computed(() => {
   if (!selectedSkill.value) return "?";
   return selectedSkill.value.name?.charAt(0)?.toUpperCase() || "?";
 });
+
+function getAvatarColor(name: string): string {
+  const colors = [
+    "#10b981", "#3b82f6", "#8b5cf6", "#f59e0b",
+    "#ef4444", "#ec4899", "#06b6d4", "#84cc16"
+  ];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return colors[Math.abs(hash) % colors.length];
+}
+
+const downloadPendingId = ref("");
+
+const latestReleaseId = computed(() => {
+  const releases = selectedSkill.value?.releases;
+  return releases?.length ? releases[0].id : "";
+});
+
+async function handleDownload(releaseId: string) {
+  if (!releaseId) return;
+  downloadPendingId.value = releaseId;
+  try {
+    const token = await $fetch<DownloadTokenResponse>(`/api/hub/releases/${releaseId}/download-token`);
+    if (import.meta.client) {
+      window.open(token.downloadUrl, "_blank", "noopener,noreferrer");
+    }
+  } catch {
+    console.warn("[Skills] 下载失败", { releaseId });
+  } finally {
+    downloadPendingId.value = "";
+  }
+}
 </script>
 
 <template>
@@ -117,10 +151,7 @@ const iconLetter = computed(() => {
         <header class="hero-section glass-card">
           <div class="hero-top">
             <div class="hero-icon-area">
-              <div v-if="selectedSkill.icon" class="skill-icon-lg">
-                <img :src="selectedSkill.icon" :alt="selectedSkill.name" />
-              </div>
-              <div v-else class="skill-icon-lg icon-fallback">
+              <div class="skill-icon-lg icon-fallback" :style="{ background: getAvatarColor(selectedSkill.name) }">
                 {{ iconLetter }}
               </div>
             </div>
@@ -136,9 +167,13 @@ const iconLetter = computed(() => {
           </div>
 
           <div class="hero-actions">
-            <button class="action-btn-primary">
+            <button
+              class="action-btn-primary"
+              :disabled="!latestReleaseId || downloadPendingId === latestReleaseId"
+              @click="handleDownload(latestReleaseId)"
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-              安装到 Claw
+              {{ downloadPendingId === latestReleaseId ? "下载中..." : "下载 ZIP" }}
             </button>
             <NuxtLink :to="`/skills/publish?id=${selectedSkill.id}`" class="action-btn-secondary">
               发布新版本
@@ -318,19 +353,11 @@ const iconLetter = computed(() => {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.skill-icon-lg img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  padding: 12px;
-}
-
 .skill-icon-lg.icon-fallback {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(var(--nuxt-green-rgb), 0.12);
-  color: var(--nuxt-green);
+  color: #fff;
   font-size: 2rem;
   font-weight: 900;
 }
@@ -418,9 +445,14 @@ const iconLetter = computed(() => {
   text-decoration: none;
 }
 
-.action-btn-primary:hover {
+.action-btn-primary:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 8px 25px rgba(var(--nuxt-green-rgb), 0.3);
+}
+
+.action-btn-primary:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .action-btn-primary svg {

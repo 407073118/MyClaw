@@ -147,7 +147,30 @@
       "Bash(del /f \"F:\\\\MyClaw\\\\.git\\\\index.lock\")",
       "Bash(tasklist)",
       "Bash(taskkill /F /PID 27800 /PID 29324 /PID 37768 /PID 40692 /PID 37000)",
-      "Bash(rm -f F:/MyClaw/.git/index.lock)"
+      "Bash(rm -f F:/MyClaw/.git/index.lock)",
+      "Bash(find /f/MyClaw/newApp/src -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js -o -name *.jsx \\\\\\))",
+      "Bash(taskkill /F /IM MyClaw.exe)",
+      "Bash(taskkill /F /IM electron.exe)",
+      "Bash(pnpm dist:pre)",
+      "Bash(handle64.exe \"F:\\\\MyClaw\\\\newApp\\\\release\\\\win-unpacked\\\\resources\\\\app.asar\")",
+      "Bash(handle.exe \"F:\\\\MyClaw\\\\newApp\\\\release\\\\win-unpacked\\\\resources\\\\app.asar\")",
+      "Bash(powershell -Command \"Get-Process | Where-Object { $_.Modules.FileName -like ''*newApp*'' -or $_.Modules.FileName -like ''*win-unpacked*'' } | Select-Object Id, ProcessName, Path\")",
+      "Bash(powershell.exe -NoProfile -Command \"Remove-Item -Path ''F:\\\\MyClaw\\\\newApp\\\\release\\\\win-unpacked'' -Recurse -Force\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(find . -name \"*.md\" -exec grep -l \"newApp\" {})",
+      "Bash(while read:*)",
+      "Bash(do sed:*)",
+      "Bash(find /f/MyClaw/desktop/src/main -name *auth* -o -name *credential* -o -name *token*)",
+      "Bash(find /f/MyClaw/desktop/src/renderer -name *.ts -o -name *.tsx)",
+      "Bash(find /f/MyClaw/desktop/src/renderer -name *auth*)",
+      "Bash(find /f/MyClaw/desktop/src -name *preload* -o -name *context*)",
+      "Bash(curl -s -w \"\\\\nHTTP_STATUS:%{http_code}\" -X POST \"https://coding.dashscope.aliyuncs.com/v1/chat/completions\" -H \"Content-Type: application/json\" -H \"Authorization: Bearer sk-sp-df8f797f71dc49e2a9de118ad90d62b9\" -d '{\"\"model\"\":\"\"qwen3.5-plus\"\",\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"hi\"\"}],\"\"max_tokens\"\":10}')",
+      "Bash(rm -rf \"F:/mc/MyClaw/data/myClaw/skills/data-viewer\" \"F:/mc/MyClaw/data/myClaw/skills/skill-dev-guide\" \"F:/mc/MyClaw/data/myClaw/skills/skills-sample\")",
+      "Bash(cp -r \"F:/MyClaw/desktop/builtin-skills/skill-starter\" \"F:/mc/MyClaw/data/myClaw/skills/skill-starter\")",
+      "Bash(pnpm add:*)",
+      "Bash(grep -E \"\\\\.\\(ts|js\\)$\")",
+      "Bash(find F:/MyClaw/desktop/shared/contracts -type f -name *.ts)",
+      "Bash(find F:/MyClaw/desktop -name *.ts -path */services/*workflow* -o -name *workflow* -path */services/*)"
     ]
   }
 }

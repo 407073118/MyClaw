@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skill 开发工坊 — 开发指南</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{
+    height:100%;
+    background:#0c0c0c;
+    color:#ededed;
+    font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:14px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  body{padding:0 24px 48px}
+
+  /* ── Nav ── */
+  .nav{
+    position:sticky;top:0;z-index:100;
+    display:flex;gap:8px;
+    padding:16px 0 12px;
+    background:#0c0c0c;
+    border-bottom:1px solid rgba(255,255,255,0.08);
+    margin-bottom:28px;
+  }
+  .nav-btn{
+    padding:7px 16px;
+    border-radius:6px;
+    border:1px solid rgba(255,255,255,0.08);
+    background:transparent;
+    color:#a3a3a3;
+    font-size:13px;
+    font-family:inherit;
+    cursor:pointer;
+    transition:all 0.2s;
+  }
+  .nav-btn:hover{
+    border-color:rgba(255,255,255,0.18);
+    color:#ededed;
+  }
+  .nav-btn.active{
+    background:rgba(16,163,127,0.12);
+    border-color:rgba(16,163,127,0.3);
+    color:#10a37f;
+  }
+
+  /* ── Header ── */
+  .page-header{margin-bottom:36px}
+  .page-header h1{
+    font-size:26px;font-weight:700;
+    letter-spacing:-0.4px;
+    margin-bottom:6px;
+  }
+  .page-header .subtitle{
+    font-size:15px;color:#737373;
+    font-weight:400;
+  }
+
+  /* ── Sections ── */
+  .section{
+    margin-bottom:40px;
+    padding-bottom:32px;
+    border-bottom:1px solid rgba(255,255,255,0.05);
+  }
+  .section:last-child{border-bottom:none}
+  .section-title{
+    font-size:18px;font-weight:600;
+    letter-spacing:-0.2px;
+    margin-bottom:16px;
+    display:flex;align-items:center;gap:10px;
+  }
+  .section-title::before{
+    content:"";display:block;
+    width:3px;height:20px;
+    border-radius:2px;
+    background:#10a37f;
+  }
+  .section-desc{
+    font-size:14px;color:#a3a3a3;
+    line-height:1.7;
+    margin-bottom:16px;
+    max-width:720px;
+  }
+
+  /* ── File Tree ── */
+  .file-tree{
+    background:#111;
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:10px;
+    padding:16px 20px;
+    font-family:"SF Mono","Fira Code","Cascadia Code",monospace;
+    font-size:13px;
+    line-height:1.8;
+    margin-bottom:16px;
+    color:#a3a3a3;
+  }
+  .file-tree .folder{color:#f59e0b}
+  .file-tree .file{color:#ededed}
+  .file-tree .indent{padding-left:20px;display:block}
+
+  /* ── Code Block ── */
+  .code-block{
+    background:#111;
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:10px;
+    margin-bottom:16px;
+    overflow:hidden;
+  }
+  .code-header{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:10px 16px;
+    background:rgba(255,255,255,0.03);
+    border-bottom:1px solid rgba(255,255,255,0.06);
+    font-size:12px;color:#737373;
+  }
+  .code-lang{
+    font-family:inherit;
+    font-weight:500;
+    text-transform:uppercase;
+    letter-spacing:0.5px;
+  }
+  .code-body{
+    padding:16px 20px;
+    overflow-x:auto;
+    font-family:"SF Mono","Fira Code","Cascadia Code",monospace;
+    font-size:12.5px;
+    line-height:1.7;
+    color:#a3a3a3;
+    white-space:pre;
+  }
+  .code-body .kw{color:#60a5fa}
+  .code-body .str{color:#10a37f}
+  .code-body .cmt{color:#525252;font-style:italic}
+  .code-body .fn{color:#f59e0b}
+  .code-body .num{color:#ef4444}
+  .code-body .tag{color:#60a5fa}
+  .code-body .attr{color:#f59e0b}
+  .code-body .val{color:#10a37f}
+  .code-body .punct{color:#737373}
+
+  /* ── Sub-section ── */
+  .sub-section{margin-bottom:24px}
+  .sub-title{
+    font-size:15px;font-weight:600;
+    color:#ededed;
+    margin-bottom:10px;
+  }
+
+  /* ── Tip Box ── */
+  .tip{
+    background:rgba(16,163,127,0.06);
+    border:1px solid rgba(16,163,127,0.18);
+    border-radius:10px;
+    padding:14px 18px;
+    font-size:13px;
+    color:#a3a3a3;
+    line-height:1.7;
+    margin-bottom:16px;
+  }
+  .tip strong{color:#10a37f;font-weight:500}
+
+  /* ── Color Palette ── */
+  .palette{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+    gap:12px;
+    margin-bottom:16px;
+  }
+  .palette-item{
+    display:flex;align-items:center;gap:12px;
+    background:#141414;
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:10px;
+    padding:12px 16px;
+    transition:all 0.2s;
+  }
+  .palette-item:hover{
+    border-color:rgba(255,255,255,0.18);
+    transform:translateY(-1px);
+  }
+  .color-circle{
+    width:32px;height:32px;
+    border-radius:50%;
+    flex-shrink:0;
+    border:2px solid rgba(255,255,255,0.06);
+  }
+  .color-info .hex{font-size:13px;font-weight:600;color:#ededed;font-family:"SF Mono",monospace}
+  .color-info .usage{font-size:11px;color:#737373;margin-top:1px}
+
+  /* ── Responsive ── */
+  @media(max-width:600px){
+    body{padding:0 14px 32px}
+    .palette{grid-template-columns:1fr 1fr}
+  }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <button class="nav-btn" onclick="navigateTo('view.html')">仪表盘</button>
+  <button class="nav-btn active" onclick="navigateTo('guide.html')">开发指南</button>
+  <button class="nav-btn" onclick="navigateTo('explore.html')">数据探索</button>
+  <button class="nav-btn" onclick="navigateTo('playground.html')">实验场</button>
+</nav>
+
+<div class="page-header">
+  <h1>开发指南</h1>
+  <div class="subtitle">从零到一，构建你的第一个 MyClaw Skill</div>
+</div>
+
+<!-- ── Section 1: 最简 Skill ── -->
+<div class="section">
+  <div class="section-title">最简 Skill</div>
+  <p class="section-desc">一个 Skill 最少只需要一个 SKILL.md 文件。它使用 YAML frontmatter 声明元信息，markdown 正文作为 Skill 的系统提示词。</p>
+
+  <div class="file-tree">
+    <span class="folder">my-skill/</span>
+    <span class="indent"><span class="file">SKILL.md</span></span>
+  </div>
+
+  <div class="code-block">
+    <div class="code-header"><span class="code-lang">SKILL.md</span></div>
+    <div class="code-body"><span class="punct">---</span>
+<span class="kw">name</span><span class="punct">:</span> <span class="str">my-skill</span>
+<span class="kw">version</span><span class="punct">:</span> <span class="str">1.0.0</span>
+<span class="kw">description</span><span class="punct">:</span> <span class="str">我的第一个 Skill</span>
+<span class="kw">author</span><span class="punct">:</span> <span class="str">your-name</span>
+<span class="punct">---</span>
+
+<span class="cmt"># 系统提示词</span>
+
+你是一个专业的助手，帮助用户完成任务。</div>
+  </div>
+
+  <div class="tip"><strong>提示：</strong>SKILL.md 是每个 Skill 的入口文件，宿主应用会解析 frontmatter 获取元信息，正文部分会被注入为 AI 的系统提示词。</div>
+</div>
+
+<!-- ── Section 2: 添加可视页面 ── -->
+<div class="section">
+  <div class="section-title">添加可视页面</div>
+  <p class="section-desc">在 Skill 目录中添加 HTML 文件，即可拥有可视化界面。页面会在 iframe 中加载，通过 postMessage 与宿主通信。</p>
+
+  <div class="file-tree">
+    <span class="folder">my-skill/</span>
+    <span class="indent"><span class="file">SKILL.md</span></span>
+    <span class="indent"><span class="file">view.html</span></span>
+  </div>
+
+  <div class="code-block">
+    <div class="code-header"><span class="code-lang">HTML</span></div>
+    <div class="code-body"><span class="tag">&lt;!DOCTYPE html&gt;</span>
+<span class="tag">&lt;html</span> <span class="attr">lang</span>=<span class="val">"zh-CN"</span><span class="tag">&gt;</span>
+<span class="tag">&lt;head&gt;</span>
+  <span class="tag">&lt;meta</span> <span class="attr">charset</span>=<span class="val">"UTF-8"</span><span class="tag">&gt;</span>
+  <span class="tag">&lt;title&gt;</span>My Skill<span class="tag">&lt;/title&gt;</span>
+<span class="tag">&lt;/head&gt;</span>
+<span class="tag">&lt;body&gt;</span>
+  <span class="tag">&lt;div</span> <span class="attr">id</span>=<span class="val">"app"</span><span class="tag">&gt;</span>加载中...<span class="tag">&lt;/div&gt;</span>
+  <span class="tag">&lt;script&gt;</span>
+    window.<span class="fn">addEventListener</span>(<span class="str">"message"</span>, (e) =&gt; {
+      <span class="kw">if</span> (e.data?.type === <span class="str">"skill-data"</span>)
+        <span class="fn">render</span>(e.data.payload);
+    });
+
+    <span class="kw">function</span> <span class="fn">render</span>(data) {
+      document.<span class="fn">getElementById</span>(<span class="str">"app"</span>)
+        .innerHTML = JSON.<span class="fn">stringify</span>(data);
+    }
+  <span class="tag">&lt;/script&gt;</span>
+<span class="tag">&lt;/body&gt;</span>
+<span class="tag">&lt;/html&gt;</span></div>
+  </div>
+
+  <div class="tip"><strong>提示：</strong>在 SKILL.md 的 frontmatter 中添加 <code style="background:#1a1a1a;padding:2px 6px;border-radius:4px;font-size:12px">pages: [view.html]</code> 来声明页面入口。</div>
+</div>
+
+<!-- ── Section 3: postMessage 通信 ── -->
+<div class="section">
+  <div class="section-title">postMessage 通信</div>
+  <p class="section-desc">Skill 页面运行在沙箱 iframe 中，通过 postMessage 与宿主应用双向通信。以下是完整的消息类型说明。</p>
+
+  <div class="sub-section">
+    <div class="sub-title">接收数据</div>
+    <p class="section-desc">宿主向 Skill 页面发送以下类型的消息：</p>
+    <div class="code-block">
+      <div class="code-header"><span class="code-lang">JavaScript</span></div>
+      <div class="code-body">window.<span class="fn">addEventListener</span>(<span class="str">"message"</span>, (e) =&gt; {
+  <span class="kw">const</span> { type, payload } = e.data || {};
+
+  <span class="kw">switch</span> (type) {
+    <span class="kw">case</span> <span class="str">"skill-data"</span>:
+      <span class="cmt">// 初始数据加载，页面首次打开时触发</span>
+      <span class="fn">render</span>(payload);
+      <span class="kw">break</span>;
+
+    <span class="kw">case</span> <span class="str">"skill-update"</span>:
+      <span class="cmt">// 增量数据更新，数据变化时触发</span>
+      <span class="fn">render</span>(payload);
+      <span class="kw">break</span>;
+
+    <span class="kw">case</span> <span class="str">"skill-progress"</span>:
+      <span class="cmt">// 进度通知，长任务执行期间触发</span>
+      <span class="fn">updateProgress</span>(payload.percent, payload.message);
+      <span class="kw">break</span>;
+  }
+});</div>
+    </div>
+  </div>
+
+  <div class="sub-section">
+    <div class="sub-title">发送回调</div>
+    <p class="section-desc">Skill 页面通过 skill-callback 类型向宿主发送操作请求：</p>
+    <div class="code-block">
+      <div class="code-header"><span class="code-lang">JavaScript</span></div>
+      <div class="code-body"><span class="cmt">// 通用回调格式</span>
+window.parent.<span class="fn">postMessage</span>({
+  type: <span class="str">"skill-callback"</span>,
+  action: <span class="str">"navigate"</span>,    <span class="cmt">// 操作类型</span>
+  data: { page: <span class="str">"guide.html"</span> }  <span class="cmt">// 操作参数</span>
+}, <span class="str">"*"</span>);
+
+<span class="cmt">// 常用 action 示例：</span>
+<span class="cmt">// "navigate"  — 页面导航</span>
+<span class="cmt">// "save"      — 保存数据</span>
+<span class="cmt">// "refresh"   — 请求刷新数据</span>
+<span class="cmt">// "toast"     — 显示提示消息</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Section 4: 多页面导航 ── -->
+<div class="section">
+  <div class="section-title">多页面导航</div>
+  <p class="section-desc">一个 Skill 可以包含多个 HTML 页面。在 SKILL.md 中声明所有页面，通过 navigateTo 函数切换。宿主会处理 iframe 的 src 切换。</p>
+
+  <div class="code-block">
+    <div class="code-header"><span class="code-lang">JavaScript</span></div>
+    <div class="code-body"><span class="cmt">// 页面导航函数</span>
+<span class="kw">function</span> <span class="fn">navigateTo</span>(page) {
+  window.parent.<span class="fn">postMessage</span>({
+    type: <span class="str">"skill-callback"</span>,
+    action: <span class="str">"navigate"</span>,
+    data: { page }
+  }, <span class="str">"*"</span>);
+}</div>
+  </div>
+
+  <div class="code-block">
+    <div class="code-header"><span class="code-lang">HTML — 导航栏模板</span></div>
+    <div class="code-body"><span class="tag">&lt;nav</span> <span class="attr">class</span>=<span class="val">"nav"</span><span class="tag">&gt;</span>
+  <span class="tag">&lt;button</span> <span class="attr">class</span>=<span class="val">"nav-btn active"</span>
+    <span class="attr">onclick</span>=<span class="val">"navigateTo('view.html')"</span><span class="tag">&gt;</span>
+    仪表盘
+  <span class="tag">&lt;/button&gt;</span>
+  <span class="tag">&lt;button</span> <span class="attr">class</span>=<span class="val">"nav-btn"</span>
+    <span class="attr">onclick</span>=<span class="val">"navigateTo('guide.html')"</span><span class="tag">&gt;</span>
+    开发指南
+  <span class="tag">&lt;/button&gt;</span>
+<span class="tag">&lt;/nav&gt;</span></div>
+  </div>
+
+  <div class="tip"><strong>提示：</strong>每个页面需要自行维护导航栏的 active 状态。建议将导航栏样式抽为公共 CSS 片段，通过复制保持一致。</div>
+</div>
+
+<!-- ── Section 5: 样式规范 ── -->
+<div class="section">
+  <div class="section-title">样式规范</div>
+  <p class="section-desc">为保持视觉一致性，建议所有 Skill 页面遵循以下配色和排版规范。页面运行在深色主题的 Electron 窗口中。</p>
+
+  <div class="palette">
+    <div class="palette-item">
+      <div class="color-circle" style="background:#0c0c0c"></div>
+      <div class="color-info">
+        <div class="hex">#0c0c0c</div>
+        <div class="usage">页面背景</div>
+      </div>
+    </div>
+    <div class="palette-item">
+      <div class="color-circle" style="background:#141414"></div>
+      <div class="color-info">
+        <div class="hex">#141414</div>
+        <div class="usage">卡片背景</div>
+      </div>
+    </div>
+    <div class="palette-item">
+      <div class="color-circle" style="background:#ededed"></div>
+      <div class="color-info">
+        <div class="hex">#ededed</div>
+        <div class="usage">主要文字</div>
+      </div>
+    </div>
+    <div class="palette-item">
+      <div class="color-circle" style="background:#a3a3a3"></div>
+      <div class="color-info">
+        <div class="hex">#a3a3a3</div>
+        <div class="usage">次要文字</div>
+      </div>
+    </div>
+    <div class="palette-item">
+      <div class="color-circle" style="background:#737373"></div>
+      <div class="color-info">
+        <div class="hex">#737373</div>
+        <div class="usage">辅助文字</div>
+      </div>
+    </div>
+    <div class="palette-item">
+      <div class="color-circle" style="background:#10a37f"></div>
+      <div class="color-info">
+        <div class="hex">#10a37f</div>
+        <div class="usage">强调色 / 成功</div>
+      </div>
+    </div>
+    <div class="palette-item">
+      <div class="color-circle" style="background:#3b82f6"></div>
+      <div class="color-info">
+        <div class="hex">#3b82f6</div>
+        <div class="usage">信息 / 链接</div>
+      </div>
+    </div>
+    <div class="palette-item">
+      <div class="color-circle" style="background:#f59e0b"></div>
+      <div class="color-info">
+        <div class="hex">#f59e0b</div>
+        <div class="usage">警告 / 标记</div>
+      </div>
+    </div>
+    <div class="palette-item">
+      <div class="color-circle" style="background:#ef4444"></div>
+      <div class="color-info">
+        <div class="hex">#ef4444</div>
+        <div class="usage">错误 / 删除</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="code-block">
+    <div class="code-header"><span class="code-lang">CSS — 推荐字体栈</span></div>
+    <div class="code-body"><span class="kw">font-family</span>: <span class="str">"Inter"</span>, -apple-system, BlinkMacSystemFont,
+             <span class="str">"Segoe UI"</span>, sans-serif;
+
+<span class="cmt">/* 代码字体 */</span>
+<span class="kw">font-family</span>: <span class="str">"SF Mono"</span>, <span class="str">"Fira Code"</span>,
+             <span class="str">"Cascadia Code"</span>, monospace;</div>
+  </div>
+
+  <div class="tip"><strong>提示：</strong>卡片使用 <code style="background:#1a1a1a;padding:2px 6px;border-radius:4px;font-size:12px">border-radius: 10px</code>，按钮和徽章使用 <code style="background:#1a1a1a;padding:2px 6px;border-radius:4px;font-size:12px">border-radius: 6px</code>。所有交互元素添加 <code style="background:#1a1a1a;padding:2px 6px;border-radius:4px;font-size:12px">transition: all 0.2s</code> 过渡效果。</div>
+</div>
+
+<script>
+/* ── postMessage Protocol ── */
+window.addEventListener("message", (e) => {
+  if (e.data?.type === "skill-data" && e.data.payload) { /* static page, no render needed */ }
+  if (e.data?.type === "skill-update" && e.data.payload) { /* static page, no render needed */ }
+});
+
+function navigateTo(page) {
+  window.parent.postMessage({ type: "skill-callback", action: "navigate", data: { page } }, "*");
+}
+</script>
+</body>
+</html>

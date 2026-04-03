@@ -32,7 +32,8 @@
       "Bash(echo '!!! 缺少 Linux 引擎 !!!' echo __NEW_LINE_83c992ad06cc66da__ echo '=== 4. Prisma index.js - 检查 binaryTargets ===' grep -A5 \"\"binaryTargets\"\" /tmp/deploy-verify/myclaw-cloud/cloud-api/node_modules/.prisma/client/index.js echo __NEW_LINE_83c992ad06cc66da__ echo '=== 5. Prisma index.js - 检查引擎查找路径 ===' grep query_engine /tmp/deploy-verify/myclaw-cloud/cloud-api/node_modules/.prisma/client/index.js)",
       "Bash(xargs -I{} echo \"  {}\" echo \"\" echo \"模拟解析 cloud-web .env:\" grep -v '^#' /tmp/deploy-verify/myclaw-cloud/cloud-web/.env)",
       "Bash(xargs -I{} echo \"  {}\" echo \"\" __NEW_LINE_130465c184b5d4af__ echo \"=== 14. 检查 setup.sh 的 Prisma generate 问题 ===\" echo \"setup.sh 会运行 npx prisma generate --schema=schema.prisma\" echo \"但 bundle 已经自带 Linux 引擎了，setup.sh 会额外安装 prisma@6 覆盖\" echo \"这可能导致版本不一致！\" echo \"\" __NEW_LINE_130465c184b5d4af__ echo \"=== 15. 检查 Prisma relativeEnvPaths ===\" grep 'relativeEnvPaths' /tmp/deploy-verify/myclaw-cloud/cloud-api/node_modules/.prisma/client/index.js)",
-      "Bash(ls -lh /f/MyClaw/cloud/node_modules/.pnpm/@prisma+client@6.19.2_prisma@6.19.2_typescript@5.9.3__typescript@5.9.3/node_modules/.prisma/client/libquery_engine*)"
+      "Bash(ls -lh /f/MyClaw/cloud/node_modules/.pnpm/@prisma+client@6.19.2_prisma@6.19.2_typescript@5.9.3__typescript@5.9.3/node_modules/.prisma/client/libquery_engine*)",
+      "Bash(pnpm build:*)"
     ]
   }
 }

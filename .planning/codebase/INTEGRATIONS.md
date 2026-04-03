@@ -75,12 +75,12 @@ The runtime connects to external MCP servers for tool discovery and invocation.
 
 **SQLite (Desktop - Local):**
 - Library: sql.js (SQLite compiled to WASM)
-- Used in: `desktop/apps/runtime/` and `newApp/`
+- Used in: `desktop/apps/runtime/` and `desktop/`
 - Purpose: Local desktop data persistence
 
 **File-based Persistence (Desktop):**
 - Session data: JSON files per session (`desktop/apps/runtime/src/services/session-persistence.ts`)
-- Runtime state: `~/.myclaw/runtime-state.json` (newApp default path)
+- Runtime state: `~/.myclaw/runtime-state.json` (desktop default path)
 - Skills: Local filesystem skill definitions with SKILL.md frontmatter (`desktop/apps/runtime/src/services/skill-manager.ts`)
 
 **File Storage (Cloud):**
@@ -117,11 +117,11 @@ The runtime connects to external MCP servers for tool discovery and invocation.
 - Tauri shell <-> Runtime sidecar (bundled Node.js binary, HTTP on port 43110)
 - Runtime exposes HTTP API for frontend to consume
 
-**Desktop Architecture (newApp / Electron):**
+**Desktop Architecture (desktop / Electron):**
 - React renderer <-> Electron main process (IPC via `contextBridge`/`ipcRenderer`)
-- Preload script: `newApp/src/preload/`
-- IPC handlers: `newApp/src/main/ipc/`
-- Runtime context: `newApp/src/main/services/runtime-context.ts`
+- Preload script: `desktop/src/preload/`
+- IPC handlers: `desktop/src/main/ipc/`
+- Runtime context: `desktop/src/main/services/runtime-context.ts`
 
 **Cloud Architecture:**
 - Nuxt web (SSR server) -> Cloud API (NestJS) via `$fetch` with `proxyCloudApi()` utility
