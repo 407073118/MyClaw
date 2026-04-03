@@ -1,5 +1,11 @@
 **/.idea/
 **/node_modules/
 **/dist/
+**/release/
+**/.pnpm-store/
+**/src-tauri/binaries/
 *.tar.gz
+*.exe
+*.dll
+*.asar
 Thumbs.db
