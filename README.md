@@ -9,6 +9,12 @@
 </p>
 
 <p align="center">
+  <a href="README.md">English</a> &nbsp;|&nbsp;
+  <a href="README.zh-CN.md">简体中文</a> &nbsp;|&nbsp;
+  <a href="README.ja.md">日本語</a>
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick Start</a> &nbsp;|&nbsp;
   <a href="#features">Features</a> &nbsp;|&nbsp;
   <a href="#architecture">Architecture</a> &nbsp;|&nbsp;
