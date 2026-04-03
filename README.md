@@ -5,7 +5,8 @@
 <h1 align="center">MyClaw</h1>
 
 <p align="center">
-  <strong>Open-source AI Agent Platform with Visual Workflow Engine</strong>
+  <strong>Enterprise-Ready, Self-Hosted AI Agent Platform</strong><br/>
+  <sub>Deploy your own Business AI in minutes -- not months.</sub>
 </p>
 
 <p align="center">
@@ -15,15 +16,16 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> &nbsp;|&nbsp;
+  <a href="#enterprise-deployment">Enterprise Deploy</a> &nbsp;|&nbsp;
   <a href="#features">Features</a> &nbsp;|&nbsp;
   <a href="#architecture">Architecture</a> &nbsp;|&nbsp;
-  <a href="#tech-stack">Tech Stack</a> &nbsp;|&nbsp;
+  <a href="#quick-start">Quick Start</a> &nbsp;|&nbsp;
   <a href="#contributing">Contributing</a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/deploy-self--hosted-critical?style=flat-square" alt="Self-Hosted" />
   <img src="https://img.shields.io/badge/electron-33-47848f?style=flat-square&logo=electron" alt="Electron" />
   <img src="https://img.shields.io/badge/react-18-61dafb?style=flat-square&logo=react" alt="React" />
   <img src="https://img.shields.io/badge/nestjs-11-e0234e?style=flat-square&logo=nestjs" alt="NestJS" />
@@ -34,31 +36,83 @@
 
 ---
 
-MyClaw is an open-source, local-first AI agent platform that combines a **desktop IDE**, a **cloud marketplace**, and a **visual workflow engine** into one integrated system. Think of it as your personal AI operating system -- connect any LLM, orchestrate complex workflows visually, and extend everything through skills and MCP servers.
+MyClaw is an **enterprise-grade, fully self-hosted** AI agent platform. Deploy the **Cloud** on your company's infrastructure to centrally manage skills, MCP servers, workflows, and model access. Employees install the **Desktop** app and instantly get a production-ready AI IDE connected to your enterprise knowledge and tools -- no data leaves your network.
 
-> **TL;DR**: Cursor/Windsurf-like AI IDE + n8n/Dify-like visual workflow builder + MCP ecosystem, all in one.
+> **Think**: Your company's private Cursor + Dify + MCP Hub, deployed in one afternoon.
 
 ---
 
-## Why MyClaw?
+## Enterprise Deployment
 
-| Pain Point | MyClaw's Answer |
-|---|---|
-| Locked into one AI provider | **9 provider flavors** -- OpenAI, Anthropic, QWen, Moonshot, Ollama, LM-Studio, OpenRouter, and more |
-| Can't control what AI does on your machine | **Fine-grained approval gateway** -- read/write/execute risk tiers with 4 approval modes |
-| Workflows require coding | **Visual DAG canvas** -- drag, connect, branch, join -- zero code |
-| Context window limits | **Smart compaction** -- auto-summarizes at 80% capacity, preserves recent 12 turns |
-| Tools scattered across apps | **MCP + Skills + 13 builtins** -- unified tool layer, one interface |
+This is what sets MyClaw apart from tools like OpenClaw, Dify, or LobeChat -- **it's built for enterprise from day one**, not bolted on as an afterthought.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    YOUR COMPANY NETWORK                      │
+│                                                             │
+│  ┌───────────────────────────────────────┐                  │
+│  │         MyClaw Cloud (Admin)          │                  │
+│  │  ┌─────────┐ ┌──────┐ ┌───────────┐  │                  │
+│  │  │  Skill  │ │ MCP  │ │ Workflow  │  │   PostgreSQL     │
+│  │  │  Hub    │ │ Reg. │ │ Templates │  │◄──── + FastDFS   │
+│  │  └────┬────┘ └──┬───┘ └─────┬─────┘  │                  │
+│  │       └─────────┼───────────┘         │                  │
+│  └─────────────────┼────────────────────┘                  │
+│                    │ REST API                                │
+│         ┌──────────┼──────────┐                             │
+│         │          │          │                              │
+│    ┌────┴────┐ ┌───┴────┐ ┌──┴─────┐                       │
+│    │Desktop A│ │Desktop B│ │Desktop C│  ... N employees     │
+│    │(Dev)    │ │(PM)     │ │(QA)     │                      │
+│    └─────────┘ └────────┘ └─────────┘                       │
+│         │          │          │                              │
+│    ┌────┴──────────┴──────────┴────┐                        │
+│    │   Company LLM Gateway / API   │  (or public providers) │
+│    └───────────────────────────────┘                        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### How It Works
+
+| Role | Component | What They Do |
+|---|---|---|
+| **IT / Admin** | **Cloud** | Deploy on company servers. Curate approved skills, register internal MCP servers, publish workflow templates, manage model access and API keys. |
+| **Employees** | **Desktop** | Install the Electron app. Get instant access to enterprise-approved AI tools, skills, and workflows. Chat with any LLM, execute tools locally with approval gates. |
+| **Platform Team** | **Both** | Build custom skills and workflows in the Cloud Hub, push to all desktops. Monitor usage, control which models and tools are available. |
+
+### Why Not Just Use SaaS AI Tools?
+
+| Concern | SaaS Tools | MyClaw (Self-Hosted) |
+|---|---|---|
+| **Data Privacy** | Your code/docs go to third-party servers | Everything stays in your network |
+| **Model Choice** | Vendor lock-in (one provider) | 9 providers, including private Ollama/LM-Studio |
+| **Custom Tools** | Limited to what they offer | Unlimited via MCP + Skills + Built-in tools |
+| **Workflow Automation** | Manual or requires separate tools | Visual workflow engine, built-in |
+| **Cost Control** | Per-seat SaaS pricing | Self-hosted, MIT license, pay only for LLM API |
+| **Enterprise Control** | Admin panels as afterthought | Cloud = enterprise control plane from day one |
+| **Deployment Speed** | Months of procurement | `docker compose up` + distribute Desktop installer |
 
 ---
 
 ## Features
 
-### Desktop App (Electron)
+### Cloud -- Enterprise Control Plane
 
-**Agentic Chat** -- Multi-turn conversations with streaming responses and an agentic tool loop (model -> tool calls -> execution -> result -> continue). Supports up to 200 autonomous rounds with configurable approval gates.
+**Skill Hub** -- Centrally manage, version, and distribute AI skills across the organization. Admins curate approved skill packages; employees install with one click from the Desktop app.
 
-**Visual Workflow Engine** -- 8 node types (Start, LLM, Tool, HumanInput, Condition, Subgraph, Join, End), 3 edge types (Normal, Parallel, Conditional), checkpoint-based execution with pause/resume.
+**MCP Server Registry** -- Register your company's internal MCP servers (database access, internal APIs, monitoring tools). All registered servers are instantly available to every Desktop user.
+
+**Workflow Templates** -- Design reusable workflow templates (code review, incident response, onboarding) in the Cloud, push to all employees. Ensure consistent AI-powered processes across teams.
+
+**Model Access Control** -- Configure which LLM providers and API keys are available. Route employees to approved models only. Support for private deployments (Ollama, LM-Studio, VLM).
+
+**Auth & Analytics** -- Token-based authentication, install tracking, usage analytics per user and per package.
+
+### Desktop -- AI IDE for Every Employee
+
+**Agentic Chat** -- Multi-turn conversations with a full agent loop (model -> tool calls -> execution -> result -> continue). Up to 200 autonomous rounds with configurable approval gates.
+
+**Visual Workflow Engine** -- 8 node types (Start, LLM, Tool, HumanInput, Condition, Subgraph, Join, End), 3 edge types (Normal, Parallel, Conditional), checkpoint-based pause/resume.
 
 ```
  [Start] --> [LLM: Analyze] --> [Condition: Pass?]
@@ -70,25 +124,24 @@ MyClaw is an open-source, local-first AI agent platform that combines a **deskto
                                     +--> [Join] --> [End]
 ```
 
-**13 Built-in Tools** -- File read/write/edit/search, Git operations, command execution, HTTP fetch, web search, and task management. Each tool has a risk category (read/write/execute) with independent approval policies.
+**13 Built-in Tools** -- File read/write/edit/search, Git operations, command execution, HTTP fetch, web search, task management. Each with risk categories (read/write/execute) and independent approval policies.
 
-**MCP Integration** -- Full [Model Context Protocol](https://modelcontextprotocol.io/) support with stdio and HTTP/SSE transports. Auto-import configs from Claude Desktop and Cursor. Real-time health monitoring.
+**MCP Integration** -- Full [Model Context Protocol](https://modelcontextprotocol.io/) support. stdio + HTTP/SSE transports. Auto-import from Claude Desktop and Cursor. All enterprise MCP servers from Cloud Registry automatically available.
 
-**Skill System** -- HTML-based skill views with bidirectional postMessage communication. Skills are exposed as function tools to the model and rendered in an embedded WebPanel.
+**Skill System** -- HTML-based skill views with iframe postMessage bidirectional communication. Enterprise skills from Cloud Hub + personal skills coexist.
 
-**Multi-Model Support** -- Dynamic model discovery from provider APIs. Per-model context budget policies with 8 configurable parameters. Provider-specific capability probing (vision, tools, reasoning).
+**Multi-Model Support** -- 9 provider flavors: OpenAI, Anthropic, QWen, Moonshot, Ollama, LM-Studio, OpenRouter, VLM, and generic OpenAI-compatible. Dynamic model discovery, per-model context budgets, capability probing.
 
-**Memory & Context Intelligence** -- Auto-extract memory from conversations, relevance-based ranking and retrieval, smart context compaction with model-generated summaries, 8 configurable token budget parameters.
+**Approval Gateway** -- Fine-grained control over what AI can do on each machine:
 
-### Cloud Platform (NestJS + Nuxt)
+| Mode | Behavior |
+|---|---|
+| `prompt` | Always ask before write/delete operations |
+| `auto-read-only` | Auto-approve reads, prompt for writes |
+| `auto-allow-all` | Auto-approve within workspace scope |
+| `unrestricted` | Full autonomy (use with caution) |
 
-**Marketplace Hub** -- Browse, publish, and install skills, workflows, MCP configs, and agent templates with version management.
-
-**Skill Publishing** -- Upload skill packages with automatic versioning, category tagging, and artifact storage.
-
-**MCP Registry** -- Centralized MCP server catalog with health tracking and tool enumeration.
-
-**Auth & Multi-tenancy** -- Token-based authentication with access/refresh flows, per-user install tracking and analytics.
+**Memory & Context Intelligence** -- Auto-extract memory from conversations, relevance-based retrieval, smart compaction at 80% context window capacity, model-generated summaries preserving recent 12 turns.
 
 ---
 
@@ -96,15 +149,15 @@ MyClaw is an open-source, local-first AI agent platform that combines a **deskto
 
 ```
 MyClaw/
-├── desktop/                  # Electron + React desktop app
+├── desktop/                  # Electron + React -- installed by employees
 │   ├── src/main/             #   Main process: IPC handlers + 20 services
 │   ├── src/renderer/         #   React UI: 17 routes, Zustand stores
 │   ├── src/preload/          #   Electron bridge (contextBridge)
 │   └── shared/contracts/     #   15 domain type files
 │
-├── cloud/                    # Cloud platform
+├── cloud/                    # NestJS + Nuxt -- deployed by IT/admin
 │   ├── apps/cloud-api/       #   NestJS backend (7 modules, Prisma ORM)
-│   ├── apps/cloud-web/       #   Nuxt 3 BFF portal
+│   ├── apps/cloud-web/       #   Nuxt 3 BFF portal (admin console)
 │   ├── packages/shared/      #   Cloud domain types
 │   └── infra/                #   Docker Compose (PostgreSQL 16)
 │
@@ -138,20 +191,6 @@ MyClaw/
 └─────────────────────────────────────────────────┘
 ```
 
-### Approval Gateway
-
-```
-Tool Call ──> Risk Assessment ──> Policy Check
-                                     │
-                    ┌────────────────┼────────────────┐
-                    │                │                 │
-              [auto-approve]   [prompt user]    [always block]
-                    │                │                 │
-                    └────────> Execute Tool <──────────┘
-                                     │
-                               Return Result
-```
-
 ---
 
 ## Tech Stack
@@ -177,49 +216,46 @@ Tool Call ──> Risk Assessment ──> Policy Check
 
 - **Node.js** >= 18
 - **pnpm** >= 9
-- **Docker** (for cloud platform database)
+- **Docker** (for Cloud database)
 
-### Desktop App
+### Deploy Cloud (Admin)
 
 ```bash
-# Clone the repository
 git clone https://github.com/407073118/MyClaw.git
-cd MyClaw/desktop
-
-# Install dependencies
-pnpm install
-
-# Development mode
-pnpm dev
-
-# Build & run
-pnpm build
-pnpm start
-
-# Package as installer
-pnpm dist
-```
-
-### Cloud Platform
-
-```bash
 cd MyClaw/cloud
 
-# Install dependencies
 pnpm install
 
 # Start PostgreSQL
 pnpm dev:db
 
-# Initialize database
+# Initialize database (schema + seed data)
 pnpm setup:api
 
 # Start API server (port 43210)
 pnpm dev:api
 
-# Start Web portal (port 43211)
+# Start Web admin portal (port 43211)
 pnpm dev:web
 ```
+
+> For production: use `pnpm build` + PM2 + Nginx reverse proxy. See [Cloud Deploy Guide](docs/plans/).
+
+### Install Desktop (Employee)
+
+```bash
+cd MyClaw/desktop
+
+pnpm install
+
+# Development mode
+pnpm dev
+
+# Build & package as installer (.exe / .dmg / .AppImage)
+pnpm dist
+```
+
+> Distribute the installer to employees. On first launch, point to your Cloud server URL.
 
 ---
 
@@ -227,7 +263,7 @@ pnpm dev:web
 
 ### Skills
 
-Skills are self-contained packages that extend MyClaw's capabilities:
+Self-contained packages that extend AI capabilities. Enterprise admins publish to the Cloud Hub; employees install on their Desktop.
 
 ```
 my-skill/
@@ -241,49 +277,41 @@ my-skill/
 
 ### MCP Servers
 
-MyClaw supports the [Model Context Protocol](https://modelcontextprotocol.io/) natively:
+Native [Model Context Protocol](https://modelcontextprotocol.io/) support -- the standard for connecting AI to external tools:
 
-- **stdio** transport -- Launch local MCP servers as child processes
-- **HTTP/SSE** transport -- Connect to remote MCP servers
+- **stdio** -- Launch local MCP servers as child processes
+- **HTTP/SSE** -- Connect to remote / enterprise MCP servers
 - **Auto-import** -- Detect configs from Claude Desktop and Cursor
+- **Enterprise Registry** -- Cloud-managed MCP servers auto-sync to all Desktops
 
 ### Workflow Nodes
 
 | Node | Purpose |
 |---|---|
-| **Start** | Entry point of the workflow |
-| **LLM** | Send a prompt to the model and capture the response |
-| **Tool** | Execute a registered tool (builtin, MCP, or skill) |
-| **HumanInput** | Pause execution and wait for user input |
-| **Condition** | Branch based on state evaluation (equals, not-equals, exists) |
-| **Subgraph** | Invoke another workflow as a nested execution |
-| **Join** | Merge parallel execution paths (all/any mode) |
+| **Start** | Entry point |
+| **LLM** | Model inference with prompt |
+| **Tool** | Execute builtin / MCP / skill tool |
+| **HumanInput** | Pause for human review |
+| **Condition** | Branch on state (equals, not-equals, exists) |
+| **Subgraph** | Nested workflow execution |
+| **Join** | Merge parallel paths (all/any) |
 | **End** | Terminal node |
-
-### Approval Modes
-
-| Mode | Behavior |
-|---|---|
-| `prompt` | Always ask before executing write/delete operations |
-| `auto-read-only` | Auto-approve read-only tools, prompt for writes |
-| `auto-allow-all` | Auto-approve tools scoped to workspace paths |
-| `unrestricted` | Never prompt (use with caution) |
 
 ---
 
 ## Roadmap
 
-- [x] **v1.0** -- Core agentic loop, chat UI, tool execution, skill system
+- [x] **v1.0** -- Core agent loop, chat UI, tool execution, skill system
 - [x] **v1.1** -- Tool concurrency, API retry, smart compaction, MCP import, token visualization
-- [ ] **v2.0** -- Sub-agent orchestration, cloud hub browsing/installation
-- [ ] **v2.1** -- Workflow execution engine (runtime), persistent cross-session memory
-- [ ] **v3.0** -- Multi-agent collaboration, enterprise features, plugin marketplace
+- [ ] **v2.0** -- Sub-agent orchestration, cloud hub sync, enterprise RBAC
+- [ ] **v2.1** -- Workflow runtime engine, persistent cross-session memory
+- [ ] **v3.0** -- Multi-agent collaboration, audit logging, SSO/LDAP, plugin marketplace
 
 ---
 
 ## Contributing
 
-Contributions are welcome! Whether it's bug reports, feature requests, or pull requests.
+Contributions are welcome! Bug reports, feature requests, and pull requests all appreciated.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -291,15 +319,14 @@ Contributions are welcome! Whether it's bug reports, feature requests, or pull r
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
----
-
 ## License
 
-This project is licensed under the MIT License -- see the [LICENSE](LICENSE) file for details.
+MIT License -- see [LICENSE](LICENSE) for details.
 
 ---
 
 <p align="center">
-  Built with passion by the MyClaw team<br/>
-  <sub>If this project helps you, consider giving it a star!</sub>
+  <strong>Stop paying per-seat for AI tools your team can't customize.</strong><br/>
+  Deploy MyClaw. Own your AI stack.<br/><br/>
+  <sub>If this project helps you, give it a star!</sub>
 </p>
