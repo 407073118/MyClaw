@@ -1,212 +1,111 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-03-31
-
-## Project Layout
-
-The repo contains three top-level products, each with distinct UI frameworks:
-
-| Product | UI Framework | State Mgmt | Path |
-|---------|-------------|------------|------|
-| desktop (Tauri app) | Vue 3 + SFC | Pinia | `desktop/apps/desktop/` |
-| desktop (Electron app) | React 18 + TSX | Zustand | `desktop/src/renderer/` |
-| cloud-web (Nuxt 4) | Vue 3 + SFC | Nuxt composables | `cloud/apps/cloud-web/` |
-| cloud-api (NestJS) | N/A | N/A | `cloud/apps/cloud-api/` |
-| runtime (Node service) | N/A | N/A | `desktop/apps/runtime/` |
-
-Both `desktop/` and `cloud/` are pnpm workspaces with `packages/shared/` sub-packages.
+**Analysis Date:** 2026-04-04
 
 ## Naming Patterns
 
 **Files:**
-- Vue SFC components: PascalCase (`WorkflowCanvas.vue`, `McpLibraryCard.vue`)
-- React TSX components: PascalCase (`WorkflowCanvas.tsx`, `ChatPage.tsx`)
-- Pure TS modules: kebab-case (`workflow-canvas-geometry.ts`, `cloud-hub-client.ts`, `runtime-client.ts`)
-- Test files: co-located `*.test.ts` for runtime/api; separate `src/tests/` tree for desktop Vue tests
-- NestJS modules: kebab-case with dot-separated role suffix (`auth.service.ts`, `auth.controller.ts`, `auth.module.ts`)
-- Nuxt server routes: follow file-based routing with HTTP-method suffix (`skills.get.ts`, `[id].put.ts`, `login.post.ts`)
-
-**Vue views vs pages:**
-- desktop: `src/views/` with `*View.vue` suffix (`ChatView.vue`, `HubView.vue`, `McpDetailView.vue`)
-- desktop: `src/renderer/pages/` with `*Page.tsx` suffix (`ChatPage.tsx`, `HubPage.tsx`)
-- cloud-web: `pages/` with lowercase filenames per Nuxt convention (`login.vue`, `console.vue`, `skills/[id].vue`)
+- Match the local workspace instead of forcing one repo-wide formatter style.
+- In `desktop/src/renderer/pages` and `desktop/src/renderer/components`, React page/component files use `PascalCase.tsx`, such as `desktop/src/renderer/pages/WorkflowsPage.tsx` and `desktop/src/renderer/components/ErrorBoundary.tsx`.
+- In `desktop/src/renderer/hooks`, hooks use `useX.ts`, such as `desktop/src/renderer/hooks/useAuth.ts`.
+- In `desktop/src/renderer/stores`, Zustand stores use short lowercase nouns, such as `desktop/src/renderer/stores/auth.ts` and `desktop/src/renderer/stores/workspace.ts`.
+- In `desktop/src/main/services`, service and utility files use kebab-case, such as `desktop/src/main/services/mcp-server-manager.ts` and `desktop/src/main/services/tool-output-sanitizer.ts`.
+- In `cloud/apps/cloud-api/src/modules`, NestJS files follow `<domain>.<role>.ts` plus `tests/`, such as `cloud/apps/cloud-api/src/modules/hub/controllers/hub.controller.ts`, `cloud/apps/cloud-api/src/modules/hub/services/hub.service.ts`, and `cloud/apps/cloud-api/src/modules/hub/tests/hub.controller.test.ts`.
+- In `cloud/apps/cloud-web/server/api`, Nuxt server handlers follow route-based filenames such as `cloud/apps/cloud-web/server/api/auth/login.post.ts` and `cloud/apps/cloud-web/server/api/hub/items/[id]/workflow-releases.post.ts`.
+- In `cloud/packages/shared/src/contracts`, contract files use lowercase kebab-case domain names such as `cloud/packages/shared/src/contracts/mcp.ts`.
 
 **Functions:**
-- Use camelCase for all functions and methods
-- Store action names are verb-first: `hydrateFromStorage()`, `persistSession()`, `applyLoginSession()`
-- Service client functions are verb-prefixed: `fetchCloudHubItems()`, `loginCloudAuth()`, `createSession()`
-- In workspace store, imported request functions are aliased to avoid collisions: `createEmployee as createEmployeeRequest`
+- Use `camelCase` for functions and methods across all workspaces, such as `buildToolSchemas` in `desktop/src/main/services/tool-schemas.ts`, `captureOriginalMeta` in `cloud/apps/cloud-web/pages/skills/publish.vue`, and `resolveLoginCredentials` in `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts`.
+- Use verb-first handler names for UI and route actions, such as `handlePublish` in `cloud/apps/cloud-web/pages/skills/publish.vue`, `handleExecute` in `desktop/src/renderer/pages/WorkflowsPage.tsx`, and `loadRuntimeEnv` in `cloud/apps/cloud-api/src/runtime/load-runtime-env.ts`.
+- Use `createX`, `buildX`, `resolveX`, `normalizeX`, and `parseX` for helpers, as seen in `desktop/src/renderer/stores/auth.ts`, `desktop/src/main/services/tool-schemas.ts`, and `cloud/apps/cloud-web/server/lib/cloud-api.ts`.
 
 **Variables:**
-- Use camelCase for variables and parameters
-- Constants use UPPER_SNAKE_CASE for module-level values: `AUTH_STORAGE_KEY`, `ACCESS_TOKEN_EXPIRES_IN_SECONDS`
-- Exported const tokens for DI use UPPER_SNAKE_CASE Symbols: `HUB_REPOSITORY`, `INTERNAL_AUTH_PROVIDER`, `SKILLS_REPOSITORY`
+- Use `camelCase` for local variables and object properties, including longer intent-revealing names such as `accessTokenExpiresAt` in `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts`, `showCategoryPicker` in `cloud/apps/cloud-web/pages/skills/publish.vue`, and `filteredWorkflows` in `desktop/src/renderer/pages/WorkflowsPage.tsx`.
+- Use `UPPER_SNAKE_CASE` for constants and tokens, such as `AUTH_STORAGE_KEY` in `desktop/src/renderer/stores/auth.ts`, `ACCESS_TOKEN_EXPIRES_IN_SECONDS` in `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts`, and `SESSION_COOKIE_KEY` in `cloud/apps/cloud-web/server/lib/cloud-api.ts`.
 
 **Types:**
-- PascalCase for all types and interfaces
-- Prefer `type` over `interface` for data shapes; use `interface` for repository/provider contracts
-- Use `as const` for union-generating arrays: `BUILTIN_TOOL_GROUPS`, `BUILTIN_TOOL_APPROVAL_MODES`
-- Derive union types from const arrays: `type BuiltinToolGroup = (typeof BUILTIN_TOOL_GROUPS)[number]`
+- Use `PascalCase` for types, interfaces, and classes, such as `WorkflowLibraryFilterState` in `desktop/src/renderer/pages/WorkflowsPage.tsx`, `AuthService` in `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts`, and `McpServerConfig` in `cloud/packages/shared/src/contracts/mcp.ts`.
+- Use suffixes that describe role: `Props`, `State`, `Response`, `Input`, `Repository`, `Provider`, and `Module` are all active patterns in `desktop/src/renderer/pages/WorkflowsPage.tsx`, `cloud/packages/shared/src/contracts/*.ts`, and `cloud/apps/cloud-api/src/modules/*`.
 
 ## Code Style
 
 **Formatting:**
-- No ESLint or Prettier configuration detected in any workspace
-- Consistent 2-space indentation across all TypeScript and Vue files
-- Double-quoted strings throughout all workspaces
-- Trailing commas on multiline arrays, objects, and function parameters
-- Semicolons required at end of statements
+- No checked-in formatter config was detected in the repo root, `desktop/`, or `cloud/`: no `eslint.config.*`, `.eslintrc*`, `.prettierrc*`, or `biome.json`.
+- Preserve file-local style instead of normalizing unrelated files.
+- Use double-quoted strings everywhere; this is consistent in `desktop/src/**`, `cloud/apps/cloud-api/src/**`, and `cloud/packages/shared/src/**`.
+- Use 2-space indentation throughout sampled files.
+- In `desktop/src/**`, keep semicolons and trailing commas, matching files such as `desktop/src/preload/index.ts`, `desktop/src/renderer/stores/auth.ts`, and `desktop/src/main/services/logger.ts`.
+- In `cloud/apps/cloud-api/src/**`, most files omit semicolons and use decorator-friendly Nest formatting, matching `cloud/apps/cloud-api/src/app.module.ts` and `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts`.
+- In `cloud/apps/cloud-web/pages/*.vue` and `cloud/packages/shared/src/contracts/*.ts`, semicolons are common; match the target file, for example `cloud/apps/cloud-web/pages/skills/publish.vue` and `cloud/packages/shared/src/contracts/mcp.ts`.
 
-**TypeScript:**
-- All workspaces use `strict: true` in tsconfig
-- Target ES2022, module ESNext, moduleResolution Bundler
-- cloud tsconfig additionally enables `noImplicitOverride`, `noUnusedLocals`, `noUnusedParameters`
-- Explicit type annotations on function parameters; return types inferred unless complex
-- Use `type` imports with `import type { ... }` syntax consistently
+**Linting:**
+- No runnable lint command or config is checked in for the sampled workspaces.
+- Existing files still contain ESLint suppression comments, especially React hook dependency suppressions such as `// eslint-disable-next-line react-hooks/exhaustive-deps` in `desktop/src/renderer/pages/WorkflowsPage.tsx` and `desktop/src/renderer/pages/SettingsPage.tsx`.
+- When touching React effects in `desktop/src/renderer/**`, preserve existing dependency-suppression intent unless you can safely rewrite the effect.
 
 ## Import Organization
 
 **Order:**
-1. Node built-ins (`node:http`, `node:fs`, `node:path`)
-2. Framework/library imports (`vue`, `pinia`, `@nestjs/common`, `vitest`)
-3. Workspace package imports (`@myclaw-desktop/shared`, `@myclaw-cloud/shared`)
-4. Path-aliased local imports (`@/services/...`, `@/stores/...`)
-5. Relative imports (`./auth.service`, `../artifact/artifact.service`)
+1. External packages first, often with `type` imports split from value imports, as in `desktop/src/preload/index.ts` and `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts`.
+2. A blank line, then internal aliases or local modules, such as `@shared/contracts` in `desktop/src/renderer/pages/WorkflowsPage.tsx` and `@myclaw-cloud/shared` in `cloud/apps/cloud-api/src/modules/hub/controllers/hub.controller.ts`.
+3. Relative same-folder imports last when no alias exists, such as `../services/hub.service` in `cloud/apps/cloud-api/src/modules/hub/controllers/hub.controller.ts`.
 
 **Path Aliases:**
-- desktop: `@` maps to `src/` (configured in `desktop/apps/desktop/vite.config.ts`)
-- desktop: `@` maps to `src/renderer/`, `@shared` maps to `shared/` (configured in `desktop/vite.config.ts`)
-- cloud-api: `@myclaw-cloud/shared` mapped via tsconfig paths
-- cloud-web: auto-imports via Nuxt (composables, utils)
-
-**Type-only imports:**
-- Always use `import type { ... }` for type-only imports, separated from value imports
-
-## State Management
-
-**desktop (Pinia):**
-- Stores in `desktop/apps/desktop/src/stores/`
-- Use `defineStore("store-id", { state, getters, actions })` (Options API style)
-- Large central `workspace` store acts as single source of truth, hydrated from runtime bootstrap
-- Auth store is separate: `desktop/apps/desktop/src/stores/auth.ts`
-- Shell store holds runtime connection info: `desktop/apps/desktop/src/stores/shell.ts`
-
-**desktop (Zustand):**
-- Stores in `desktop/src/renderer/stores/`
-- Use `create<State>()((set, get) => ({ ... }))` pattern
-- Same domain structure mirrored from desktop: `workspace.ts`, `auth.ts`, `shell.ts`
-
-**cloud-web (Nuxt composables):**
-- Session composable in `cloud/apps/cloud-web/composables/useCloudSession.ts`
-- Uses `useState()` for SSR-safe reactive state, `useCookie()` for persistence
-- No Pinia dependency in cloud-web
+- `desktop/tsconfig.json` defines `@/*` for `desktop/src/renderer/*`.
+- `desktop/tsconfig.json` and `desktop/vitest.config.ts` define `@shared/*` and `@shared` for `desktop/shared/*`.
+- `cloud/tsconfig.base.json` defines `@myclaw-cloud/shared` for `cloud/packages/shared/src/index.ts`, while `cloud/apps/cloud-api/tsconfig.json` remaps the same alias to built declarations in `cloud/packages/shared/dist/index.d.ts`.
+- Nuxt uses project-relative aliases such as `~/assets/css/main.css` in `cloud/apps/cloud-web/nuxt.config.ts`.
 
 ## Error Handling
 
-**cloud-api (NestJS):**
-- Throw NestJS HTTP exceptions directly: `throw new UnauthorizedException("account_or_password_invalid")`
-- Error messages are snake_case string codes: `"account_or_password_required"`, `"skill_already_exists"`
-- Catch provider errors by exception type and re-throw with semantic codes
-- Service methods validate inputs and throw `BadRequestException` / `NotFoundException` for domain rules
-
-**cloud-web server routes:**
-- Use `createError()` from h3 to throw HTTP errors
-- Forward cloud-api error responses with status code and message
-
-**desktop/runtime:**
-- Console-based logging with structured context objects: `console.info("[desktop-auth] message", { key: value })`
-- Async actions wrap errors in try/catch and log before propagating
-- No centralized error boundary; each store action handles its own errors
+**Patterns:**
+- In `desktop/src/preload/index.ts`, renderer-facing IPC wrappers often catch failures and return safe fallback payloads instead of rethrowing, for example `{ modelIds: [] }`, `{ items: [] }`, or `{ workflow: null }`.
+- In `desktop/src/renderer/**`, UI handlers convert exceptions to end-user messages through local state or `alert`, as in `desktop/src/renderer/pages/WorkflowsPage.tsx`.
+- In `cloud/apps/cloud-api/src/**`, throw Nest exceptions with stable string codes rather than ad hoc text, such as `new UnauthorizedException("account_or_password_invalid")` in `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts` and `new BadRequestException("hub_package_must_be_zip")` in `cloud/apps/cloud-api/src/modules/hub/controllers/hub.controller.ts`.
+- In `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts`, normalize upstream provider failures into domain-safe exceptions before returning control to controllers.
+- In `cloud/apps/cloud-web/server/lib/cloud-api.ts`, wrap upstream `$fetch` failures with `createError({ statusCode, statusMessage, data })` so route handlers expose uniform HTTP errors.
 
 ## Logging
 
-**Framework:** `console` (no external logging framework)
+**Framework:** mixed `console` logging plus a local logger helper.
 
 **Patterns:**
-- Prefix log messages with a bracketed tag: `[desktop-auth]`, `[desktop-router]`
-- Log structured context as second argument: `console.info("[tag] message", { key: value })`
-- Use `console.info` for normal flow, `console.warn` for recoverable errors, `console.error` sparingly
-- Log messages are in Chinese for user-facing desktop flows
+- Use bracketed subsystem prefixes, such as `[desktop-auth]` in `desktop/src/renderer/stores/auth.ts`, `[workflow]` in `desktop/src/renderer/components/workflow/*.tsx`, `[Skills 发布]` in `cloud/apps/cloud-web/pages/skills/publish.vue`, and `[hub-repository]` in `cloud/apps/cloud-api/src/modules/hub/repositories/prisma-hub.repository.ts`.
+- Use Chinese business messages for user-facing or operational flow logs in most app code, especially under `desktop/src/renderer/**`, `desktop/src/main/services/directory-service.ts`, `cloud/apps/cloud-web/pages/*.vue`, and `cloud/apps/cloud-api/src/runtime/load-runtime-env.ts`.
+- Use structured context objects as the second argument instead of string concatenation where possible, as in `desktop/src/main/services/mcp-server-manager.ts`, `desktop/src/renderer/stores/auth.ts`, and `cloud/apps/cloud-api/src/modules/hub/repositories/prisma-hub.repository.ts`.
+- In `desktop/src/main/services/logger.ts`, create scoped loggers through `createLogger(module)` for main-process services that need file-backed logging.
+- In `cloud/apps/cloud-api/src/modules/auth/providers/*.ts`, Nest `Logger` is used inside providers; elsewhere in the API, direct `console.info/warn/error` is still common.
 
 ## Comments
 
 **When to Comment:**
-- JSDoc-style comments (`/** ... */`) on store actions and service methods
-- Comments are written in Chinese for desktop and cloud code
-- No inline `//` comments for obvious code; use them for non-obvious logic
+- Prefer Chinese JSDoc or line comments for public helpers, UI handlers, and bridge methods, matching `desktop/src/preload/index.ts`, `desktop/src/renderer/pages/WorkflowsPage.tsx`, `cloud/apps/cloud-web/pages/skills/publish.vue`, and `cloud/packages/shared/src/contracts/mcp.ts`.
+- Use section dividers to chunk large files, especially in desktop React/Electron code. Common patterns include dashed banners in `desktop/src/preload/index.ts` and box-drawing separators in `desktop/src/renderer/pages/WorkflowsPage.tsx`.
+- Keep comments close to invariants or compatibility rules, such as the bridge synchronization note in `desktop/src/preload/index.ts` and the getter-reset note in `desktop/src/renderer/stores/auth.ts`.
+- When touching English-commented utility files like `desktop/src/main/services/logger.ts`, preserve the surrounding style unless you intentionally normalize the whole file.
 
 **JSDoc/TSDoc:**
-- Used on Pinia store actions and getters: `/** 从本地存储恢复桌面登录态... */`
-- Used on exported functions in router/service modules
-- Not used on type definitions (types are self-documenting)
-
-## Repository/Provider Pattern (cloud-api)
-
-**Pattern:** Interface + Symbol token + Prisma implementation
-
-- Define the interface in a dedicated file: `hub.repository.ts` exports `interface HubRepository` and `const HUB_REPOSITORY = Symbol("HUB_REPOSITORY")`
-- Implement with Prisma: `prisma-hub.repository.ts` exports `class PrismaHubRepository implements HubRepository`
-- Wire in the module: `{ provide: HUB_REPOSITORY, useExisting: PrismaHubRepository }`
-- Services inject via `@Inject(HUB_REPOSITORY) private readonly hubRepository: HubRepository`
-
-Apply this pattern for all new cloud-api domain modules.
-
-## NestJS Module Organization
-
-Each domain is a self-contained module directory under `cloud/apps/cloud-api/src/modules/`:
-
-```
-modules/auth/
-  auth.module.ts          # Module definition
-  auth.controller.ts      # HTTP endpoints
-  auth.service.ts         # Business logic
-  auth.service.test.ts    # Unit tests
-  auth-session.repository.ts        # Interface
-  prisma-auth-session.repository.ts # Prisma impl
-  internal-auth-provider.ts         # Port interface
-  mock-internal-auth.provider.ts    # Test double
-  cas-internal-auth.provider.ts     # Production impl
-```
-
-## Shared Package Conventions
-
-**desktop shared:** `desktop/packages/shared/src/`
-- Contract types per domain: `contracts/session.ts`, `contracts/mcp.ts`, `contracts/workflow.ts`
-- Re-exported from `src/index.ts`
-- Referenced as `@myclaw-desktop/shared`
-
-**cloud shared:** `cloud/packages/shared/src/`
-- Contract types: `contracts/auth.ts`, `contracts/hub.ts`, `contracts/skills.ts`
-- Re-exported from `src/index.ts`
-- Referenced as `@myclaw-cloud/shared`
-
-## Component Conventions (Vue)
-
-**Template:**
-- Use `data-testid` attributes on interactive and verifiable elements
-- Use kebab-case for custom events
-- Inline SVG icons (no icon library in desktop)
-- lucide-vue-next for cloud-web icons
-
-**Script:**
-- `<script setup lang="ts">` for all Vue SFCs
-- Import stores with `useXxxStore()` composables
-- Destructure store into local refs as needed
+- TSDoc is common on contract fields and exported helpers, especially in `cloud/packages/shared/src/contracts/mcp.ts`, `cloud/apps/cloud-api/src/modules/hub/ports/hub.repository.ts`, `desktop/src/renderer/hooks/useAuth.ts`, and `desktop/src/renderer/pages/SettingsPage.tsx`.
+- Keep field-level docs on shared types; consumers in `cloud-api` and `cloud-web` rely on those contracts.
 
 ## Function Design
 
-**Size:** Functions are generally kept short (under 30 lines). Large orchestration functions exist in stores.
+**Size:** application pages and preload bridges can be large, but helper logic is still extracted above the main export. Follow the same split used in `desktop/src/renderer/pages/WorkflowsPage.tsx`, `desktop/src/preload/index.ts`, and `cloud/apps/cloud-web/pages/skills/publish.vue`.
 
-**Parameters:** Use typed objects for functions with more than 2 parameters. Single responsibility per function.
+**Parameters:**
+- Prefer typed object parameters for multi-field inputs, such as `buildToolSchemas(cwd, skills, mcpTools)` in `desktop/src/main/services/tool-schemas.ts`, `proxyCloudApi(event, path, options)` in `cloud/apps/cloud-web/server/lib/cloud-api.ts`, and repository/service input types in `cloud/apps/cloud-api/src/modules/**/ports/*.ts`.
+- Use local type aliases for route bodies and uploaded files inside controllers when the shape is endpoint-specific, as in `cloud/apps/cloud-api/src/modules/hub/controllers/hub.controller.ts`.
 
-**Return Values:** Explicit return types on complex functions. Boolean returns for auth/validation operations.
+**Return Values:**
+- Return explicit object shapes rather than tuples. Examples include preload wrappers in `desktop/src/preload/index.ts`, proxy handlers in `cloud/apps/cloud-web/server/api/*.ts`, and service responses typed from `cloud/packages/shared/src/contracts/*.ts`.
+- For renderer safety, prefer deterministic fallback objects over throwing from bridge methods; for API code, prefer throwing typed Nest exceptions.
 
 ## Module Design
 
-**Exports:** Named exports only. No default exports except for Vue SFC components and Vite config.
+**Exports:** use named exports for services, helpers, stores, and contracts, such as `createLogger` in `desktop/src/main/services/logger.ts` and `proxyCloudApi` in `cloud/apps/cloud-web/server/lib/cloud-api.ts`. Use default exports for React pages and Nuxt handlers, such as `desktop/src/renderer/pages/WorkflowsPage.tsx` and `cloud/apps/cloud-web/server/api/auth/login.post.ts`.
 
-**Barrel Files:** Shared packages use `src/index.ts` barrel files. Application code does not use barrel files.
+**Barrel Files:** use barrels sparingly. `cloud/packages/shared/src/index.ts` is the primary barrel and re-exports contract modules for both `cloud-api` and `cloud-web`. Most other directories import concrete files directly rather than adding extra barrel layers.
 
 ---
 
-*Convention analysis: 2026-03-31*
+*Convention analysis: 2026-04-04*

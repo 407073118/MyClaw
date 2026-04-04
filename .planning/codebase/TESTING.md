@@ -1,428 +1,239 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-03-31
+**Analysis Date:** 2026-04-04
 
 ## Test Framework
 
 **Runner:**
-- Vitest 3.0.8 across all workspaces (desktop, runtime, cloud-api)
-- Node `assert` module for cloud workspace-level structural tests (`.mjs` files)
+- `Vitest` is the executable runner for `desktop/` via `desktop/package.json` and `desktop/vitest.config.ts`.
+- `Vitest` is also the executable runner for `cloud/apps/cloud-api` via `cloud/apps/cloud-api/package.json` and `cloud/apps/cloud-api/vitest.config.ts`.
+- `Node` script execution is the runner for `cloud/apps/cloud-web`, `cloud/packages/shared`, and `cloud/tests` via `node *.test.mjs` commands in `cloud/apps/cloud-web/package.json`, `cloud/packages/shared/package.json`, and `cloud/package.json`.
+- Config: `desktop/vitest.config.ts`, `cloud/apps/cloud-api/vitest.config.ts`
 
 **Assertion Library:**
-- Vitest built-in `expect` for all Vitest tests
-- `node:assert/strict` for cloud structural tests
+- `expect`, `describe`, `it`, `vi`, and lifecycle hooks from Vitest are used in `desktop/tests/*.test.ts` and `cloud/apps/cloud-api/src/**/*.test.ts`.
+- `node:assert/strict` is used for static and scaffold verification tests in `cloud/apps/cloud-web/tests/pages.test.mjs`, `cloud/packages/shared/tests/contracts.test.mjs`, and `cloud/tests/*.test.mjs`.
 
 **Run Commands:**
 ```bash
-# desktop workspace (runs all sub-packages)
-cd desktop && pnpm test
-
-# desktop app only
-cd desktop/apps/desktop && pnpm test          # vitest run
-
-# runtime only
-cd desktop/apps/runtime && pnpm test          # vitest run
-
-# cloud-api only
-cd cloud/apps/cloud-api && pnpm test          # vitest run
-
-# cloud workspace structural tests
-cd cloud && pnpm test                          # node tests/*.test.mjs
-
-# cloud-web page structure tests
-cd cloud/apps/cloud-web && pnpm test          # node tests/pages.test.mjs
-
-# desktop
-cd desktop && pnpm test                         # vitest run
+pnpm --dir desktop test                 # Run desktop Vitest suite
+pnpm --dir cloud/apps/cloud-api test    # Run cloud-api Vitest suite
+pnpm --dir cloud/apps/cloud-web test    # Run cloud-web Node assertion suite
+pnpm --dir cloud/packages/shared test   # Run shared package Node assertion suite
+pnpm --dir cloud test                   # Run cloud workspace verification scripts
+pnpm --dir desktop typecheck            # Desktop verification companion command
+pnpm --dir cloud build                  # Cloud verification companion command
 ```
 
 ## Test File Organization
 
-**desktop/apps/desktop:**
-- Vue view tests: `src/tests/views/*.test.ts` (separate directory, mirrors view names)
-- Component tests: `src/tests/components/workflow/*.test.ts`
-- Service tests: `src/tests/services/*.test.ts`
-- Store tests: `src/tests/stores/*.test.ts`
-- Co-located unit tests for non-Vue modules: `src/services/runtime-client.test.ts`, `src/settings/provider-presets.test.ts`
-- Test fixtures: `src/test-utils/workspace-fixture.ts`
+**Location:**
+- `desktop/` keeps tests in a separate top-level `desktop/tests/` directory, not co-located with sources.
+- `cloud/apps/cloud-api` keeps tests close to domain code under `src/modules/*/tests/` and `src/runtime/tests/`.
+- `cloud/apps/cloud-web`, `cloud/packages/shared`, and `cloud/tests` keep script-based checks in top-level `tests/` directories.
 
-**desktop/apps/runtime:**
-- Co-located integration tests: `src/server.test.ts`, `src/server.*.test.ts` (topic-specific splits)
-- Co-located service tests: `src/services/*.test.ts`
-- Structured test tree: `tests/unit/`, `tests/integration/`, `tests/contract/`
-  - `tests/unit/services/model-provider/*.test.ts`
-  - `tests/unit/store/*.test.ts`
-  - `tests/integration/server/*.test.ts`
-  - `tests/integration/services/*.test.ts`
-  - `tests/contract/runtime-api/*.test.ts`
+**Naming:**
+- Use `*.test.ts` for Vitest suites, such as `desktop/tests/workflow-ipc.test.ts` and `cloud/apps/cloud-api/src/modules/auth/tests/auth.service.test.ts`.
+- Use `*.test.mjs` for Node assertion scripts, such as `cloud/apps/cloud-web/tests/pages.test.mjs` and `cloud/tests/infrastructure.test.mjs`.
 
-**cloud/apps/cloud-api:**
-- Co-located with source: `src/modules/{domain}/{name}.test.ts`
-- Example: `src/modules/auth/auth.service.test.ts`, `src/modules/hub/hub.controller.test.ts`
-- One test file per testable unit (service, controller, repository, provider)
-
-**cloud workspace level:**
-- `cloud/tests/*.test.mjs` - structural smoke tests (file existence, config shape)
-- `cloud/apps/cloud-web/tests/pages.test.mjs` - page file/route existence verification
-
-**desktop:**
-- No test files detected (no `*.test.ts` or `*.test.tsx` files in `desktop/src/`)
-
-## Vitest Configuration
-
-**desktop/apps/desktop** (`desktop/apps/desktop/vitest.config.ts`):
-```typescript
-export default defineConfig({
-  plugins: [vue()],
-  resolve: { alias: { "@": "./src" } },
-  test: { environment: "jsdom" },
-});
+**Structure:**
 ```
+desktop/
+  tests/*.test.ts
 
-**desktop/apps/runtime** (`desktop/apps/runtime/vitest.config.ts`):
-```typescript
-export default defineConfig({
-  test: {
-    environment: "node",
-    include: ["tests/**/*.test.ts", "src/**/*.test.ts"],
-  },
-});
-```
+cloud/apps/cloud-api/
+  src/modules/<domain>/tests/*.test.ts
+  src/runtime/tests/*.test.ts
 
-**cloud/apps/cloud-api** (`cloud/apps/cloud-api/vitest.config.ts`):
-```typescript
-export default defineConfig({
-  test: {
-    api: { host: "127.0.0.1" },
-    environment: "node",
-    include: ["src/**/*.test.ts"],
-  },
-});
+cloud/apps/cloud-web/
+  tests/*.test.mjs
+
+cloud/packages/shared/
+  tests/*.test.mjs
+
+cloud/
+  tests/*.test.mjs
 ```
 
 ## Test Structure
 
-**Suite Organization (desktop Vue views):**
+**Suite Organization:**
 ```typescript
-import { flushPromises, mount } from "@vue/test-utils";
-import { createPinia, setActivePinia } from "pinia";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-import { useWorkspaceStore } from "@/stores/workspace";
-import { createWorkspaceFixture } from "@/test-utils/workspace-fixture";
-import SomeView from "@/views/SomeView.vue";
-
-describe("SomeView", () => {
+describe("workflow IPC handlers", () => {
   beforeEach(() => {
-    setActivePinia(createPinia());
-    vi.restoreAllMocks();
+    handleMock.mockClear();
+    saveWorkflowMock.mockClear();
   });
 
-  it("renders expected elements when workspace is hydrated", () => {
-    const pinia = createPinia();
-    setActivePinia(pinia);
-    const workspace = useWorkspaceStore();
-    workspace.hydrate(createWorkspaceFixture());
+  it("keeps stateSchema defined after creating and updating a workflow", async () => {
+    const { registerWorkflowHandlers } = await import("../src/main/ipc/workflows");
+    registerWorkflowHandlers(ctx);
 
-    const wrapper = mount(SomeView, {
-      global: { plugins: [pinia] },
+    const createHandler = findHandler("workflow:create");
+    const updateHandler = findHandler("workflow:update");
+    const getHandler = findHandler("workflow:get");
+
+    await createHandler(null, { name: "新建工作流", description: "..." });
+    await updateHandler(null, "workflow-id", { nodes: [], edges: [] });
+
+    await expect(getHandler(null, "workflow-id")).resolves.toMatchObject({
+      stateSchema: [],
     });
-
-    expect(wrapper.find("[data-testid='...']").exists()).toBe(true);
   });
 });
 ```
 
-**Suite Organization (cloud-api services):**
-```typescript
-import { describe, expect, it, vi } from "vitest";
-import { SomeService } from "./some.service";
-
-describe("some service", () => {
-  it("does something with injected dependencies", async () => {
-    const repository = { /* inline mock object */ };
-    const service = new SomeService(repository);
-
-    const result = await service.someMethod();
-    expect(result).toEqual(/* expected */);
-  });
-});
-```
-
-**Suite Organization (runtime server integration):**
-```typescript
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createRuntimeApp } from "./server";
-
-describe("runtime server - topic", () => {
-  let app: Awaited<ReturnType<typeof createRuntimeApp>>;
-  let tempDir: string;
-
-  beforeEach(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "myclaw-runtime-"));
-    app = await createRuntimeApp({ port: 0, stateFilePath: join(tempDir, "state.json") });
-  });
-
-  afterEach(async () => {
-    await app.close();
-    rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it("returns expected HTTP response", async () => {
-    const response = await fetch(`${app.baseUrl}/api/endpoint`);
-    expect(response.status).toBe(200);
-  });
-});
-```
+**Patterns:**
+- Group by feature or module using `describe("domain name", ...)`, as in `desktop/tests/browser-service.test.ts`, `desktop/tests/phase8-infrastructure.test.ts`, and `cloud/apps/cloud-api/src/modules/hub/tests/hub.controller.test.ts`.
+- Prefer readable behavior sentences in `it(...)`; most tests describe the contract, not the implementation detail.
+- Use local inline helpers or factory functions inside the test file rather than a shared fixture directory, for example `findHandler()` in `desktop/tests/workflow-ipc.test.ts` and `createSessionRepository()` in `cloud/apps/cloud-api/src/modules/auth/tests/auth.service.test.ts`.
+- Use `afterEach` to restore global mutations when a test patches `process`, `console`, or imported singletons, as in `cloud/apps/cloud-api/src/runtime/tests/load-runtime-env.test.ts`.
 
 ## Mocking
 
-**Framework:** Vitest built-in `vi.fn()`, `vi.spyOn()`, `vi.mock()`
+**Framework:** `vi.mock`, `vi.fn`, and `vi.spyOn` from Vitest
 
-**Patterns - Module Spying (desktop):**
+**Patterns:**
 ```typescript
-import * as runtimeClient from "@/services/runtime-client";
+const handleMock = vi.fn();
+const saveWorkflowMock = vi.fn(() => Promise.resolve());
 
-vi.spyOn(runtimeClient, "fetchBootstrap").mockResolvedValue(/* fixture */);
-vi.spyOn(cloudAuthClient, "loginCloudAuth").mockResolvedValue(createLoginPayload());
+vi.mock("electron", () => ({
+  ipcMain: {
+    handle: handleMock,
+  },
+}));
+
+vi.mock("../src/main/services/state-persistence", () => ({
+  saveWorkflow: saveWorkflowMock,
+}));
 ```
 
-**Patterns - Inline Mock Objects (cloud-api):**
 ```typescript
-// Services are constructed with plain objects implementing the interface
-const repository = {
-  list: async () => [/* test data */],
-  findById: async () => null,
-  createItem: async () => { throw new Error("not used"); },
+const databaseService = {
+  mcpServer: {
+    findMany: vi.fn(async () => [/* records */]),
+  },
 };
-const service = new HubService(repository, createArtifactServiceMock() as any);
+
+const repository = new PrismaMcpRepository(databaseService as never);
 ```
 
-**Patterns - Mock Factory Functions (cloud-api):**
+**What to Mock:**
+- Electron host APIs and IPC registration, as in `desktop/tests/workflow-ipc.test.ts`.
+- File-backed persistence boundaries, as in `desktop/tests/workflow-ipc.test.ts`.
+- Console methods for logging assertions, as in `desktop/tests/phase8-infrastructure.test.ts`.
+- Prisma/database service methods via lightweight object literals plus `vi.fn`, as in `cloud/apps/cloud-api/src/modules/mcp/tests/prisma-mcp.repository.test.ts` and `cloud/apps/cloud-api/src/modules/hub/tests/prisma-hub.repository.test.ts`.
+- Nest service collaborators through plain objects cast to service types, as in `cloud/apps/cloud-api/src/modules/hub/tests/hub.controller.test.ts`.
+- Process-level functions and environment variables when testing boot/runtime code, as in `cloud/apps/cloud-api/src/runtime/tests/load-runtime-env.test.ts`.
+
+**What NOT to Mock:**
+- Pure data transformation helpers in `desktop/src/main/services/tool-schemas.ts`, `desktop/src/renderer/utils/context-ui-helpers.ts`, and `desktop/src/main/services/model-capability-resolver.ts`; those are tested directly in `desktop/tests/browser-service.test.ts` and `desktop/tests/phase15-context-ui.test.ts`.
+- Contract files in `cloud/packages/shared/src/contracts/*.ts`; instead, the shared package uses source-text assertions in `cloud/packages/shared/tests/contracts.test.mjs`.
+- Nuxt pages and layouts are not rendered with component mocks; `cloud/apps/cloud-web/tests/pages.test.mjs` verifies file presence and source text patterns directly.
+
+## Fixtures and Factories
+
+**Test Data:**
 ```typescript
-function createArtifactServiceMock() {
+function createSessionRepository() {
+  const sessions = [];
+
   return {
-    storeSkillArtifact: vi.fn(async ({ releaseId }) => ({
-      fileName: `${releaseId}.zip`,
-      fileSize: 128,
-      storageKey: `/group1/M00/${releaseId}.zip`,
-      storageUrl: `http://127.0.0.1:8080/group1/M00/${releaseId}.zip`,
-    })),
-    createDownloadToken: vi.fn(async (releaseId) => ({
-      downloadUrl: `/api/artifacts/download/${releaseId}`,
-      expiresIn: 300,
-    })),
+    sessions,
+    repo: {
+      create: async (input) => {
+        const record = { id: `session-${sessions.length + 1}`, ...input, revokedAt: null };
+        sessions.push(record);
+        return record;
+      },
+    },
   };
 }
 ```
 
-**Patterns - DOM Mocking (desktop components):**
-```typescript
-vi.spyOn(stage, "getBoundingClientRect").mockReturnValue({
-  x: 0, y: 0, top: 0, left: 0, right: 1200, bottom: 720,
-  width: 1200, height: 720, toJSON: () => ({}),
-});
-```
-
-**What to Mock:**
-- External HTTP clients (`cloud-auth-client`, `runtime-client`)
-- Repository implementations (use inline objects conforming to the interface)
-- DOM APIs when testing canvas/geometry logic
-- File system operations in runtime tests (use real temp directories)
-
-**What NOT to Mock:**
-- The service/component under test
-- Pure functions (test directly)
-- Pinia stores (create fresh instances per test with `createPinia()`)
-
-## Fixtures and Factories
-
-**Central Workspace Fixture** (`desktop/apps/desktop/src/test-utils/workspace-fixture.ts`):
-```typescript
-export type WorkspaceFixture = {
-  sessions: ChatSession[];
-  models: ModelProfile[];
-  builtinTools: ResolvedBuiltinTool[];
-  mcpServers: McpServer[];
-  skills: SkillDefinition[];
-  employees: LocalEmployeeSummary[];
-  workflows: WorkflowDefinitionSummary[];
-  workflowDefinitions: WorkflowDefinition[];
-  cloudHubItems: CloudHubItem[];
-  approvals: ApprovalPolicy;
-  approvalRequests: ApprovalRequest[];
-  // ... other fields
-};
-
-export function createWorkspaceFixture(): WorkspaceFixture { /* ... */ }
-```
-
-This fixture provides a fully populated workspace snapshot used by nearly all desktop view/component tests. Override specific fields by spreading:
-```typescript
-workspace.hydrate({
-  ...createWorkspaceFixture(),
-  sessions: [customSession],
-});
-```
-
-**Inline Factory Functions (cloud-api):**
-- `createLoginPayload()` for auth test data
-- `createArtifactServiceMock()` for artifact service doubles
-- `createSession()`, `createIntent()` for runtime test data
-
-**Runtime Test Setup:**
-- Tests that need a real runtime app use `createRuntimeApp({ port: 0, stateFilePath })` with a temp directory
-- Cloud hub proxy tests spin up an inline `createServer()` to simulate cloud API responses
-
 **Location:**
-- desktop fixture: `desktop/apps/desktop/src/test-utils/workspace-fixture.ts`
-- runtime/cloud-api: factory functions defined inline within each test file (no shared fixture directory)
+- Factories live inside the individual test file that uses them, such as `createSessionRepository()` in `cloud/apps/cloud-api/src/modules/auth/tests/auth.service.test.ts`.
+- Static test data is usually declared inline near the assertion, such as the mock Hub items in `cloud/apps/cloud-api/src/modules/hub/tests/hub.controller.test.ts` and config payloads in `desktop/tests/browser-service.test.ts`.
+- No shared `fixtures/`, `factories/`, or test utility package was detected.
 
 ## Coverage
 
-**Requirements:** None enforced. No coverage thresholds configured in any vitest.config.ts.
+**Requirements:** None enforced. No coverage script, coverage threshold, or reporter config was detected in `desktop/package.json`, `cloud/package.json`, `cloud/apps/cloud-api/package.json`, `cloud/apps/cloud-web/package.json`, or `cloud/packages/shared/package.json`.
 
 **View Coverage:**
 ```bash
-cd desktop/apps/desktop && npx vitest run --coverage
-cd desktop/apps/runtime && npx vitest run --coverage
-cd cloud/apps/cloud-api && npx vitest run --coverage
+Not detected
 ```
+
+## CI & Verification Assumptions
+
+**CI pipeline:**
+- Not detected. No `.github/workflows/*` or `.gitlab-ci.yml` file was found in the repository root, `desktop/`, or `cloud/`.
+
+**Verification assumptions:**
+- Local command execution is the current verification contract.
+- `cloud/AGENTS.md` treats `pnpm --dir packages/shared test`, `pnpm --dir apps/cloud-api test`, `pnpm --dir apps/cloud-web test`, `pnpm test`, and `pnpm build` as the expected workspace checks.
+- `cloud/apps/cloud-api/AGENTS.md`, `cloud/apps/cloud-web/AGENTS.md`, and `cloud/packages/shared/AGENTS.md` each pair `test` with `build`, which indicates tests are expected to be run together with type/build verification.
+- `desktop/package.json` exposes `test` and `typecheck`, but no dedicated lint or coverage commands.
 
 ## Test Types
 
 **Unit Tests:**
-- Pure function tests (geometry calculations, data parsing, tool definitions)
-- Pinia store tests (auth flows, state mutations)
-- NestJS service tests (business logic with mocked repositories)
-- NestJS controller tests (request/response mapping)
+- `desktop/tests/*.test.ts` are mostly unit and contract tests around pure helpers, IPC registration, approval logic, model capability resolution, token budgeting, and service glue. Representative files: `desktop/tests/browser-service.test.ts`, `desktop/tests/phase8-infrastructure.test.ts`, and `desktop/tests/workflow-ipc.test.ts`.
+- `cloud/apps/cloud-api/src/modules/*/tests/*.test.ts` are unit-style tests around controllers, services, repositories, and schema assumptions using fakes instead of a live Nest application. Representative files: `cloud/apps/cloud-api/src/modules/auth/tests/auth.service.test.ts`, `cloud/apps/cloud-api/src/modules/hub/tests/hub.controller.test.ts`, and `cloud/apps/cloud-api/src/modules/mcp/tests/prisma-mcp.repository.test.ts`.
 
 **Integration Tests:**
-- Runtime server tests (`src/server.test.ts` and topic-specific `src/server.*.test.ts`): spin up a real HTTP server, send real fetch requests
-- `tests/integration/server/bootstrap-route.test.ts`: full route integration
-- `tests/contract/runtime-api/*.test.ts`: contract tests for runtime API shape
-
-**Component Tests (desktop):**
-- Mount Vue components with `@vue/test-utils`
-- Hydrate Pinia stores with fixtures
-- Assert DOM structure via `data-testid` selectors
-- Test user interactions (click, input) via wrapper methods
-
-**Structural Tests (cloud):**
-- `cloud/tests/workspace.test.mjs`: verifies required files exist (scaffold integrity)
-- `cloud/tests/infrastructure.test.mjs`: verifies infra config
-- `cloud/tests/shared-package-consumption.test.mjs`: verifies shared package wiring
-- `cloud/apps/cloud-web/tests/pages.test.mjs`: verifies all page files exist and contain expected patterns
+- `cloud/tests/*.test.mjs` act as workspace integration and scaffold checks. They verify package wiring, Prisma schema presence, runtime module format, seed expectations, and shared package consumption without spinning up services.
+- `cloud/apps/cloud-api/src/runtime/tests/load-runtime-env.test.ts` is a process-level integration-style test around environment bootstrapping.
 
 **E2E Tests:**
-- Not used. No Playwright, Cypress, or similar framework detected.
+- Not used.
+- `desktop/package.json` depends on `playwright-core`, but no Playwright config or browser E2E suite was detected.
+- `cloud/apps/cloud-web` has no rendered component tests or browser-driven workflow tests; its current suite is static source verification in `cloud/apps/cloud-web/tests/pages.test.mjs`.
 
 ## Common Patterns
 
-**Async Testing (stores):**
+**Async Testing:**
 ```typescript
-it("refreshes an expired session", async () => {
-  vi.spyOn(cloudAuthClient, "refreshCloudAuth").mockResolvedValue({
-    accessToken: "access-2",
-    expiresIn: 7200,
-  });
-
-  const store = useDesktopAuthStore();
-  const authenticated = await store.ensureAuthenticated("http://127.0.0.1:43110");
-
-  expect(authenticated).toBe(true);
-  expect(store.session.accessToken).toBe("access-2");
+await expect(
+  service.login({
+    account: "admin",
+    password: "wrong-password",
+  }),
+).rejects.toMatchObject({
+  message: "account_or_password_invalid",
 });
 ```
 
-**Error Testing (cloud-api):**
 ```typescript
-it("rejects when password is incorrect", async () => {
-  await expect(
-    service.login({ account: "admin", password: "wrong" }),
-  ).rejects.toMatchObject({
-    message: "account_or_password_invalid",
-  });
+await expect(Promise.resolve(controller.list("employee-package"))).resolves.toEqual({
+  items: [/* ... */],
 });
 ```
 
-**Router Testing (desktop):**
+**Error Testing:**
 ```typescript
-function createTestRouter() {
-  return createRouter({
-    history: createWebHistory(),
-    routes: [
-      { path: "/mcp/new", component: McpDetailView },
-      { path: "/mcp/:id", component: McpDetailView },
-    ],
-  });
-}
-
-async function mountDetail(path = "/mcp/mcp-filesystem") {
-  const pinia = createPinia();
-  setActivePinia(pinia);
-  const workspace = useWorkspaceStore();
-  workspace.hydrate(createWorkspaceFixture());
-
-  const router = createTestRouter();
-  router.push(path);
-  await router.isReady();
-
-  return mount(McpDetailView, {
-    global: { plugins: [pinia, router] },
-  });
-}
+await expect(controller.detail("missing")).rejects.toBeInstanceOf(NotFoundException);
+await expect(controller.publishEmployeeRelease("employee-onboarding-assistant", {
+  version: "1.1.0",
+  releaseNotes: "x",
+})).rejects.toBeInstanceOf(BadRequestException);
 ```
 
-**`data-testid` Assertion Pattern:**
-```typescript
-expect(wrapper.find("[data-testid='mcp-detail-view']").exists()).toBe(true);
-expect(wrapper.get("[data-testid='workflow-canvas-node-node-start']").text()).toContain("Start");
+**Static Structure Testing:**
+```javascript
+const login = readFileSync(join(root, "pages/login.vue"), "utf8");
+assert.match(login, /\/api\/auth\/login/);
+assert.match(login, /handleLogin/);
+assert.doesNotMatch(login, /hero-grid/);
 ```
 
-## Test Coverage by Module
-
-### Well-Tested Areas
-
-**desktop/apps/desktop:**
-- All views have corresponding test files in `src/tests/views/` (16+ view tests)
-- Workflow components: `WorkflowCanvas.test.ts`, `WorkflowCanvas.drag.test.ts`, `WorkflowNodeEditor.join.test.ts`, `WorkflowGraphInspector.test.ts`, `WorkflowRunPanel.test.ts`, `WorkflowLibraryCard.test.ts`
-- Auth store thoroughly tested with login, refresh, introspect flows
-- Services: `cloud-auth-client.test.ts`, `cloud-hub-client.test.ts`, `runtime-client.test.ts`
-- Geometry and factory utilities: `workflow-canvas-geometry.test.ts`, `workflow-node-factory.test.ts`
-
-**desktop/apps/runtime:**
-- Server integration tests for every major feature area (9 test files: `server.test.ts`, `server.employees.test.ts`, `server.workflows.test.ts`, `server.streaming.test.ts`, `server.pending-approval.test.ts`, etc.)
-- Service-level tests: `model-provider.test.ts`, `a2ui.test.ts`, `mcp-service.test.ts`, `tool-executor.test.ts`, `skill-manager.test.ts`, `session-persistence.test.ts`, `workflow-checkpoint-store.test.ts`, `workflow-definition-validator.test.ts`, `publish-draft-manager.test.ts`, `runtime-heartbeat.test.ts`
-- Layered tests: `tests/unit/` (tool definitions, state codecs, schema), `tests/integration/` (bootstrap route, model provider facade, state facade), `tests/contract/` (runtime API shape)
-
-**cloud/apps/cloud-api:**
-- All modules tested: auth (service + provider), hub (controller + service + repository + seed), artifact (controller + service + storage), install (service), mcp (controller + service + repository), skills (controller + service)
-- Runtime env loading tested: `runtime/load-runtime-env.test.ts`
-
-### Coverage Gaps
-
-**desktop (Electron/React):**
-- **Zero test files.** The entire `desktop/` directory has no tests. This is the highest-risk gap.
-- No test framework configured (though `vitest` is in `devDependencies` of the root `desktop/package.json`)
-- Stores (`workspace.ts`, `auth.ts`, `shell.ts`), pages, and components are all untested.
-
-**cloud/apps/cloud-web:**
-- Only structural file-existence tests (`tests/pages.test.mjs`)
-- No component rendering tests, no composable tests, no server-route logic tests
-- `useCloudSession.ts` composable has complex session/cookie logic with no unit tests
-- Server utils (`cloud-api.ts` proxy) has no tests
-
-**desktop/apps/desktop - untested areas:**
-- `src/stores/workspace.ts` - the largest and most critical store has no dedicated test file (only exercised indirectly via view tests that hydrate it)
-- `src/stores/shell.ts` - no tests
-- `src/utils/tool-output.ts` - no tests
-- Non-workflow components: `ToolLogContent.vue`, `McpServerForm.vue`, `McpLibraryCard.vue` have no dedicated tests
-
-**Shared packages:**
-- `desktop/packages/shared/` has `contracts.test.ts` and `mcp-contracts-usage.test.ts` (basic shape tests)
-- `cloud/packages/shared/` has no tests
+**Current gaps to respect when adding tests:**
+- `desktop/vitest.config.ts` runs with `environment: "node"`, so desktop component tests should stay logic-focused unless you first add a jsdom-oriented setup.
+- `desktop/tests/phase15-context-ui.test.ts` explicitly documents that UI data logic is tested without `@testing-library/react`.
+- Cloud web tests are source-level smoke tests; if behavior matters, a new runtime harness is required rather than extending regex-only checks indefinitely.
 
 ---
 
-*Testing analysis: 2026-03-31*
+*Testing analysis: 2026-04-04*

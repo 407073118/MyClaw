@@ -1,226 +1,129 @@
 # External Integrations
 
-**Analysis Date:** 2026-03-31
+**Analysis Date:** 2026-04-04
 
-## AI / LLM Provider APIs
+## APIs & External Services
 
-The runtime service (`desktop/apps/runtime/src/services/model-provider/`) implements a multi-provider LLM client that communicates with AI model APIs. No vendor SDK is used; all calls use raw `fetch()`.
+**Desktop to Cloud Platform:**
+- MyClaw Cloud API - desktop auth, hub browsing, skill import, MCP import, and artifact download requests from `desktop/src/main/ipc/cloud.ts`
+  - SDK/Client: native `fetch` helper in `desktop/src/main/ipc/cloud.ts`
+  - Auth: bearer access tokens returned by `/auth/login` and refreshed via `/auth/refresh`; base URL comes from `MYCLAW_CLOUD_API_URL` or `desktop/config/env.*.ts`
+- MyClaw Cloud API via Nuxt BFF - cloud web proxies every browser request through `cloud/apps/cloud-web/server/lib/cloud-api.ts`
+  - SDK/Client: Nuxt `$fetch` plus `proxyCloudApi()` in `cloud/apps/cloud-web/server/lib/cloud-api.ts`
+  - Auth: `myclaw-cloud-session` cookie handled in `cloud/apps/cloud-web/composables/useCloudSession.ts` and forwarded as `Authorization` by `cloud/apps/cloud-web/server/lib/cloud-api.ts`
 
-**OpenAI-Compatible Providers:**
-- Implementation: `desktop/apps/runtime/src/services/model-provider/openai-compatible/client.ts`
-- Endpoints: `/chat/completions` (inference), `/models` (catalog)
-- Auth: Bearer token via `ModelProfile.apiKey`
-- Flavor detection: `desktop/apps/runtime/src/services/model-provider/openai-compatible/flavor.ts`
-- Supported flavors:
-  - `generic` - Standard OpenAI-compatible (OpenAI, local LLMs, etc.)
-  - `qwen` - Alibaba Qwen via `dashscope.aliyuncs.com` (requires `/compatible-mode/v1` prefix; stream+tools disabled)
-  - `qwen-coding` - Alibaba Qwen Coding via `coding.dashscope.aliyuncs.com` (standard OpenAI path)
-  - `minimax` - MiniMax provider (detected by URL pattern)
+**AI Model Providers:**
+- OpenAI-compatible and Anthropic-style providers - desktop model testing and inference use the custom HTTP client in `desktop/src/main/services/model-client.ts`
+  - SDK/Client: native `fetch` in `desktop/src/main/services/model-client.ts` and `desktop/src/main/ipc/models.ts`
+  - Auth: per-profile `apiKey`, optional headers, and base URL stored in model profile JSON written by `desktop/src/main/services/state-persistence.ts`
+- Supported provider flavors - normalization and probing code currently supports OpenAI, OpenRouter, Vercel AI Gateway, Qwen/DashScope, Moonshot, Ollama, Anthropic, MiniMax, and generic local gateways in `desktop/src/main/ipc/models.ts`, `desktop/src/main/services/model-capability-registry.ts`, and `desktop/src/main/services/provider-capability-probers/*.ts`
+  - SDK/Client: provider-specific catalog normalizers in `desktop/src/main/services/provider-capability-probers/*.ts`
+  - Auth: bearer tokens for OpenAI-compatible APIs and `x-api-key` for Anthropic in `desktop/src/main/services/model-client.ts`
 
-**Anthropic (Claude):**
-- Implementation: `desktop/apps/runtime/src/services/model-provider/anthropic/client.ts`
-- Endpoint: `/v1/messages`
-- Auth: `x-api-key` header via `ModelProfile.apiKey`
-- API version header: `anthropic-version` (constant `ANTHROPIC_API_VERSION`)
-- Also has flavor detection for MiniMax Anthropic proxy: `desktop/apps/runtime/src/services/model-provider/anthropic/flavor.ts`
+**MCP Ecosystem:**
+- Local stdio MCP servers - desktop launches and manages external MCP processes from `desktop/src/main/services/mcp-server-manager.ts`
+  - SDK/Client: `McpClient` referenced by `desktop/src/main/services/mcp-server-manager.ts`
+  - Auth: optional per-server process env and command args stored in `desktop/shared/contracts/mcp.ts`
+- Remote MCP HTTP/SSE servers - desktop connects to networked MCP endpoints from `desktop/src/main/services/mcp-http-client.ts`
+  - SDK/Client: `McpHttpClient` in `desktop/src/main/services/mcp-http-client.ts`
+  - Auth: optional request headers stored per server in `desktop/shared/contracts/mcp.ts`
+- External MCP config import - desktop discovers user-owned MCP definitions from local tool configs in `desktop/src/main/services/mcp-server-manager.ts`
+  - SDK/Client: JSON config readers for `~/.claude/claude_desktop_config.json` and `~/.cursor/mcp.json`
+  - Auth: inherited from imported server env/header definitions
 
-**Streaming Support:**
-- SSE parsing for both OpenAI and Anthropic protocols
-- OpenAI SSE: `desktop/apps/runtime/src/services/model-provider/openai-compatible/sse.ts`
-- Anthropic SSE: `desktop/apps/runtime/src/services/model-provider/anthropic/sse.ts`
+**Enterprise Identity and Artifact Services:**
+- Internal CAS or internal auth HTTP endpoint - cloud login delegates credential validation from `cloud/apps/cloud-api/src/modules/auth/providers/cas-internal-auth.provider.ts`
+  - SDK/Client: native `fetch`
+  - Auth: `CAS_VALIDATE_USER_URL`, `INTERNAL_AUTH_BASE_URL`, `INTERNAL_AUTH_VALIDATE_URL`, `INTERNAL_AUTH_VALIDATE_PATH`, `INTERNAL_AUTH_TIMEOUT_MS`, and `INTERNAL_AUTH_REQUIRED_ROLES`
+- FastDFS artifact service - cloud package uploads and downloads run through `cloud/apps/cloud-api/src/modules/artifact/providers/fastdfs-artifact-storage.ts`
+  - SDK/Client: native `fetch` plus `FormData`
+  - Auth: `FASTDFS_BASE_URL`, `FASTDFS_PROJECT_CODE`, `FASTDFS_TOKEN`, `FASTDFS_UPLOAD_PATH`, `FASTDFS_DOWNLOAD_PATH`, and `FASTDFS_TIMEOUT_MS`
 
-**URL Resolution:**
-- Smart base URL resolution with user-error correction (strips accidentally appended endpoint paths)
-- Implementation: `desktop/apps/runtime/src/services/model-provider/shared/endpoint.ts`
-- Supports `provider-root` mode (auto-append `/v1`) and manual mode (use as-is)
-
-**Configuration:**
-- Model profiles are user-configured at runtime (no hardcoded API keys)
-- Each profile specifies: `provider`, `baseUrl`, `baseUrlMode`, `model`, `apiKey`, custom `headers`
-- Type definition: `@myclaw-desktop/shared` -> `desktop/packages/shared/src/contracts/model.ts`
-
-## MCP (Model Context Protocol) Servers
-
-The runtime connects to external MCP servers for tool discovery and invocation.
-
-**Implementation:** `desktop/apps/runtime/src/services/live-mcporter-adapter.ts`
-
-**Transport Protocols:**
-- **stdio** - Spawns child process, communicates via JSON-RPC 2.0 over stdin/stdout
-- **HTTP** - POST JSON-RPC 2.0 requests to server endpoint
-
-**MCP Protocol Version:** `2024-11-05`
-
-**Operations:**
-- `initialize` - Handshake with server
-- `notifications/initialized` - Post-init notification
-- `tools/list` - Discover available tools from server
-- `tools/call` - Invoke a specific tool with arguments
-
-**Configuration:**
-- `McpServerConfig` type from `@myclaw-desktop/shared` -> `desktop/packages/shared/src/contracts/mcp.ts`
-- Supports: `id`, `transport` ("stdio"|"http"), `command`, `args`, `cwd`, `env`, `url`, `headers`
-
-**MCP Service Layer:** `desktop/apps/runtime/src/services/mcp-service.ts`
-**MCP Manager:** `desktop/apps/runtime/src/services/mcp-manager.ts`
+**General Web Access:**
+- Arbitrary HTTP endpoints - desktop built-in `http.fetch` tool can request any URL via `desktop/src/main/services/builtin-tool-executor.ts`
+  - SDK/Client: native `fetch`
+  - Auth: caller-supplied URL only; no fixed env contract
+- DuckDuckGo HTML search - desktop built-in `web.search` tool queries `https://html.duckduckgo.com/html/` from `desktop/src/main/services/builtin-tool-executor.ts`
+  - SDK/Client: native `fetch`
+  - Auth: none
+- Browser automation targets - desktop Playwright tools open arbitrary web pages from `desktop/src/main/services/browser-service.ts`
+  - SDK/Client: `playwright-core`
+  - Auth: page-specific user/browser state only
 
 ## Data Storage
 
-**PostgreSQL (Cloud):**
-- Provider: PostgreSQL 16 via Docker (`cloud/infra/docker-compose.yml`)
-- Connection: `DATABASE_URL` env var
-- ORM: Prisma 6.5.x (`cloud/apps/cloud-api/prisma/schema.prisma`)
-- Models: `LoginSession`, `HubItem`, `HubRelease`, `Skill`, `SkillRelease`, `InstallLog`
-- Database module: `cloud/apps/cloud-api/src/modules/database/database.module.ts`
+**Databases:**
+- MySQL 8.0 - primary cloud relational store defined in `cloud/apps/cloud-api/prisma/schema.prisma`
+  - Connection: `DATABASE_URL`
+  - Client: Prisma via `cloud/apps/cloud-api/src/modules/database/services/database.service.ts`
+- Local MySQL container scaffold - optional development database in `cloud/infra/docker-compose.yml`
+  - Connection: the compose file stands up MySQL for local use; app code still reads `DATABASE_URL`
+  - Client: Prisma via `cloud/apps/cloud-api/package.json`
 
-**SQLite (Desktop - Local):**
-- Library: sql.js (SQLite compiled to WASM)
-- Used in: `desktop/apps/runtime/` and `desktop/`
-- Purpose: Local desktop data persistence
+**File Storage:**
+- FastDFS - published skill and hub package artifacts are stored remotely through `cloud/apps/cloud-api/src/modules/artifact/providers/fastdfs-artifact-storage.ts`
+- Local filesystem only - desktop persistent data, skills, sessions, and model profiles are stored under the derived data root from `desktop/src/main/services/directory-service.ts` and written by `desktop/src/main/services/state-persistence.ts`
 
-**File-based Persistence (Desktop):**
-- Session data: JSON files per session (`desktop/apps/runtime/src/services/session-persistence.ts`)
-- Runtime state: `~/.myclaw/runtime-state.json` (desktop default path)
-- Skills: Local filesystem skill definitions with SKILL.md frontmatter (`desktop/apps/runtime/src/services/skill-manager.ts`)
-
-**File Storage (Cloud):**
-- FastDFS integration for artifact (skill package) storage
-- Implementation: `cloud/apps/cloud-api/src/modules/artifact/fastdfs-artifact-storage.ts`
-- Port interface: `cloud/apps/cloud-api/src/modules/artifact/artifact-storage.port.ts`
-- Env vars: `FASTDFS_BASE_URL`, `FASTDFS_PROJECT_CODE`, `FASTDFS_TOKEN`
-- Operations: upload skill zip, generate download descriptors, stream downloads
+**Caching:**
+- None detected
 
 ## Authentication & Identity
 
-**Cloud Auth (Custom Token-Based):**
-- Implementation: `cloud/apps/cloud-api/src/modules/auth/auth.service.ts`
-- Pattern: Opaque access + refresh tokens, SHA-256 hashed in database
-- Access token TTL: 7200 seconds (2 hours)
-- Refresh token TTL: 180 days
-- Token format: `access-<base64url>` / `refresh-<base64url>` (using `node:crypto`)
-- Session storage: `LoginSession` Prisma model
-- Auth validation: delegated to `InternalAuthProvider` interface (`cloud/apps/cloud-api/src/modules/auth/internal-auth-provider.ts`)
-- Endpoints: login, refresh, logout, me, introspect
-
-**Desktop -> Cloud Auth:**
-- Desktop frontend stores access token and passes it via `Authorization: Bearer` header
-- Runtime proxy forwards auth headers to cloud API: `desktop/apps/desktop/src/services/cloud-hub-client.ts`
-
-**Cloud Web Auth:**
-- Session cookie: `myclaw-cloud-session` (contains JSON with `accessToken`)
-- Server-side proxy extracts token from cookie: `cloud/apps/cloud-web/server/utils/cloud-api.ts`
-
-## Internal Service Communication
-
-**Desktop Architecture (Tauri):**
-- Vue frontend <-> Tauri Rust shell (IPC via `@tauri-apps/api`)
-- Tauri shell <-> Runtime sidecar (bundled Node.js binary, HTTP on port 43110)
-- Runtime exposes HTTP API for frontend to consume
-
-**Desktop Architecture (desktop / Electron):**
-- React renderer <-> Electron main process (IPC via `contextBridge`/`ipcRenderer`)
-- Preload script: `desktop/src/preload/`
-- IPC handlers: `desktop/src/main/ipc/`
-- Runtime context: `desktop/src/main/services/runtime-context.ts`
-
-**Cloud Architecture:**
-- Nuxt web (SSR server) -> Cloud API (NestJS) via `$fetch` with `proxyCloudApi()` utility
-- Desktop runtime -> Cloud API via `CloudHubProxy` class
-- Base URL: configurable, defaults to `http://127.0.0.1:43210`
-
-**Cloud Hub Proxy (Desktop Runtime):**
-- Purpose: Avoids CORS by routing desktop frontend requests through the local runtime process
-- Implementation: `desktop/apps/runtime/src/services/cloud-hub-proxy.ts`
-- Exposed at: `/api/cloud-hub/*` routes on the runtime HTTP server
-- Client: `desktop/apps/desktop/src/services/cloud-hub-client.ts`
-- Operations: list hub items, fetch details, fetch manifests, get download tokens, list/detail skills
-
-## Cloud API Modules
-
-| Module | Path | Purpose |
-|--------|------|---------|
-| auth | `cloud/apps/cloud-api/src/modules/auth/` | Login, token refresh, session management |
-| hub | `cloud/apps/cloud-api/src/modules/hub/` | Hub item catalog (MCP, employees, workflows) |
-| skills | `cloud/apps/cloud-api/src/modules/skills/` | Skill CRUD, publishing, versioning |
-| artifact | `cloud/apps/cloud-api/src/modules/artifact/` | File storage (FastDFS), download streaming |
-| install | `cloud/apps/cloud-api/src/modules/install/` | Installation logging |
-| mcp | `cloud/apps/cloud-api/src/modules/mcp/` | MCP server registry |
-| database | `cloud/apps/cloud-api/src/modules/database/` | Prisma client provider |
+**Auth Provider:**
+- Custom session service backed by Prisma, with upstream enterprise validation or mock login in `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts` and `cloud/apps/cloud-api/src/modules/auth/auth.module.ts`
+  - Implementation: cloud API issues opaque access and refresh tokens, stores only token hashes in MySQL, and chooses between `CasInternalAuthProvider` and `MockInternalAuthProvider`
+- Desktop auth state - local session persistence in `desktop/src/renderer/stores/auth.ts`
+  - Implementation: access and refresh tokens are stored in browser `localStorage` under `myclaw-desktop-auth-session`
+- Cloud web auth state - browser/session cookie persistence in `cloud/apps/cloud-web/composables/useCloudSession.ts`
+  - Implementation: access and refresh tokens are stored in the `myclaw-cloud-session` cookie and mirrored to `localStorage`
 
 ## Monitoring & Observability
 
-**Error Tracking:** None detected (no Sentry, DataDog, etc.)
+**Error Tracking:**
+- None detected
 
-**Logging:**
-- NestJS `Logger` class used in cloud API (e.g., `FastdfsArtifactStorage`)
-- `console.log`/`console.warn`/`console.error`/`console.info` used throughout runtime services
-- No structured logging framework
+**Logs:**
+- Desktop uses `console` and custom logger helpers in `desktop/src/main/services/logger.ts`
+- Cloud API uses Nest `Logger` and `console` in files such as `cloud/apps/cloud-api/src/modules/artifact/providers/fastdfs-artifact-storage.ts`, `cloud/apps/cloud-api/src/modules/auth/providers/cas-internal-auth.provider.ts`, and `cloud/apps/cloud-api/src/main.ts`
+- Cloud deployment expects PM2 process logs through `cloud/scripts/pack-deploy.sh`
 
 ## CI/CD & Deployment
 
-**Hosting:** Not detected from codebase (no Dockerfile for app, no deployment configs)
+**Hosting:**
+- Desktop is packaged locally into native Electron installers by `electron-builder` in `desktop/package.json`
+- Cloud services are self-hosted Node processes managed by PM2 through `cloud/scripts/pack-deploy.sh`
 
-**CI Pipeline:** Not detected (no `.github/workflows/`, no `.gitlab-ci.yml`, etc.)
-
-**Local Dev Infrastructure:**
-- Docker Compose for PostgreSQL: `cloud/infra/docker-compose.yml`
-- Dev commands: `pnpm dev:db` (start), `pnpm dev:db:down` (stop)
+**CI Pipeline:**
+- None detected
 
 ## Environment Configuration
 
-**Required env vars (Cloud API):**
-- `DATABASE_URL` - PostgreSQL connection string
-- FastDFS vars for artifact storage (if using file uploads)
-- Internal auth provider configuration (implementation-dependent)
-
-**Required env vars (Cloud Web):**
-- `CLOUD_API_BASE` - Backend API URL (default: `http://127.0.0.1:43210`)
-
-**Required env vars (Desktop Runtime):**
-- `RUNTIME_PORT` - HTTP server port (default: 43110)
-- `RUNTIME_STATE_FILE_PATH` - State persistence file path
-- `MYCLAW_CLOUD_HUB_BASE_URL` - Cloud hub URL (default: `http://127.0.0.1:43210`)
+**Required env vars:**
+- Desktop runtime config: `APP_ENV`, `MYCLAW_CLOUD_API_URL`, `MYCLAW_DATA_ROOT`, `MYCLAW_RENDERER_DEV_URL`
+- Cloud API runtime config: `PORT`, `DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`
+- Cloud API enterprise auth config: `CAS_VALIDATE_USER_URL`, `INTERNAL_AUTH_BASE_URL`, `INTERNAL_AUTH_VALIDATE_URL`, `INTERNAL_AUTH_VALIDATE_PATH`, `INTERNAL_AUTH_TIMEOUT_MS`, `INTERNAL_AUTH_MODE`, `INTERNAL_AUTH_REQUIRED_ROLES`
+- Cloud API artifact config: `FASTDFS_BASE_URL`, `FASTDFS_PROJECT_CODE`, `FASTDFS_TOKEN`, `FASTDFS_UPLOAD_PATH`, `FASTDFS_DOWNLOAD_PATH`, `FASTDFS_TIMEOUT_MS`
+- Cloud web runtime config surface: `CLOUD_API_BASE` in `cloud/apps/cloud-web/nuxt.config.ts`; deployment scripts also emit `NUXT_CLOUD_API_BASE`, plus `PORT` and `HOST`, in `cloud/scripts/pack-deploy.sh`
 
 **Secrets location:**
-- Environment variables (no `.env` files detected in repo)
-- Model API keys stored in user-configured `ModelProfile` objects at runtime
+- Cloud runtime secrets live in `cloud/apps/cloud-api/.env`; the app loads them through `cloud/apps/cloud-api/src/runtime/load-runtime-env.ts`
+- Cloud deployment packaging writes runtime `.env` files into staged artifacts in `cloud/scripts/pack-deploy.sh`
+- Desktop provider secrets are persisted locally inside model profile JSON files under the `modelsDir` path defined by `desktop/src/main/services/directory-service.ts` and written by `desktop/src/main/services/state-persistence.ts`
 
 ## Webhooks & Callbacks
 
-**Incoming:** None detected
+**Incoming:**
+- None detected; the cloud API exposes standard HTTP endpoints in `cloud/apps/cloud-api/src/modules/auth/controllers/auth.controller.ts`, `cloud/apps/cloud-api/src/modules/skills/controllers/skills.controller.ts`, `cloud/apps/cloud-api/src/modules/mcp/controllers/mcp.controller.ts`, `cloud/apps/cloud-api/src/modules/hub/controllers/hub.controller.ts`, `cloud/apps/cloud-api/src/modules/artifact/controllers/artifact.controller.ts`, and `cloud/apps/cloud-api/src/modules/install/controllers/install.controller.ts`
 
-**Outgoing:** None detected
-
-## Built-in Tools (Desktop Runtime)
-
-The runtime exposes built-in tools to the AI model for agentic coding workflows.
-
-**Implementation:** `desktop/apps/runtime/src/services/builtin-tool-registry.ts`
-**Executor:** `desktop/apps/runtime/src/services/builtin-tool-executor.ts`
-
-| Tool ID | Group | Risk | Purpose |
-|---------|-------|------|---------|
-| `fs.list` | fs | Read | List files in workspace |
-| `fs.read` | fs | Read | Read text files |
-| `fs.search` | fs | Read | Search text content |
-| `fs.stat` | fs | Read | File metadata |
-| `fs.find` | fs | Read | Glob-based file finding |
-| `fs.write` | fs | Write | Write text files |
-| `fs.apply_patch` | fs | Write | Apply structured patches |
-| `fs.move` | fs | Write | Move/rename files |
-| `fs.delete` | fs | Write | Delete files/dirs |
-| `exec.command` | exec | Exec | Run shell commands |
-| `exec.task` | exec | Exec | Run predefined tasks |
-| `git.status` | git | Read | Git status |
-| `git.diff` | git | Read | Git diff |
-| `git.show` | git | Read | Git show |
-| `process.list` | process | Read | List OS processes |
-| `process.kill` | process | Exec | Kill OS processes |
-| `http.fetch` | http | Network | HTTP GET requests |
-| `archive.extract` | archive | Write | Extract archives |
-| `web.search` | web | Network | Web search |
-| `task.manage` | task | Read | Task list management |
+**Outgoing:**
+- CAS/internal auth validation requests from `cloud/apps/cloud-api/src/modules/auth/providers/cas-internal-auth.provider.ts`
+- FastDFS upload and download requests from `cloud/apps/cloud-api/src/modules/artifact/providers/fastdfs-artifact-storage.ts`
+- Nuxt BFF proxy requests from `cloud/apps/cloud-web/server/lib/cloud-api.ts`
+- Desktop Cloud API requests from `desktop/src/main/ipc/cloud.ts`
+- Desktop model provider requests from `desktop/src/main/services/model-client.ts` and `desktop/src/main/ipc/models.ts`
+- Remote MCP HTTP/SSE requests from `desktop/src/main/services/mcp-http-client.ts`
+- Desktop generic web requests and DuckDuckGo search from `desktop/src/main/services/builtin-tool-executor.ts`
 
 ---
 
-*Integration audit: 2026-03-31*
+*Integration audit: 2026-04-04*

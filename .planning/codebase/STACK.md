@@ -1,138 +1,96 @@
 # Technology Stack
 
-**Analysis Date:** 2026-03-31
+**Analysis Date:** 2026-04-04
 
 ## Languages
 
 **Primary:**
-- TypeScript 5.8.x - All application code across desktop, cloud, and desktop workspaces
-- Rust (edition 2021) - Tauri native shell in `desktop/apps/desktop/src-tauri/`
+- TypeScript 5.8.x - application code across `desktop/src/**/*`, `desktop/shared/**/*`, `cloud/apps/cloud-api/src/**/*`, `cloud/apps/cloud-web/**/*`, and `cloud/packages/shared/src/**/*`
 
 **Secondary:**
-- JavaScript (ESM) - Workspace-level test scripts in `cloud/tests/` and `cloud/packages/shared/tests/`
-- SQL (Prisma schema) - Database definitions in `cloud/apps/cloud-api/prisma/schema.prisma`
+- JavaScript (Node CJS/ESM) - build scripts and smoke tests in `desktop/scripts/*.js`, `cloud/apps/cloud-api/scripts/bundle.mjs`, `cloud/tests/*.mjs`, and `cloud/apps/cloud-web/tests/pages.test.mjs`
+- Vue SFC, TSX, HTML, and CSS - UI layers in `cloud/apps/cloud-web/pages/*.vue`, `desktop/src/renderer/**/*.tsx`, `desktop/src/renderer/styles/global.css`, and `desktop/builtin-skills/**/*.html`
+- Shell - deployment automation in `cloud/scripts/pack-deploy.sh`
+- Prisma schema DSL - database schema in `cloud/apps/cloud-api/prisma/schema.prisma`
 
 ## Runtime
 
 **Environment:**
-- Node.js 18+ (target for `pkg` sidecar bundling; TypeScript targets ES2022)
-- Electron 33.2.x (desktop desktop runtime) - `desktop/package.json`
-- Tauri 2.2.5 (original desktop shell) - `desktop/apps/desktop/src-tauri/Cargo.toml`
-- Browser (Nuxt SSR/CSR for cloud-web)
+- Electron 33.2.1 desktop runtime for `desktop/`, with main process entry `desktop/src/main/index.ts` and preload bridge `desktop/src/preload/index.ts`
+- Node.js 20+ cloud runtime for `cloud/`, documented in `cloud/README.md` and enforced by `target: "node20"` in `cloud/apps/cloud-api/scripts/bundle.mjs`
+- Nuxt server runtime for `cloud/apps/cloud-web/.output/server/index.mjs`, configured from `cloud/apps/cloud-web/nuxt.config.ts`
 
 **Package Manager:**
-- pnpm 9.11.0 - declared in `desktop/package.json` and `cloud/package.json` via `packageManager` field
-- npm (desktop only) - `desktop/package-lock.json` present, no pnpm workspace
-- Lockfiles: `desktop/pnpm-lock.yaml`, `cloud/pnpm-lock.yaml`, `desktop/package-lock.json`
-
-## Monorepo Structure
-
-The repository contains **three independent workspaces**, not a single unified monorepo:
-
-| Workspace | Manager | Config |
-|-----------|---------|--------|
-| `desktop/` | pnpm workspaces | `desktop/pnpm-workspace.yaml` |
-| `cloud/` | pnpm workspaces | `cloud/pnpm-workspace.yaml` |
-| `desktop/` | npm (standalone) | `desktop/package.json` |
-
-Each pnpm workspace follows the same layout: `apps/*` + `packages/*`.
+- `pnpm` - the operational package manager in both workspaces, used by scripts in `desktop/package.json`, `desktop/scripts/dev.js`, and `cloud/package.json`
+- `pnpm@9.11.0` - pinned in `cloud/package.json`
+- Lockfile: present in `cloud/pnpm-lock.yaml` and `desktop/pnpm-lock.yaml`; `desktop/package-lock.json` also exists, so desktop package-manager metadata is mixed
 
 ## Frameworks
 
 **Core:**
-- Vue 3.5.x - Desktop frontend UI (`desktop/apps/desktop/package.json`)
-- React 18.3.x - New Electron renderer (`desktop/package.json`)
-- Nuxt 4.4.x - Cloud web frontend (`cloud/apps/cloud-web/package.json`)
-- NestJS 11.x - Cloud API backend (`cloud/apps/cloud-api/package.json`)
-- Tauri 2.x - Original desktop native shell (`desktop/apps/desktop/src-tauri/`)
-- Electron 33.x - New desktop shell (`desktop/package.json`)
-
-**State Management:**
-- Pinia 3.x - Vue store for desktop app (`desktop/apps/desktop/package.json`)
-- Zustand 5.x - React store for desktop (`desktop/package.json`)
-
-**Routing:**
-- vue-router 4.5.x - Desktop app (`desktop/apps/desktop/package.json`)
-- react-router-dom 6.28.x - desktop (`desktop/package.json`, uses `HashRouter`)
-- Nuxt built-in file-based routing - Cloud web
+- Electron 33.2.1 - desktop shell and native window/runtime bridge in `desktop/package.json` and `desktop/src/main/index.ts`
+- React 18.3.1 - desktop renderer UI in `desktop/package.json`, `desktop/src/renderer/main.tsx`, and `desktop/src/renderer/App.tsx`
+- React Router DOM 6.28.0 - desktop routing in `desktop/package.json` and `desktop/src/renderer/router/index.tsx`
+- NestJS 11 - cloud API framework in `cloud/apps/cloud-api/package.json`, `cloud/apps/cloud-api/src/main.ts`, and `cloud/apps/cloud-api/src/app.module.ts`
+- Nuxt 4.4.2 with Vue 3.5.13 - cloud management console in `cloud/apps/cloud-web/package.json` and `cloud/apps/cloud-web/nuxt.config.ts`
+- Prisma 6 - cloud API ORM and schema tooling in `cloud/apps/cloud-api/package.json` and `cloud/apps/cloud-api/prisma/schema.prisma`
 
 **Testing:**
-- Vitest 3.0.x - Unit tests across all workspaces
-- @vue/test-utils 2.4.x - Vue component testing (`desktop/apps/desktop/`)
-- @testing-library/react 16.1.x - React component testing (`desktop/`)
-- jsdom 26.x - DOM simulation for tests
-- Plain Node.js `node:assert` test scripts - Cloud workspace-level tests (`cloud/tests/`)
+- Vitest 3 - desktop and cloud API tests in `desktop/vitest.config.ts` and `cloud/apps/cloud-api/vitest.config.ts`
+- Node `assert` smoke tests - workspace and Nuxt/shared package checks in `cloud/tests/*.mjs`, `cloud/apps/cloud-web/tests/pages.test.mjs`, and `cloud/packages/shared/tests/contracts.test.mjs`
 
 **Build/Dev:**
-- Vite 6.2.x - Frontend bundling for all three workspaces
-- @vitejs/plugin-vue 5.2.x - Vue SFC support (`desktop/apps/desktop/`)
-- @vitejs/plugin-react 4.3.x - React JSX support (`desktop/`)
-- esbuild 0.25.x - Runtime sidecar bundling (`desktop/apps/runtime/`)
-- tsc (TypeScript compiler) - Type checking and cloud-shared package builds
-- @tauri-apps/cli 2.1.x - Tauri dev/build commands (`desktop/apps/desktop/`)
-- electron-builder 25.x - Electron packaging (`desktop/`)
-- pkg 5.8.x - Node.js single-binary bundling for runtime sidecar (`desktop/apps/runtime/`)
-- tsx 4.x - Dev-time TypeScript execution (`desktop/apps/runtime/`, `cloud/apps/cloud-api/`)
-- concurrently 9.x - Parallel dev process runner (`desktop/`)
-- NestJS CLI 11.x - `nest start --watch` for cloud API dev (`cloud/apps/cloud-api/`)
+- Vite 6 with `@vitejs/plugin-react` - desktop renderer dev/build pipeline in `desktop/vite.config.ts`
+- TypeScript compiler with `tsc-alias` - desktop main/preload/shared compilation in `desktop/package.json` and `desktop/tsconfig.main.json`
+- esbuild 0.27.4 - cloud API bundle generation in `cloud/apps/cloud-api/scripts/bundle.mjs`
+- electron-builder 25.1.8 - desktop installer packaging in `desktop/package.json`
+- Docker Compose - optional local MySQL bootstrap in `cloud/package.json` and `cloud/infra/docker-compose.yml`
+- PM2 - cloud deployment process manager generated by `cloud/scripts/pack-deploy.sh`
 
 ## Key Dependencies
 
 **Critical:**
-- @tauri-apps/api 2.1.x - Tauri IPC bridge from Vue frontend to Rust backend (`desktop/apps/desktop/`)
-- @prisma/client 6.5.x + prisma 6.5.x - PostgreSQL ORM for cloud API (`cloud/apps/cloud-api/`)
-- sql.js 1.x - SQLite-in-WASM for local data (used in both `desktop/apps/runtime/` and `desktop/`)
-- marked 17.x - Markdown rendering in chat UI (both `desktop/apps/desktop/` and `desktop/`)
-- rxjs 7.8.x - NestJS reactive dependency (`cloud/apps/cloud-api/`)
-- reflect-metadata 0.2.x - NestJS decorator support (`cloud/apps/cloud-api/`)
+- `@nestjs/common`, `@nestjs/core`, `@nestjs/platform-express` - cloud API module graph and HTTP runtime in `cloud/apps/cloud-api/package.json`
+- `@prisma/client` and `prisma` - MySQL access, schema generation, and bundling exclusions in `cloud/apps/cloud-api/package.json`, `cloud/apps/cloud-api/src/modules/database/services/database.service.ts`, and `cloud/apps/cloud-api/scripts/bundle.mjs`
+- `@myclaw-cloud/shared` - shared API/web contract package in `cloud/apps/cloud-api/package.json`, `cloud/apps/cloud-web/package.json`, and `cloud/packages/shared/src/index.ts`
+- `playwright-core` - desktop browser automation tool runtime in `desktop/package.json` and `desktop/src/main/services/browser-service.ts`
+- `react`, `react-dom`, and `zustand` - desktop UI and local state management in `desktop/package.json` and `desktop/src/renderer/stores/*.ts`
 
-**UI:**
-- lucide-vue-next 1.x - Icon library for Vue desktop app (`desktop/apps/desktop/`)
-- lucide-react 0.468.x - Icon library for React desktop (`desktop/`)
-
-**Shared Packages (workspace internal):**
-- `@myclaw-desktop/shared` - Type contracts for desktop workspace (`desktop/packages/shared/`)
-- `@myclaw-cloud/shared` - Type contracts for cloud workspace (`cloud/packages/shared/`)
-- `@shared/*` (path alias) - Shared contracts in desktop (`desktop/shared/`)
+**Infrastructure:**
+- `electron` - desktop app runtime in `desktop/package.json`
+- `nuxt` and `vue` - cloud web SSR/admin UI runtime in `cloud/apps/cloud-web/package.json`
+- Native `fetch` - primary HTTP client in `desktop/src/main/ipc/cloud.ts`, `desktop/src/main/services/model-client.ts`, `cloud/apps/cloud-api/src/modules/artifact/providers/fastdfs-artifact-storage.ts`, and `cloud/apps/cloud-api/src/modules/auth/providers/cas-internal-auth.provider.ts`
+- `FileInterceptor` plus multipart upload handling - artifact and package upload surface in `cloud/apps/cloud-api/src/modules/skills/controllers/skills.controller.ts` and `cloud/apps/cloud-api/src/modules/hub/controllers/hub.controller.ts`
 
 ## Configuration
 
-**TypeScript:**
-- Base config: `desktop/tsconfig.base.json`, `cloud/tsconfig.base.json`, `desktop/tsconfig.json`
-- All target ES2022, moduleResolution "Bundler", strict mode enabled
-- Cloud workspace has additional `noUnusedLocals` and `noUnusedParameters`
-- Cloud uses path alias: `@myclaw-cloud/shared` -> `packages/shared/src/index.ts`
-- desktop uses Vite aliases: `@` -> `src/renderer`, `@shared` -> `shared/`
+**Environment:**
+- Desktop environment selection is generated into `desktop/config/_resolved.ts` by `desktop/scripts/set-env.js`; `APP_ENV` can override it at runtime in `desktop/config/index.ts`
+- Desktop Cloud endpoint resolution uses `MYCLAW_CLOUD_API_URL` first, then the static environment files `desktop/config/env.development.ts`, `desktop/config/env.pre.ts`, and `desktop/config/env.production.ts`
+- Desktop portable data location can be overridden with `MYCLAW_DATA_ROOT` in `desktop/src/main/services/directory-service.ts`
+- Cloud API reads runtime variables from `.env` candidates via `cloud/apps/cloud-api/src/runtime/load-runtime-env.ts`; example keys live in `cloud/apps/cloud-api/.env.example`, and a real `.env` file is present at `cloud/apps/cloud-api/.env`
+- Cloud web runtime config exposes `cloudApiBase` in `cloud/apps/cloud-web/nuxt.config.ts`; deployment scripts emit `NUXT_CLOUD_API_BASE` in `cloud/scripts/pack-deploy.sh`
 
 **Build:**
-- `desktop/apps/desktop/src-tauri/tauri.conf.json` - Tauri build configuration
-- `desktop/vite.config.ts` - Vite config with React plugin, renderer root at `src/renderer`
-- `cloud/apps/cloud-web/nuxt.config.ts` - Nuxt config with runtimeConfig for API base URL
-
-**Environment:**
-- `RUNTIME_PORT` - Runtime HTTP server port (default: 43110)
-- `RUNTIME_STATE_FILE_PATH` - Runtime state persistence path
-- `DATABASE_URL` - PostgreSQL connection for cloud API (Prisma)
-- `CLOUD_API_BASE` - Cloud API base URL for Nuxt server proxy (default: `http://127.0.0.1:43210`)
-- `MYCLAW_CLOUD_HUB_BASE_URL` - Cloud Hub URL used by desktop runtime proxy (default: `http://127.0.0.1:43210`)
-- FastDFS config vars (`FASTDFS_BASE_URL`, `FASTDFS_PROJECT_CODE`, `FASTDFS_TOKEN`, etc.) - Artifact storage
+- Desktop build configuration lives in `desktop/package.json`, `desktop/vite.config.ts`, `desktop/tsconfig.json`, `desktop/tsconfig.main.json`, and `desktop/tsconfig.renderer.json`
+- Desktop dev orchestration lives in `desktop/scripts/dev.js`
+- Cloud workspace configuration lives in `cloud/package.json`, `cloud/pnpm-workspace.yaml`, and `cloud/tsconfig.base.json`
+- Cloud API build configuration lives in `cloud/apps/cloud-api/tsconfig.json`, `cloud/apps/cloud-api/tsconfig.build.json`, and `cloud/apps/cloud-api/scripts/bundle.mjs`
+- Cloud web build/runtime configuration lives in `cloud/apps/cloud-web/nuxt.config.ts`
 
 ## Platform Requirements
 
 **Development:**
-- Node.js 18+
-- pnpm 9.11.0 (for desktop and cloud workspaces)
-- npm (for desktop)
-- Rust toolchain (for Tauri builds in desktop workspace)
-- Docker (for local PostgreSQL via `cloud/infra/docker-compose.yml`)
-- Windows x64 primary target (sidecar builds target `x86_64-pc-windows-msvc`)
+- Install Node.js 20+ for the cloud workspace, as documented in `cloud/README.md` and assumed by `cloud/apps/cloud-api/scripts/bundle.mjs`
+- Install `pnpm` for both workspaces; all runnable commands in `desktop/package.json`, `desktop/scripts/dev.js`, and `cloud/package.json` assume it
+- Install Docker only if local MySQL is needed via `docker compose -f cloud/infra/docker-compose.yml` from `cloud/package.json`
+- Install Chrome, Edge, or Chromium locally if desktop browser tools are used; channel detection is implemented in `desktop/src/main/services/browser-service.ts`
 
 **Production:**
-- Desktop: Windows (NSIS installer via Tauri or electron-builder)
-- Cloud API: Node.js server (NestJS)
-- Cloud Web: Node.js server (Nuxt SSR) or static deployment
-- Database: PostgreSQL 16
+- Desktop ships as Electron installers for Windows, macOS, and Linux from `desktop/package.json`
+- Cloud API deploys as a bundled Node process with copied Prisma artifacts under `cloud/apps/cloud-api/bundle/`, managed by PM2 through `cloud/scripts/pack-deploy.sh`
+- Cloud web deploys as a Nuxt server output under `cloud/apps/cloud-web/.output/`, also managed by PM2 through `cloud/scripts/pack-deploy.sh`
 
 ---
 
-*Stack analysis: 2026-03-31*
+*Stack analysis: 2026-04-04*
