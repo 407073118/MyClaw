@@ -94,3 +94,14 @@
 | 4. Governed Enterprise Read Connectors | 0/TBD | Not started | - |
 | 5. Structured Action Surfaces | 0/TBD | Not started | - |
 | 6. Advanced Planner Optimization | 0/TBD | Not started | - |
+| 7. Assistant Soul, Identity & System Prompt Foundation | 0/TBD | Not started | - |
+
+### Phase 7: Assistant Soul, Identity & System Prompt Foundation
+
+**Goal:** 为个人助手建立稳定的身份、自我认知、职责边界与 system message 基础层，让模型知道“我是谁、该做什么、该如何站在用户职业语境中做事”。
+**Requirements**: TBD
+**Depends on:** Phase 6
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 7 to break down)

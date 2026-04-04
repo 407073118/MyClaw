@@ -84,9 +84,7 @@ export type PublishMcpReleaseInput = {
   config: McpServerConfig;
 };
 
-/**
- * MCP 清单信息，用于 Hub 统一类型
- */
+/** MCP 清单信息，供 Hub 侧统一识别与展示。 */
 export type McpManifest = {
   kind: "mcp";
   name: string;

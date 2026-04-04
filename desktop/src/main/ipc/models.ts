@@ -21,33 +21,31 @@ type CreateModelInput = Omit<ModelProfile, "id">;
 type UpdateModelInput = Partial<Omit<ModelProfile, "id">>;
 
 // ---------------------------------------------------------------------------
-// URL resolution helpers
+// URL 解析辅助方法
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the models-list endpoint from a profile's baseUrl.
+ * 从模型配置推导模型列表接口地址。
  *
- * For the chat completions endpoint use resolveModelEndpointUrl (imported
- * from model-client) which applies the full provider-aware logic.
+ * 聊天补全接口请继续使用 `resolveModelEndpointUrl`，
+ * 那里包含更完整的 provider 感知逻辑。
  */
 function resolveModelsListUrl(profile: ModelProfile): string {
-  // Derive the models list URL from the same API root used for chat.
-  // Replace the terminal path segment with /models.
+  // 先拿到聊天接口使用的 API 根路径，再把尾段替换成 `/models`。
   const chatUrl = resolveModelEndpointUrl(profile);
 
-  // Strip the last path component and replace with /models.
-  // e.g. .../v1/chat/completions → .../v1/models
-  //      .../v1/messages        → .../v1/models
+  // 移除最后一段路径并拼成 `/models`。
+  // 例如：
+  // .../v1/chat/completions -> .../v1/models
+  // .../v1/messages        -> .../v1/models
   const lastSlash = chatUrl.lastIndexOf("/");
   const parentPath = chatUrl.slice(0, lastSlash);
   const parentLastSlash = parentPath.lastIndexOf("/");
   const parentSegment = parentPath.slice(parentLastSlash + 1);
 
-  // If the parent segment is already "v1" or "compatible-mode", go up two
-  // levels so we end at the right root (e.g. .../compatible-mode/v1/models).
-  // For /chat/completions the parent is /v1 → remove "chat" → /v1/models.
+  // 如果末级目录是 `chat` 或 `messages`，就继续向上回退一层再拼 `/models`。
   if (parentSegment === "chat" || parentSegment === "messages") {
-    // Go up one more: strip "chat" or "messages" then append /models
+    // 再向上回退一层，确保得到正确的模型列表根路径。
     return `${parentPath.slice(0, parentLastSlash)}/models`;
   }
 
@@ -57,7 +55,7 @@ function resolveModelsListUrl(profile: ModelProfile): string {
 /**
  * 根据配置推断 provider flavor，优先使用用户显式配置。
  */
-export function resolveProviderFlavor(
+function resolveProviderFlavor(
   profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "model">,
 ): ProviderFlavor {
   if (profile.providerFlavor) return profile.providerFlavor;
@@ -87,7 +85,7 @@ export function resolveProviderFlavor(
 /**
  * 按 provider flavor 选择目录归一化策略。
  */
-export function normalizeCatalogPayload(
+function normalizeCatalogPayload(
   payload: unknown,
   provider: ModelProfile["provider"],
   providerFlavor: ProviderFlavor,
@@ -104,7 +102,7 @@ export function normalizeCatalogPayload(
     return normalizeOllamaCatalog(payload, provider, providerFlavor);
   }
 
-  if (provider === "anthropic" || providerFlavor === "anthropic") {
+  if (provider === "anthropic" || providerFlavor === "anthropic" || providerFlavor === "minimax-anthropic") {
     return normalizeAnthropicCatalog(payload, provider, providerFlavor);
   }
 
@@ -116,17 +114,16 @@ export function normalizeCatalogPayload(
 }
 
 // ---------------------------------------------------------------------------
-// IPC handlers
+// IPC 处理器
 // ---------------------------------------------------------------------------
 
 export function registerModelHandlers(ctx: RuntimeContext): void {
-
-  // List all model profiles
+  // 列出全部模型配置。
   ipcMain.handle("model:list", async (): Promise<ModelProfile[]> => {
     return [...ctx.state.models];
   });
 
-  // Create a new model profile
+  // 创建新的模型配置。
   ipcMain.handle("model:create", async (_event, input: CreateModelInput): Promise<ModelProfile> => {
     const { id: _discardId, ...safeInput } = input as ModelProfile;
     const profile: ModelProfile = {
@@ -135,24 +132,25 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
     };
     ctx.state.models.push(profile);
 
-    // If this is the first model, auto-set it as default
+    // 如果这是第一个模型，则自动设为默认模型。
     if (ctx.state.models.length === 1 || !ctx.state.getDefaultModelProfileId()) {
       ctx.state.setDefaultModelProfileId(profile.id);
       saveSettings(ctx.runtime.paths, {
         defaultModelProfileId: profile.id,
         approvalPolicy: ctx.state.getApprovals(),
+        personalPrompt: ctx.state.getPersonalPromptProfile(),
       }).catch((err) => {
         console.error("[model:create] failed to persist default model setting", err);
       });
     }
 
-    // Persist to disk — await to guarantee file written before returning
+    // 写盘后再返回，确保文件已经落地。
     await saveModelProfile(ctx.runtime.paths, profile);
 
     return profile;
   });
 
-  // Update an existing model profile
+  // 更新已有模型配置。
   ipcMain.handle(
     "model:update",
     async (_event, id: string, updates: UpdateModelInput): Promise<ModelProfile> => {
@@ -169,7 +167,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
     },
   );
 
-  // Delete a model profile
+  // 删除模型配置。
   ipcMain.handle("model:delete", async (_event, id: string) => {
     const index = ctx.state.models.findIndex((m) => m.id === id);
     if (index === -1) {
@@ -177,7 +175,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
     }
     ctx.state.models.splice(index, 1);
 
-    // If the deleted model was the default, pick next available and persist
+    // 如果删掉的是默认模型，则自动选择下一个可用模型并持久化。
     const currentDefault = ctx.state.getDefaultModelProfileId();
     if (currentDefault === id || currentDefault === null) {
       const nextDefaultId = ctx.state.models[0]?.id ?? null;
@@ -185,6 +183,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
       saveSettings(ctx.runtime.paths, {
         defaultModelProfileId: nextDefaultId,
         approvalPolicy: ctx.state.getApprovals(),
+        personalPrompt: ctx.state.getPersonalPromptProfile(),
       }).catch((err) => {
         console.error("[model:delete] failed to persist runtime state", err);
       });
@@ -201,7 +200,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
     };
   });
 
-  // Set the default model profile ID
+  // 设置默认模型配置。
   ipcMain.handle(
     "model:set-default",
     async (_event, id: string): Promise<{ defaultModelProfileId: string }> => {
@@ -214,6 +213,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
       saveSettings(ctx.runtime.paths, {
         defaultModelProfileId: id,
         approvalPolicy: ctx.state.getApprovals(),
+        personalPrompt: ctx.state.getPersonalPromptProfile(),
       }).catch((err) => {
         console.error("[model:set-default] failed to persist runtime state", err);
       });

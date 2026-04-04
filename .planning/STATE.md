@@ -9,10 +9,10 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 
 ## Current Position
 
-Phase: 1 of 6 (Runtime Seams, Ledger & Eval Baseline)
+Phase: 1 of 7 (Runtime Seams, Ledger & Eval Baseline)
 Plan: 0 of 0 in current phase
 Status: Ready to plan
-Last activity: 2026-04-04 — Roadmap created and v1 traceability initialized
+Last activity: 2026-04-04 — Added Phase 7 for assistant soul / identity / system prompt foundation
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -47,6 +47,10 @@ Recent decisions affecting current work:
 ### Pending Todos
 
 None yet.
+
+### Roadmap Evolution
+
+- Phase 7 added: 个人助手 Soul / Identity / System Message 基础层
 
 ### Blockers/Concerns
 

@@ -1,28 +1,31 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
-import { marked } from "marked";
 import type { FileTreeNode } from "@shared/contracts";
+import { renderSafeSkillMarkdown, shouldShowSkillPreviewToggle } from "../utils/skill-preview";
 
-// ── Types ────────────────────────────────────────────────────────────────────
+// ── 类型定义 ──────────────────────────────────────────────────────────────────
 
 type ViewMode = "source" | "preview";
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── 辅助方法 ──────────────────────────────────────────────────────────────────
 
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp", ".ico"]);
-const PREVIEW_EXTS = new Set([".md", ".html"]);
+const PREVIEW_EXTS = new Set([".md"]);
 const SOURCE_DEFAULT_EXTS = new Set([".json", ".ts", ".js", ".css", ".yaml", ".yml"]);
 
+/** 提取文件扩展名，统一转成小写便于后续判断。 */
 function getExtension(name: string): string {
   const idx = name.lastIndexOf(".");
   return idx >= 0 ? name.slice(idx).toLowerCase() : "";
 }
 
+/** 判断当前文件是否属于图片资源。 */
 function isImageFile(name: string): boolean {
   return IMAGE_EXTS.has(getExtension(name));
 }
 
+/** 根据文件扩展名推断默认展示模式。 */
 function defaultViewMode(name: string): ViewMode {
   const ext = getExtension(name);
   if (PREVIEW_EXTS.has(ext)) return "preview";
@@ -30,11 +33,7 @@ function defaultViewMode(name: string): ViewMode {
   return "source";
 }
 
-function canToggleView(name: string): boolean {
-  return PREVIEW_EXTS.has(getExtension(name));
-}
-
-/** Find SKILL.md node in tree (breadth-first). */
+/** 在文件树中按广度优先查找 `SKILL.md` 节点。 */
 function findSkillMd(nodes: FileTreeNode[]): FileTreeNode | null {
   const queue = [...nodes];
   while (queue.length > 0) {
@@ -45,7 +44,7 @@ function findSkillMd(nodes: FileTreeNode[]): FileTreeNode | null {
   return null;
 }
 
-// ── TreeNode component ───────────────────────────────────────────────────────
+// ── 文件树节点组件 ────────────────────────────────────────────────────────────
 
 interface TreeNodeProps {
   node: FileTreeNode;
@@ -55,20 +54,24 @@ interface TreeNodeProps {
   onSelect: (node: FileTreeNode) => void;
 }
 
+/** 渲染文件树节点，并负责目录展开和文件选择。 */
 function TreeNode({ node, depth, selectedPath, defaultExpanded, onSelect }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   if (node.type === "directory") {
     return (
       <div className="tree-node">
-        <div
+        <button
+          type="button"
           className="tree-item tree-dir"
+          aria-label={node.name}
+          aria-expanded={expanded}
           style={{ paddingLeft: `${12 + depth * 16}px` }}
           onClick={() => setExpanded((v) => !v)}
         >
           <span className="tree-icon">{expanded ? "\u25BC" : "\u25B6"}</span>
           <span className="tree-label">{node.name}</span>
-        </div>
+        </button>
         {expanded && node.children && (
           <div className="tree-children">
             {node.children.map((child) => (
@@ -89,19 +92,23 @@ function TreeNode({ node, depth, selectedPath, defaultExpanded, onSelect }: Tree
 
   const isSelected = selectedPath === node.relativePath;
   return (
-    <div
+    <button
+      type="button"
       className={`tree-item tree-file${isSelected ? " selected" : ""}`}
+      aria-label={node.name}
+      aria-current={isSelected ? "true" : undefined}
       style={{ paddingLeft: `${12 + depth * 16}px` }}
       onClick={() => onSelect(node)}
     >
       <span className="tree-icon file-icon">{"\uD83D\uDCC4"}</span>
       <span className="tree-label">{node.name}</span>
-    </div>
+    </button>
   );
 }
 
-// ── SkillDetailPage ──────────────────────────────────────────────────────────
+// ── SkillDetailPage 页面 ─────────────────────────────────────────────────────
 
+/** 展示 Skill 的文件树、源码内容与预览结果。 */
 export default function SkillDetailPage() {
   const { id: skillId } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -109,17 +116,17 @@ export default function SkillDetailPage() {
 
   const skill = useMemo(() => skills.find((s) => s.id === skillId) ?? null, [skills, skillId]);
 
-  // File tree
+  // 文件树状态。
   const [tree, setTree] = useState<FileTreeNode[]>([]);
   const [treeLoading, setTreeLoading] = useState(true);
 
-  // Selected file
+  // 当前选中文件状态。
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string>("");
   const [fileLoading, setFileLoading] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("source");
 
-  // Load file tree
+  // 加载 Skill 文件树，并默认选中 `SKILL.md`。
   useEffect(() => {
     if (!skillId) return;
     let cancelled = false;
@@ -129,7 +136,7 @@ export default function SkillDetailPage() {
       .then((nodes) => {
         if (cancelled) return;
         setTree(nodes);
-        // Auto-select SKILL.md
+        // 优先自动选中 `SKILL.md`，让详情页首屏更聚焦。
         const skillMd = findSkillMd(nodes);
         if (skillMd) {
           setSelectedPath(skillMd.relativePath);
@@ -144,7 +151,7 @@ export default function SkillDetailPage() {
     return () => { cancelled = true; };
   }, [skillId]);
 
-  // Load file content when selection changes
+  // 文件选择变化后，重新加载文件内容与视图模式。
   useEffect(() => {
     if (!skillId || !selectedPath) {
       setFileContent("");
@@ -170,13 +177,14 @@ export default function SkillDetailPage() {
     return () => { cancelled = true; };
   }, [skillId, selectedPath]);
 
+  /** 处理文件节点点击，仅允许选择文件类型节点。 */
   const handleSelectFile = useCallback((node: FileTreeNode) => {
     if (node.type === "file") {
       setSelectedPath(node.relativePath);
     }
   }, []);
 
-  // ── Not found ──────────────────────────────────────────────────────────────
+  // ── 未找到 Skill ───────────────────────────────────────────────────────────
   if (!skill) {
     return (
       <main className="page-container">
@@ -191,10 +199,10 @@ export default function SkillDetailPage() {
     );
   }
 
-  // ── Render content area ────────────────────────────────────────────────────
+  // ── 渲染内容区域 ───────────────────────────────────────────────────────────
   const selectedFileName = selectedPath?.split("/").pop() ?? "";
   const ext = getExtension(selectedFileName);
-  const showToggle = canToggleView(selectedFileName);
+  const showToggle = shouldShowSkillPreviewToggle(selectedFileName);
 
   let contentElement: React.ReactNode = null;
   if (!selectedPath) {
@@ -208,21 +216,15 @@ export default function SkillDetailPage() {
       </div>
     );
   } else if (viewMode === "preview" && ext === ".md") {
-    const html = marked.parse(fileContent) as string;
     contentElement = (
-      <div className="markdown-preview" dangerouslySetInnerHTML={{ __html: html }} />
-    );
-  } else if (viewMode === "preview" && ext === ".html") {
-    contentElement = (
-      <iframe
-        className="html-preview"
-        sandbox="allow-scripts allow-same-origin"
-        srcDoc={fileContent}
-        title={selectedFileName}
+      <div
+        className="markdown-preview"
+        data-testid="skill-detail-content"
+        dangerouslySetInnerHTML={{ __html: renderSafeSkillMarkdown(fileContent) }}
       />
     );
   } else {
-    // Source mode with line numbers
+    // 源码模式下展示带行号的只读视图。
     const lines = fileContent.split("\n");
     contentElement = (
       <pre className="source-code">
@@ -240,7 +242,7 @@ export default function SkillDetailPage() {
 
   return (
     <main className="skill-detail-page">
-      {/* Top bar */}
+      {/* 顶部栏 */}
       <header className="top-bar">
         <button type="button" className="btn-back" onClick={() => navigate("/skills")}>
           &larr; 返回列表
@@ -251,9 +253,9 @@ export default function SkillDetailPage() {
         </span>
       </header>
 
-      {/* Main body */}
+      {/* 主体区域 */}
       <div className="main-body">
-        {/* File tree sidebar */}
+        {/* 文件树侧栏 */}
         <aside className="file-tree-sidebar">
           {treeLoading ? (
             <p className="tree-loading">加载中...</p>
@@ -273,9 +275,9 @@ export default function SkillDetailPage() {
           )}
         </aside>
 
-        {/* Content area */}
+        {/* 内容区域 */}
         <section className="content-area">
-          {/* Toolbar */}
+          {/* 内容工具栏 */}
           <div className="content-toolbar">
             <span className="file-path-label">
               {selectedPath ?? "..."}
@@ -291,7 +293,7 @@ export default function SkillDetailPage() {
             )}
           </div>
 
-          {/* File content */}
+          {/* 文件内容区 */}
           <div className="content-body">
             {contentElement}
           </div>
@@ -303,7 +305,7 @@ export default function SkillDetailPage() {
   );
 }
 
-// ── Styles ───────────────────────────────────────────────────────────────────
+// ── 样式 ──────────────────────────────────────────────────────────────────────
 
 const styles = `
   .skill-detail-page {
@@ -313,7 +315,7 @@ const styles = `
     overflow: hidden;
   }
 
-  /* ---- Not found ---- */
+  /* ---- 未找到状态 ---- */
   .not-found {
     display: flex;
     flex-direction: column;
@@ -325,7 +327,7 @@ const styles = `
     font-size: 15px;
   }
 
-  /* ---- Top bar ---- */
+  /* ---- 顶部栏 ---- */
   .top-bar {
     display: flex;
     align-items: center;
@@ -381,14 +383,14 @@ const styles = `
     color: #2ea043;
   }
 
-  /* ---- Main body (sidebar + content) ---- */
+  /* ---- 主体布局（侧栏 + 内容区） ---- */
   .main-body {
     display: flex;
     flex: 1;
     min-height: 0;
   }
 
-  /* ---- File tree sidebar ---- */
+  /* ---- 文件树侧栏 ---- */
   .file-tree-sidebar {
     width: 240px;
     flex-shrink: 0;
@@ -414,6 +416,20 @@ const styles = `
     color: var(--text-secondary, #b0b0b8);
     transition: background 0.1s;
     user-select: none;
+  }
+
+  .tree-item {
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: left;
+    appearance: none;
+    font: inherit;
+  }
+
+  .tree-item:focus-visible {
+    outline: 2px solid rgba(103, 232, 249, 0.65);
+    outline-offset: -2px;
   }
 
   .tree-item:hover {
@@ -444,7 +460,7 @@ const styles = `
     white-space: nowrap;
   }
 
-  /* ---- Content area ---- */
+  /* ---- 内容区域 ---- */
   .content-area {
     flex: 1;
     min-width: 0;
@@ -503,7 +519,7 @@ const styles = `
     font-size: 14px;
   }
 
-  /* ---- Source code ---- */
+  /* ---- 源码视图 ---- */
   .source-code {
     margin: 0;
     padding: 12px 0;
@@ -535,7 +551,7 @@ const styles = `
     color: var(--text-primary, #fff);
   }
 
-  /* ---- Image preview ---- */
+  /* ---- 图片预览 ---- */
   .image-preview {
     display: flex;
     align-items: center;
@@ -551,15 +567,7 @@ const styles = `
     border-radius: var(--radius-md, 6px);
   }
 
-  /* ---- HTML preview ---- */
-  .html-preview {
-    width: 100%;
-    height: 100%;
-    border: none;
-    background: #fff;
-  }
-
-  /* ---- Markdown preview ---- */
+  /* ---- Markdown 预览 ---- */
   .markdown-preview {
     padding: 24px 32px;
     color: var(--text-primary, #fff);

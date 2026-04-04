@@ -1,6 +1,8 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
-import { useWorkspaceStore, type CloudSkillCategory } from "@/stores/workspace";
-import { useShellStore } from "@/stores/shell";
+import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import FallbackAvatar from "../components/FallbackAvatar";
+import { useDialogA11y } from "../hooks/useDialogA11y";
+import { useWorkspaceStore, type CloudSkillCategory } from "../stores/workspace";
+import { useShellStore } from "../stores/shell";
 
 type CloudHubItemType = "skill" | "mcp" | "employee-package" | "workflow-package";
 
@@ -65,6 +67,7 @@ export default function HubPage() {
   const [cloudError, setCloudError] = useState(false);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
+  const detailPanelRef = useRef<HTMLElement>(null);
   const MAX_RETRIES = 5;
 
   const displayedSkills = useMemo(() => {
@@ -176,7 +179,22 @@ export default function HubPage() {
     }
   }
 
-  async function openSkillDetail(skillId: string) {
+  /** 关闭云端详情弹层，并清理导入反馈。 */
+  const closeDetail = useCallback(() => {
+    setDetailVisible(false);
+    setImportFeedback("");
+    setImportError("");
+  }, []);
+
+  const { captureTrigger: captureDialogTrigger } = useDialogA11y({
+    isOpen: detailVisible,
+    onClose: closeDetail,
+    initialFocusRef: detailPanelRef,
+    dialogName: "hub-detail",
+  });
+
+  async function openSkillDetail(skillId: string, trigger?: HTMLElement | null) {
+    captureDialogTrigger(trigger);
     setDetailVisible(true);
     setImportFeedback("");
     setImportError("");
@@ -184,7 +202,8 @@ export default function HubPage() {
     try { await workspace.loadCloudSkillDetail(skillId); } catch { /* handled */ }
   }
 
-  async function openHubItemDetail(itemId: string) {
+  async function openHubItemDetail(itemId: string, trigger?: HTMLElement | null) {
+    captureDialogTrigger(trigger);
     setDetailVisible(true);
     setImportFeedback("");
     setImportError("");
@@ -194,12 +213,6 @@ export default function HubPage() {
       const releaseId = (detail as any).releases[0]?.id;
       if (releaseId) await workspace.loadCloudHubManifest(releaseId);
     } catch { /* handled */ }
-  }
-
-  function closeDetail() {
-    setDetailVisible(false);
-    setImportFeedback("");
-    setImportError("");
   }
 
   async function installSkill() {
@@ -317,11 +330,14 @@ export default function HubPage() {
           ) : (
             <div className="skills-grid">
               {displayedSkills.map((skill: any) => (
-                <button key={skill.id} data-testid={`hub-item-${skill.id}`} className="skill-card" onClick={() => void openSkillDetail(skill.id)}>
+                <button key={skill.id} data-testid={`hub-item-${skill.id}`} className="skill-card" onClick={(event) => void openSkillDetail(skill.id, event.currentTarget)}>
                   <div className="card-top">
-                    <div className="skill-avatar" style={skill.icon ? {} : { background: getAvatarColor(skill.name) }}>
-                      {skill.icon ? <img src={skill.icon} alt={skill.name} onError={(e) => { const el = e.target as HTMLImageElement; el.style.display = "none"; el.parentElement!.style.background = getAvatarColor(skill.name); const s = document.createElement("span"); s.textContent = skill.name.charAt(0).toUpperCase(); el.parentElement!.appendChild(s); }} /> : <span>{skill.name.charAt(0).toUpperCase()}</span>}
-                    </div>
+                    <FallbackAvatar
+                      name={skill.name}
+                      src={skill.icon}
+                      className="skill-avatar"
+                      background={getAvatarColor(skill.name)}
+                    />
                     <div className="card-title-block"><h4>{skill.name}</h4><span className="author">{skill.author || "anonymous"}</span></div>
                   </div>
                   <p className="text-clamp">{skill.summary || skill.description || "暂无说明。"}</p>
@@ -351,13 +367,14 @@ export default function HubPage() {
           ) : (
             <div className="skills-grid">
               {filteredHubItems.map((item: any) => (
-                <button key={item.id} data-testid={`hub-item-${item.id}`} className="skill-card" onClick={() => void openHubItemDetail(item.id)}>
+                <button key={item.id} data-testid={`hub-item-${item.id}`} className="skill-card" onClick={(event) => void openHubItemDetail(item.id, event.currentTarget)}>
                   <div className="card-top">
-                    {item.iconUrl ? (
-                      <div className="skill-avatar"><img src={item.iconUrl} alt={item.name} onError={(e) => { const el = e.target as HTMLImageElement; el.style.display = "none"; el.parentElement!.style.background = getAvatarColor(item.name); const s = document.createElement("span"); s.textContent = item.name.charAt(0).toUpperCase(); el.parentElement!.appendChild(s); }} /></div>
-                    ) : (
-                      <div className="skill-avatar" style={{ background: getAvatarColor(item.name) }}><span>{item.name.charAt(0).toUpperCase()}</span></div>
-                    )}
+                    <FallbackAvatar
+                      name={item.name}
+                      src={item.iconUrl}
+                      className="skill-avatar"
+                      background={getAvatarColor(item.name)}
+                    />
                     <div className="card-title-block"><h4>{item.name}</h4><span className="author">{hubTypeLabel(item.type)}</span></div>
                   </div>
                   <p className="text-clamp">{item.summary || "暂无说明。"}</p>
@@ -372,18 +389,28 @@ export default function HubPage() {
       {/* Detail overlay */}
       {detailVisible && (
         <div className="detail-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeDetail(); }}>
-          <article className="detail-panel">
+          <article
+            ref={detailPanelRef}
+            className="detail-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label="云端资源详情"
+            tabIndex={-1}
+          >
             {skillDetail && activeTab === "skill" ? (
               <>
                 <div className="detail-header">
-                  <div className="skill-avatar lg" style={skillDetail.icon ? {} : { background: getAvatarColor(skillDetail.name) }}>
-                    {skillDetail.icon ? <img src={skillDetail.icon} alt={skillDetail.name} onError={(e) => { const el = e.target as HTMLImageElement; el.style.display = "none"; el.parentElement!.style.background = getAvatarColor(skillDetail.name); const s = document.createElement("span"); s.textContent = skillDetail.name.charAt(0).toUpperCase(); el.parentElement!.appendChild(s); }} /> : <span>{skillDetail.name.charAt(0).toUpperCase()}</span>}
-                  </div>
+                  <FallbackAvatar
+                    name={skillDetail.name}
+                    src={skillDetail.icon}
+                    className="skill-avatar lg"
+                    background={getAvatarColor(skillDetail.name)}
+                  />
                   <div>
                     <h3>{skillDetail.name}</h3>
                     <p className="detail-author">{skillDetail.author || "anonymous"} · {getCategoryLabel(skillDetail.category)}</p>
                   </div>
-                  <button className="close-btn" onClick={closeDetail}>&times;</button>
+                  <button type="button" className="close-btn" aria-label="关闭详情" onClick={closeDetail}>&times;</button>
                 </div>
                 <p className="detail-desc">{skillDetail.description}</p>
                 <div className="detail-info-grid">
@@ -410,12 +437,16 @@ export default function HubPage() {
             ) : hubDetail ? (
               <>
                 <div className="detail-header">
-                  <div className="skill-avatar lg" style={{ background: getAvatarColor(hubDetail.name) }}><span>{hubDetail.name.charAt(0).toUpperCase()}</span></div>
+                  <FallbackAvatar
+                    name={hubDetail.name}
+                    className="skill-avatar lg"
+                    background={getAvatarColor(hubDetail.name)}
+                  />
                   <div>
                     <h3>{hubDetail.name}</h3>
                     <p className="detail-author">{hubTypeLabel(hubDetail.type)}</p>
                   </div>
-                  <button className="close-btn" onClick={closeDetail}>&times;</button>
+                  <button type="button" className="close-btn" aria-label="关闭详情" onClick={closeDetail}>&times;</button>
                 </div>
                 <p className="detail-desc">{hubDetail.description}</p>
                 <div className="detail-info-grid">

@@ -1,6 +1,6 @@
 import { readBody } from "h3";
 
-import { proxyCloudApi } from "../../utils/cloud-api";
+import { proxyCloudApi } from "../../lib/cloud-api";
 
 export default defineEventHandler(async (event) => {
   return proxyCloudApi(event, "/api/mcp/items", {

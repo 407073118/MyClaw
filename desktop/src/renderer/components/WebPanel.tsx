@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
 
+/** 渲染 Skill 侧边 Web 面板，并负责 iframe 通信与拖拽调宽。 */
 export default function WebPanel() {
   const webPanel = useWorkspaceStore((s) => s.webPanel);
   const closeWebPanel = useWorkspaceStore((s) => s.closeWebPanel);
@@ -12,12 +13,12 @@ export default function WebPanel() {
   const [iframeKey, setIframeKey] = useState(0);
   const [iframeLoaded, setIframeLoaded] = useState(false);
 
-  // Reset loaded state when view changes
+  // 视图切换或主动刷新后，重置 iframe 加载状态。
   useEffect(() => {
     setIframeLoaded(false);
   }, [webPanel.viewPath, iframeKey]);
 
-  // Push data to iframe via postMessage after load
+  // iframe 加载完成后，把结构化数据通过 postMessage 推送给子页面。
   useEffect(() => {
     if (!webPanel.isOpen || !iframeRef.current) return;
     const iframe = iframeRef.current;
@@ -32,10 +33,13 @@ export default function WebPanel() {
     return () => iframe.removeEventListener("load", handleLoad);
   }, [webPanel.isOpen, webPanel.viewPath, webPanel.data, iframeKey]);
 
-  // Listen for skill-callback messages from iframe
+  // 监听 iframe 回传的回调消息，便于后续接入更复杂的交互。
   useEffect(() => {
     if (!webPanel.isOpen) return;
     const handleMessage = (e: MessageEvent) => {
+      if (e.source !== iframeRef.current?.contentWindow) {
+        return;
+      }
       if (e.data?.type === "skill-callback") {
         console.info("[web-panel] Received callback from view:", e.data);
       }
@@ -44,7 +48,7 @@ export default function WebPanel() {
     return () => window.removeEventListener("message", handleMessage);
   }, [webPanel.isOpen]);
 
-  // Drag resize handler
+  /** 处理拖拽开始事件，并在鼠标移动时实时更新面板宽度。 */
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -70,6 +74,7 @@ export default function WebPanel() {
     [webPanel.panelWidth, setWebPanelWidth]
   );
 
+  /** 强制刷新 iframe，重新加载当前 Web 面板视图。 */
   const handleRefresh = useCallback(() => {
     setIframeKey((k) => k + 1);
   }, []);
@@ -82,12 +87,12 @@ export default function WebPanel() {
       className={`web-panel${isDragging ? " dragging" : ""}`}
       style={{ width: webPanel.panelWidth }}
     >
-      {/* Drag handle */}
+      {/* 拖拽手柄 */}
       <div className="wp-drag-handle" onMouseDown={handleMouseDown}>
         <div className="wp-drag-indicator" />
       </div>
 
-      {/* Toolbar */}
+      {/* 顶部工具栏 */}
       <div className="wp-toolbar">
         <div className="wp-toolbar-left">
           <span className="wp-dot" />
@@ -117,20 +122,21 @@ export default function WebPanel() {
         </div>
       </div>
 
-      {/* Loading indicator */}
+      {/* 加载指示器 */}
       {!iframeLoaded && (
         <div className="wp-loading">
           <div className="wp-loading-bar" />
         </div>
       )}
 
-      {/* Iframe */}
+      {/* 内容 iframe */}
       <iframe
         key={iframeKey}
         ref={iframeRef}
         src={`file://${webPanel.viewPath.replace(/\\/g, "/")}`}
         className="wp-iframe"
-        sandbox="allow-scripts allow-same-origin"
+        sandbox="allow-scripts"
+        referrerPolicy="no-referrer"
         style={{ opacity: iframeLoaded ? 1 : 0 }}
       />
 
@@ -271,7 +277,7 @@ export default function WebPanel() {
           100% { transform: translateX(350%); }
         }
 
-        /* ---- iframe ---- */
+        /* ---- 内容 iframe ---- */
         .wp-iframe {
           flex: 1;
           width: 100%;

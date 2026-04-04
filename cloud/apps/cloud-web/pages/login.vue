@@ -18,13 +18,14 @@ const errorMessage = ref("");
 const successMessage = ref("");
 const showPassword = ref(false);
 
-// Theme Support for Login (standalone layout)
+// 登录页独立维护主题切换状态，不依赖默认布局。
 const colorMode = ref<'dark' | 'light'>('dark');
 onMounted(() => {
   const savedTheme = localStorage.getItem('cloud_theme') as 'dark' | 'light' || 'dark';
   colorMode.value = savedTheme;
 });
 
+/** 切换登录页配色并持久化到本地。 */
 function toggleTheme() {
   colorMode.value = colorMode.value === 'dark' ? 'light' : 'dark';
   localStorage.setItem('cloud_theme', colorMode.value);
@@ -46,6 +47,7 @@ const redirectTarget = computed(() => {
   return target;
 });
 
+/** 处理登录提交，成功后自动跳转到目标页。 */
 async function handleLogin() {
   pending.value = true;
   errorMessage.value = "";

@@ -12,6 +12,7 @@ import type {
   McpServerConfig,
   ModelCatalogItem,
   ModelProfile,
+  PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
@@ -115,6 +116,7 @@ type WorkspaceState = {
   cloudSkillDetail: CloudSkillDetail | null;
   approvals: ApprovalPolicy | null;
   approvalRequests: ApprovalRequest[];
+  personalPrompt: PersonalPromptProfile;
 
   // WebPanel
   webPanel: {
@@ -128,12 +130,11 @@ type WorkspaceState = {
   // Derived (recalculated after set())
   currentSession: ChatSession | null;
 
-  // Actions
+  // 动作
   loadBootstrap: () => Promise<void>;
   selectSession: (sessionId: string) => void;
   createSession: () => Promise<ChatSession>;
   deleteSession: (sessionId: string) => Promise<unknown>;
-  updateSessionThinking: (sessionId: string, enabled: boolean) => Promise<ChatSession | null>;
   sendMessage: (content: string, options?: {
     onMessageStream?: (snapshot: unknown) => void;
   }) => Promise<void>;
@@ -174,6 +175,8 @@ type WorkspaceState = {
     autoApproveReadOnly: boolean;
     autoApproveSkills: boolean;
   }) => Promise<ApprovalPolicy>;
+  loadPersonalPrompt: () => Promise<PersonalPromptProfile>;
+  updatePersonalPrompt: (prompt: string) => Promise<PersonalPromptProfile>;
 
   importCloudSkill: (input: { releaseId: string; skillName: string }) => Promise<unknown>;
   importCloudMcp: (input: { releaseId: string; servers: McpServerConfig[] }) => Promise<unknown>;
@@ -232,7 +235,7 @@ type WorkspaceState = {
 };
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助方法
 // ---------------------------------------------------------------------------
 
 function isConfiguredModelProfile(profile: ModelProfile): boolean {
@@ -335,6 +338,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   cloudSkillDetail: null,
   approvals: null,
   approvalRequests: [],
+  personalPrompt: {
+    prompt: "",
+    summary: "",
+    tags: [],
+    updatedAt: null,
+  },
 
   webPanel: {
     isOpen: false,
@@ -389,6 +398,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         cloudHubManifest: payload.cloudHubManifest ?? null,
         approvals: payload.approvals ?? null,
         approvalRequests: payload.approvalRequests ?? [],
+        personalPrompt: payload.personalPrompt ?? {
+          prompt: "",
+          summary: "",
+          tags: [],
+          updatedAt: null,
+        },
         ready: true,
         error: null,
       });
@@ -432,27 +447,6 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       return { sessions, approvalRequests, activeSessionId };
     });
     return payload;
-  },
-
-  async updateSessionThinking(sessionId, enabled) {
-    const current = get().sessions.find((item) => item.id === sessionId) ?? null;
-    if (!current) return null;
-
-    const payload = await window.myClawAPI.updateSessionThinking(sessionId, {
-      thinkingEnabled: enabled,
-      thinkingSource: "user-toggle",
-    });
-
-    set((s) => {
-      const sessions = [...s.sessions];
-      const index = sessions.findIndex((item) => item.id === sessionId);
-      if (index >= 0) {
-        sessions[index] = payload.session;
-      }
-      return { sessions };
-    });
-
-    return payload.session;
   },
 
   // -------------------------------------------------------------------------
@@ -698,6 +692,18 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     const payload = await window.myClawAPI.updateApprovalPolicy(input);
     set({ approvals: payload.approvals });
     return payload.approvals;
+  },
+
+  async loadPersonalPrompt() {
+    const profile = await window.myClawAPI.getPersonalPrompt();
+    set({ personalPrompt: profile });
+    return profile;
+  },
+
+  async updatePersonalPrompt(prompt) {
+    const profile = await window.myClawAPI.updatePersonalPrompt({ prompt });
+    set({ personalPrompt: profile });
+    return profile;
   },
 
   // -------------------------------------------------------------------------

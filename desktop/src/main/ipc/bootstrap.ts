@@ -6,6 +6,7 @@ import type {
   ChatSession,
   McpServer,
   ModelProfile,
+  PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
@@ -33,6 +34,7 @@ export type BootstrapPayload = {
   workflows: WorkflowSummary[];
   approvals: ApprovalPolicy;
   approvalRequests: ApprovalRequest[];
+  personalPrompt: PersonalPromptProfile;
   mcp: { servers: McpServer[] };
   employees: [];
   workflowRuns: [];
@@ -58,6 +60,7 @@ export function registerBootstrapHandlers(ctx: RuntimeContext): void {
       workflows: ctx.state.getWorkflows(),
       approvals: ctx.state.getApprovals(),
       approvalRequests: ctx.state.getApprovalRequests(),
+      personalPrompt: ctx.state.getPersonalPromptProfile(),
       mcp: { servers: ctx.services.listMcpServers() },
       employees: [],
       workflowRuns: [],

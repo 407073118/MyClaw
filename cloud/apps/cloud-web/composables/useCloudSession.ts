@@ -2,7 +2,6 @@ import type { AuthLoginResponse, AuthUser } from "@myclaw-cloud/shared";
 
 type CloudSessionState = {
   accessToken: string;
-  refreshToken: string;
   expiresIn: number;
   loggedInAt: string | null;
   user: AuthUser | null;
@@ -13,7 +12,6 @@ const SESSION_STORAGE_KEY = "myclaw-cloud-session";
 function createEmptySession(): CloudSessionState {
   return {
     accessToken: "",
-    refreshToken: "",
     expiresIn: 0,
     loggedInAt: null,
     user: null
@@ -41,8 +39,6 @@ export function useCloudSession() {
     default: () => null
   });
   const session = useState<CloudSessionState>("cloud-session", () => parseSession(sessionCookie.value));
-  const hydrated = useState<boolean>("cloud-session-hydrated", () => false);
-  const storageListenerBound = useState<boolean>("cloud-session-storage-bound", () => false);
   const sessionExpiresAt = computed(() => {
     if (!session.value.loggedInAt || !session.value.expiresIn) {
       return null;
@@ -70,25 +66,9 @@ export function useCloudSession() {
     return expiresAt.getTime() > Date.now();
   });
 
-  if (import.meta.client && !hydrated.value) {
-    hydrated.value = true;
-
-    const stored = localStorage.getItem(SESSION_STORAGE_KEY);
-    if (stored) {
-      applyParsedSession(parseSession(stored));
-      sessionCookie.value = JSON.stringify(session.value);
-    } else if (sessionCookie.value) {
-      applyParsedSession(parseSession(sessionCookie.value));
-    }
-  }
-
   function persist() {
     const serialized = JSON.stringify(session.value);
     sessionCookie.value = serialized;
-
-    if (import.meta.client) {
-      localStorage.setItem(SESSION_STORAGE_KEY, serialized);
-    }
   }
 
   function applyParsedSession(value: CloudSessionState) {
@@ -98,23 +78,10 @@ export function useCloudSession() {
     }
   }
 
-  function handleStorage(event: StorageEvent) {
-    if (event.key !== SESSION_STORAGE_KEY) {
-      return;
-    }
-
-    applyParsedSession(parseSession(event.newValue));
-  }
-
-  if (import.meta.client && !storageListenerBound.value) {
-    window.addEventListener("storage", handleStorage);
-    storageListenerBound.value = true;
-  }
-
+  /** 记录登录成功后的最小会话信息，避免在浏览器侧长期保存额外敏感字段。 */
   function setSession(payload: AuthLoginResponse) {
     session.value = {
       accessToken: payload.accessToken,
-      refreshToken: payload.refreshToken,
       expiresIn: payload.expiresIn,
       loggedInAt: new Date().toISOString(),
       user: payload.user
@@ -125,10 +92,6 @@ export function useCloudSession() {
   function clearSession() {
     session.value = createEmptySession();
     sessionCookie.value = null;
-
-    if (import.meta.client) {
-      localStorage.removeItem(SESSION_STORAGE_KEY);
-    }
   }
 
   return {

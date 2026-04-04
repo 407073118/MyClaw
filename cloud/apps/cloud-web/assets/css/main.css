@@ -43,7 +43,7 @@ body {
   overflow-x: hidden;
 }
 
-/* Auth Background */
+/* 认证背景 */
 .auth-bg {
   position: fixed;
   inset: 0;
@@ -89,7 +89,7 @@ a {
   text-decoration: none;
 }
 
-/* Base Layout */
+/* 基础布局 */
 .cloud-app {
   display: flex;
   flex-direction: column;
@@ -103,7 +103,7 @@ a {
   padding: 40px 0 80px;
 }
 
-/* Header */
+/* 顶部栏 */
 .site-header {
   padding: 24px 0 0;
   position: sticky;
@@ -189,7 +189,7 @@ a {
 }
 .site-header__mobile { display: none; }
 
-/* Buttons */
+/* 按钮 */
 .button {
   display: inline-flex;
   align-items: center;
@@ -228,7 +228,7 @@ a {
   font-size: 0.85rem;
 }
 
-/* Typography & Content Block */
+/* 排版与内容块 */
 h1, h2, h3, h4 {
   margin: 0 0 16px;
   line-height: 1.2;
@@ -254,7 +254,7 @@ p {
   gap: 32px;
 }
 
-/* Page Hero */
+/* 页面首屏 */
 .page-hero {
   display: grid;
   grid-template-columns: 1.2fr 1fr;
@@ -298,7 +298,7 @@ p {
   gap: 16px;
 }
 
-/* Cards */
+/* 卡片 */
 .signal-card, .capability-card, .panel {
   background: var(--bg-card);
   border: 1px solid var(--glass-border);
@@ -357,7 +357,7 @@ p {
   max-width: 600px;
 }
 
-/* Capability Grid */
+/* 能力网格 */
 .capability-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -407,7 +407,7 @@ p {
   align-items: center;
 }
 
-/* Tags */
+/* 标签 */
 .tag {
   display: inline-flex;
   align-items: center;
@@ -445,7 +445,7 @@ p {
   font-weight: bold;
 }
 
-/* Footer */
+/* 页脚 */
 .site-footer {
   padding: 0 0 40px;
 }
@@ -467,7 +467,7 @@ p {
   max-width: 600px;
 }
 
-/* Form & Console Additions */
+/* 表单与控制台扩展 */
 .form-shell {
   display: flex;
   flex-direction: column;
@@ -1345,7 +1345,7 @@ p {
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Responsive */
+/* 响应式布局 */
 @media (max-width: 1024px) {
   .site-header__inner {
     grid-template-columns: 1fr;
@@ -1413,4 +1413,3 @@ p {
     grid-template-columns: 1fr;
   }
 }
-

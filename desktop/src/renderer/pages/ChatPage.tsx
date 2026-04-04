@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { ArrowUp, Square } from "lucide-react";
 import { marked } from "marked";
-import { useWorkspaceStore } from "@/stores/workspace";
+import { useDialogA11y } from "../hooks/useDialogA11y";
+import { useWorkspaceStore } from "../stores/workspace";
 import type {
   A2UiForm,
   A2UiPayload,
@@ -13,9 +14,10 @@ import type {
 } from "@shared/contracts";
 import { ToolRiskCategory } from "@shared/contracts";
 
-// Configure marked
+// 配置 `marked`，统一启用 GFM 和换行转 `<br>`。
 marked.setOptions({ gfm: true, breaks: true });
 
+/** 把 Markdown 文本渲染成 HTML，失败时回退原文本。 */
 function renderMarkdown(content: string): string {
   if (!content) return "";
   try {
@@ -25,7 +27,7 @@ function renderMarkdown(content: string): string {
   }
 }
 
-// ─── ToolLogContent inline component ──────────────────────────────────────────
+// ─── ToolLogContent 内联组件辅助类型 ─────────────────────────────────────────
 
 interface DirectoryEntry {
   kind: string;
@@ -38,8 +40,9 @@ interface DirectoryTree {
   entries: DirectoryEntry[];
 }
 
+/** 解析 PowerShell 目录树输出，便于在工具日志中结构化展示。 */
 function parsePowerShellDirectoryTree(content: string): DirectoryTree | null {
-  // Minimal parser — delegate to util if available
+  // 这里保持最小解析逻辑，优先满足目录树预览场景。
   try {
     const lines = content.split(/\r?\n/);
     if (lines.length < 2) return null;
@@ -56,6 +59,7 @@ function parsePowerShellDirectoryTree(content: string): DirectoryTree | null {
   }
 }
 
+/** 优先以目录树样式渲染工具日志，否则退回普通文本。 */
 function ToolLogContent({ content, messageId }: { content: string; messageId: string }) {
   const directoryTree = useMemo(() => parsePowerShellDirectoryTree(content), [content]);
 
@@ -83,9 +87,9 @@ function ToolLogContent({ content, messageId }: { content: string; messageId: st
   return <span className="tool-log-text">{content}</span>;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── 辅助方法 ─────────────────────────────────────────────────────────────────
 
-/** Safely extract text from ChatMessage content (may be string or multimodal array). */
+/** 安全提取消息正文文本，兼容字符串和多模态数组两种结构。 */
 function textOf(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -97,6 +101,7 @@ function textOf(content: unknown): string {
   return String(content ?? "");
 }
 
+/** 将消息角色映射为更适合中文界面的标签。 */
 function roleLabel(role: string) {
   return ({ user: "用户", assistant: "助手", system: "系统", tool: "工具" } as Record<string, string>)[role] ?? role;
 }
@@ -109,6 +114,7 @@ const EXECUTION_CHAIN_BADGES: Record<string, string> = {
   RESULT: "结果",
 };
 
+/** 解析执行链前缀标签，拆出标记和详细内容。 */
 function parseExecutionChainContent(content: string): { tag: string | null; detail: string } {
   const trimmed = content.trim();
   const matched = trimmed.match(/^\[([A-Z_]+)\]\s*(.*)$/);
@@ -116,6 +122,7 @@ function parseExecutionChainContent(content: string): { tag: string | null; deta
   return { tag: matched[1] ?? null, detail: (matched[2] ?? "").trim() };
 }
 
+/** 为执行链消息计算角标文案。 */
 function executionChainBadge(message: ChatMessage) {
   if (message.role === "tool") return "输出";
   if (message.role === "assistant" && Array.isArray((message as any).tool_calls) && (message as any).tool_calls.length > 0) {
@@ -126,6 +133,7 @@ function executionChainBadge(message: ChatMessage) {
   return EXECUTION_CHAIN_BADGES[parsed.tag] ?? parsed.tag;
 }
 
+/** 提取执行链摘要，便于在折叠列表中快速浏览。 */
 function executionChainSummary(message: ChatMessage) {
   if (message.role === "tool") {
     const text = textOf(message.content);
@@ -141,8 +149,9 @@ function executionChainSummary(message: ChatMessage) {
   return parsed.detail || text;
 }
 
+/** 生成一组工具链消息的标题，优先使用工具调用名。 */
 function toolChainTitle(items: ChatMessage[]): string {
-  // Look for assistant messages with tool_calls
+  // 优先寻找包含 `tool_calls` 的助手消息。
   const assistantWithTools = items.find((m) =>
     m.role === "assistant" && Array.isArray((m as any).tool_calls) && (m as any).tool_calls.length > 0
   );
@@ -152,7 +161,7 @@ function toolChainTitle(items: ChatMessage[]): string {
     return names.length > 60 ? names.slice(0, 57) + "..." : names;
   }
 
-  // Fallback: look for system messages with "调用"
+  // 否则回退到带“调用”字样的系统消息。
   const firstCall = items.find((m) => m.role === "system" && textOf(m.content).includes("调用"));
   if (firstCall) {
     const parsed = parseExecutionChainContent(textOf(firstCall.content));
@@ -163,6 +172,7 @@ function toolChainTitle(items: ChatMessage[]): string {
   return "工具调用";
 }
 
+/** 美化工具参数 JSON，方便在日志面板中阅读。 */
 function formatToolArgs(argsJson: string): string {
   try {
     const parsed = JSON.parse(argsJson);
@@ -172,16 +182,18 @@ function formatToolArgs(argsJson: string): string {
   }
 }
 
+/** 规范化 Slash 指令中的标识符，避免生成非法 toolId。 */
 function normalizeIntentId(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+/** 尝试把 MCP 参数解析成结构化对象，兼容读写类快捷输入。 */
 function parseMcpArguments(toolName: string, rawArgs: string): Record<string, unknown> {
   if (!rawArgs) return {};
   try {
     const parsed = JSON.parse(rawArgs) as unknown;
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
-  } catch { /* fall through */ }
+  } catch { /* 解析失败后继续走兜底分支 */ }
   const normalized = toolName.trim().toLowerCase();
   if (normalized.includes("write") && rawArgs.includes("::")) {
     const [path, ...rest] = rawArgs.split("::");
@@ -193,6 +205,7 @@ function parseMcpArguments(toolName: string, rawArgs: string): Record<string, un
   return { input: rawArgs };
 }
 
+/** 根据工具名称启发式推断 MCP 风险等级。 */
 function inferMcpRisk(label: string): ToolRiskCategory {
   const normalized = label.trim().toLowerCase();
   if (normalized.includes("read") || normalized.includes("list") || normalized.includes("search") || normalized.includes("find") || normalized.includes("get")) {
@@ -201,6 +214,7 @@ function inferMcpRisk(label: string): ToolRiskCategory {
   return ToolRiskCategory.Write;
 }
 
+/** 解析 Slash 命令，生成统一的执行意图对象。 */
 function parseExecutionIntentCommand(input: string): ExecutionIntent | null {
   if (!input.startsWith("/")) return null;
   const [command] = input.split(/\s+/, 1);
@@ -229,12 +243,14 @@ function parseExecutionIntentCommand(input: string): ExecutionIntent | null {
   }
 }
 
+/** 判断消息中的 A2UI 载荷是否适合以内联表单方式展示。 */
 function shouldRenderInlineA2UiForm(payload: A2UiPayload | null | undefined): payload is A2UiForm {
   return payload?.kind === "form" && Array.isArray((payload as A2UiForm).fields) && (payload as A2UiForm).fields.length >= 2;
 }
 
-// ─── Main Component ────────────────────────────────────────────────────────────
+// ─── 主页面组件 ───────────────────────────────────────────────────────────────
 
+/** 渲染聊天主界面，并负责消息流、审批和内联表单交互。 */
 export default function ChatPage() {
   const workspace = useWorkspaceStore();
   const [composerDraft, setComposerDraft] = useState("");
@@ -245,23 +261,25 @@ export default function ChatPage() {
   const [formDrafts, setFormDrafts] = useState<Record<string, Record<string, string>>>({});
   const [submittedFormIds, setSubmittedFormIds] = useState<string[]>([]);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
-  const [confirmDialog, setConfirmDialog] = useState<{
-    message: string;
-    confirmLabel?: string;
-    confirmTone?: "default" | "danger";
-    onConfirm: () => void;
-  } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => Promise<void> | void } | null>(null);
   const timelinePanelRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const confirmCancelRef = useRef<HTMLButtonElement | null>(null);
 
-  // Tool execution tracking state for CHAT-UI enhancements
+  // 跟踪当前轮次工具执行状态，用于增强聊天时间线展示。
   const [activeTools, setActiveTools] = useState<Map<string, { toolId: string; toolName: string; startTime: number; args?: Record<string, unknown> }>>(new Map());
   const [toolTimings, setToolTimings] = useState<Map<string, number>>(new Map());
   const [currentRound, setCurrentRound] = useState(0);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
 
   const session = workspace.currentSession;
-  const thinkingEnabled = session?.thinkingEnabled ?? false;
+
+  const { captureTrigger: captureConfirmTrigger } = useDialogA11y({
+    isOpen: confirmDialog !== null,
+    onClose: closeConfirmDialog,
+    initialFocusRef: confirmCancelRef,
+    dialogName: "删除会话确认弹层",
+  });
 
   const sessionMessages = session?.messages;
 
@@ -300,8 +318,7 @@ export default function ChatPage() {
     let currentGroup: any = null;
     for (const message of parsedMessages) {
       const isTechnical = message.role === "system" || message.role === "tool";
-      // Assistant messages that contain tool_calls and no meaningful content
-      // are intermediate "thinking" steps — group them with the tool chain.
+      // 没有正文但带 `tool_calls` 的助手消息属于中间思考步骤，归并到技术链中展示。
       const isToolCallAssistant = message.role === "assistant"
         && Array.isArray((message as any).tool_calls)
         && (message as any).tool_calls.length > 0
@@ -338,7 +355,7 @@ export default function ChatPage() {
     return lastMsg.role === "user" || lastMsg.role === "system";
   }, [sending, session]);
 
-  // ─── Slash command menu ──────────────────────────────────────────────────────
+  // ─── Slash 命令菜单 ─────────────────────────────────────────────────────────
 
   const slashItems = useMemo(() => {
     const builtins = [
@@ -368,12 +385,14 @@ export default function ChatPage() {
   }, [slashMenuOpen, slashFilter, slashItems]);
   const slashIdx = filteredSlash.length > 0 ? Math.min(slashMenuIndex, filteredSlash.length - 1) : 0;
 
+  /** 选择某个 Slash 菜单项，并把命令写回输入框。 */
   function selectSlashItem(item: (typeof slashItems)[number]) {
     setComposerDraft(item.command);
     setSlashMenuIndex(0);
     requestAnimationFrame(() => composerRef.current?.focus());
   }
 
+  /** 判断当前分组是否是时间线中最后一个技术链分组。 */
   function isLastTechnicalGroup(index: number): boolean {
     const groups = groupedMessages;
     for (let i = groups.length - 1; i >= 0; i--) {
@@ -382,18 +401,19 @@ export default function ChatPage() {
     return false;
   }
 
-  /** Check if the user has scrolled up significantly (reading history). */
-  function isNearBottom(): boolean {
+  /** 判断用户是否仍停留在时间线底部附近。 */
+  const isNearBottom = useCallback((): boolean => {
     const el = timelinePanelRef.current;
     if (!el) return true;
-    // Consider "near bottom" if within 150px of the bottom edge
+    // 距离底部 150px 以内就视为“接近底部”。
     return el.scrollHeight - el.scrollTop - el.clientHeight < 150;
-  }
+  }, []);
 
-  function scrollToBottom(behavior: ScrollBehavior = "smooth", force = false) {
+  /** 在合适时机把时间线滚动到底部，可强制覆盖用户当前阅读位置。 */
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth", force = false) => {
     const el = timelinePanelRef.current;
     if (!el) return;
-    // Don't auto-scroll if the user is reading history, unless forced (e.g. session switch)
+    // 用户正在回看历史消息时，不主动抢走滚动位置，除非显式强制。
     if (!force && !isNearBottom()) return;
     requestAnimationFrame(() => {
       if (typeof el.scrollTo === "function") {
@@ -405,9 +425,9 @@ export default function ChatPage() {
         setTimeout(() => { if (el) el.scrollTop = el.scrollHeight; }, 80);
       }
     });
-  }
+  }, [isNearBottom]);
 
-  // Subscribe to session:stream events from the main process for real-time streaming
+  // 订阅主进程转发的 `session:stream` 事件，接收实时流式消息与工具状态。
   useEffect(() => {
     const unsubscribe = window.myClawAPI.onSessionStream((event) => {
       const ws = useWorkspaceStore.getState();
@@ -488,9 +508,9 @@ export default function ChatPage() {
       }
     });
     return unsubscribe;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Subscribe to web-panel:open events — auto-open WebPanel when a skill with view.html is invoked
+  // 订阅 `web-panel:open` 事件，在带 `view.html` 的 Skill 被调用时自动打开侧边面板。
   useEffect(() => {
     const unsubscribe = window.myClawAPI.onWebPanelOpen((payload) => {
       if (payload?.viewPath) {
@@ -498,20 +518,21 @@ export default function ChatPage() {
       }
     });
     return unsubscribe;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Scroll on session switch or message updates
+  // 会话切换或消息更新后，按规则滚动到底部。
   const prevSessionIdRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     const isSwitch = prevSessionIdRef.current !== session?.id;
     prevSessionIdRef.current = session?.id;
     scrollToBottom(isSwitch ? "auto" : "smooth", isSwitch);
     if (isSwitch) {
-      // Focus composer after session switch (including after delete → new session)
+      // 切换会话后把焦点还给输入框，包括删除后自动新建会话的场景。
       requestAnimationFrame(() => composerRef.current?.focus());
     }
-  }, [session?.id, groupedMessages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session?.id, groupedMessages.length, scrollToBottom]);
 
+  /** 把错误以助手消息形式写回当前会话，避免静默失败。 */
   function reportChatError(error: any) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     if (session) {
@@ -520,6 +541,7 @@ export default function ChatPage() {
     }
   }
 
+  /** 创建新会话，并处理失败提示。 */
   async function createSession() {
     setCreatingSession(true);
     try {
@@ -531,18 +553,27 @@ export default function ChatPage() {
     }
   }
 
+  /** 判断指定会话是否正处于删除中状态。 */
   function isDeletingSession(sessionId: string) {
     return deletingSessionIds.has(sessionId);
   }
 
-  function handleDeleteSession(sessionId: string) {
+  /** 关闭删除确认框，并让弹层 hook 处理焦点回收。 */
+  function closeConfirmDialog() {
+    if (!confirmDialog) return;
+    console.info("[chat-page] 关闭删除确认弹层", { message: confirmDialog.message });
+    setConfirmDialog(null);
+  }
+
+  /** 打开删除确认框，并在确认后执行会话删除。 */
+  function handleDeleteSession(sessionId: string, trigger?: HTMLElement | null) {
     if (isDeletingSession(sessionId)) return;
+    captureConfirmTrigger(trigger);
+    console.info("[chat-page] 打开删除确认弹层", { sessionId });
     setConfirmDialog({
       message: "删除这条对话记录？",
-      confirmLabel: "确认删除",
-      confirmTone: "danger",
       onConfirm: async () => {
-        setConfirmDialog(null);
+        closeConfirmDialog();
         setDeletingSessionIds((prev) => new Set([...prev, sessionId]));
         try {
           await workspace.deleteSession(sessionId);
@@ -555,42 +586,11 @@ export default function ChatPage() {
     });
   }
 
-  function hasAssistantMessages(targetSession: ChatSession | null | undefined) {
-    return !!targetSession?.messages.some((message) => message.role === "assistant");
-  }
-
-  async function applyThinkingToggle(nextEnabled: boolean) {
-    if (!session) return;
-    try {
-      await workspace.updateSessionThinking(session.id, nextEnabled);
-    } catch (error) {
-      reportChatError(error);
-    }
-  }
-
-  function handleThinkingToggle() {
-    if (!session) return;
-    const nextEnabled = !thinkingEnabled;
-    if (hasAssistantMessages(session)) {
-      setConfirmDialog({
-        message: "中途切换会改变后续回复延迟与风格，确认继续吗？",
-        confirmLabel: "继续切换",
-        confirmTone: "default",
-        onConfirm: async () => {
-          setConfirmDialog(null);
-          await applyThinkingToggle(nextEnabled);
-        },
-      });
-      return;
-    }
-    void applyThinkingToggle(nextEnabled);
-  }
-
+  /** 把输入内容发送给运行时，统一处理发送态和异常展示。 */
   async function sendMessageToRuntime(draft: string): Promise<boolean> {
     setSending(true);
     try {
-      // Slash commands (/cmd, /skill, /read, /mcp, /network) are sent as
-      // regular messages — the model interprets the intent and uses tools.
+      // Slash 命令仍按普通消息发送，由模型自行解析意图并调用工具。
       await workspace.sendMessage(draft);
       return true;
     } catch (error) {
@@ -601,6 +601,7 @@ export default function ChatPage() {
     }
   }
 
+  /** 提交当前输入框内容。 */
   async function submitMessage() {
     const draft = composerDraft.trim();
     if (!draft) return;
@@ -608,6 +609,7 @@ export default function ChatPage() {
     await sendMessageToRuntime(draft);
   }
 
+  /** 处理输入框快捷键，包括 Slash 菜单导航和回车发送。 */
   function handleComposerKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (slashMenuOpen && filteredSlash.length > 0) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSlashMenuIndex((i) => (i + 1) % filteredSlash.length); return; }
@@ -621,10 +623,12 @@ export default function ChatPage() {
     }
   }
 
+  /** 读取某条内联表单消息中指定字段的草稿值。 */
   function readFormFieldValue(messageId: string, fieldName: string): string {
     return formDrafts[messageId]?.[fieldName] ?? "";
   }
 
+  /** 写入某条内联表单消息中指定字段的草稿值。 */
   function writeFormFieldValue(messageId: string, fieldName: string, value: string) {
     setFormDrafts((prev) => ({
       ...prev,
@@ -632,6 +636,7 @@ export default function ChatPage() {
     }));
   }
 
+  /** 找出首个未填写的必填字段，供提交前校验提示使用。 */
   function findMissingRequiredField(messageId: string, form: A2UiForm): A2UiFormField | null {
     for (const field of form.fields) {
       if (!field.required) continue;
@@ -640,11 +645,13 @@ export default function ChatPage() {
     return null;
   }
 
+  /** 组装 A2UI 表单提交报文，沿用现有消息协议。 */
   function createFormSubmissionPayload(messageId: string, form: A2UiForm): string {
     const pairs = form.fields.map((f) => `${f.name}=${readFormFieldValue(messageId, f.name).trim()}`);
     return `[A2UI_FORM:${form.id}] ${pairs.join("; ")}`;
   }
 
+  /** 提交某条消息上的内联 A2UI 表单。 */
   async function submitA2UiForm(message: ChatMessage) {
     if (!shouldRenderInlineA2UiForm((message as any).ui)) return;
     const form = (message as any).ui as A2UiForm;
@@ -662,10 +669,12 @@ export default function ChatPage() {
     }
   }
 
+  /** 判断指定审批请求是否正处于处理中状态。 */
   function isResolvingApproval(approvalId: string) {
     return resolvingApprovalIds.has(approvalId);
   }
 
+  /** 提交审批决定，并在处理期间锁定对应按钮。 */
   async function handleApproval(approvalId: string, decision: ApprovalDecision) {
     if (isResolvingApproval(approvalId)) return;
     setResolvingApprovalIds((prev) => new Set([...prev, approvalId]));
@@ -678,13 +687,15 @@ export default function ChatPage() {
     }
   }
 
+  /** 生成会话列表预览文案，优先取最后一条消息。 */
   function previewMessage(item: ChatSession) {
     const last = item.messages.at(-1);
     return last ? textOf(last.content) : "暂无消息";
   }
 
-  // ─── Render helpers ──────────────────────────────────────────────────────────
+  // ─── 渲染辅助方法 ───────────────────────────────────────────────────────────
 
+  /** 渲染内联 A2UI 表单字段与提交区域。 */
   function renderUiFields(message: any) {
     const form = message.ui as A2UiForm;
     const isSubmitted = submittedFormIds.includes(message.id);
@@ -772,7 +783,7 @@ export default function ChatPage() {
   return (
     <section className="chat-shell">
       <section className="chat-main">
-        {/* Header */}
+        {/* 顶部栏 */}
         <header className="chat-title-header">
           <div className="header-left">
             <div className="session-dropdown-container">
@@ -802,7 +813,7 @@ export default function ChatPage() {
                           data-testid={`session-delete-${item.id}`}
                           className="session-delete"
                           disabled={isDeletingSession(item.id)}
-                          onClick={() => void handleDeleteSession(item.id)}
+                          onClick={(e) => void handleDeleteSession(item.id, e.currentTarget)}
                           title="删除会话"
                         >
                           {isDeletingSession(item.id) ? (
@@ -822,18 +833,6 @@ export default function ChatPage() {
           </div>
           <div className="header-right">
             <button
-              type="button"
-              data-testid="thinking-toggle"
-              className={`thinking-toggle ${thinkingEnabled ? "is-enabled" : ""}`}
-              aria-pressed={thinkingEnabled}
-              onClick={handleThinkingToggle}
-              disabled={!session}
-              title="切换会话级 Thinking 状态"
-            >
-              <span className="thinking-dot" aria-hidden="true"></span>
-              <span>{`Thinking: ${thinkingEnabled ? "On" : "Off"}`}</span>
-            </button>
-            <button
               data-testid="new-chat-button"
               className="primary new-chat-btn"
               disabled={creatingSession}
@@ -848,12 +847,12 @@ export default function ChatPage() {
           </div>
         </header>
 
-        {/* Timeline */}
+        {/* 时间线区域 */}
         <section className="timeline-panel" ref={timelinePanelRef as React.RefObject<HTMLElement>}>
           <div className="timeline">
             {groupedMessages.map((message, index) => {
               if (!message.isTechnicalGroup) {
-                // Normal message
+                // 普通消息卡片。
                 return (
                   <div key={message.id} className={`message-row role-${message.role}`}>
                     <div className="message-avatar">
@@ -927,7 +926,7 @@ export default function ChatPage() {
                   </div>
                 );
               } else {
-                // Technical chain group
+                // 技术链分组，用于折叠展示工具调用过程。
                 return (
                   <div key={message.id} className="message-row role-tool">
                     <div className="message-avatar">
@@ -1001,7 +1000,7 @@ export default function ChatPage() {
                               </li>
                             );
                           })}
-                          {/* Show currently executing tools that haven't produced results yet */}
+                          {/* 展示仍在执行、尚未产出结果的工具。 */}
                           {isLastTechnicalGroup(index) && Array.from(activeTools.entries()).map(([tcId, info]) => (
                             <li key={`active-${tcId}`} className="execution-chain-step execution-chain-step--active is-active">
                               <span className="tool-step-spinner"></span>
@@ -1019,7 +1018,7 @@ export default function ChatPage() {
               }
             })}
 
-            {/* Awaiting model response */}
+            {/* 等待模型响应中 */}
             {isAwaitingModelResponse && (
               <div className="message-row role-assistant">
                 <div className="message-avatar pending-avatar">
@@ -1036,7 +1035,7 @@ export default function ChatPage() {
               </div>
             )}
 
-            {/* Approval requests */}
+            {/* 审批请求列表 */}
             {sessionApprovalRequests.map((approval: any) => (
               <div key={approval.id} className="message-row role-system">
                 <div className="message-avatar">
@@ -1069,7 +1068,7 @@ export default function ChatPage() {
           </div>
         </section>
 
-        {/* Composer */}
+        {/* 输入区 */}
         <footer className="composer-panel">
           <div className="composer-container">
             {slashMenuOpen && filteredSlash.length > 0 && (
@@ -1136,19 +1135,26 @@ export default function ChatPage() {
         </footer>
       </section>
 
-      {/* Confirm Dialog */}
+      {/* 确认弹窗 */}
       {confirmDialog && (
-        <div className="confirm-overlay" onClick={() => setConfirmDialog(null)}>
-          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()}>
-            <p className="confirm-message">{confirmDialog.message}</p>
+        <div className="confirm-overlay" onClick={closeConfirmDialog}>
+          <div
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="chat-confirm-message"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p id="chat-confirm-message" className="confirm-message">{confirmDialog.message}</p>
             <div className="confirm-actions">
-              <button className="confirm-cancel" onClick={() => setConfirmDialog(null)}>取消</button>
               <button
-                className={`confirm-ok ${confirmDialog.confirmTone === "default" ? "confirm-ok--default" : ""}`}
-                onClick={() => confirmDialog.onConfirm()}
+                ref={confirmCancelRef}
+                className="confirm-cancel"
+                onClick={closeConfirmDialog}
               >
-                {confirmDialog.confirmLabel ?? "确认"}
+                取消
               </button>
+              <button className="confirm-ok" onClick={() => void confirmDialog.onConfirm()}>确认删除</button>
             </div>
           </div>
         </div>
@@ -1166,12 +1172,6 @@ export default function ChatPage() {
         .session-dropdown-menu { position: absolute; top: calc(100% + 8px); left: -12px; width: 320px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-lg); box-shadow: 0 12px 40px rgba(0,0,0,0.4); opacity: 0; visibility: hidden; transform: translateY(-8px); transition: all 0.2s cubic-bezier(0.16,1,0.3,1); display: flex; flex-direction: column; max-height: 60vh; }
         .session-dropdown-container:hover .session-dropdown-menu, .session-dropdown-container:focus-within .session-dropdown-menu { opacity: 1; visibility: visible; transform: translateY(0); }
         .dropdown-header { padding: 16px; border-bottom: 1px solid var(--glass-border); font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-        .header-right { display: flex; align-items: center; gap: 12px; }
-        .thinking-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--glass-border); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; transition: all 0.2s ease; font-size: 12px; font-weight: 600; }
-        .thinking-toggle:hover:not(:disabled) { border-color: var(--text-muted); color: var(--text-primary); }
-        .thinking-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
-        .thinking-toggle.is-enabled { color: var(--accent-cyan); border-color: rgba(34, 211, 238, 0.4); background: rgba(34, 211, 238, 0.08); }
-        .thinking-dot { width: 8px; height: 8px; border-radius: 999px; background: currentColor; opacity: 0.8; }
         .new-chat-btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; }
         .session-list-dropdown { flex: 1; overflow-y: auto; padding: 8px; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
         .session-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: all 0.2s ease; }
@@ -1327,8 +1327,6 @@ export default function ChatPage() {
         .confirm-cancel:hover { background: var(--glass-reflection); color: var(--text-primary); }
         .confirm-ok { background: #ef4444; color: #fff; border-color: transparent; }
         .confirm-ok:hover { background: #dc2626; }
-        .confirm-ok--default { background: var(--text-primary); color: var(--bg-base); }
-        .confirm-ok--default:hover { background: #d4d4d8; }
       `}</style>
     </section>
   );

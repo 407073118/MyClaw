@@ -4,9 +4,10 @@
   "description": "MyClaw Desktop - Electron + React",
   "main": "dist/src/main/index.js",
   "scripts": {
-    "dev": "cross-env MYCLAW_DATA_ROOT=F:/mc/preMyClaw/data concurrently -n main,renderer \"pnpm run dev:main\" \"pnpm run dev:renderer\"",
+    "dev": "node scripts/dev.js",
     "dev:main": "tsc -p tsconfig.main.json --watch",
     "dev:renderer": "vite",
+    "lint": "eslint \"src/renderer/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
     "build": "node scripts/set-env.js development && pnpm run build:main && pnpm run build:renderer",
     "build:pre": "node scripts/set-env.js pre && pnpm run build:main && pnpm run build:renderer",
     "build:prod": "node scripts/set-env.js production && pnpm run build:main && pnpm run build:renderer",
@@ -35,11 +36,16 @@
     "@types/node": "^22.10.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@typescript-eslint/parser": "^8.58.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.0",
     "cross-env": "^10.1.0",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
+    "eslint": "^9.39.4",
+    "eslint-plugin-jsx-a11y": "^6.10.2",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "globals": "^17.4.0",
     "jsdom": "^26.0.0",
     "sharp": "^0.34.5",
     "tsc-alias": "^1.8.16",
@@ -77,8 +83,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": true,
-      "installerIcon": "build/icon.ico",
-      "defaultInstallDir": "F:\\mc\\preMyClaw"
+      "installerIcon": "build/icon.ico"
     }
   }
 }

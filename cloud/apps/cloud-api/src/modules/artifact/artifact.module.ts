@@ -1,10 +1,10 @@
 import { Module } from "@nestjs/common";
 
 import { DatabaseModule } from "../database/database.module";
-import { ArtifactController } from "./artifact.controller";
-import { ARTIFACT_STORAGE_PORT } from "./artifact-storage.port";
-import { ArtifactService } from "./artifact.service";
-import { FastdfsArtifactStorage } from "./fastdfs-artifact-storage";
+import { ArtifactController } from "./controllers/artifact.controller";
+import { ARTIFACT_STORAGE_PORT } from "./ports/artifact-storage.port";
+import { ArtifactService } from "./services/artifact.service";
+import { FastdfsArtifactStorage } from "./providers/fastdfs-artifact-storage";
 
 @Module({
   imports: [DatabaseModule],

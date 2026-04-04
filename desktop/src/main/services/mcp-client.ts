@@ -1,10 +1,10 @@
 /**
- * MCP (Model Context Protocol) stdio client.
+ * MCP（Model Context Protocol）stdio 客户端。
  *
- * Manages a single child process communicating via JSON-RPC 2.0 over stdin/stdout.
- * Implements: initialize/initialized handshake, tools/list, tools/call.
+ * 该客户端管理一个通过 stdin/stdout 使用 JSON-RPC 2.0 通信的子进程，
+ * 实现 initialize/initialized 握手、tools/list 和 tools/call 等协议调用。
  *
- * Protocol reference: https://modelcontextprotocol.io/specification
+ * 协议参考：https://modelcontextprotocol.io/specification
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -15,7 +15,7 @@ import { createLogger } from "./logger";
 const log = createLogger("mcp-client");
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
 export type McpToolInfo = {
@@ -56,7 +56,7 @@ type PendingRequest = {
 };
 
 // ---------------------------------------------------------------------------
-// McpClient
+// McpClient 主体
 // ---------------------------------------------------------------------------
 
 export class McpClient extends EventEmitter {
@@ -82,12 +82,12 @@ export class McpClient extends EventEmitter {
   get error(): string | null { return this._error; }
 
   // -------------------------------------------------------------------------
-  // Lifecycle
+  // 生命周期
   // -------------------------------------------------------------------------
 
   /**
-   * Spawn the child process, perform initialize handshake, and fetch tools.
-   * Returns the tool list on success.
+   * 启动子进程，完成 initialize 握手，并拉取工具列表。
+   * 成功时返回工具列表。
    */
   async connect(): Promise<McpToolInfo[]> {
     if (this._connected) {
@@ -103,12 +103,12 @@ export class McpClient extends EventEmitter {
     return this._tools;
   }
 
-  /** Stop the child process and clean up. */
+  /** 停止子进程并清理内部状态。 */
   async disconnect(): Promise<void> {
     this._connected = false;
     this._tools = [];
 
-    // Reject all pending requests
+    // 拒绝所有尚未完成的请求
     for (const [, req] of this.pending) {
       clearTimeout(req.timer);
       req.reject(new Error("MCP client disconnected"));
@@ -126,17 +126,17 @@ export class McpClient extends EventEmitter {
     this.emit("disconnected");
   }
 
-  /** Reconnect: disconnect + connect again. */
+  /** 重新连接：先断开，再重新连接。 */
   async reconnect(): Promise<McpToolInfo[]> {
     await this.disconnect();
     return this.connect();
   }
 
   // -------------------------------------------------------------------------
-  // Public API
+  // 对外 API
   // -------------------------------------------------------------------------
 
-  /** Call a tool on the MCP server. */
+  /** 调用 MCP 服务上的某个工具。 */
   async callTool(
     toolName: string,
     args: Record<string, unknown>,
@@ -153,7 +153,7 @@ export class McpClient extends EventEmitter {
     return result;
   }
 
-  /** Re-fetch the tool list from the server. */
+  /** 重新从服务端获取工具列表。 */
   async refreshTools(): Promise<McpToolInfo[]> {
     if (!this._connected) {
       throw new Error("MCP client not connected");
@@ -163,7 +163,7 @@ export class McpClient extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
-  // Private: process management
+  // 私有方法：进程管理
   // -------------------------------------------------------------------------
 
   private spawnProcess(): Promise<void> {
@@ -190,12 +190,12 @@ export class McpClient extends EventEmitter {
 
       const proc = this.process;
 
-      // Listen for data on stdout
+      // 监听 stdout 返回的数据
       proc.stdout?.on("data", (chunk: Buffer) => {
         this.onData(chunk.toString("utf8"));
       });
 
-      // Stderr for debug logging
+      // stderr 仅用于调试日志记录
       proc.stderr?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf8").trim();
         if (text) {
@@ -215,8 +215,8 @@ export class McpClient extends EventEmitter {
         this.emit("exit", code, signal);
       });
 
-      // Give the process a moment to start, then resolve
-      // We'll know it's truly ready after initialize handshake
+      // 给进程一点启动时间后再返回
+      // 真正可用仍要等 initialize 握手完成后才能确认
       setTimeout(() => {
         if (proc.exitCode !== null) {
           reject(new Error(`MCP process exited immediately with code ${proc.exitCode}`));
@@ -228,14 +228,14 @@ export class McpClient extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
-  // Private: JSON-RPC 2.0 transport (newline-delimited JSON over stdio)
+  // 私有方法：JSON-RPC 2.0 传输层（stdio 上按行分隔 JSON）
   // -------------------------------------------------------------------------
 
   private onData(data: string): void {
     this.buffer += data;
 
-    // Try to parse complete JSON objects from the buffer.
-    // MCP over stdio uses newline-delimited JSON (one JSON object per line).
+    // 尝试从缓冲区中解析出完整 JSON 对象。
+    // MCP over stdio 采用按行分隔的 JSON（每行一个 JSON 对象）。
     let newlineIdx: number;
     while ((newlineIdx = this.buffer.indexOf("\n")) !== -1) {
       const line = this.buffer.slice(0, newlineIdx).trim();
@@ -247,14 +247,14 @@ export class McpClient extends EventEmitter {
         const msg = JSON.parse(line);
         this.handleMessage(msg);
       } catch {
-        // Not valid JSON — might be partial, skip
+        // 当前不是合法 JSON，可能只是半包，先跳过
         log.warn("non-JSON line received", { line: line.slice(0, 200) });
       }
     }
   }
 
   private handleMessage(msg: JsonRpcResponse | JsonRpcNotification): void {
-    // Response to a request we sent
+    // 这是对我们已发送请求的响应
     if ("id" in msg && msg.id != null) {
       const pending = this.pending.get(msg.id);
       if (pending) {
@@ -271,7 +271,7 @@ export class McpClient extends EventEmitter {
       return;
     }
 
-    // Server-initiated notification — log but don't handle yet
+    // 服务端主动发起的通知：先记录日志，暂不处理
     if ("method" in msg) {
       this.emit("notification", msg.method, (msg as JsonRpcNotification).params);
     }
@@ -318,7 +318,7 @@ export class McpClient extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
-  // Private: MCP protocol methods
+  // 私有方法：MCP 协议调用
   // -------------------------------------------------------------------------
 
   private async initialize(): Promise<void> {
@@ -333,7 +333,7 @@ export class McpClient extends EventEmitter {
       },
     });
 
-    // Send initialized notification to complete handshake
+    // 发送 initialized 通知，完成握手流程
     this.sendNotification("initialized");
 
     log.info("initialized", { result: JSON.stringify(result).slice(0, 200) });

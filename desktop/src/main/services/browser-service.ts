@@ -1,9 +1,9 @@
 /**
- * BrowserService — Playwright-based browser automation for builtin browser.* tools.
+ * BrowserService：为内置 browser.* 工具提供基于 Playwright 的浏览器自动化能力。
  *
- * Manages a single browser instance with lazy launch, idle auto-close,
- * and crash recovery. Uses playwright-core to connect to the system
- * Chrome/Edge (no bundled browser binary).
+ * 该服务维护单个浏览器实例，支持按需启动、空闲自动关闭以及异常断连恢复。
+ * 通过 playwright-core 连接系统已安装的 Chrome / Edge / Chromium，
+ * 不额外捆绑浏览器二进制。
  */
 
 import { existsSync } from "node:fs";
@@ -11,35 +11,35 @@ import type { Browser, BrowserContext, Page } from "playwright-core";
 import type { ToolExecutionResult } from "./builtin-tool-executor";
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
-/** Auto-close the browser after 5 minutes of inactivity. */
+/** 浏览器空闲 5 分钟后自动关闭。 */
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** Maximum output length for snapshot/evaluate results. */
+/** snapshot / evaluate 输出允许的最大字符数。 */
 const MAX_OUTPUT_CHARS = 15_000;
 
-/** Page navigation timeout (30 seconds). */
+/** 页面导航超时时间（30 秒）。 */
 const NAV_TIMEOUT_MS = 30_000;
 
-/** Element action timeout (10 seconds). */
+/** 元素交互超时时间（10 秒）。 */
 const ACTION_TIMEOUT_MS = 10_000;
 
-/** Maximum wait duration for browser.wait (30 seconds). */
+/** browser.wait 允许的最大等待时长（30 秒）。 */
 const MAX_WAIT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
-// Browser channel detection
+// 浏览器通道探测
 // ---------------------------------------------------------------------------
 
 /**
- * Detect the best available browser channel on the current platform.
+ * 在当前平台上探测最合适的浏览器通道。
  *
- * All platforms prefer Chrome first, then fall back:
- * - Windows: Chrome → Edge (Edge is 100% pre-installed as fallback)
- * - macOS:   Chrome → Edge → Chromium
- * - Linux:   Chrome → Chromium
+ * 各平台都优先选择 Chrome，找不到时再按顺序降级：
+ * - Windows：Chrome → Edge（通常系统自带）
+ * - macOS：Chrome → Edge → Chromium
+ * - Linux：Chrome → Chromium
  */
 function detectBrowserChannel(): string {
   const platform = process.platform;
@@ -51,7 +51,7 @@ function detectBrowserChannel(): string {
       `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
     ];
     if (chromePaths.some((p) => p && existsSync(p))) return "chrome";
-    // Edge is pre-installed on Windows 10+
+    // Windows 10+ 通常预装 Edge，可作为兜底方案
     return "msedge";
   }
 
@@ -62,7 +62,7 @@ function detectBrowserChannel(): string {
     return "chrome";
   }
 
-  // Linux: Chrome → Chromium
+  // Linux：Chrome → Chromium
   const linuxChromePaths = [
     "/usr/bin/google-chrome",
     "/usr/bin/google-chrome-stable",
@@ -80,17 +80,17 @@ function detectBrowserChannel(): string {
 }
 
 // ---------------------------------------------------------------------------
-// Selector resolution helper
+// 选择器解析辅助方法
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a user-provided selector to a Playwright-compatible selector.
+ * 将用户传入的选择器转换成 Playwright 可识别的选择器。
  *
- * Supports:
- *   - "ref=42"        → look up from last snapshot's ref map
- *   - "text=Login"    → Playwright text selector
- *   - "role=button"   → Playwright role selector
- *   - "button.submit" → CSS selector (default)
+ * 支持：
+ *   - "ref=42"        → 从上一次快照保存的 ref 映射中解析
+ *   - "text=Login"    → Playwright 文本选择器
+ *   - "role=button"   → Playwright role 选择器
+ *   - "button.submit" → 默认按 CSS 选择器处理
  */
 function resolveSelector(
   selector: string,
@@ -121,7 +121,7 @@ function resolveSelector(
 }
 
 // ---------------------------------------------------------------------------
-// BrowserService
+// BrowserService 主体 主体
 // ---------------------------------------------------------------------------
 
 export class BrowserService {
@@ -131,11 +131,11 @@ export class BrowserService {
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private launching = false;
 
-  /** Per-instance ref map — reset on each snapshot, used by click/type/etc. */
+  /** 当前实例的 ref 映射；每次生成快照后重建，供 click/type 等操作复用。 */
   private refCounter = 0;
   private refMap = new Map<number, string>();
 
-  // ── Lifecycle ───────────────────────────────────────────────
+  // ── 生命周期 ────────────────────────────────────────────────
 
   private async ensurePage(): Promise<Page> {
     this.resetIdleTimer();
@@ -192,7 +192,7 @@ export class BrowserService {
         ],
       });
 
-      // Detect system locale instead of hardcoding
+      // 自动探测系统语言，避免写死 locale
       let locale = "zh-CN";
       try {
         const { app } = await import("electron");
@@ -244,8 +244,8 @@ export class BrowserService {
   }
 
   /**
-   * Close the browser and release all resources.
-   * Called on idle timeout and MUST be called on app shutdown.
+   * 关闭浏览器并释放所有资源。
+   * 空闲超时会调用该方法，应用退出时也必须显式调用。
    */
   async close(): Promise<void> {
     if (this.idleTimer) {
@@ -255,7 +255,7 @@ export class BrowserService {
     if (this.browser) {
       try {
         await this.browser.close();
-      } catch { /* ignore close errors */ }
+      } catch { /* 忽略关闭过程中的异常 */ }
       this.browser = null;
       this.context = null;
       this.page = null;
@@ -264,39 +264,40 @@ export class BrowserService {
     this.refCounter = 0;
   }
 
-  /** Invalidate stale refs after navigation. */
+  /** 页面导航后清空已失效的 ref 引用。 */
   private invalidateRefs(): void {
     this.refMap.clear();
     this.refCounter = 0;
   }
 
-  // ── Snapshot helpers (replaces deprecated page.accessibility.snapshot) ──
+  // ── 页面快照辅助方法（替代已废弃的 page.accessibility.snapshot） ──
 
   /**
-   * Build an accessibility-like snapshot using Playwright's aria APIs.
+   * 使用 Playwright 的 aria 能力构建近似无障碍树的页面快照。
    *
-   * Strategy: use page.locator('body').ariaSnapshot() if available (Playwright 1.49+),
-   * fall back to page.accessibility.snapshot() for older versions,
-   * and ultimately fall back to a DOM-based extraction.
+   * 策略如下：
+   * 1. 优先使用 page.locator('body').ariaSnapshot()（Playwright 1.49+）
+   * 2. 旧版本回退到 page.accessibility.snapshot()
+   * 3. 再不行则退化为基于 DOM 的交互元素提取
    */
   private async buildSnapshot(page: Page, selector?: string): Promise<string> {
     const target = selector
       ? page.locator(selector).first()
       : page.locator("body");
 
-    // Reset refs
+    // 重置 ref 计数和映射
     this.refCounter = 0;
     this.refMap.clear();
 
-    // Strategy 1: ariaSnapshot (Playwright 1.49+)
+    // 策略 1：ariaSnapshot（Playwright 1.49+）
     try {
       const ariaSnap = await (target as any).ariaSnapshot({ timeout: ACTION_TIMEOUT_MS });
       if (typeof ariaSnap === "string" && ariaSnap.trim()) {
         return this.enrichAriaSnapshot(ariaSnap);
       }
-    } catch { /* not available, try next */ }
+    } catch { /* 当前版本不可用，继续尝试下一种方案 */ }
 
-    // Strategy 2: deprecated accessibility.snapshot (still works in many versions)
+    // 策略 2：已废弃的 accessibility.snapshot（许多版本仍可使用）
     try {
       const root = selector
         ? await target.elementHandle()
@@ -307,9 +308,9 @@ export class BrowserService {
       if (axTree) {
         return this.formatAXTree(axTree);
       }
-    } catch { /* not available, try next */ }
+    } catch { /* 当前版本不可用，继续尝试下一种方案 */ }
 
-    // Strategy 3: DOM-based fallback — extract interactive elements
+    // 策略 3：基于 DOM 的兜底方案，提取可交互元素
     try {
       const elements = await page.evaluate(() => {
         const results: string[] = [];
@@ -342,7 +343,7 @@ export class BrowserService {
         });
         return results;
       });
-      // Build refMap from DOM fallback
+      // 根据 DOM 兜底结果构建 refMap
       for (let i = 0; i < elements.length; i++) {
         const match = elements[i].match(/\[ref=(\d+)\]\s+(\w+)(?:\[type=\w+\])?\s*"?([^"]*)"?/);
         if (match) {
@@ -359,7 +360,7 @@ export class BrowserService {
   }
 
   /**
-   * Enrich a YAML-format aria snapshot with ref= numbers for AI to reference.
+   * 为近似 YAML 格式的 aria 快照补充 ref= 编号，方便模型后续引用。
    */
   private enrichAriaSnapshot(raw: string): string {
     const lines = raw.split("\n");
@@ -367,7 +368,8 @@ export class BrowserService {
     for (const line of lines) {
       if (!line.trim()) continue;
 
-      // Match YAML-like: "  - role 'name' [attrs]" or "  - role: text content"
+      // 匹配类似 YAML 的行，例如：
+      // "  - role 'name' [attrs]" 或 "  - role: text content"
       const yamlMatch = line.match(
         /^(\s*)-\s+(\w+)(?:\s*:\s*(.+)|(?:\s+"([^"]*)"|\s+'([^']*)')?\s*((?:\[.+?\])*))?/
       );
@@ -376,10 +378,10 @@ export class BrowserService {
         const ref = ++this.refCounter;
         const indent = yamlMatch[1] || "";
         const role = yamlMatch[2];
-        const colonText = yamlMatch[3]?.trim();     // "text: Some paragraph"
-        const dqName = yamlMatch[4];                 // "name" in double quotes
-        const sqName = yamlMatch[5];                 // 'name' in single quotes
-        const attrs = yamlMatch[6] || "";            // [value=...][level=2] etc.
+        const colonText = yamlMatch[3]?.trim();     // 形如 "text: 某段文本"
+        const dqName = yamlMatch[4];                 // 双引号中的名称
+        const sqName = yamlMatch[5];                 // 单引号中的名称
+        const attrs = yamlMatch[6] || "";            // 例如 [value=...][level=2]
 
         const name = colonText || dqName || sqName || "";
         this.refMap.set(ref, name ? `${role}[name="${name}"]` : role);
@@ -396,7 +398,7 @@ export class BrowserService {
   }
 
   /**
-   * Format a legacy accessibility tree (from page.accessibility.snapshot).
+   * 将旧版 accessibility tree（来自 page.accessibility.snapshot）格式化为文本。
    */
   private formatAXTree(node: { role: string; name?: string; value?: string; children?: any[] }, depth = 0): string {
     const lines: string[] = [];
@@ -450,7 +452,7 @@ export class BrowserService {
     return lines.join("\n");
   }
 
-  // ── Tool implementations ────────────────────────────────────
+  // ── 工具实现 ────────────────────────────────────────────────
 
   async open(url: string): Promise<ToolExecutionResult> {
     const page = await this.ensurePage();
@@ -512,11 +514,11 @@ export class BrowserService {
     const resolved = resolveSelector(selector, this.refMap);
     try {
       await page.locator(resolved).first().click({ timeout: ACTION_TIMEOUT_MS });
-      // Smart wait: try to wait for navigation or network idle, with a short fallback
+      // 智能等待：优先等待导航完成，失败时短暂兜底等待
       try {
         await page.waitForLoadState("domcontentloaded", { timeout: 2000 });
       } catch {
-        // No navigation happened, that's fine — just a button click
+        // 没发生导航也没关系，说明可能只是普通按钮点击
         await page.waitForTimeout(300);
       }
       const title = await page.title();
@@ -548,7 +550,7 @@ export class BrowserService {
     try {
       const locator = page.locator(resolved).first();
       await locator.click({ timeout: ACTION_TIMEOUT_MS });
-      // Try fill() first (works for input/textarea), fallback to keyboard for contenteditable
+      // 优先尝试 fill()（适用于 input/textarea），失败后回退到键盘输入
       try {
         await locator.fill(text);
       } catch {
@@ -576,7 +578,7 @@ export class BrowserService {
   async screenshot(fullPage?: boolean): Promise<ToolExecutionResult> {
     const page = await this.ensurePage();
     try {
-      // Use JPEG at quality 50 to keep size manageable (~30-80KB for typical pages)
+      // 使用质量 50 的 JPEG，尽量把截图大小控制在可接受范围内
       const buffer = await page.screenshot({
         type: "jpeg",
         quality: 50,

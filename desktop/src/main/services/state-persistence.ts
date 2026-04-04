@@ -1,10 +1,10 @@
 /**
- * State persistence service.
+ * 状态持久化服务。
  *
- * Loads all persisted state from disk at startup (synchronous),
- * and saves individual items asynchronously after mutations.
+ * 在启动时从磁盘同步加载所有已持久化状态，
+ * 并在状态变更后异步保存单个对象。
  *
- * Directory layout:
+ * 目录布局：
  *   <myClawDir>/models/<id>.json
  *   <myClawDir>/sessions/<id>/session.json
  *   <myClawDir>/sessions/<id>/messages.json
@@ -30,20 +30,22 @@ import type {
   ChatSession,
   LocalEmployeeSummary,
   ModelProfile,
+  PersonalPromptProfile,
   WorkflowDefinition,
   WorkflowSummary,
 } from "@shared/contracts";
-import { createDefaultApprovalPolicy } from "@shared/contracts";
+import { createDefaultApprovalPolicy, createDefaultPersonalPromptProfile } from "@shared/contracts";
 
 import type { MyClawPaths } from "./directory-service";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
 export type AppSettings = {
   defaultModelProfileId: string | null;
   approvalPolicy: ApprovalPolicy;
+  personalPrompt: PersonalPromptProfile;
 };
 
 export type PersistedState = {
@@ -54,10 +56,11 @@ export type PersistedState = {
   workflowDefinitions: Record<string, WorkflowDefinition>;
   defaultModelProfileId: string | null;
   approvalPolicy: ApprovalPolicy;
+  personalPrompt: PersonalPromptProfile;
 };
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助方法
 // ---------------------------------------------------------------------------
 
 function ensureDir(dir: string): void {
@@ -71,7 +74,7 @@ function tryReadJson<T>(filePath: string): T | null {
     const raw = readFileSync(filePath, "utf-8");
     return JSON.parse(raw) as T;
   } catch (err) {
-    // Log corruption/missing file so data loss is discoverable
+    // 记录文件损坏或缺失，方便定位潜在数据丢失问题
     if (existsSync(filePath)) {
       console.warn(`[state-persistence] Corrupt or unreadable JSON: ${filePath}`, err instanceof Error ? err.message : String(err));
     }
@@ -80,8 +83,8 @@ function tryReadJson<T>(filePath: string): T | null {
 }
 
 /**
- * Atomic write: write to temp file then rename.
- * Prevents data corruption from partial writes on crash/power loss.
+ * 原子写入：先写临时文件，再执行重命名。
+ * 可防止崩溃或断电时因部分写入导致的数据损坏。
  */
 async function atomicWriteFile(filePath: string, data: string): Promise<void> {
   const tmpPath = `${filePath}.${randomUUID().slice(0, 8)}.tmp`;
@@ -97,31 +100,24 @@ function workflowsDir(paths: MyClawPaths): string {
   return join(paths.myClawDir, "workflows");
 }
 
-/**
- * 统一补齐旧会话缺失的 thinking 抽象字段，确保恢复后的运行时状态稳定。
- */
-function normalizeSession(session: ChatSession): ChatSession {
-  return {
-    ...session,
-    thinkingEnabled: session.thinkingEnabled ?? false,
-    thinkingSource: session.thinkingSource ?? "default",
-  };
-}
-
 // ---------------------------------------------------------------------------
-// Load all state from disk (synchronous — called once at startup)
+// 从磁盘加载全部状态（同步执行，仅在启动时调用一次）
 // ---------------------------------------------------------------------------
 
 export function loadPersistedState(paths: MyClawPaths): PersistedState {
   // ---- settings.json -----------------------------------------------------
   let defaultModelProfileId: string | null = null;
   let approvalPolicy: ApprovalPolicy = createDefaultApprovalPolicy();
+  let personalPrompt: PersonalPromptProfile = createDefaultPersonalPromptProfile();
 
   const settings = tryReadJson<Partial<AppSettings>>(paths.settingsFile);
   if (settings) {
     defaultModelProfileId = settings.defaultModelProfileId ?? null;
     if (settings.approvalPolicy) {
       approvalPolicy = { ...approvalPolicy, ...settings.approvalPolicy };
+    }
+    if (settings.personalPrompt) {
+      personalPrompt = { ...personalPrompt, ...settings.personalPrompt };
     }
   }
 
@@ -137,7 +133,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       }
     }
   } catch {
-    // modelsDir unreadable — start empty
+    // modelsDir 不可读时从空数据启动
   }
 
   // ---- sessions ----------------------------------------------------------
@@ -151,10 +147,10 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       const meta = tryReadJson<Omit<ChatSession, "messages">>(metaFile);
       if (!meta || !meta.id) continue;
       const messages = tryReadJson<ChatSession["messages"]>(messagesFile) ?? [];
-      sessions.push(normalizeSession({ ...meta, messages }));
+      sessions.push({ ...meta, messages });
     }
   } catch {
-    // sessionsDir unreadable — start empty
+    // sessionsDir 不可读时从空数据启动
   }
 
   // ---- employees ---------------------------------------------------------
@@ -170,7 +166,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       }
     }
   } catch {
-    // unreadable — start empty
+    // 不可读时从空数据启动
   }
 
   // ---- workflows ---------------------------------------------------------
@@ -184,7 +180,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       const data = tryReadJson<WorkflowDefinition>(join(wfDir, file));
       if (data && data.id) {
         workflowDefinitions[data.id] = data;
-        // Build summary from full definition
+        // 从完整定义中构建摘要
         const summary: WorkflowSummary = {
           id: data.id,
           name: data.name,
@@ -201,7 +197,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       }
     }
   } catch {
-    // unreadable — start empty
+    // 不可读时从空数据启动
   }
 
   return {
@@ -212,11 +208,12 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
     workflowDefinitions,
     defaultModelProfileId,
     approvalPolicy,
+    personalPrompt,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Save individual items (async — called after each mutation)
+// 保存单个对象（异步执行，每次变更后调用）
 // ---------------------------------------------------------------------------
 
 export async function saveModelProfile(
@@ -242,13 +239,12 @@ export async function saveSession(
   paths: MyClawPaths,
   session: ChatSession,
 ): Promise<void> {
-  const normalizedSession = normalizeSession(session);
-  const sessionDir = join(paths.sessionsDir, normalizedSession.id);
+  const sessionDir = join(paths.sessionsDir, session.id);
   await mkdir(sessionDir, { recursive: true });
 
-  // Split: metadata (without messages) and messages separately
-  // Both use atomic writes (temp + rename) to prevent data corruption
-  const { messages, ...meta } = normalizedSession;
+  // 拆分保存：metadata（不含 messages）与 messages 分别落盘
+  // 两者都使用原子写入（临时文件 + rename）避免数据损坏
+  const { messages, ...meta } = session;
   await atomicWriteFile(join(sessionDir, "session.json"), JSON.stringify(meta, null, 2));
   await atomicWriteFile(join(sessionDir, "messages.json"), JSON.stringify(messages, null, 2));
 }

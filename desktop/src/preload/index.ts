@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 
-// Scale the entire UI by 85% to mimic denser IDE-like apps like Codex or Claude Node Desktop
+// 将整体界面缩放到 85%，让布局密度更接近 Codex 或 Claude Node Desktop 这类 IDE 风格应用
 webFrame.setZoomFactor(0.85);
 
 import type {
@@ -10,11 +10,12 @@ import type {
   ModelCatalogItem,
   McpServerConfig,
   ModelProfile,
+  PersonalPromptProfile,
   WorkflowDefinition,
 } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
-// Streaming event listener helpers
+// 流式事件监听辅助方法
 // ---------------------------------------------------------------------------
 
 type UnsubscribeFn = () => void;
@@ -26,14 +27,14 @@ function onChannel<T>(channel: string, callback: (payload: T) => void): Unsubscr
 }
 
 // ---------------------------------------------------------------------------
-// Exposed API surface
+// 暴露给渲染进程的 API 接口
 //
-// Method names MUST match what the renderer's workspace/auth stores call
-// via window.myClawAPI.  Keep in sync with electron.d.ts declarations.
+// 方法名必须与渲染层 workspace/auth store 通过 window.myClawAPI
+// 调用的名称保持一致，并与 electron.d.ts 中的声明同步。
 // ---------------------------------------------------------------------------
 
 const myClawAPI = {
-  // ---- Platform info -------------------------------------------------------
+  // ---- 平台信息 ------------------------------------------------------------
   platform: process.platform as NodeJS.Platform,
 
   // ---- 窗口控制 API（自定义标题栏使用） ------------------------------------
@@ -51,10 +52,10 @@ const myClawAPI = {
       onChannel("window:maximized-changed", callback),
   },
 
-  // ---- Bootstrap -----------------------------------------------------------
+  // ---- 启动初始化 ----------------------------------------------------------
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
 
-  // ---- Auth ----------------------------------------------------------------
+  // ---- 认证 ----------------------------------------------------------------
   auth: {
     login: (payload: AuthLoginRequest) =>
       ipcRenderer.invoke("cloud:auth-login", payload),
@@ -67,22 +68,11 @@ const myClawAPI = {
       ipcRenderer.invoke("cloud:auth-introspect", accessToken),
   },
 
-  // ---- Sessions ------------------------------------------------------------
-  createSession: (data?: {
-    title?: string;
-    modelProfileId?: string;
-    attachedDirectory?: string | null;
-    thinkingEnabled?: boolean;
-    thinkingSource?: "default" | "user-toggle";
-  }) =>
+  // ---- 会话 ----------------------------------------------------------------
+  createSession: (data?: { title?: string; modelProfileId?: string; attachedDirectory?: string | null }) =>
     ipcRenderer.invoke("session:create", data ?? {}),
 
   deleteSession: (id: string) => ipcRenderer.invoke("session:delete", id),
-
-  updateSessionThinking: (
-    sessionId: string,
-    input: { thinkingEnabled: boolean; thinkingSource?: "default" | "user-toggle" },
-  ) => ipcRenderer.invoke("session:update-thinking", sessionId, input),
 
   sendMessage: (
     sessionId: string,
@@ -93,11 +83,11 @@ const myClawAPI = {
   requestExecutionIntent: (sessionId: string, intent: unknown) =>
     ipcRenderer.invoke("session:get-execution-intents", sessionId),
 
-  /** Subscribe to streaming session events (message deltas, tool calls, etc.) */
+  /** 订阅会话流式事件，例如消息增量、工具调用等 */
   onSessionStream: (callback: (event: Record<string, unknown>) => void): UnsubscribeFn =>
     onChannel("session:stream", callback),
 
-  // ---- Models --------------------------------------------------------------
+  // ---- 模型 ----------------------------------------------------------------
   listModels: () => ipcRenderer.invoke("model:list"),
 
   createModelProfile: (data: Omit<ModelProfile, "id">) =>
@@ -131,9 +121,9 @@ const myClawAPI = {
   fetchAvailableModelIds: (
     input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
   ) => {
-    // Create a temporary profile to use model:catalog
-    // We need a model ID to look up — create a temp one via model:create then delete,
-    // or just call model:catalog-by-config directly.
+    // 创建一个临时配置来复用 model:catalog
+    // 这里原本需要一个模型 ID 才能查询，可以先临时创建再删除，
+    // 也可以直接调用 model:catalog-by-config。
     return myClawAPI.fetchModelCatalog(input)
       .then((result: { modelIds: Array<{ id: string }> }) => ({
         modelIds: (result.modelIds ?? []).map((m: { id: string } | string) =>
@@ -143,7 +133,7 @@ const myClawAPI = {
       .catch(() => ({ modelIds: [] as string[] }));
   },
 
-  // ---- Builtin Tools -------------------------------------------------------
+  // ---- 内置工具 ------------------------------------------------------------
   listBuiltinTools: () => ipcRenderer.invoke("tool:list-builtin"),
 
   fetchBuiltinTools: () =>
@@ -156,7 +146,7 @@ const myClawAPI = {
     .then((tool: unknown) => ({ tool }))
     .catch(() => ({ tool: { id: toolId, ...input } })),
 
-  // ---- MCP Tools -----------------------------------------------------------
+  // ---- MCP 工具 ------------------------------------------------------------
   fetchMcpTools: () =>
     ipcRenderer.invoke("tool:list-mcp").then((items: unknown[]) => ({ items })).catch(() => ({ items: [] })),
 
@@ -181,7 +171,7 @@ const myClawAPI = {
     sessionId?: string;
   }) => ipcRenderer.invoke("tool:execute-mcp", input),
 
-  // ---- MCP Servers ---------------------------------------------------------
+  // ---- MCP 服务 ------------------------------------------------------------
   fetchMcpServers: () =>
     ipcRenderer.invoke("mcp:list-servers").then((servers: unknown[]) => ({ servers })),
 
@@ -215,7 +205,7 @@ const myClawAPI = {
   importMcpServers: (servers: unknown[]) =>
     ipcRenderer.invoke("mcp:import-servers", servers),
 
-  // ---- Approvals -----------------------------------------------------------
+  // ---- 审批 ----------------------------------------------------------------
   getApprovalPolicy: () => ipcRenderer.invoke("approval:get-policy"),
 
   resolveApproval: (approvalId: string, decision: ApprovalDecision) => {
@@ -226,11 +216,18 @@ const myClawAPI = {
   updateApprovalPolicy: (input: Partial<ApprovalPolicy>) =>
     ipcRenderer.invoke("approval:set-policy", input).then((result: unknown) => ({ approvals: result })),
 
-  /** Subscribe to approval-resolved events pushed from main */
+  // ---- 个人长期 Prompt ----------------------------------------------------
+  getPersonalPrompt: () =>
+    ipcRenderer.invoke("personal-prompt:get") as Promise<PersonalPromptProfile>,
+
+  updatePersonalPrompt: (input: { prompt: string }) =>
+    ipcRenderer.invoke("personal-prompt:set", input) as Promise<PersonalPromptProfile>,
+
+  /** 订阅主进程推送的审批完成事件 */
   onApprovalResolved: (callback: (event: Record<string, unknown>) => void): UnsubscribeFn =>
     onChannel("approval:resolved", callback),
 
-  // ---- Workflows -----------------------------------------------------------
+  // ---- 工作流 --------------------------------------------------------------
   fetchWorkflows: () =>
     ipcRenderer.invoke("workflow:list").then((items: unknown[]) => ({ items })),
 
@@ -256,7 +253,7 @@ const myClawAPI = {
   resumeWorkflowRun: (runId: string) =>
     ipcRenderer.invoke("workflow:resume-run", runId).catch(() => ({ run: null, items: [] })),
 
-  // ---- Cloud / Hub ---------------------------------------------------------
+  // ---- 云端 / Hub ----------------------------------------------------------
   fetchCloudHubItems: (type?: string) =>
     ipcRenderer.invoke("cloud:hub-items", { kind: type }),
 
@@ -267,13 +264,13 @@ const myClawAPI = {
   fetchCloudHubDownloadToken: (releaseId: string) =>
     ipcRenderer.invoke("cloud:hub-download-token", releaseId),
 
-  // ---- Cloud Skills --------------------------------------------------------
+  // ---- 云端技能 ------------------------------------------------------------
   fetchCloudSkills: (query?: Record<string, unknown>) =>
     ipcRenderer.invoke("cloud:skills", query),
 
   fetchCloudSkillDetail: (skillId: string) => ipcRenderer.invoke("cloud:skill-detail", skillId),
 
-  // ---- Cloud imports -------------------------------------------------------
+  // ---- 云端导入 ------------------------------------------------------------
   importCloudSkill: (input: { releaseId: string; skillName: string }) =>
     ipcRenderer.invoke("cloud:import-skill", input),
 
@@ -286,7 +283,7 @@ const myClawAPI = {
   installWorkflowPackageFromCloud: (input: Record<string, unknown>) =>
     ipcRenderer.invoke("cloud:import-workflow-package", input),
 
-  // ---- Employees -----------------------------------------------------------
+  // ---- 员工 ----------------------------------------------------------------
   fetchEmployees: () =>
     ipcRenderer.invoke("employee:list")
       .then((items: unknown[]) => ({ items }))
@@ -303,23 +300,23 @@ const myClawAPI = {
   updateEmployee: (employeeId: string, input: Record<string, unknown>) =>
     ipcRenderer.invoke("employee:update", employeeId, input).catch(() => ({ employee: null })),
 
-  // ---- Skills --------------------------------------------------------------
+  // ---- 技能 ----------------------------------------------------------------
   fetchSkillDetail: (skillId: string) =>
     ipcRenderer.invoke("skill:detail", skillId)
       .catch(() => ({ skill: null })),
 
-  // ---- Publish drafts ------------------------------------------------------
+  // ---- 发布草稿 ------------------------------------------------------------
   createPublishDraft: (input: Record<string, unknown>) =>
     ipcRenderer.invoke("publish:create-draft", input).catch(() => null),
 
-  // ---- Web Panels -----------------------------------------------------------
+  // ---- Web 面板 ------------------------------------------------------------
   webPanelResolveView: (skillId: string): Promise<string | null> =>
     ipcRenderer.invoke("web-panel:resolve-view", skillId),
 
   onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void): UnsubscribeFn =>
     onChannel("web-panel:open", callback),
 
-  // ---- Skill Files ----------------------------------------------------------
+  // ---- 技能文件 ------------------------------------------------------------
   skillReadTree: (skillId: string) => ipcRenderer.invoke("skill:read-tree", skillId),
   skillReadFile: (skillId: string, relativePath: string) => ipcRenderer.invoke("skill:read-file", skillId, relativePath),
 } as const;
@@ -327,7 +324,7 @@ const myClawAPI = {
 contextBridge.exposeInMainWorld("myClawAPI", myClawAPI);
 
 // ---------------------------------------------------------------------------
-// TypeScript declaration -- available to renderer via window.myClawAPI
+// TypeScript 类型声明：渲染进程可通过 window.myClawAPI 使用
 // ---------------------------------------------------------------------------
 
 export type MyClawAPI = typeof myClawAPI;

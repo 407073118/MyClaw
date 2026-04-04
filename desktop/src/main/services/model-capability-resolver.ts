@@ -1,4 +1,4 @@
-import type { ModelCapability, ModelProfile, ReasoningProtocol } from "@shared/contracts";
+import type { ModelCapability, ModelProfile } from "@shared/contracts";
 
 import { findRegistryCapability } from "./model-capability-registry";
 
@@ -14,28 +14,10 @@ const SAFE_DEFAULT_CAPABILITY: ModelCapability = {
   maxInputTokens: 28672,
   maxOutputTokens: 4096,
   supportsTools: true,
-  supportsReasoning: false,
-  supportsEffort: false,
   supportsStreaming: true,
-  requiresReasoningReplay: false,
   tokenCountingMode: "character-fallback",
   source: "default",
 };
-
-/**
- * 为 provider 解析默认协议偏好，避免 session/UI 层直接理解协议差异。
- */
-function inferPreferredProtocol(profile: ModelProfile): ReasoningProtocol {
-  if (profile.provider === "anthropic" || profile.providerFlavor === "anthropic" || profile.providerFlavor === "minimax-anthropic") {
-    return "anthropic";
-  }
-
-  if (profile.provider === "local-gateway" || profile.providerFlavor === "generic-local-gateway") {
-    return "local-gateway";
-  }
-
-  return "openai-compatible";
-}
 
 /**
  * 从 legacy contextWindow 推导能力字段，保证历史配置可继续使用。
@@ -51,11 +33,7 @@ function buildLegacyCapability(profile: ModelProfile): ModelCapability | null {
     maxInputTokens,
     maxOutputTokens: outputReserve,
     supportsTools: true,
-    supportsReasoning: false,
-    supportsEffort: false,
     supportsStreaming: true,
-    requiresReasoningReplay: false,
-    preferredProtocol: inferPreferredProtocol(profile),
     tokenCountingMode: "character-fallback",
     source: "observed-response",
   };
@@ -102,30 +80,6 @@ export function resolveModelCapability(
     ...(registry ?? {}),
     ...(discovered ?? {}),
     ...(hasManual ? manualOverride : {}),
-    supportsReasoning:
-      (hasManual ? manualOverride?.supportsReasoning : undefined)
-      ?? discovered?.supportsReasoning
-      ?? registry?.supportsReasoning
-      ?? legacy?.supportsReasoning
-      ?? SAFE_DEFAULT_CAPABILITY.supportsReasoning,
-    supportsEffort:
-      (hasManual ? manualOverride?.supportsEffort : undefined)
-      ?? discovered?.supportsEffort
-      ?? registry?.supportsEffort
-      ?? legacy?.supportsEffort
-      ?? SAFE_DEFAULT_CAPABILITY.supportsEffort,
-    requiresReasoningReplay:
-      (hasManual ? manualOverride?.requiresReasoningReplay : undefined)
-      ?? discovered?.requiresReasoningReplay
-      ?? registry?.requiresReasoningReplay
-      ?? legacy?.requiresReasoningReplay
-      ?? SAFE_DEFAULT_CAPABILITY.requiresReasoningReplay,
-    preferredProtocol:
-      (hasManual ? manualOverride?.preferredProtocol : undefined)
-      ?? discovered?.preferredProtocol
-      ?? registry?.preferredProtocol
-      ?? legacy?.preferredProtocol
-      ?? inferPreferredProtocol(profile),
     source,
   };
 
@@ -136,3 +90,4 @@ export function resolveModelCapability(
     manualOverride: hasManual ? manualOverride : null,
   };
 }
+

@@ -3,17 +3,7 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type {
-  ChatSession,
-  ChatMessage as SessionChatMessage,
-  ChatSessionThinkingSource,
-  ExecutionIntent,
-  SkillDefinition,
-  ApprovalRequest,
-  ModelProfile,
-  ApprovalDecision,
-  ApprovalMode,
-} from "@shared/contracts";
+import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile } from "@shared/contracts";
 import { EventType, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
@@ -24,34 +14,34 @@ import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../servi
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
-import { buildReasoningExecutionPlan, resolveSessionThinkingState } from "../services/reasoning-runtime";
+import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
 /**
- * Absolute safety ceiling — prevents truly infinite loops from bugs.
- * NOT a task-completion limit. The model stops by not making tool calls.
+ * 绝对安全上限，用来防止 bug 导致的无限循环。
+ * 这不是任务完成轮数限制；模型正常情况下会因为不再发起工具调用而自然停止。
  */
 const SAFETY_CEILING = 200;
 
-/** Consecutive identical round signatures before warning the model. */
+/** 连续出现相同轮次签名前，先对模型发出警告的阈值。 */
 const LOOP_WARN_THRESHOLD = 3;
 
-/** Consecutive identical round signatures before forcing a stop. */
+/** 连续出现相同轮次签名后，强制停止的阈值。 */
 const LOOP_STOP_THRESHOLD = 5;
 
 // ---------------------------------------------------------------------------
-// Async git branch detection (replaces blocking execSync)
+// 异步获取 Git 分支（替代阻塞式 execSync）
 // ---------------------------------------------------------------------------
 
 const execAsync = promisify(execCb);
 
 /**
- * Asynchronously resolve the current git branch.
- * Returns null if not a git repo or git is unavailable.
- * Non-blocking — safe to call from Electron main process.
+ * 异步解析当前 Git 分支名。
+ * 如果当前目录不是 Git 仓库，或系统中不可用 Git，则返回 null。
+ * 该实现是非阻塞的，可安全在 Electron 主进程中调用。
  */
 async function getGitBranchAsync(cwd: string): Promise<string | null> {
   try {
@@ -66,18 +56,18 @@ async function getGitBranchAsync(cwd: string): Promise<string | null> {
   }
 }
 
-/** Maximum number of read-only tools to execute concurrently. */
+/** 只读工具允许并发执行的最大数量。 */
 const PARALLEL_LIMIT = 5;
 
-/** Tools that only read state and can safely run in parallel. */
+/** 仅执行读取操作、可安全并行运行的工具集合。 */
 const READ_ONLY_TOOLS = new Set([
   "fs.read", "fs.list", "fs.search", "fs.find",
   "git.status", "git.diff", "git.log", "task.manage",
 ]);
 
 /**
- * Determine whether a tool is read-only (safe for concurrent execution).
- * Skills are considered read-only by default since they run in a sandbox.
+ * 判断某个工具是否属于只读工具（可安全并发执行）。
+ * Skill 默认视为只读，因为它们运行在受控沙箱中。
  */
 export function isReadOnlyTool(toolId: string): boolean {
   if (READ_ONLY_TOOLS.has(toolId)) return true;
@@ -87,8 +77,8 @@ export function isReadOnlyTool(toolId: string): boolean {
 }
 
 /**
- * Build a signature for the current round's tool calls.
- * Used to detect loops (model calling the same tools with the same args).
+ * 为当前轮次的工具调用构建签名。
+ * 该签名用于检测循环调用，例如模型重复以相同参数调用相同工具。
  */
 function buildRoundSignature(toolCalls: { name: string; argumentsJson: string }[]): string {
   return toolCalls
@@ -97,7 +87,7 @@ function buildRoundSignature(toolCalls: { name: string; argumentsJson: string }[
     .join("|");
 }
 
-/** Count how many times the last element repeats consecutively from the end. */
+/** 统计最后一个元素从尾部开始连续重复了多少次。 */
 function countConsecutiveRepeats(signatures: string[]): number {
   if (signatures.length === 0) return 0;
   const last = signatures[signatures.length - 1];
@@ -109,25 +99,25 @@ function countConsecutiveRepeats(signatures: string[]): number {
   return count;
 }
 
-/** Shared tool executor instance (holds in-memory task list state). */
+/** 共享的工具执行器实例（维护内存中的任务列表状态）。 */
 const toolExecutor = new BuiltinToolExecutor();
 
-/** Shutdown browser on app exit — call from index.ts before-quit. */
+/** 应用退出时关闭浏览器，需在 index.ts 的 before-quit 中调用。 */
 export async function shutdownToolExecutor(): Promise<void> {
   await toolExecutor.shutdown();
 }
 
 // ---------------------------------------------------------------------------
-// Approval system
+// 审批系统
 // ---------------------------------------------------------------------------
 
-/** Map of approval request ID → { resolve, timeout } for pending approvals. */
+/** 待处理审批映射：approval request ID → { resolve, timeout }。 */
 const pendingApprovals = new Map<string, {
   resolve: (decision: "approve" | "deny") => void;
   timeout: ReturnType<typeof setTimeout>;
 }>();
 
-/** Risk mapping for builtin tools. */
+/** 内置工具的风险映射表。 */
 const TOOL_RISK_MAP: Record<string, ToolRiskCategory> = {
   "fs.read": ToolRiskCategory.Read,
   "fs.list": ToolRiskCategory.Read,
@@ -143,7 +133,7 @@ const TOOL_RISK_MAP: Record<string, ToolRiskCategory> = {
   "http.fetch": ToolRiskCategory.Network,
   "web.search": ToolRiskCategory.Network,
   "task.manage": ToolRiskCategory.Read,
-  // browser.*
+  // browser.* 工具
   "browser.open": ToolRiskCategory.Network,
   "browser.snapshot": ToolRiskCategory.Read,
   "browser.click": ToolRiskCategory.Write,
@@ -158,12 +148,12 @@ const TOOL_RISK_MAP: Record<string, ToolRiskCategory> = {
 };
 
 function getToolRisk(toolId: string, toolName: string): ToolRiskCategory {
-  // Check builtin tool risk map
+  // 先检查内置工具风险映射表
   if (TOOL_RISK_MAP[toolId]) return TOOL_RISK_MAP[toolId];
-  // Skills default to Read
+  // Skill 默认按 Read 风险处理
   if (toolId.startsWith("skill_invoke__")) return ToolRiskCategory.Read;
   if (toolId === "skill.view") return ToolRiskCategory.Read;
-  // MCP tools — infer from name
+  // MCP 工具：根据名称推断风险
   if (toolName.startsWith("mcp__")) return ToolRiskCategory.Write;
   return ToolRiskCategory.Read;
 }
@@ -175,25 +165,18 @@ function getApprovalSource(toolId: string): "builtin-tool" | "mcp-tool" | "skill
 }
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
 type CreateSessionInput = {
   title?: string;
   modelProfileId?: string;
   attachedDirectory?: string | null;
-  thinkingEnabled?: boolean;
-  thinkingSource?: ChatSessionThinkingSource;
 };
 
 type SendMessageInput = {
   content: string;
   attachedDirectory?: string | null;
-};
-
-type UpdateSessionThinkingInput = {
-  thinkingEnabled: boolean;
-  thinkingSource?: ChatSessionThinkingSource;
 };
 
 type SessionPayload = {
@@ -207,14 +190,14 @@ type SessionsPayload = {
 };
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助方法
 // ---------------------------------------------------------------------------
 
 /**
- * Broadcast a streaming event to all renderer windows.
- * Uses the session channel so the renderer can filter by sessionId.
- * Wrapped in try-catch because webContents may be destroyed between
- * getAllWebContents() and send(), which would throw and crash the agentic loop.
+ * 向所有渲染进程窗口广播流式事件。
+ * 使用 session 通道，便于渲染层按 sessionId 过滤。
+ * 这里包裹 try-catch，因为 webContents 可能在
+ * getAllWebContents() 与 send() 之间被销毁，否则会抛错并中断 agentic loop。
  */
 function broadcastToRenderers(channel: string, payload: unknown): void {
   for (const wc of webContents.getAllWebContents()) {
@@ -223,17 +206,23 @@ function broadcastToRenderers(channel: string, payload: unknown): void {
         wc.send(channel, payload);
       }
     } catch {
-      // WebContents destroyed between check and send — safe to ignore
+      // WebContents 可能在检查后到发送前被销毁，这里可安全忽略
     }
   }
 }
 
 /**
- * Build a rich system prompt for a session.
- * The optional `gitBranch` parameter avoids calling execSync on the main thread.
- * Callers should pre-compute the branch asynchronously via getGitBranchAsync().
+ * 为会话构建内容更完整的 system prompt。
+ * 可选的 `gitBranch` 参数用于避免在主线程调用 execSync。
+ * 调用方应先通过 getGitBranchAsync() 异步计算当前分支。
  */
-function buildSystemPrompt(session: ChatSession, workingDir: string, skills?: SkillDefinition[], gitBranch?: string | null): string {
+function buildSystemPrompt(
+  session: ChatSession,
+  workingDir: string,
+  skills?: SkillDefinition[],
+  gitBranch?: string | null,
+  personalPromptProfile?: PersonalPromptProfile | null,
+): string {
   const now = new Date();
   const parts: string[] = [];
 
@@ -292,11 +281,16 @@ function buildSystemPrompt(session: ChatSession, workingDir: string, skills?: Sk
   parts.push(`- If a tool call fails, analyze the error and try a different approach.`);
   parts.push(`- Be concise but thorough in explanations.`);
 
+  const personalPromptContext = buildPersonalPromptContext(personalPromptProfile);
+  if (personalPromptContext) {
+    parts.push(`\n${personalPromptContext}`);
+  }
+
   return parts.join("\n");
 }
 
 /**
- * Calculate cumulative token usage for a session.
+ * 计算一个会话累计使用的 token 数量。
  */
 export function calculateSessionTokens(session: ChatSession): number {
   return session.messages.reduce((sum: number, msg: SessionChatMessage) => {
@@ -305,7 +299,7 @@ export function calculateSessionTokens(session: ChatSession): number {
 }
 
 /**
- * Build a fallback summary when model-generated summary is unavailable.
+ * 当模型摘要不可用时，构建一个兜底摘要。
  */
 export function fallbackSummary(messages: SessionChatMessage[]): string {
   const userMsgCount = messages.filter((m) => m.role === "user").length;
@@ -319,11 +313,11 @@ export function fallbackSummary(messages: SessionChatMessage[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// IPC Handlers
+// IPC 处理器
 // ---------------------------------------------------------------------------
 
 export function registerSessionHandlers(ctx: RuntimeContext): void {
-  // Create a new chat session
+  // 创建新的聊天会话
   ipcMain.handle("session:create", async (_event, input: CreateSessionInput): Promise<SessionPayload> => {
     const now = new Date().toISOString();
     const session: ChatSession = {
@@ -331,8 +325,6 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       title: input?.title ?? "New Chat",
       modelProfileId: input?.modelProfileId ?? ctx.state.getDefaultModelProfileId() ?? "",
       attachedDirectory: input?.attachedDirectory ?? null,
-      thinkingEnabled: input?.thinkingEnabled ?? false,
-      thinkingSource: input?.thinkingSource ?? "default",
       createdAt: now,
       messages: [],
     };
@@ -344,7 +336,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
     return { session };
   });
 
-  // Delete a session by ID
+  // 按 ID 删除会话
   ipcMain.handle("session:delete", async (_event, sessionId: string): Promise<SessionsPayload> => {
     const index = ctx.state.sessions.findIndex((s) => s.id === sessionId);
     if (index !== -1) {
@@ -359,33 +351,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
     };
   });
 
-  /**
-   * 更新会话级 thinking 抽象状态，保持 renderer 不直接写 provider 细节。
-   */
-  ipcMain.handle(
-    "session:update-thinking",
-    async (_event, sessionId: string, input: UpdateSessionThinkingInput): Promise<SessionPayload> => {
-      const session = ctx.state.sessions.find((s) => s.id === sessionId);
-      if (!session) {
-        throw new Error(`Session not found: ${sessionId}`);
-      }
-
-      session.thinkingEnabled = input.thinkingEnabled;
-      session.thinkingSource = input.thinkingSource ?? "user-toggle";
-
-      console.info("[session:thinking] 已更新会话 thinking 状态", {
-        sessionId,
-        thinkingEnabled: session.thinkingEnabled,
-        thinkingSource: session.thinkingSource,
-      });
-
-      await saveSession(ctx.runtime.paths, session);
-      return { session };
-    },
-  );
-
   // -------------------------------------------------------------------------
-  // Send a message — agentic tool loop
+  // 发送消息：进入 agentic 工具循环
   // -------------------------------------------------------------------------
 
   ipcMain.handle(
@@ -399,7 +366,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       const messageId = randomUUID();
       const now = new Date().toISOString();
 
-      // Append the user message
+      // 追加用户消息
       session.messages.push({
         id: randomUUID(),
         role: "user",
@@ -407,14 +374,14 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         createdAt: now,
       });
 
-      // Notify renderer that the run started
+      // 通知渲染层本轮运行已开始
       broadcastToRenderers("session:stream", {
         type: EventType.RunStarted,
         sessionId,
         messageId,
       });
 
-      // Resolve the model profile to use for this session
+      // 解析当前会话应使用的模型配置
       const profileId = session.modelProfileId || ctx.state.getDefaultModelProfileId();
       const modelProfile = ctx.state.models.find((m) => m.id === profileId)
         ?? ctx.state.models[0];
@@ -446,27 +413,27 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         return { session };
       }
 
-      // Build tool schemas for function calling
+      // 为函数调用构建工具 schema
       const workingDir = session.attachedDirectory || ctx.runtime.myClawRootPath || process.cwd();
       const enabledSkills = ctx.state.skills.filter((s) => s.enabled && !s.disableModelInvocation);
 
-      // Gather MCP tools from all connected servers
+      // 汇总所有已连接 MCP 服务提供的工具
       const mcpTools = ctx.services.mcpManager?.getAllTools() ?? [];
       const tools = buildToolSchemas(workingDir, enabledSkills, mcpTools);
 
-      // Update the tool executor with current skills and path permissions
+      // 用当前技能与路径权限刷新工具执行器
       toolExecutor.setSkills(ctx.state.skills);
       toolExecutor.setAllowExternalPaths(allowsExternalPaths(ctx.state.getApprovals().mode));
 
-      // ----- Pre-compute git branch asynchronously (non-blocking) -----
+      // ----- 预先异步计算 Git 分支（非阻塞） -----
       const gitBranch = await getGitBranchAsync(workingDir);
 
-      // Create a bound system prompt builder that uses the cached git branch
-      // (avoids execSync on every agentic loop iteration)
+      // 创建一个绑定版 system prompt 构造器，复用已缓存的 Git 分支
+      // 避免在每次 agentic 循环中都执行一次 execSync
       const boundBuildSystemPrompt = (s: ChatSession, wd: string, sk?: SkillDefinition[]) =>
-        buildSystemPrompt(s, wd, sk, gitBranch);
+        buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile());
 
-      // ----- Agentic loop: call model → execute tools → feed results → repeat -----
+      // ----- Agentic 循环：调用模型 → 执行工具 → 回填结果 → 重复 -----
       let round = 0;
       let currentMessageId = messageId;
       const roundSignatures: string[] = [];
@@ -490,26 +457,11 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               ` (${assembled.compactionReason}), budget used: ${assembled.budgetUsed}`,
             );
           }
-          const thinkingState = resolveSessionThinkingState(session);
-          const executionPlan = buildReasoningExecutionPlan({
-            thinkingState,
-            capability: resolved.effective,
-            profile: modelProfile,
-          });
-          console.info("[session:thinking] 本轮 reasoning 执行计划已生成", {
-            sessionId,
-            providerFlavor: modelProfile.providerFlavor ?? modelProfile.provider,
-            thinkingEnabled: thinkingState.enabled,
-            hasBodyPatch: Object.keys(executionPlan.bodyPatch).length > 0,
-            degradedReason: executionPlan.degradedReason,
-          });
           const modelMessages = assembled.messages as ModelChatMessage[];
 
           const result = await callModel({
             profile: modelProfile,
             messages: modelMessages,
-            bodyPatch: executionPlan.bodyPatch,
-            replayPolicy: executionPlan.replayPolicy,
             tools,
             onDelta: (delta) => {
               broadcastToRenderers("session:stream", {
@@ -521,23 +473,18 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             },
           });
 
-          // Check if the model made tool calls
+          // 检查模型是否发起了工具调用
           const hasToolCalls = result.toolCalls.length > 0;
 
           if (hasToolCalls) {
-            // Append the assistant message WITH tool_calls (content may be empty)
-            const replayMessage = result.assistantReplay?.message;
+            // 追加带 tool_calls 的 assistant 消息（content 可能为空）
             const assistantMsg = {
               id: currentMessageId,
               role: "assistant" as const,
-              content: replayMessage?.content ?? (result.content || ""),
-              ...((typeof replayMessage?.reasoning === "string" && replayMessage.reasoning)
-                ? { reasoning: replayMessage.reasoning }
-                : result.reasoning
-                  ? { reasoning: result.reasoning }
-                  : {}),
+              content: result.content || "",
+              ...(result.reasoning ? { reasoning: result.reasoning } : {}),
               ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
-              tool_calls: replayMessage?.tool_calls ?? result.toolCalls.map((tc) => ({
+              tool_calls: result.toolCalls.map((tc) => ({
                 id: tc.id,
                 type: "function" as const,
                 function: { name: tc.name, arguments: tc.argumentsJson },
@@ -545,27 +492,21 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               createdAt: new Date().toISOString(),
             };
             session.messages.push(assistantMsg);
-            console.info("[session:thinking] 已写入 assistant replay payload", {
-              sessionId,
-              replayPolicy: executionPlan.replayPolicy,
-              replayMode: result.assistantReplay?.mode ?? "compatibility",
-              degradedReason: result.assistantReplay?.degradedReason ?? executionPlan.degradedReason,
-            });
 
-            // Broadcast the assistant message with tool calls info
+            // 广播带工具调用信息的 assistant 消息
             broadcastToRenderers("session:stream", {
               type: EventType.MessageCompleted,
               sessionId,
               messageId: currentMessageId,
             });
-            // Broadcast session update so renderer shows tool_calls in real-time
+            // 广播会话更新，让渲染层实时展示 tool_calls
             broadcastToRenderers("session:stream", {
               type: EventType.SessionUpdated,
               sessionId,
               session,
             });
 
-            // ---- Step 1: Check approvals for all tool calls (serial — awaits user) ----
+            // ---- 第 1 步：检查所有工具调用的审批（串行执行，需要等待用户） ----
             type ApprovedTool = { toolCall: ResolvedToolCall; denied: boolean };
             const approvedTools: ApprovedTool[] = [];
 
@@ -607,7 +548,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 });
 
                 const decision = await new Promise<"approve" | "deny">((resolve) => {
-                  // Auto-cleanup: deny after 5 minutes if renderer never responds
+                  // 自动清理：如果渲染层 5 分钟内未响应，则自动拒绝
                   const timeout = setTimeout(() => {
                     if (pendingApprovals.has(approvalId)) {
                       pendingApprovals.get(approvalId)?.resolve("deny");
@@ -634,7 +575,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               approvedTools.push({ toolCall, denied: false });
             }
 
-            // ---- Step 2: Execute a single tool call (shared helper) ----
+            // ---- 第 2 步：执行单个工具调用（复用共享 helper） ----
             const executeSingleTool = async (toolCall: ResolvedToolCall): Promise<ChatMessageContent> => {
               const toolCallId = toolCall.id;
               const toolId = functionNameToToolId(toolCall.name);
@@ -671,12 +612,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                     ? execResult.output
                     : `[错误] ${execResult.error ?? "工具执行失败"}\n${execResult.output}`.trim();
 
-                  // Capture screenshot image for multimodal response
+                  // 捕获截图，供多模态响应使用
                   if (execResult.imageBase64) {
                     imageBase64 = execResult.imageBase64;
                   }
 
-                  // If skill has a view, tell the renderer to open the WebPanel
+                  // 如果技能带有视图文件，则通知渲染层打开 WebPanel
                   if (execResult.viewMeta) {
                     broadcastToRenderers("web-panel:open", execResult.viewMeta);
                   }
@@ -701,13 +642,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 });
               }
 
-              // Cap tool output to prevent session bloat (compactor handles context window separately)
+              // 限制工具输出长度，避免会话体积膨胀（上下文窗口由 compactor 另行处理）
               const MAX_TOOL_OUTPUT_PERSIST = 8000; // ~2k tokens
               const cappedOutput = toolOutput.length > MAX_TOOL_OUTPUT_PERSIST
                 ? toolOutput.slice(0, MAX_TOOL_OUTPUT_PERSIST) + `\n\n[... truncated ${toolOutput.length - MAX_TOOL_OUTPUT_PERSIST} chars for session storage]`
                 : toolOutput;
 
-              // Return multimodal content for screenshots (vision-capable models)
+              // 对截图返回多模态内容（供支持视觉的模型使用）
               if (imageBase64) {
                 return [
                   { type: "text", text: cappedOutput },
@@ -718,7 +659,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               return cappedOutput;
             };
 
-            // ---- Step 3: Handle denied tools ----
+            // ---- 第 3 步：处理被拒绝的工具 ----
             for (const { toolCall } of approvedTools.filter((t) => t.denied)) {
               const toolCallId = toolCall.id;
               const toolId = functionNameToToolId(toolCall.name);
@@ -737,7 +678,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 toolId,
                 error: deniedOutput,
               });
-              // Broadcast session update so denied tool results appear in real-time
+              // 广播会话更新，让被拒绝的工具结果也能实时显示
               broadcastToRenderers("session:stream", {
                 type: EventType.SessionUpdated,
                 sessionId,
@@ -745,13 +686,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               });
             }
 
-            // ---- Step 4: Split approved tools into read-only vs write groups ----
+            // ---- 第 4 步：把已批准工具拆分成只读组与写入组 ----
             const approved = approvedTools.filter((t) => !t.denied);
             const readOnlyTasks = approved.filter((t) => isReadOnlyTool(functionNameToToolId(t.toolCall.name)));
             const writeTasks = approved.filter((t) => !isReadOnlyTool(functionNameToToolId(t.toolCall.name)));
 
-            // Execute read-only tools concurrently (batched by PARALLEL_LIMIT)
-            // Collect results first, then push messages serially for deterministic ordering
+            // 并发执行只读工具（按 PARALLEL_LIMIT 分批）
+            // 先收集结果，再按确定顺序串行写入消息
             for (let i = 0; i < readOnlyTasks.length; i += PARALLEL_LIMIT) {
               const batch = readOnlyTasks.slice(i, i + PARALLEL_LIMIT);
               const results = await Promise.all(
@@ -760,7 +701,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   return { toolCall, result };
                 }),
               );
-              // Push messages serially in deterministic order
+              // 以固定顺序串行写入消息
               for (const { toolCall, result } of results) {
                 session.messages.push({
                   id: randomUUID(),
@@ -777,7 +718,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               }
             }
 
-            // Execute write tools serially
+            // 写入类工具串行执行
             for (const { toolCall } of writeTasks) {
               const result = await executeSingleTool(toolCall);
               session.messages.push({
@@ -794,7 +735,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               });
             }
 
-            // ---- Loop detection ----
+            // ---- 循环检测 ----
             const roundSig = buildRoundSignature(result.toolCalls);
             roundSignatures.push(roundSig);
             const repeats = countConsecutiveRepeats(roundSignatures);
@@ -826,10 +767,10 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               console.info(`[session:loop-detect] Warning injected at round ${round} (${repeats} repeats)`);
             }
 
-            // Prepare for next round
+            // 为下一轮做准备
             currentMessageId = randomUUID();
 
-            // Broadcast that we're starting a new model call
+            // 广播即将开始新一轮模型调用
             broadcastToRenderers("session:stream", {
               type: EventType.RunStarted,
               sessionId,
@@ -837,22 +778,17 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               round,
             });
           } else {
-            // No tool calls — this is the final response
-            const replayMessage = result.assistantReplay?.message;
+            // 没有工具调用，说明这就是最终回复
             session.messages.push({
               id: currentMessageId,
               role: "assistant",
-              content: replayMessage?.content ?? result.content,
-              ...((typeof replayMessage?.reasoning === "string" && replayMessage.reasoning)
-                ? { reasoning: replayMessage.reasoning }
-                : result.reasoning
-                  ? { reasoning: result.reasoning }
-                  : {}),
+              content: result.content,
+              ...(result.reasoning ? { reasoning: result.reasoning } : {}),
               ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
               createdAt: new Date().toISOString(),
             });
 
-            // Auto-generate session title from first exchange
+            // 根据首次对话自动生成会话标题
             if (session.title === "New Chat" && session.messages.length >= 2) {
               const userMsg = session.messages.find((m: SessionChatMessage) => m.role === "user");
               if (userMsg) {
@@ -865,7 +801,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           }
         }
 
-        // Safety ceiling reached (should be extremely rare — 200 rounds)
+        // 命中安全上限（极少发生，默认 200 轮）
         if (round >= SAFETY_CEILING) {
           console.warn(`[session:agentic] Hit safety ceiling of ${SAFETY_CEILING} rounds`);
           session.messages.push({
@@ -906,14 +842,14 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         session,
       });
 
-      // Persist updated messages to disk
+      // 将更新后的消息持久化到磁盘
       await saveSession(ctx.runtime.paths, session);
 
       return { session };
     },
   );
 
-  // Get pending execution intents for a session
+  // 获取某个会话当前待处理的 execution intents
   ipcMain.handle(
     "session:get-execution-intents",
     async (_event, sessionId: string): Promise<ExecutionIntent[]> => {
@@ -935,7 +871,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
     },
   );
 
-  // Resolve a pending approval request with full ApprovalDecision semantics
+  // 按完整 ApprovalDecision 语义处理待审批请求
   ipcMain.handle(
     "session:resolve-approval",
     async (_event, approvalId: string, decision: ApprovalDecision): Promise<{ success: boolean }> => {
@@ -956,16 +892,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         }
       }
 
-      // Clear the auto-deny timeout since the user responded
+      // 用户已响应，清理自动拒绝超时定时器
       clearTimeout(pending.timeout);
 
-      // 映射到 agentic loop 的 approve/deny
+      // 映射为 agentic loop 使用的 approve/deny
       pending.resolve(decision === "deny" ? "deny" : "approve");
       return { success: true };
     },
   );
 
-  // Update approval policy
+  // 更新审批策略
   ipcMain.handle(
     "session:update-approval-policy",
     async (_event, policy: { mode?: ApprovalMode; autoApproveReadOnly?: boolean; autoApproveSkills?: boolean }): Promise<{ success: boolean }> => {

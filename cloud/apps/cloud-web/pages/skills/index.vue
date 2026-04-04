@@ -13,14 +13,27 @@ const SKILL_CATEGORIES: { value: SkillCategory; label: string }[] = [
 ];
 
 const keyword = ref("");
+const debouncedKeyword = ref("");
 const selectedCategory = ref<SkillCategory | "">("");
 const selectedTag = ref("");
 const sortBy = ref<"latest" | "downloads" | "name">("latest");
 const viewMode = ref<"grid" | "list">("grid");
 
+/** 对 Skills 搜索词做轻量防抖，避免频繁刷新列表请求。 */
+watch(
+  keyword,
+  (value, _previousValue, onCleanup) => {
+    const timer = setTimeout(() => {
+      debouncedKeyword.value = value.trim();
+    }, 300);
+    onCleanup(() => clearTimeout(timer));
+  },
+  { immediate: true }
+);
+
 const queryParams = computed(() => ({
   ...(selectedCategory.value ? { category: selectedCategory.value } : {}),
-  ...(keyword.value.trim() ? { keyword: keyword.value.trim() } : {}),
+  ...(debouncedKeyword.value ? { keyword: debouncedKeyword.value } : {}),
   ...(sortBy.value !== "latest" ? { sort: sortBy.value } : {}),
   ...(selectedTag.value ? { tag: selectedTag.value } : {}),
 }));
@@ -51,31 +64,37 @@ const sortOptions = [
   { value: "name", label: "名称排序" }
 ] as const;
 
+/** 切换技能分类，并清空当前标签筛选。 */
 function selectCategory(cat: SkillCategory | "") {
   selectedCategory.value = cat;
   selectedTag.value = "";
 }
 
+/** 切换标签筛选状态，再次点击同一标签时取消筛选。 */
 function toggleTag(tag: string) {
   selectedTag.value = selectedTag.value === tag ? "" : tag;
 }
 
+/** 格式化下载量，较大数值使用 `k/w` 缩写。 */
 function formatDownloads(count: number): string {
   if (count >= 10000) return (count / 10000).toFixed(1) + "w";
   if (count >= 1000) return (count / 1000).toFixed(1) + "k";
   return String(count);
 }
 
+/** 将更新时间格式化为中文日期。 */
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
   return d.toLocaleDateString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit" });
 }
 
+/** 根据分类值获取界面展示标签。 */
 function getCategoryLabel(cat: SkillCategory): string {
   const found = SKILL_CATEGORIES.find((c) => c.value === cat);
   return found ? found.label : cat;
 }
 
+/** 按技能名称生成稳定的头像背景色。 */
 function getAvatarColor(name: string): string {
   const colors = [
     "#10b981", "#3b82f6", "#8b5cf6", "#f59e0b",
@@ -96,7 +115,7 @@ useHead({
 <template>
   <main class="nuxt-skills-page">
     <div class="content-container">
-      <!-- Header -->
+      <!-- 页面头部 -->
       <section class="page-header">
         <div class="header-main">
           <h2>Skills <span class="dim">市场</span></h2>
@@ -105,7 +124,7 @@ useHead({
         <NuxtLink class="action-btn-primary" to="/skills/publish">发布 Skill</NuxtLink>
       </section>
 
-      <!-- Category tabs -->
+      <!-- 分类标签栏 -->
       <div class="category-tabs">
         <button
           :class="['tab-item', { active: selectedCategory === '' }]"
@@ -123,7 +142,7 @@ useHead({
         </button>
       </div>
 
-      <!-- Toolbar: search + sort + view toggle -->
+      <!-- 工具栏：搜索、排序、视图切换 -->
       <div class="toolbar">
         <div class="search-bar-nx">
           <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -156,7 +175,7 @@ useHead({
         </div>
       </div>
 
-      <!-- Tag cloud -->
+      <!-- 标签云 -->
       <div v-if="allTags.length" class="tag-cloud">
         <button
           v-for="tag in allTags"
@@ -168,7 +187,7 @@ useHead({
         </button>
       </div>
 
-      <!-- Stats row -->
+      <!-- 统计信息行 -->
       <div class="stats-row-nx">
         <span class="status-nx">{{ skills.length }} 个 Skills</span>
         <span v-if="selectedCategory || selectedTag || keyword" class="filter-hint">
@@ -176,13 +195,13 @@ useHead({
         </span>
       </div>
 
-      <!-- Loading -->
+      <!-- 加载状态 -->
       <div v-if="pending" class="state-container">
         <div class="pulse-loader-nx"></div>
         <p>正在加载 Skills 列表...</p>
       </div>
 
-      <!-- Grid view -->
+      <!-- 网格视图 -->
       <div v-else-if="viewMode === 'grid'" class="skills-grid-nx">
         <NuxtLink
           v-for="skill in skills"
@@ -278,7 +297,7 @@ useHead({
   padding: 40px;
 }
 
-/* Header */
+/* 页面头部 */
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -329,7 +348,7 @@ useHead({
   box-shadow: 0 4px 12px rgba(var(--nuxt-green-rgb), 0.2);
 }
 
-/* Category tabs */
+/* 分类标签栏 */
 .category-tabs {
   display: flex;
   gap: 4px;
@@ -368,7 +387,7 @@ useHead({
   color: var(--nuxt-green);
 }
 
-/* Toolbar */
+/* 工具栏 */
 .toolbar {
   display: flex;
   gap: 16px;
@@ -466,7 +485,7 @@ useHead({
   color: var(--nuxt-green);
 }
 
-/* Tag cloud */
+/* 标签云 */
 .tag-cloud {
   display: flex;
   flex-wrap: wrap;
@@ -497,7 +516,7 @@ useHead({
   color: var(--nuxt-green);
 }
 
-/* Stats */
+/* 统计区 */
 .stats-row-nx {
   display: flex;
   align-items: center;
@@ -521,7 +540,7 @@ useHead({
   font-weight: 600;
 }
 
-/* Grid */
+/* 网格视图 */
 .skills-grid-nx {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -686,7 +705,7 @@ useHead({
   gap: 4px;
 }
 
-/* List view */
+/* 列表视图 */
 .skills-list-nx {
   display: flex;
   flex-direction: column;
@@ -776,7 +795,7 @@ useHead({
   text-align: right;
 }
 
-/* States */
+/* 状态区域 */
 .state-container {
   padding: 80px 0;
   display: flex;
@@ -831,7 +850,7 @@ useHead({
   color: var(--nuxt-green);
 }
 
-/* Responsive */
+/* 响应式布局 */
 @media (max-width: 768px) {
   .content-container {
     padding: 24px 16px;

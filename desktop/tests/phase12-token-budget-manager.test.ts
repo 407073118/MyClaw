@@ -1,13 +1,13 @@
 /**
- * Phase 12: Token Estimation & Budget Manager tests
+ * 第 12 阶段：Token 估算与预算管理器测试。
  *
- * Tests:
- * - estimateTokenCount returns reasonable character-based estimates
- * - estimateMessagesTokens sums message token estimates
- * - buildBudgetSnapshot computes correct budget allocation
- * - budget respects requestBody max_tokens / max_completion_tokens overrides
- * - calibrateEstimate adjusts future estimates based on actual usage
- * - edge cases: zero capability, missing fields, very large messages
+ * 测试内容：
+ * - `estimateTokenCount` 是否返回合理的字符级估算
+ * - `estimateMessagesTokens` 是否能正确汇总消息 token
+ * - `buildBudgetSnapshot` 是否计算出正确预算分配
+ * - 预算是否尊重 `requestBody.max_tokens / max_completion_tokens`
+ * - 未来估算是否可按真实 usage 校准
+ * - 零能力、缺失字段、超大消息等边界情况
  */
 
 import { describe, it, expect } from "vitest";
@@ -81,7 +81,7 @@ describe("estimateMessagesTokens", () => {
   it("accounts for role overhead per message", () => {
     const singleMsg = [{ role: "user" as const, content: "Hi" }];
     const estimate = estimateMessagesTokens(singleMsg, "character-fallback");
-    // Should be more than just content tokens due to role/format overhead
+    // 由于角色和消息格式开销，结果应大于纯正文 token。
     expect(estimate).toBeGreaterThan(1);
   });
 });
@@ -107,8 +107,8 @@ describe("buildBudgetSnapshot", () => {
     expect(snapshot.effectiveContextWindow).toBe(32768);
     expect(snapshot.effectiveMaxOutput).toBe(4096);
     expect(snapshot.effectiveMaxInput).toBe(28672);
-    // safeInputBudget = maxInput - systemReserve - toolReserve - memoryReserve - outputReserve - safetyMargin
-    // = 28672 - 2048 - 4096 - 4096 - 4096 - 1024 = 13312
+    // `safeInputBudget = maxInput - systemReserve - toolReserve - memoryReserve - outputReserve - safetyMargin`
+    // 即 `28672 - 2048 - 4096 - 4096 - 4096 - 1024 = 13312`
     expect(snapshot.safeInputBudget).toBe(13312);
     expect(snapshot.compactTriggerTokens).toBeGreaterThan(0);
   });
@@ -149,7 +149,7 @@ describe("buildBudgetSnapshot", () => {
     };
     const snapshot = buildBudgetSnapshot(baseCapability, policy);
 
-    expect(snapshot.effectiveMaxOutput).toBe(4096); // capped by capability
+    expect(snapshot.effectiveMaxOutput).toBe(4096); // 会被模型能力上限截断。
     expect(snapshot.compactTriggerTokens).toBe(Math.floor(snapshot.safeInputBudget * 0.7));
     expect(snapshot.policy.enableLongTermMemory).toBe(false);
   });

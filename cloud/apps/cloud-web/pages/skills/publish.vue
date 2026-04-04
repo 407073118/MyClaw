@@ -15,11 +15,11 @@ const SKILL_CATEGORIES: { value: SkillCategory; label: string }[] = [
 const route = useRoute();
 const { user: currentUser } = useCloudSession();
 
-// ---------- Mode detection ----------
+// ---------- 模式识别 ----------
 const existingSkillId = computed(() => (route.query.id as string) || "");
 const isEditMode = computed(() => !!existingSkillId.value);
 
-// ---------- Form state ----------
+// ---------- 表单状态 ----------
 const form = reactive({
   id: "",
   name: "",
@@ -34,8 +34,6 @@ const form = reactive({
   readme: "",
 });
 
-const showCategoryPicker = ref(false);
-
 const isPending = ref(false);
 const errorMsg = ref("");
 const successMsg = ref("");
@@ -43,9 +41,10 @@ const artifactFile = ref<File | null>(null);
 const existingSkill = ref<SkillDetail | null>(null);
 const isLoading = ref(false);
 
-// ---------- Track original metadata to detect changes ----------
+// ---------- 记录原始元数据，便于判断是否发生修改 ----------
 const originalMeta = ref<Record<string, any>>({});
 
+/** 记录技能原始元数据，便于后续判断是否发生编辑。 */
 function captureOriginalMeta(skill: SkillDetail) {
   originalMeta.value = {
     name: skill.name,
@@ -63,7 +62,7 @@ const metadataChanged = computed(() => {
   return fields.some((f) => (form as any)[f] !== originalMeta.value[f]);
 });
 
-// ---------- Fetch existing skill when in edit mode ----------
+// ---------- 编辑模式下加载已有技能 ----------
 watch(
   existingSkillId,
   async (id) => {
@@ -73,7 +72,7 @@ watch(
     try {
       const skill = await $fetch<SkillDetail>(`/api/skills/${id}`);
       existingSkill.value = skill;
-      // Pre-fill form
+      // 预填当前技能信息到表单。
       form.id = skill.id;
       form.name = skill.name;
       form.summary = skill.summary;
@@ -82,7 +81,7 @@ watch(
       form.tags = (skill.tags || []).join(", ");
       form.author = skill.author || "";
       form.readme = skill.readme || "";
-      // Reset release-specific fields for new version
+      // 为新版本发布重置版本相关字段。
       form.version = "";
       form.releaseNotes = "";
       form.entryFile = "SKILL.md";
@@ -96,7 +95,8 @@ watch(
   { immediate: true }
 );
 
-// ---------- Submit ----------
+// ---------- 提交发布 ----------
+/** 提交技能发布流程，按模式分别处理新建与已有技能。 */
 async function handlePublish() {
   errorMsg.value = "";
   successMsg.value = "";
@@ -110,11 +110,11 @@ async function handlePublish() {
     let skillId = existingSkillId.value;
 
     if (isEditMode.value) {
-      // Mode 2: optionally update metadata, then publish release
-      console.info("[Skills 发布] 开始为已有 Skill 发布新版本", { id: skillId, version: form.version });
+      // 模式二：如有必要先更新元数据，再发布新版本。
+      console.info("[Skills 发布] 开始为已有技能发布新版本", { id: skillId, version: form.version });
 
       if (metadataChanged.value) {
-        console.info("[Skills 发布] 检测到元数据变更，正在更新 Skill 信息", { id: skillId });
+        console.info("[Skills 发布] 检测到元数据变更，正在更新技能信息", { id: skillId });
         await $fetch(`/api/skills/${skillId}`, {
           method: "PUT",
           body: {
@@ -128,8 +128,8 @@ async function handlePublish() {
         });
       }
     } else {
-      // Mode 1: create skill first
-      console.info("[Skills 发布] 开始创建新 Skill", { id: form.id, version: form.version });
+      // 模式一：先创建技能，再继续发布首个版本。
+      console.info("[Skills 发布] 开始创建新技能", { id: form.id, version: form.version });
 
       const createBody: CreateSkillInput = {
         id: form.id,
@@ -148,7 +148,7 @@ async function handlePublish() {
       skillId = result.skill.id;
     }
 
-    // Publish release
+    // 发布版本压缩包。
     const formData = new FormData();
     formData.append("version", form.version);
     formData.append("releaseNotes", form.releaseNotes);
@@ -161,17 +161,18 @@ async function handlePublish() {
       body: formData,
     });
 
-    console.info("[Skills 发布] Skill 发布成功，准备跳转详情页", { id: skillId, version: form.version });
+    console.info("[Skills 发布] 技能发布成功，准备跳转详情页", { id: skillId, version: form.version });
     await navigateTo(`/skills/${skillId}`);
   } catch (error: any) {
-    console.error("[Skills 发布] Skill 发布失败", error);
-    errorMsg.value = error?.data?.statusMessage || error?.statusMessage || error?.message || "发布 Skill 失败。";
+    console.error("[Skills 发布] 技能发布失败", error);
+    errorMsg.value = error?.data?.statusMessage || error?.statusMessage || error?.message || "发布技能失败。";
   } finally {
     isPending.value = false;
   }
 }
 
-// ---------- Helpers ----------
+// ---------- 辅助方法 ----------
+/** 把逗号分隔的标签字符串解析为标签数组。 */
 function parseTags(raw: string): string[] {
   return raw
     .split(",")
@@ -179,6 +180,7 @@ function parseTags(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** 读取用户选择的压缩包文件并缓存到表单状态。 */
 function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement;
   artifactFile.value = input.files?.[0] ?? null;
@@ -245,19 +247,11 @@ useHead({
             <div class="row-inputs mb-xl">
               <div class="form-group flex-1">
                 <label>分类</label>
-                <div class="custom-select" @click="showCategoryPicker = !showCategoryPicker" @blur="showCategoryPicker = false" tabindex="0">
-                  <span class="custom-select-value">{{ SKILL_CATEGORIES.find(c => c.value === form.category)?.label || '选择分类' }}</span>
-                  <svg class="custom-select-arrow" :class="{ open: showCategoryPicker }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 9l6 6 6-6"/></svg>
-                  <div v-if="showCategoryPicker" class="custom-select-dropdown">
-                    <div
-                      v-for="cat in SKILL_CATEGORIES"
-                      :key="cat.value"
-                      class="custom-select-option"
-                      :class="{ active: form.category === cat.value }"
-                      @mousedown.prevent="form.category = cat.value; showCategoryPicker = false"
-                    >{{ cat.label }}</div>
-                  </div>
-                </div>
+                <select v-model="form.category" class="native-select">
+                  <option v-for="cat in SKILL_CATEGORIES" :key="cat.value" :value="cat.value">
+                    {{ cat.label }}
+                  </option>
+                </select>
               </div>
               <div class="form-group flex-1">
                 <label>作者</label>
@@ -404,17 +398,10 @@ useHead({
 
 .form-group input, .form-group textarea { width: 100%; padding: 14px 18px; background-color: var(--bg-input); border: 1px solid var(--border-main); border-radius: 12px; color: var(--text-main); font-family: inherit; font-size: 0.95rem; transition: 0.2s; box-sizing: border-box; }
 .form-group input:focus, .form-group textarea:focus { outline: none; border-color: var(--nuxt-green); box-shadow: 0 0 0 3px rgba(var(--nuxt-green-rgb), 0.1); background-color: rgba(var(--nuxt-green-rgb), 0.02); }
-/* Custom select dropdown */
-.custom-select { position: relative; display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 14px 18px; background-color: var(--bg-input); border: 1px solid var(--border-main); border-radius: 12px; color: var(--text-main); font-family: inherit; font-size: 0.95rem; cursor: pointer; transition: 0.2s; box-sizing: border-box; user-select: none; outline: none; }
-.custom-select:hover { border-color: rgba(var(--nuxt-green-rgb), 0.4); }
-.custom-select:focus { border-color: var(--nuxt-green); box-shadow: 0 0 0 3px rgba(var(--nuxt-green-rgb), 0.1); }
-.custom-select-value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.custom-select-arrow { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-dim); transition: transform 0.2s; }
-.custom-select-arrow.open { transform: rotate(180deg); }
-.custom-select-dropdown { position: absolute; top: calc(100% + 6px); left: 0; right: 0; background: var(--bg-main); border: 1px solid var(--border-muted); border-radius: 12px; padding: 6px; box-shadow: 0 12px 40px rgba(0,0,0,0.25); z-index: 50; max-height: 260px; overflow-y: auto; }
-.custom-select-option { padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; color: var(--text-main); cursor: pointer; transition: 0.15s; }
-.custom-select-option:hover { background: rgba(var(--nuxt-green-rgb), 0.08); color: var(--nuxt-green); }
-.custom-select-option.active { background: rgba(var(--nuxt-green-rgb), 0.12); color: var(--nuxt-green); font-weight: 700; }
+/* 自定义下拉选择器 */
+.native-select { width: 100%; padding: 14px 18px; background-color: var(--bg-input); border: 1px solid var(--border-main); border-radius: 12px; color: var(--text-main); font-family: inherit; font-size: 0.95rem; transition: 0.2s; box-sizing: border-box; }
+.native-select:hover { border-color: rgba(var(--nuxt-green-rgb), 0.4); }
+.native-select:focus { outline: none; border-color: var(--nuxt-green); box-shadow: 0 0 0 3px rgba(var(--nuxt-green-rgb), 0.1); }
 .mono-font { font-family: 'Fira Code', monospace !important; font-size: 0.85rem !important; line-height: 1.6; }
 
 .readonly-field { padding: 14px 18px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-muted); border-radius: 12px; color: var(--text-dim); font-family: 'Fira Code', monospace; font-size: 0.9rem; user-select: all; }

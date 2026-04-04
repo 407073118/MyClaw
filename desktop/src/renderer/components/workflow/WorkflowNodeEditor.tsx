@@ -429,7 +429,7 @@ export default function WorkflowNodeEditor({
         <section className="subsection">
           <h5 className="subtitle">LLM 节点</h5>
           <label className="field">
-            <span>提示词</span>
+            <span>个性</span>
             <textarea
               data-testid="workflow-node-editor-llm-prompt"
               rows={4}

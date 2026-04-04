@@ -6,7 +6,7 @@ import type { ChatSession, ChatMessage } from "@shared/contracts";
 import { textOfContent } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
 export type ContextCheckpoint = {

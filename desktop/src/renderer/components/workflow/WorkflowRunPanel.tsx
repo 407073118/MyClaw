@@ -12,6 +12,7 @@ interface WorkflowRunPanelProps {
   definition: WorkflowDefinition;
 }
 
+/** 展示工作流运行记录、详情和检查点时间轴。 */
 export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRunPanelProps) {
   const workspace = useWorkspaceStore();
   const shell = useShellStore();
@@ -72,7 +73,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     return activeRunDetail.run.status === "waiting-input" || latestStatus === "waiting-human-input";
   }, [activeRunDetail, latestCheckpoint]);
 
-  // Sync selectedRunId when runs change
+  // 运行记录变化后，同步当前选中的 runId。
   const prevRunsRef = useRef<typeof runs | null>(null);
   useEffect(() => {
     if (runs.length === 0) {
@@ -86,7 +87,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     prevRunsRef.current = runs;
   }, [runs]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load detail when selectedRunId changes
+  // 当前选中运行变化时，加载对应详情。
   useEffect(() => {
     if (!selectedRunId) {
       setActiveRunDetail(null);
@@ -95,7 +96,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     loadRunDetail(selectedRunId);
   }, [selectedRunId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load runs on mount
+  // 首次挂载时拉取运行历史。
   useEffect(() => {
     setIsLoadingRuns(true);
     workspace
@@ -108,6 +109,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** 加载指定运行的详情信息。 */
   async function loadRunDetail(runId: string) {
     setIsLoadingDetail(true);
     setPanelError("");
@@ -122,6 +124,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     }
   }
 
+  /** 启动一次新的工作流运行，并自动切到新运行详情。 */
   async function handleStartRun() {
     setIsStarting(true);
     setPanelError("");
@@ -136,6 +139,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     }
   }
 
+  /** 恢复等待人工输入的运行。 */
   async function handleResumeRun() {
     const runId = selectedRunId ?? activeRunDetail?.run.id ?? null;
     if (!runId) return;

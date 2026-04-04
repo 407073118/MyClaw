@@ -1,8 +1,8 @@
 /**
- * Builtin tool executor for the newApp Electron main process.
+ * newApp Electron 主进程使用的内置工具执行器。
  *
- * Self-contained — no imports from desktop packages.
- * Implements real filesystem, shell, git, HTTP, and web-search tools.
+ * 自包含实现，不依赖 desktop 其他包。
+ * 实现真实的文件系统、Shell、Git、HTTP 与网页搜索工具。
  */
 
 import { execSync } from "node:child_process";
@@ -22,16 +22,16 @@ import type { SkillDefinition } from "@shared/contracts";
 import { BrowserService } from "./browser-service";
 
 // ---------------------------------------------------------------------------
-// Result type
+// 结果类型
 // ---------------------------------------------------------------------------
 
 export type ToolExecutionResult = {
   success: boolean;
   output: string;
   error?: string;
-  /** Base64-encoded image for screenshot results (JPEG). */
+  /** 截图结果对应的 Base64 图片数据（JPEG）。 */
   imageBase64?: string;
-  /** When a skill has view.html, this carries the info needed to open the WebPanel. */
+  /** 当技能包含 view.html 时，这里携带打开 WebPanel 所需的信息。 */
   viewMeta?: {
     viewPath: string;
     title: string;
@@ -40,7 +40,7 @@ export type ToolExecutionResult = {
 };
 
 // ---------------------------------------------------------------------------
-// Argument parsing helpers  (mirrors desktop parsePathAndContentPayload etc.)
+// 参数解析辅助方法（与 desktop 中的 parsePathAndContentPayload 等逻辑保持一致）
 // ---------------------------------------------------------------------------
 
 function parsePathAndContent(label: string): { path: string; content: string } {
@@ -73,7 +73,7 @@ function parseSearchPayload(label: string): { pattern: string; searchPath: strin
 }
 
 // ---------------------------------------------------------------------------
-// Path safety helpers
+// 路径安全辅助方法
 // ---------------------------------------------------------------------------
 
 function normalizeSep(p: string): string {
@@ -95,7 +95,7 @@ function safeResolve(base: string, userPath: string, allowExternal = false): str
 }
 
 // ---------------------------------------------------------------------------
-// Shell command safety check  (mirrors desktop validateShellCommandInput)
+// Shell 命令安全检查（与 desktop 中的 validateShellCommandInput 逻辑保持一致）
 // ---------------------------------------------------------------------------
 
 const BLOCKED_SHELL_PATTERNS = [
@@ -103,7 +103,7 @@ const BLOCKED_SHELL_PATTERNS = [
   /\bformat\s+[a-z]:/i,
   /\bdel\s+\/[fsq]/i,
   /\brmdir\s+\/s/i,
-  // Redirect to /dev/sda or raw block devices
+  // 重定向到 /dev/sda 或其他裸块设备
   />\s*\/dev\/[sh]d[a-z]/,
 ];
 
@@ -117,7 +117,7 @@ function validateShellCommand(command: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// fs.search implementation (recursive grep-like text search)
+// fs.search 实现（递归文本搜索，类似 grep）
 // ---------------------------------------------------------------------------
 
 function searchTextInDir(
@@ -152,14 +152,14 @@ function searchTextInDir(
           }
         }
       } catch {
-        // skip unreadable files
+        // 跳过不可读文件
       }
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// fs.find implementation (glob-style file finder)
+// fs.find 实现（基于 glob 风格的文件查找）
 // ---------------------------------------------------------------------------
 
 function matchGlob(relPath: string, pattern: string): boolean {
@@ -175,7 +175,7 @@ function matchGlob(relPath: string, pattern: string): boolean {
       "$",
   );
   if (regex.test(normalized)) return true;
-  // Also match just filename part if pattern has no path separator
+  // 如果 pattern 不含路径分隔符，则额外匹配文件名本身
   if (!pattern.includes("/") && !pattern.includes("\\")) {
     const filename = normalized.split("/").pop() ?? "";
     return regex.test(filename);
@@ -215,7 +215,7 @@ function findFilesInDir(
 }
 
 // ---------------------------------------------------------------------------
-// Main executor class
+// 执行器主类
 // ---------------------------------------------------------------------------
 
 const MAX_SESSION_TASKS = 200;
@@ -225,30 +225,30 @@ export class BuiltinToolExecutor {
   private skills: SkillDefinition[] = [];
   private browserService = new BrowserService();
 
-  /** Update the skills list (called when skills are refreshed or session starts) */
+  /** 更新技能列表（刷新技能或会话启动时调用）。 */
   setSkills(skills: SkillDefinition[]): void {
     this.skills = skills;
   }
 
-  /** Close browser on app shutdown to prevent orphaned Chrome processes. */
+  /** 应用退出时关闭浏览器，避免遗留孤儿 Chrome 进程。 */
   async shutdown(): Promise<void> {
     await this.browserService.close();
   }
 
-  /** Whether the current session allows access to paths outside the workspace. */
+  /** 当前会话是否允许访问工作区外部路径。 */
   private _allowExternalPaths = false;
 
-  /** Set whether external path access is permitted (based on approval mode). */
+  /** 设置是否允许访问外部路径（取决于审批模式）。 */
   setAllowExternalPaths(allow: boolean): void {
     this._allowExternalPaths = allow;
   }
 
   /**
-   * Execute a builtin tool by ID.
+   * 按工具 ID 执行内置工具。
    *
-   * @param toolId      The tool identifier (e.g. "fs.read", "exec.command")
-   * @param label       The primary argument string (may encode multiple values)
-   * @param workingDir  The current working directory for the session (may be null)
+   * @param toolId      工具标识（例如 "fs.read"、"exec.command"）
+   * @param label       主参数字符串（可能编码了多个值）
+   * @param workingDir  当前会话的工作目录（可为 null）
    */
   async execute(
     toolId: string,
@@ -268,12 +268,12 @@ export class BuiltinToolExecutor {
     }
   }
 
-  /** Resolve a user path, respecting the current external-path permission. */
+  /** 解析用户路径，并遵守当前的外部路径访问权限。 */
   private resolvePathSafe(base: string, userPath: string): string {
     return safeResolve(base, userPath, this._allowExternalPaths);
   }
 
-  /** Check whether a resolved path is outside the workspace base. */
+  /** 检查解析后的路径是否超出当前工作区根目录。 */
   isOutsideWorkspace(base: string, targetPath: string): boolean {
     return !isInsideBase(base, resolve(base, targetPath));
   }
@@ -406,7 +406,7 @@ export class BuiltinToolExecutor {
     }
 
     // ------------------------------------------------------------------
-    // fs.edit  (FileEditTool — partial string replacement, like claude-code)
+    // fs.edit（FileEditTool：类似 claude-code 的局部字符串替换）
     // ------------------------------------------------------------------
     if (toolId === "fs.edit") {
       return this.executeFileEdit(label, cwd);
@@ -440,7 +440,7 @@ export class BuiltinToolExecutor {
       if (!message) {
         return { success: false, output: "", error: "请提供 commit 信息。" };
       }
-      // Stage all changes first, then commit
+      // 先暂存全部变更，再执行提交
       try {
         execSync("git add -A", { cwd, timeout: 15_000, encoding: "utf8", windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       } catch { /* ignore staging errors */ }
@@ -448,14 +448,14 @@ export class BuiltinToolExecutor {
     }
 
     // ------------------------------------------------------------------
-    // skill_invoke__* (SkillTool — read and return skill content, NO panel)
+    // skill_invoke__*（SkillTool：读取并返回技能内容，不打开面板）
     // ------------------------------------------------------------------
     if (toolId.startsWith("skill_invoke__")) {
       return this.executeSkillInvoke(toolId, label, cwd);
     }
 
     // ------------------------------------------------------------------
-    // skill.view — model opens an HTML panel with data it provides
+    // skill.view：由模型在完成工作后用数据打开 HTML 面板
     // ------------------------------------------------------------------
     if (toolId === "skill.view") {
       return this.executeSkillView(label);
@@ -469,7 +469,7 @@ export class BuiltinToolExecutor {
     }
 
     // ------------------------------------------------------------------
-    // browser.* — 浏览器自动化工具组
+    // browser.*：浏览器自动化工具组
     // ------------------------------------------------------------------
     if (toolId.startsWith("browser.")) {
       return this.executeBrowser(toolId, label);
@@ -483,7 +483,7 @@ export class BuiltinToolExecutor {
   }
 
   // --------------------------------------------------------------------------
-  // browser.* — dispatch to BrowserService
+  // browser.*：分发给 BrowserService 处理
   // --------------------------------------------------------------------------
 
   private async executeBrowser(toolId: string, label: string): Promise<ToolExecutionResult> {
@@ -540,12 +540,12 @@ export class BuiltinToolExecutor {
   }
 
   // --------------------------------------------------------------------------
-  // fs.edit — partial file edit (string replacement, like claude-code FileEditTool)
+  // fs.edit：局部文件编辑（字符串替换，类似 claude-code FileEditTool）
   // --------------------------------------------------------------------------
 
   private executeFileEdit(label: string, cwd: string): ToolExecutionResult {
-    // Parse structured args from JSON (when called via function calling)
-    // or from label format: path\n---\nold_string\n---\nnew_string
+    // 解析 JSON 形式的结构化参数（用于函数调用场景）
+    // 或从 label 格式解析：path\n---\nold_string\n---\nnew_string
     let filePath: string;
     let oldString: string;
     let newString: string;
@@ -556,7 +556,7 @@ export class BuiltinToolExecutor {
       oldString = String(parsed.old_string ?? "");
       newString = String(parsed.new_string ?? "");
     } catch {
-      // Fallback to delimiter format
+      // 回退到分隔符格式解析
       const parts = label.split("\n---\n");
       if (parts.length < 3) {
         return {
@@ -585,10 +585,10 @@ export class BuiltinToolExecutor {
 
     const content = readFileSync(resolved, "utf8");
 
-    // Check old_string exists in file
+    // 检查 old_string 是否存在于文件中
     const occurrences = content.split(oldString).length - 1;
     if (occurrences === 0) {
-      // Show a snippet of the file to help the model understand the current content
+      // 展示一段文件片段，帮助模型理解当前内容
       const preview = content.length > 500 ? content.slice(0, 500) + "\n...（已截断）" : content;
       return {
         success: false,
@@ -605,7 +605,7 @@ export class BuiltinToolExecutor {
       };
     }
 
-    // Perform the replacement (exactly 1 occurrence)
+    // 执行替换（必须精确匹配 1 处）
     const newContent = content.replace(oldString, newString);
     writeFileSync(resolved, newContent, "utf8");
 
@@ -616,7 +616,7 @@ export class BuiltinToolExecutor {
   }
 
   // --------------------------------------------------------------------------
-  // git helper
+  // Git 辅助方法
   // --------------------------------------------------------------------------
 
   private runGit(args: string[], cwd: string): ToolExecutionResult {
@@ -678,7 +678,7 @@ export class BuiltinToolExecutor {
   }
 
   // --------------------------------------------------------------------------
-  // web.search  (DuckDuckGo HTML)
+  // web.search（DuckDuckGo HTML）
   // --------------------------------------------------------------------------
 
   private async executeWebSearch(query: string): Promise<ToolExecutionResult> {
@@ -722,7 +722,7 @@ export class BuiltinToolExecutor {
   }
 
   // --------------------------------------------------------------------------
-  // task.manage  (in-memory task list)
+  // task.manage（内存中的任务列表）
   // --------------------------------------------------------------------------
 
   private executeTaskManage(label: string): ToolExecutionResult {
@@ -735,7 +735,7 @@ export class BuiltinToolExecutor {
         return { success: false, output: "", error: "请提供任务描述。" };
       }
       if (this.sessionTasks.length >= MAX_SESSION_TASKS) {
-        // Remove oldest completed tasks first, then oldest overall
+        // 优先移除最早完成的任务，其次再移除最早的任务
         const doneIdx = this.sessionTasks.findIndex(t => t.done);
         if (doneIdx >= 0) {
           this.sessionTasks.splice(doneIdx, 1);
@@ -767,7 +767,7 @@ export class BuiltinToolExecutor {
       return { success: true, output: "任务列表已清空。" };
     }
 
-    // default: list
+    // 默认行为：列出任务
     return {
       success: true,
       output: this.formatTasks() || "(空)",
@@ -775,7 +775,7 @@ export class BuiltinToolExecutor {
   }
 
   // --------------------------------------------------------------------------
-  // skill.view — open an HTML panel with model-provided data
+  // skill.view：使用模型生成的数据打开 HTML 面板
   // --------------------------------------------------------------------------
 
   private executeSkillView(label: string): ToolExecutionResult {
@@ -817,13 +817,13 @@ export class BuiltinToolExecutor {
   }
 
   // --------------------------------------------------------------------------
-  // skill_invoke — read skill content and return to model (NO panel)
+  // skill_invoke：读取技能内容并返回给模型（不会打开面板）
   // --------------------------------------------------------------------------
 
   private executeSkillInvoke(toolId: string, input: string, cwd: string): ToolExecutionResult {
     const rawSkillId = toolId.replace("skill_invoke__", "");
 
-    // Find the skill by matching the sanitized ID
+    // 通过清洗后的 ID 匹配技能
     const skill = this.skills.find((s) => {
       const sanitizedId = s.id.replace(/[^a-zA-Z0-9_-]/g, "_");
       return sanitizedId === rawSkillId || s.id === rawSkillId;
@@ -845,22 +845,22 @@ export class BuiltinToolExecutor {
       };
     }
 
-    // Read the skill content
+    // 读取技能内容
     try {
       const skillPath = skill.path;
       let content = "";
 
-      // Try SKILL.md first (directory format)
+      // 优先尝试读取 SKILL.md（目录格式）
       const skillMdPath = join(skillPath, "SKILL.md");
       if (existsSync(skillMdPath)) {
         content = readFileSync(skillMdPath, "utf8");
       } else if (existsSync(skillPath) && skillPath.endsWith(".json")) {
-        // JSON manifest format
+        // JSON manifest 格式
         const raw = readFileSync(skillPath, "utf8");
         const manifest = JSON.parse(raw);
         content = manifest.content || manifest.description || `Skill: ${skill.name}`;
 
-        // If there's an entrypoint, read that too
+        // 如果存在 entrypoint，也一并读取
         if (manifest.entrypoint) {
           const entryPath = resolve(dirname(skillPath), manifest.entrypoint);
           if (existsSync(entryPath)) {
@@ -890,7 +890,7 @@ export class BuiltinToolExecutor {
         };
       }
 
-      // Truncate if too long
+      // 内容过长时进行截断
       const maxLen = 15000;
       const truncated = content.length > maxLen
         ? content.slice(0, maxLen) + "\n\n...（技能内容已截断）"
@@ -904,8 +904,8 @@ export class BuiltinToolExecutor {
         output: `${header}${userInput}\n## 技能内容\n\n${truncated}`,
       };
 
-      // Note: skill_invoke does NOT open HTML panels.
-      // The model should call skill_view separately after completing work.
+      // 注意：skill_invoke 不会打开 HTML 面板。
+      // 模型应在完成工作后单独调用 skill_view。
 
       return result;
     } catch (err) {

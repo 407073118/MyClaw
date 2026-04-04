@@ -4,9 +4,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import AppShell from "../layouts/AppShell";
 import { useAuthStore } from "../stores/auth";
 
-// Direct imports — no lazy loading for Electron desktop app.
-// All pages are served from local filesystem; code-splitting adds latency
-// (Suspense fallback flash) with zero network benefit.
+// Electron 桌面端直接静态导入页面，避免本地文件场景下的额外懒加载闪烁。
 import SetupPage from "../pages/SetupPage";
 import LoginPage from "../pages/LoginPage";
 import ChatPage from "../pages/ChatPage";
@@ -24,11 +22,9 @@ import PublishDraftPage from "../pages/PublishDraftPage";
 import SettingsPage from "../pages/SettingsPage";
 import ModelsPage from "../pages/ModelsPage";
 import ModelDetailPage from "../pages/ModelDetailPage";
+import PersonalPromptPage from "../pages/PersonalPromptPage";
 
-/**
- * Auth guard that redirects to /login when the user is not authenticated.
- * Preserves the intended destination in the `redirect` query param.
- */
+/** 认证守卫：未登录时跳转到 `/login`，并保留原目标地址。 */
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const location = useLocation();
@@ -46,16 +42,17 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** 注册渲染层全部路由。 */
 export function AppRoutes() {
   return (
     <Routes>
-      {/* Initial model setup (first launch — no model configured yet) */}
+      {/* 首次启动且尚未配置模型时的初始化页 */}
       <Route path="/setup" element={<SetupPage />} />
 
-      {/* Login — no setup guard needed; directory is auto-configured */}
+      {/* 登录页，不需要经过初始化守卫 */}
       <Route path="/login" element={<LoginPage />} />
 
-      {/* Protected routes wrapped in AppShell layout */}
+      {/* 需要鉴权的主应用路由，统一包裹在 AppShell 中 */}
       <Route
         element={
           <RequireAuth>
@@ -77,12 +74,13 @@ export function AppRoutes() {
         <Route path="/workflows/:id" element={<WorkflowStudioPage />} />
         <Route path="/publish-drafts" element={<PublishDraftPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/me/prompt" element={<PersonalPromptPage />} />
         <Route path="/settings/models" element={<ModelsPage />} />
         <Route path="/settings/models/new" element={<ModelDetailPage />} />
         <Route path="/settings/models/:id" element={<ModelDetailPage />} />
       </Route>
 
-      {/* Fallback */}
+      {/* 兜底跳转 */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

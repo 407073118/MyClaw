@@ -5,6 +5,7 @@ export * from "./employee";
 export * from "./events";
 export * from "./mcp";
 export * from "./model";
+export * from "./personal-prompt";
 export * from "./session";
 export * from "./skill";
 export * from "./ui";

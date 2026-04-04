@@ -1,12 +1,12 @@
 /**
- * Phase 14: Memory Service tests
+ * 第 14 阶段：记忆服务测试。
  *
- * Tests:
- * - MemoryExtractor extracts memory candidates from messages
- * - MemoryRanker ranks memories by relevance, recency, and importance
- * - MemoryRetriever retrieves relevant memories for a query
- * - MemoryService integrates extraction, ranking, retrieval
- * - Backward compatibility: old sessions without memory files still work
+ * 测试内容：
+ * - `MemoryExtractor` 是否能从消息中提取记忆候选
+ * - `MemoryRanker` 是否按相关性、时间和重要度排序
+ * - `MemoryRetriever` 是否能按查询取回相关记忆
+ * - `MemoryService` 是否完成提取、排序、检索的一体化整合
+ * - 没有旧版记忆文件时是否仍保持向后兼容
  */
 
 import { describe, it, expect } from "vitest";
@@ -32,7 +32,7 @@ import {
 import type { ChatMessage } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助方法
 // ---------------------------------------------------------------------------
 
 function makeMessage(
@@ -124,7 +124,7 @@ describe("rankMemories", () => {
       makeMemory("project-fact", "The database uses PostgreSQL"),
     ];
     const ranked = rankMemories(memories, "auth JWT");
-    // Auth-related memory should rank higher
+    // 与 `auth` 相关的记忆应该排得更靠前。
     expect(ranked[0].content).toContain("auth");
   });
 
@@ -136,7 +136,7 @@ describe("rankMemories", () => {
     const unpinned = makeMemory("project-fact", "Unpinned fact", 0.3);
     const pinned = { ...makeMemory("pinned-context", "Pinned important context", 0.3), pinned: true };
     const ranked = rankMemories([unpinned, pinned], "anything");
-    // Pinned should rank first regardless of other factors
+    // 置顶记忆应当无条件排在最前面。
     expect(ranked[0].pinned).toBe(true);
   });
 });
@@ -168,7 +168,7 @@ describe("retrieveRelevantMemories", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Memory Service (integration)
+// Memory Service 集成测试
 // ---------------------------------------------------------------------------
 
 describe("MemoryService", () => {

@@ -1,12 +1,12 @@
 /**
- * Phase 7: MCP Import & Server UX
+ * 第 7 阶段：MCP 导入与服务体验测试。
  *
- * Tests:
- * - IMPORT-01: Parse Claude Desktop config format
- * - IMPORT-02: Parse Cursor config format
- * - IMPORT-03: Mark already-imported servers correctly
- * - Handle missing / malformed config files gracefully
- * - importServers creates server configs
+ * 测试内容：
+ * - `IMPORT-01`：解析 Claude Desktop 配置格式
+ * - `IMPORT-02`：解析 Cursor 配置格式
+ * - `IMPORT-03`：正确标记已导入的服务
+ * - 缺失或损坏配置文件时平稳处理
+ * - `importServers` 能创建服务配置
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { McpServerManager, type DiscoveredMcpServer } from "../src/main/services/mcp-server-manager";
 
 // ---------------------------------------------------------------------------
-// Test directory setup
+// 测试目录准备
 // ---------------------------------------------------------------------------
 
 let testDir: string;
@@ -32,7 +32,7 @@ afterEach(() => {
   try {
     rmSync(testDir, { recursive: true, force: true });
   } catch {
-    // ignore cleanup errors
+    // 清理失败不影响测试结论。
   }
 });
 
@@ -43,27 +43,25 @@ afterEach(() => {
 describe("discoverExternalServers", () => {
   it("returns empty array when no external configs exist", () => {
     const manager = new McpServerManager(testDir);
-    // This reads from the actual home directory configs — they may or may not exist.
-    // The method should not throw regardless.
+    // 这里会读取真实 home 目录中的配置，但无论是否存在都不应抛错。
     const result = manager.discoverExternalServers();
     expect(Array.isArray(result)).toBe(true);
   });
 
   it("handles gracefully when config files are malformed", () => {
-    // The method reads from actual home directory.
-    // We can't easily mock homedir, but we can verify it doesn't throw.
+    // 这里同样会读取真实 home 目录；虽然不容易 mock，但至少要保证不抛错。
     const manager = new McpServerManager(testDir);
     expect(() => manager.discoverExternalServers()).not.toThrow();
   });
 });
 
 // ---------------------------------------------------------------------------
-// discoverExternalServers — parsing logic (unit-style via direct config reading)
+// discoverExternalServers 解析逻辑（通过直接读取配置做单元式验证）
 // ---------------------------------------------------------------------------
 
 describe("discoverExternalServers parsing", () => {
   it("parses Claude Desktop format correctly", () => {
-    // Simulate the parsing logic that discoverExternalServers uses
+    // 模拟 `discoverExternalServers` 使用的解析逻辑。
     const claudeConfig = {
       mcpServers: {
         "test-server": {
@@ -72,7 +70,7 @@ describe("discoverExternalServers parsing", () => {
           env: { API_KEY: "test123" },
         },
         "server-no-command": {
-          // Missing command — should be skipped
+          // 缺少 `command` 时应跳过该项。
           args: ["--flag"],
         },
       },
@@ -143,8 +141,7 @@ describe("discoverExternalServers parsing", () => {
   it("marks alreadyImported correctly when server with same name exists", () => {
     const manager = new McpServerManager(testDir);
 
-    // Pre-populate a server config via createServer
-    // We need to add a config manually to test alreadyImported detection
+    // 预先写入一个服务配置，用于验证 `alreadyImported` 检测逻辑。
     const configPath = join(testDir, "mcp-servers.json");
     writeFileSync(
       configPath,
@@ -162,19 +159,18 @@ describe("discoverExternalServers parsing", () => {
       "utf8",
     );
 
-    // Recreate manager to pick up the config
+    // 重建 manager，使其重新加载刚才写入的配置。
     const manager2 = new McpServerManager(testDir);
 
-    // Simulate checking alreadyImported against the existing configs
+    // 模拟基于现有配置判断 `alreadyImported`。
     const servers = manager2.listServers();
     expect(servers).toHaveLength(1);
     expect(servers[0].name).toBe("test-server");
 
-    // Now discoverExternalServers would check this.configs.some(c => c.name === name)
-    // We verify the alreadyImported logic works by checking discoverExternalServers
-    // (it reads from actual home dir, but the alreadyImported flag is based on existing configs)
+    // `discoverExternalServers` 最终会用服务名和现有配置做比对。
+    // 这里通过调用它来间接验证 `alreadyImported` 逻辑是否生效。
     const discovered = manager2.discoverExternalServers();
-    // Any server named "test-server" should have alreadyImported = true
+    // 任何同名的 `test-server` 都应该被标记为已导入。
     const matching = discovered.filter((d) => d.name === "test-server");
     for (const m of matching) {
       expect(m.alreadyImported).toBe(true);
@@ -187,16 +183,14 @@ describe("discoverExternalServers parsing", () => {
 // ---------------------------------------------------------------------------
 
 describe("importServers", () => {
-  // importServers calls createServer which auto-connects stdio servers, spawning
-  // real processes. To keep tests fast and deterministic, we verify the import
-  // logic (filtering, source mapping, config creation) by testing equivalent
-  // operations that don't trigger auto-connect.
+  // `importServers` 内部会调用 `createServer`，而 `createServer` 可能自动连接
+  // stdio 服务并拉起真实进程。为了让测试保持稳定和快速，这里改为验证等价逻辑。
 
   it("creates server configs for non-imported servers via createServer with enabled=false", async () => {
     const manager = new McpServerManager(testDir);
 
-    // Simulate what importServers does: call createServer for non-imported entries.
-    // Use enabled=false to avoid auto-connect in test.
+    // 模拟 `importServers` 对未导入项调用 `createServer` 的行为。
+    // 这里用 `enabled=false` 避免测试时自动连接。
     const result = await manager.createServer({
       name: "new-server",
       source: "claude",
@@ -210,7 +204,7 @@ describe("importServers", () => {
     expect(result.name).toBe("new-server");
     expect(result.transport).toBe("stdio");
 
-    // Verify persisted to disk
+    // 验证配置已成功写盘。
     const configPath = join(testDir, "mcp-servers.json");
     const persisted = JSON.parse(readFileSync(configPath, "utf8"));
     expect(persisted).toHaveLength(1);
@@ -221,7 +215,7 @@ describe("importServers", () => {
   });
 
   it("importServers skips servers with alreadyImported=true", async () => {
-    // Pre-populate an existing server config
+    // 预先写入一个已存在的服务配置。
     const configPath = join(testDir, "mcp-servers.json");
     writeFileSync(
       configPath,
@@ -241,9 +235,8 @@ describe("importServers", () => {
 
     const manager = new McpServerManager(testDir);
 
-    // The first server is alreadyImported, second is not.
-    // We pass enabled: false indirectly: importServers always sets enabled=true,
-    // but the alreadyImported server should be skipped entirely.
+    // 第一个服务已导入，第二个未导入。
+    // `importServers` 默认会设成 `enabled=true`，但已导入项应被完全跳过。
     const toImport: DiscoveredMcpServer[] = [
       {
         source: "cursor",
@@ -257,7 +250,7 @@ describe("importServers", () => {
     const imported = await manager.importServers(toImport);
     expect(imported).toHaveLength(0);
 
-    // Only the original server should remain
+    // 最终只应保留原有服务。
     const persisted = JSON.parse(readFileSync(configPath, "utf8"));
     expect(persisted).toHaveLength(1);
     expect(persisted[0].name).toBe("existing");

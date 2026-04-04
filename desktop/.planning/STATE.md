@@ -2,17 +2,17 @@
 
 ## Current Position
 
-Phase: v1.1 Phase 5~8 all completed
-Plan: Next milestone planning
-Status: v1.0 + v1.1 全部完成，116 个测试通过
-Last activity: 2026-04-04 -- Phase 10 已完成，MiniMax-first adapter、assistant replay 与 settings verification 已落地
+Phase: 11 of 11 (OpenAI / Anthropic compatibility bridge)
+Plan: 0 of 0 in current phase
+Status: Phase 9/10 已完成，desktop 通用推理运行时与 MiniMax-first adapter 已落地
+Last activity: 2026-04-04 -- 收口 Phase 9/10 规划状态，并新增 Phase 11 作为下一阶段
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** 用户可以通过自然语言与 AI 对话，AI 自动调用工具完成复杂的编码和系统管理任务。
-**Current focus:** Phase 10 已完成，当前可进入下一阶段规划，或继续做 OpenAI / Anthropic compatibility bridge。
+**Current focus:** Phase 11 待规划，优先把 OpenAI / Anthropic compatibility bridge 接到现有 reasoning runtime 上，并补齐跨 provider 验证矩阵。
 
 ## Completed Phases
 
@@ -26,6 +26,8 @@ See: .planning/PROJECT.md (updated 2026-04-01)
 | 6 | Smart Compact & Token UI | COMPACT-01~03, TOKEN-01~03 | 2026-04-01 |
 | 7 | MCP Import & Server UX | IMPORT-01~03, MCP-UX-01~02 | 2026-04-01 |
 | 8 | Infrastructure | INFRA-01~04 | 2026-04-01 |
+| 9 | Chat 推理等级与 Thinking/Effort 适配 | P9-01~04 | 2026-04-04 |
+| 10 | Provider adapters for MiniMax-first reasoning runtime | P10-01~06 | 2026-04-04 |
 
 ## Accumulated Context
 
@@ -48,17 +50,22 @@ See: .planning/PROJECT.md (updated 2026-04-01)
 - **结构化日志** — createLogger(module) → 日志文件 + 控制台
 - **ErrorBoundary** — 渲染进程崩溃友好展示 + 重试
 - 116 个单元测试全部通过（Phase 1~8 核心逻辑覆盖）
+- **Reasoning runtime 已落地** — 会话级 thinking 状态、request-body patch、Chat thinking 开关与确认交互已经接通
+- **MiniMax-first adapter 已落地** — first-class provider adapter、assistant replay payload、settings/catalog 语义对齐和回归矩阵已经补齐
+- Phase 9/10 的 targeted vitest suites 与 `pnpm --dir desktop run typecheck` 已通过
 - MCP SSE/HTTP 模式、Cloud Hub、Workflow 运行时仍是 stub
 
 ### Roadmap Evolution
 
 - Phase 9 added: Chat 推理等级与 Thinking/Effort 适配
 - Phase 10 added: Provider adapters for MiniMax-first reasoning runtime
+- Phase 11 added: OpenAI / Anthropic compatibility bridge
 
 ### Decisions
 
 - Phase 9 先聚焦运行时能力落地，不预设 low / medium / high 等多档位；优先打磨一种稳定、好用的 thinking/effort 模式。
 - Phase 10 明确保持现有 MiniMax 调用方式继续可用，在此基础上引入 first-class provider adapter，而不是强制切换到单一路径。
+- Phase 11 先收口 OpenAI / Anthropic compatibility bridge 与跨 provider 验证，不在该阶段继续扩大参数面板或做新的 provider 特判。
 
 ## Key Files Changed (v1.1)
 
@@ -78,3 +85,7 @@ See: .planning/PROJECT.md (updated 2026-04-01)
 | `src/renderer/App.tsx` | Wrapped with ErrorBoundary |
 | `src/main/index.ts` | Logger init, structured logging |
 | `src/main/services/mcp-client.ts` | Structured logging |
+| `src/main/services/reasoning-runtime.ts` | NEW — provider-neutral reasoning runtime |
+| `src/main/services/provider-adapters/minimax.ts` | NEW — MiniMax first-class adapter |
+| `src/main/services/model-client.ts` | Added reasoning body patch and assistant replay payload |
+| `src/renderer/pages/ModelDetailPage.tsx` | MiniMax providerFlavor and compatibility/enhanced hints |

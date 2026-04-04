@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { SkillDetail, SkillCategory, DownloadTokenResponse } from "@myclaw-cloud/shared";
+import { renderSafeMarkdown } from "~/utils/render-safe-markdown";
 
 const SKILL_CATEGORIES: { value: SkillCategory; label: string }[] = [
   { value: "ai-assistant", label: "AI 助手" },
@@ -34,11 +35,13 @@ const categoryLabel = computed(() => {
   return found?.label ?? selectedSkill.value.category;
 });
 
+/** 把日期格式化为技能详情页使用的中文短日期。 */
 const formatDate = (dateStr: string) => {
   const d = new Date(dateStr);
   return d.toLocaleDateString("zh-CN", { year: "numeric", month: "short", day: "numeric" });
 };
 
+/** 把日期格式化为包含时间的中文展示文案。 */
 const formatDateTime = (dateStr: string) => {
   const d = new Date(dateStr);
   return d.toLocaleDateString("zh-CN", {
@@ -50,6 +53,7 @@ const formatDateTime = (dateStr: string) => {
   });
 };
 
+/** 将说明文档 Markdown 渲染成详情页可直接展示的 HTML。 */
 const renderedReadme = computed(() => {
   const skill = selectedSkill.value;
   if (!skill) return "";
@@ -57,43 +61,16 @@ const renderedReadme = computed(() => {
   if (!md) {
     md = `# ${skill.name}\n\n${skill.description || ""}\n\n${skill.summary || ""}`;
   }
-  // Code blocks (fenced)
-  md = md.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, _lang, code) => {
-    return `<pre><code>${code.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code></pre>`;
-  });
-  // Headings
-  md = md.replace(/^### (.+)$/gm, "<h3>$1</h3>");
-  md = md.replace(/^## (.+)$/gm, "<h2>$1</h2>");
-  md = md.replace(/^# (.+)$/gm, "<h1>$1</h1>");
-  // Bold
-  md = md.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-  // Italic
-  md = md.replace(/\*(.+?)\*/g, "<em>$1</em>");
-  // Inline code
-  md = md.replace(/`([^`]+)`/g, "<code>$1</code>");
-  // List items
-  md = md.replace(/^- (.+)$/gm, "<li>$1</li>");
-  md = md.replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`);
-  // Line breaks (but not inside pre/h tags)
-  md = md.replace(/\n\n/g, "</p><p>");
-  md = md.replace(/\n/g, "<br>");
-  md = `<p>${md}</p>`;
-  // Clean up empty paragraphs and paragraphs wrapping block elements
-  md = md.replace(/<p>\s*<\/p>/g, "");
-  md = md.replace(/<p>\s*(<h[1-3]>)/g, "$1");
-  md = md.replace(/(<\/h[1-3]>)\s*<\/p>/g, "$1");
-  md = md.replace(/<p>\s*(<pre>)/g, "$1");
-  md = md.replace(/(<\/pre>)\s*<\/p>/g, "$1");
-  md = md.replace(/<p>\s*(<ul>)/g, "$1");
-  md = md.replace(/(<\/ul>)\s*<\/p>/g, "$1");
-  return md;
+  return renderSafeMarkdown(md);
 });
 
+/** 从技能名称生成头像首字母。 */
 const iconLetter = computed(() => {
   if (!selectedSkill.value) return "?";
   return selectedSkill.value.name?.charAt(0)?.toUpperCase() || "?";
 });
 
+/** 按名称哈希生成稳定的头像背景色。 */
 function getAvatarColor(name: string): string {
   const colors = [
     "#10b981", "#3b82f6", "#8b5cf6", "#f59e0b",
@@ -113,6 +90,7 @@ const latestReleaseId = computed(() => {
   return releases?.length ? releases[0].id : "";
 });
 
+/** 为指定版本申请下载令牌，并在浏览器中打开下载地址。 */
 async function handleDownload(releaseId: string) {
   if (!releaseId) return;
   downloadPendingId.value = releaseId;
@@ -132,7 +110,7 @@ async function handleDownload(releaseId: string) {
 <template>
   <main class="skill-detail-page">
     <div class="detail-container">
-      <!-- Back link -->
+      <!-- 返回链接 -->
       <div class="nav-bar">
         <NuxtLink class="back-link" to="/skills">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -140,14 +118,14 @@ async function handleDownload(releaseId: string) {
         </NuxtLink>
       </div>
 
-      <!-- Loading -->
+      <!-- 加载状态 -->
       <div v-if="pending" class="state-container">
         <div class="pulse-loader"></div>
         <p>加载中...</p>
       </div>
 
       <template v-else-if="selectedSkill">
-        <!-- Hero Section -->
+        <!-- Hero 区域 -->
         <header class="hero-section glass-card">
           <div class="hero-top">
             <div class="hero-icon-area">
@@ -265,7 +243,7 @@ async function handleDownload(releaseId: string) {
         </section>
       </template>
 
-      <!-- Not found -->
+      <!-- 未找到状态 -->
       <div v-else class="empty-state glass-card">
         <p>未找到该技能</p>
         <NuxtLink to="/skills" class="action-btn-secondary">返回技能市场</NuxtLink>
@@ -290,7 +268,7 @@ async function handleDownload(releaseId: string) {
   padding: 40px;
 }
 
-/* Glass card base */
+/* 玻璃卡片基础样式 */
 .glass-card {
   background: var(--bg-main);
   border: 1px solid var(--border-muted);
@@ -298,7 +276,7 @@ async function handleDownload(releaseId: string) {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
 }
 
-/* Nav */
+/* 导航区 */
 .nav-bar {
   margin-bottom: 24px;
 }
@@ -328,7 +306,7 @@ async function handleDownload(releaseId: string) {
   height: 16px;
 }
 
-/* Hero Section */
+/* 首屏区域 */
 .hero-section {
   padding: 40px;
   margin-bottom: 32px;
@@ -516,7 +494,7 @@ async function handleDownload(releaseId: string) {
   color: var(--nuxt-green) !important;
 }
 
-/* Two-column layout */
+/* 双栏布局 */
 .content-columns {
   display: grid;
   grid-template-columns: 1fr 380px;
@@ -534,7 +512,7 @@ async function handleDownload(releaseId: string) {
   gap: 20px;
 }
 
-/* README Panel */
+/* 说明文档面板 */
 .readme-panel {
   padding: 32px;
   display: flex;
@@ -558,7 +536,7 @@ async function handleDownload(releaseId: string) {
   color: var(--text-dim);
 }
 
-/* README content styles */
+/* 说明文档内容样式 */
 .readme-content {
   color: var(--text-main);
   line-height: 1.7;
@@ -650,7 +628,7 @@ async function handleDownload(releaseId: string) {
   background: var(--nuxt-green);
 }
 
-/* Sidebar cards */
+/* 侧栏卡片 */
 .sidebar-card {
   padding: 24px;
   display: flex;
@@ -703,7 +681,7 @@ async function handleDownload(releaseId: string) {
   gap: 6px;
 }
 
-/* Install code */
+/* 安装命令代码块 */
 .install-code {
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid var(--border-main);
@@ -720,7 +698,7 @@ async function handleDownload(releaseId: string) {
   white-space: nowrap;
 }
 
-/* Release Timeline */
+/* 发布时间线 */
 .release-timeline {
   display: flex;
   flex-direction: column;
@@ -813,7 +791,7 @@ async function handleDownload(releaseId: string) {
   padding: 12px 0;
 }
 
-/* States */
+/* 状态区域 */
 .state-container {
   padding: 120px 0;
   display: flex;
@@ -849,7 +827,7 @@ async function handleDownload(releaseId: string) {
   font-size: 1rem;
 }
 
-/* Responsive */
+/* 响应式布局 */
 @media (max-width: 960px) {
   .detail-container {
     padding: 24px 16px;

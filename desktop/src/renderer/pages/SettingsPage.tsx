@@ -11,6 +11,7 @@ const DEFAULT_APPROVAL_POLICY = {
   alwaysAllowedTools: [] as string[],
 };
 
+/** 基于默认常量创建一份独立的审批策略草稿。 */
 function createDefaultApprovalPolicy() {
   return { ...DEFAULT_APPROVAL_POLICY };
 }
@@ -29,6 +30,7 @@ function getProviderLabel(profile: any): string {
 const TABS = ["模型", "通用", "审批"] as const;
 type TabName = typeof TABS[number];
 
+/** 渲染个人设置页，管理模型、通用选项与审批策略。 */
 export default function SettingsPage() {
   const navigate = useNavigate();
   const workspace = useWorkspaceStore();
@@ -44,7 +46,7 @@ export default function SettingsPage() {
     autoApproveSkills: workspace.approvals?.autoApproveSkills ?? defaultApprovalPolicy.autoApproveSkills,
   });
 
-  // Sync approvalDraft when workspace.approvals changes
+  // 工作区审批配置变化后，同步刷新本地编辑草稿。
   useEffect(() => {
     const approvals = workspace.approvals;
     setApprovalDraft({
@@ -65,6 +67,7 @@ export default function SettingsPage() {
   const skillsRootPath = workspace.skillsRootPath ?? "未设置";
   const sessionsRootPath = workspace.sessionsRootPath ?? "未设置";
 
+  /** 测试指定模型配置的连通性并回写状态文案。 */
   async function testModelProfile(profileId: string) {
     setModelConnectivityLoading((prev) => ({ ...prev, [profileId]: true }));
     setModelConnectivityStatus((prev) => ({ ...prev, [profileId]: "测试中..." }));
@@ -80,6 +83,7 @@ export default function SettingsPage() {
     }
   }
 
+  /** 保存当前审批策略草稿。 */
   async function saveApprovalPolicy() {
     await workspace.updateApprovalPolicy({
       mode: approvalDraft.mode,
@@ -112,7 +116,7 @@ export default function SettingsPage() {
         </div>
       </header>
 
-      {/* Models tab */}
+      {/* 模型页签 */}
       {activeTab === "模型" && (
         <article className="card no-padding">
           <div className="section-header-row">
@@ -208,7 +212,7 @@ export default function SettingsPage() {
         </article>
       )}
 
-      {/* General tab */}
+      {/* 通用页签 */}
       {activeTab === "通用" && (
         <article className="card">
           <p className="eyebrow">通用</p>
@@ -217,7 +221,7 @@ export default function SettingsPage() {
         </article>
       )}
 
-      {/* Approval tab */}
+      {/* 审批页签 */}
       {activeTab === "审批" && (
         <article className="card">
           <p className="eyebrow">审批</p>

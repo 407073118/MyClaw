@@ -39,6 +39,7 @@ type AuthIntrospectResponse = {
 
 const AUTH_STORAGE_KEY = "myclaw-desktop-auth-session";
 
+/** 创建一份空登录会话，用作初始化与清空后的统一默认值。 */
 function createEmptySession(): DesktopAuthSession {
   return {
     accessToken: "",
@@ -49,6 +50,7 @@ function createEmptySession(): DesktopAuthSession {
   };
 }
 
+/** 解析本地持久化的登录会话，失败时回退为空会话。 */
 function parsePersistedSession(raw: string | null): DesktopAuthSession {
   if (!raw) {
     return createEmptySession();
@@ -60,6 +62,7 @@ function parsePersistedSession(raw: string | null): DesktopAuthSession {
   }
 }
 
+/** 计算当前会话的 access token 过期时间。 */
 function resolveSessionExpiresAt(session: DesktopAuthSession): Date | null {
   if (!session.loggedInAt || !session.expiresIn) {
     return null;
@@ -77,12 +80,12 @@ type AuthState = {
   validationChecked: boolean;
   restoring: boolean;
 
-  // Computed flags (recalculated after every set())
+  // 派生标记，每次 set 后都重新计算。
   isLoggedIn: boolean;
   isAccessTokenExpired: boolean;
   isAuthenticated: boolean;
 
-  // Actions
+  // 动作
   hydrateFromStorage: (force?: boolean) => void;
   persistSession: () => void;
   applyLoginSession: (payload: AuthLoginResponse) => void;
@@ -96,7 +99,7 @@ type AuthState = {
   logout: () => Promise<void>;
 };
 
-/** Compute derived auth flags from session state. */
+/** 根据会话状态计算登录态派生标记。 */
 function computeAuthFlags(session: DesktopAuthSession) {
   const isLoggedIn = Boolean(session.accessToken && session.user?.account);
   const expiresAt = resolveSessionExpiresAt(session);
@@ -105,7 +108,7 @@ function computeAuthFlags(session: DesktopAuthSession) {
 }
 
 export const useAuthStore = create<AuthState>()((rawSet, get) => {
-  // Wrap set() so derived flags are always recalculated after every state change.
+  // 包装 `set()`，确保每次状态变化后都重新计算派生标记。
   const set = (partial: Partial<AuthState> | ((state: AuthState) => Partial<AuthState>)) => {
     rawSet(partial as Parameters<typeof rawSet>[0]);
     const state = get();
@@ -125,9 +128,8 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
   validationChecked: false,
   restoring: false,
 
-  // NOTE: These are computed as regular properties, not JS getters, because
-  // zustand's set() uses Object.assign which does not preserve getter descriptors.
-  // They are recalculated via selectors or by calling deriveAuthFlags() after set().
+  // 这些字段使用普通属性而不是 getter，避免 zustand 的 `Object.assign`
+  // 在 set() 过程中丢失 getter 描述符；每次更新后统一重算。
   isLoggedIn: false,
   isAccessTokenExpired: false,
   isAuthenticated: false,

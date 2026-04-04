@@ -1,9 +1,9 @@
 import { Module } from "@nestjs/common";
 
-import { McpController } from "./mcp.controller";
-import { MCP_REPOSITORY } from "./mcp.repository";
-import { McpService } from "./mcp.service";
-import { PrismaMcpRepository } from "./prisma-mcp.repository";
+import { McpController } from "./controllers/mcp.controller";
+import { MCP_REPOSITORY } from "./ports/mcp.repository";
+import { McpService } from "./services/mcp.service";
+import { PrismaMcpRepository } from "./repositories/prisma-mcp.repository";
 
 @Module({
   controllers: [McpController],

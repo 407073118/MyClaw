@@ -5,11 +5,24 @@ type HubFilterType = "all" | HubItemType;
 
 const selectedType = ref<HubFilterType>("all");
 const keyword = ref("");
+const debouncedKeyword = ref("");
 const selectedItemId = ref("");
+
+/** 对 Hub 搜索词做轻量防抖，避免每次击键都直接触发请求。 */
+watch(
+  keyword,
+  (value, _previousValue, onCleanup) => {
+    const timer = setTimeout(() => {
+      debouncedKeyword.value = value.trim();
+    }, 300);
+    onCleanup(() => clearTimeout(timer));
+  },
+  { immediate: true }
+);
 
 const query = computed(() => ({
   ...(selectedType.value === "all" ? {} : { type: selectedType.value }),
-  ...(keyword.value.trim() ? { keyword: keyword.value.trim() } : {})
+  ...(debouncedKeyword.value ? { keyword: debouncedKeyword.value } : {})
 }));
 
 const { data, pending } = useLazyFetch<{ items: HubItem[] }>("/api/hub/items", {

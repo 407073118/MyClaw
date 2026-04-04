@@ -14,9 +14,11 @@ const PAGE_LABELS: Record<string, string> = {
   "/employees": "Employees",
   "/workflows": "Workflows",
   "/publish-drafts": "Publish",
+  "/me/prompt": "My Prompt",
   "/settings": "Settings",
 };
 
+/** 根据当前路由路径推断标题栏右侧的页面标签。 */
 function resolvePageLabel(pathname: string): string {
   if (PAGE_LABELS[pathname]) return PAGE_LABELS[pathname];
   for (const [prefix, label] of Object.entries(PAGE_LABELS)) {
@@ -25,6 +27,7 @@ function resolvePageLabel(pathname: string): string {
   return "MyClaw";
 }
 
+/** 渲染自定义标题栏，并兼容 macOS 交通灯占位。 */
 export default function TitleBar() {
   const api = window.myClawAPI;
   const isMac = api?.platform === "darwin";
@@ -34,7 +37,7 @@ export default function TitleBar() {
     const location = useLocation();
     pageLabel = resolvePageLabel(location.pathname);
   } catch {
-    // TitleBar may render outside Router (e.g. bootstrap splash)
+    // 标题栏在启动闪屏等场景可能运行在 Router 之外。
   }
 
   return (
@@ -45,14 +48,18 @@ export default function TitleBar() {
       {/* 左侧品牌 + 页面指示 */}
       <div className="titlebar-brand">
         <svg className="titlebar-logo" viewBox="0 0 24 24" width="14" height="14">
-          <path fill="currentColor" d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" />
+          <path
+            fill="currentColor"
+            d="M12.06 2.75 6.18 20h2.36l1.32-4.01h4.27L15.47 20h2.35L12.06 2.75Zm0 5.41 1.37 4.18h-2.76l1.39-4.18Z"
+          />
+          <path fill="currentColor" opacity="0.34" d="m12.08 9.84 2.05 6.15H9.86z" />
         </svg>
         <span className="titlebar-app-name">MyClaw</span>
         <span className="titlebar-sep">/</span>
         <span className="titlebar-page">{pageLabel}</span>
       </div>
 
-      {/* 可拖拽区域 — 覆盖标题栏大部分面积，让用户可以拖动窗口 */}
+      {/* 可拖拽区域，覆盖标题栏大部分面积，方便直接拖动窗口。 */}
       <div className="titlebar-drag-region" />
 
       <style>{`

@@ -52,7 +52,7 @@ type HubManifest = {
 };
 
 // ---------------------------------------------------------------------------
-// IPC handlers
+// IPC 处理器
 // ---------------------------------------------------------------------------
 
 const CLOUD_API_BASE = process.env.MYCLAW_CLOUD_API_URL ?? appEnv.CLOUD_API_BASE;

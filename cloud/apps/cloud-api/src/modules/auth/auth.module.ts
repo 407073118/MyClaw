@@ -1,13 +1,13 @@
 import { Module } from "@nestjs/common";
 
-import { CasInternalAuthProvider } from "./cas-internal-auth.provider";
+import { CasInternalAuthProvider } from "./providers/cas-internal-auth.provider";
 import { DatabaseModule } from "../database/database.module";
-import { AuthController } from "./auth.controller";
-import { AUTH_SESSION_REPOSITORY } from "./auth-session.repository";
-import { AuthService } from "./auth.service";
-import { INTERNAL_AUTH_PROVIDER } from "./internal-auth-provider";
-import { MockInternalAuthProvider } from "./mock-internal-auth.provider";
-import { PrismaAuthSessionRepository } from "./prisma-auth-session.repository";
+import { AuthController } from "./controllers/auth.controller";
+import { AUTH_SESSION_REPOSITORY } from "./ports/auth-session.repository";
+import { AuthService } from "./services/auth.service";
+import { INTERNAL_AUTH_PROVIDER } from "./ports/internal-auth-provider";
+import { MockInternalAuthProvider } from "./providers/mock-internal-auth.provider";
+import { PrismaAuthSessionRepository } from "./repositories/prisma-auth-session.repository";
 
 @Module({
   imports: [DatabaseModule],

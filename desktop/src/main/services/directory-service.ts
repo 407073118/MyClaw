@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
-// Directory layout (production — portable next to executable):
+// 目录布局（生产环境：数据便携存放在可执行文件旁边）：
 //
 //   <exeDir>/
 //   ├── MyClaw.exe
@@ -16,31 +16,31 @@ import { existsSync, mkdirSync } from "node:fs";
 //   │       ├── models/
 //   │       └── settings.json
 //
-// In development, data stays under Electron's default userData (%APPDATA%).
+// 开发环境下，数据保留在 Electron 默认的 userData 目录中。
 // ---------------------------------------------------------------------------
 
 export type MyClawPaths = {
-  /** Root data directory (portable in prod, userData in dev) */
+  /** 数据根目录（生产环境便携存储，开发环境使用 userData） */
   rootDir: string;
-  /** <rootDir>/myClaw — all app business data lives here */
+  /** <rootDir>/myClaw：应用业务数据主目录 */
   myClawDir: string;
-  /** <rootDir>/myClaw/skills */
+  /** <rootDir>/myClaw/skills：技能目录 */
   skillsDir: string;
-  /** <rootDir>/myClaw/sessions */
+  /** <rootDir>/myClaw/sessions：会话目录 */
   sessionsDir: string;
-  /** <rootDir>/myClaw/models */
+  /** <rootDir>/myClaw/models：模型配置目录 */
   modelsDir: string;
-  /** <rootDir>/myClaw/settings.json */
+  /** <rootDir>/myClaw/settings.json：设置文件路径 */
   settingsFile: string;
 };
 
 /**
- * Resolve the data root.
+ * 解析数据根目录。
  *
- * - **Production (packaged):** `<install dir>/data` — portable, all data next to exe
- * - **Development (unpackaged):** Electron default `userData` (%APPDATA%/myclaw-desktop)
+ * - **生产环境（已打包）：** `<install dir>/data`，所有数据跟随程序一起便携存放
+ * - **开发环境（未打包）：** 使用 Electron 默认 `userData`
  *
- * Uses `app.isPackaged` which is the reliable, official way to distinguish.
+ * 通过 `app.isPackaged` 区分是否已打包，这是官方且可靠的判断方式。
  */
 function resolveDataRoot(): string {
   // 环境变量优先，方便开发时指向已有安装目录的数据
@@ -51,11 +51,11 @@ function resolveDataRoot(): string {
     const exeDir = dirname(app.getPath("exe"));
     return join(exeDir, "data");
   }
-  // Dev mode: use Electron's default userData — stable and already has existing data
+  // 开发模式下使用 Electron 默认 userData，路径稳定且可复用既有数据
   return app.getPath("userData");
 }
 
-/** Derive all standard paths from a root directory */
+/** 根据根目录推导所有标准路径。 */
 export function derivePaths(rootDir: string): MyClawPaths {
   const myClawDir = join(rootDir, "myClaw");
   return {
@@ -68,7 +68,7 @@ export function derivePaths(rootDir: string): MyClawPaths {
   };
 }
 
-/** Ensure all directories exist on disk */
+/** 确保所有必需目录都已存在于磁盘中。 */
 function ensureDirectories(paths: MyClawPaths): void {
   for (const dir of [paths.myClawDir, paths.skillsDir, paths.sessionsDir, paths.modelsDir]) {
     if (!existsSync(dir)) {
@@ -78,16 +78,16 @@ function ensureDirectories(paths: MyClawPaths): void {
 }
 
 /**
- * Redirect Electron's userData to portable location.
+ * 将 Electron 的 userData 重定向到便携目录。
  *
- * Only applies in **production** (packaged) builds.
- * In dev mode this is a no-op — we keep the default %APPDATA% paths.
+ * 仅在**生产环境（已打包）**生效。
+ * 开发环境下该方法为空操作，继续使用默认 userData 路径。
  *
- * MUST be called before app.whenReady().
+ * 必须在 `app.whenReady()` 之前调用。
  */
 export function redirectUserData(): void {
   if (!app.isPackaged) {
-    // Dev mode: don't touch userData, keep everything in %APPDATA%
+    // 开发模式下不改写 userData，保持默认路径
     return;
   }
   const dataRoot = resolveDataRoot();
@@ -99,8 +99,8 @@ export function redirectUserData(): void {
 }
 
 /**
- * Initialize the directory service.
- * Creates all necessary sub-directories and returns resolved paths.
+ * 初始化目录服务。
+ * 该方法会创建必需的子目录，并返回解析后的路径集合。
  */
 export async function initializeDirectories(): Promise<MyClawPaths> {
   const rootDir = resolveDataRoot();

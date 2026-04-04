@@ -1,7 +1,7 @@
 /**
  * Phase 2: MCP Integration
  *
- * Tests:
+ * 测试内容：
  * - MCP-02: Config persistence (mcp-servers.json)
  * - MCP-07: MCP tools auto-registered as OpenAI function tools
  * - MCP-11: Server health state tracking
@@ -20,6 +20,7 @@ import { buildToolSchemas } from "../src/main/services/tool-schemas";
 import { McpServerManager } from "../src/main/services/mcp-server-manager";
 import type { McpTool } from "../shared/contracts/mcp";
 import { ToolRiskCategory } from "../shared/contracts/events";
+import { EXPECTED_BUILTIN_TOOL_NAMES } from "./shared/builtin-tool-contract";
 
 // ---------------------------------------------------------------------------
 // Test directory setup
@@ -150,8 +151,11 @@ describe("Phase 2: MCP tool schema generation", () => {
     ];
 
     const tools = buildToolSchemas("/test", undefined, mcpTools);
-    // 14 builtin + 2 MCP = 16
-    expect(tools.length).toBe(16);
+    expect(tools.map((tool) => tool.function.name)).toEqual([
+      ...EXPECTED_BUILTIN_TOOL_NAMES,
+      "mcp__test-server__read_file",
+      "mcp__test-server__write_file",
+    ]);
 
     const mcpReadTool = tools.find((t) => t.function.name.includes("read_file"));
     expect(mcpReadTool).toBeDefined();
@@ -183,8 +187,11 @@ describe("Phase 2: MCP tool schema generation", () => {
     }];
 
     const tools = buildToolSchemas("/test", skills, mcpTools);
-    // 14 builtin + 1 MCP + 1 skill = 16
-    expect(tools.length).toBe(16);
+    expect(tools.map((tool) => tool.function.name)).toEqual([
+      ...EXPECTED_BUILTIN_TOOL_NAMES,
+      "mcp__s1__tool1",
+      "skill_invoke__skill-1",
+    ]);
   });
 });
 

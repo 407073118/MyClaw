@@ -4,7 +4,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import type { McpServer, McpServerConfig, McpSource, McpTool } from "@shared/contracts";
 import { ToolRiskCategory } from "@shared/contracts";
 
-// ── Inline McpServerForm component ───────────────────────────────────────────
+// ── 内联 McpServerForm 组件 ──────────────────────────────────────────────────
 
 interface McpServerFormProps {
   initialValue: McpServerConfig | null;
@@ -14,6 +14,7 @@ interface McpServerFormProps {
   onCancel: () => void;
 }
 
+/** 渲染 MCP 服务表单，并兼容 stdio/http 两种传输方式。 */
 function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel }: McpServerFormProps) {
   const [transport, setTransport] = useState<"stdio" | "http">(
     initialValue?.transport ?? "stdio",
@@ -24,7 +25,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
     (initialValue?.source as McpSource) ?? "manual",
   );
   const [enabled, setEnabled] = useState(initialValue?.enabled ?? true);
-  // stdio fields
+  // `stdio` 模式表单字段。
   const [command, setCommand] = useState(
     initialValue?.transport === "stdio" ? initialValue.command ?? "" : "",
   );
@@ -39,7 +40,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
       ? initialValue.env ? JSON.stringify(initialValue.env, null, 2) : ""
       : "",
   );
-  // http fields
+  // `http` 模式表单字段。
   const [url, setUrl] = useState(
     initialValue?.transport === "http" ? initialValue.url ?? "" : "",
   );
@@ -50,6 +51,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
   );
   const [formError, setFormError] = useState("");
 
+  /** 收集表单数据并组装成 MCP 服务配置。 */
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setFormError("");
@@ -219,16 +221,19 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
   );
 }
 
-// ── Helper functions ──────────────────────────────────────────────────────────
+// ── 辅助方法 ──────────────────────────────────────────────────────────────────
 
+/** 安全提取字符串值，缺失时返回兜底文案。 */
 function safeString(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
 
+/** 判断给定值是否为可解析的时间戳字符串。 */
 function isValidTimestamp(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && Number.isFinite(Date.parse(value));
 }
 
+/** 把工具风险枚举转换成中文标签。 */
 function riskLabel(risk: McpTool["risk"]): string {
   if (risk === ToolRiskCategory.Read) return "读取";
   if (risk === ToolRiskCategory.Write) return "写入";
@@ -238,11 +243,13 @@ function riskLabel(risk: McpTool["risk"]): string {
   return "未知";
 }
 
+/** 判断工具输入 schema 是否包含 `properties` 定义。 */
 function hasSchemaProperties(schema: Record<string, unknown>): boolean {
   const props = schema.properties;
   return Boolean(props && typeof props === "object" && Object.keys(props).length > 0);
 }
 
+/** 提取 schema 中的属性定义对象。 */
 function getSchemaProperties(schema: Record<string, unknown>): Record<string, unknown> {
   const props = schema.properties;
   if (props && typeof props === "object") {
@@ -251,11 +258,13 @@ function getSchemaProperties(schema: Record<string, unknown>): Record<string, un
   return {};
 }
 
+/** 判断某个参数是否属于 schema 的必填项。 */
 function isRequiredParam(schema: Record<string, unknown>, name: string): boolean {
   const required = schema.required;
   return Array.isArray(required) && required.includes(name);
 }
 
+/** 解析参数类型字段，缺失时回退为 `any`。 */
 function resolveParamType(def: unknown): string {
   if (def && typeof def === "object") {
     const d = def as Record<string, unknown>;
@@ -264,6 +273,7 @@ function resolveParamType(def: unknown): string {
   return "any";
 }
 
+/** 解析参数描述字段，缺失时回退为空字符串。 */
 function resolveParamDesc(def: unknown): string {
   if (def && typeof def === "object") {
     const d = def as Record<string, unknown>;
@@ -272,6 +282,7 @@ function resolveParamDesc(def: unknown): string {
   return "";
 }
 
+/** 把 MCP 服务对象重新组装成可编辑的配置结构。 */
 function toServerConfig(server: McpServer, enabled = server.enabled): McpServerConfig {
   if (server.transport === "http") {
     return {
@@ -298,8 +309,9 @@ function toServerConfig(server: McpServer, enabled = server.enabled): McpServerC
   };
 }
 
-// ── McpDetailPage ─────────────────────────────────────────────────────────────
+// ── McpDetailPage 页面 ───────────────────────────────────────────────────────
 
+/** 展示 MCP 服务详情，并支持创建、编辑、同步与工具预览。 */
 export default function McpDetailPage() {
   const { id: paramId } = useParams<{ id: string }>();
   const location = useLocation();
@@ -1181,7 +1193,7 @@ export default function McpDetailPage() {
         .placeholder-icon { color: var(--text-muted, #52525b); }
         .placeholder-state p { margin: 0; color: var(--text-secondary, #b0b0b8); font-size: 13px; }
 
-        /* Form Styles */
+        /* 表单样式 */
         .server-form { display: flex; flex-direction: column; gap: 20px; }
 
         .form-grid {

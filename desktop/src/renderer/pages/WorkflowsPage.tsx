@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import React from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, X } from "lucide-react";
+import { useDialogA11y } from "../hooks/useDialogA11y";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { WorkflowSummary } from "@shared/contracts";
 
-// ── Filter types ──────────────────────────────────────────────────────────────
+// ── 筛选类型 ──────────────────────────────────────────────────────────────────
 
 interface WorkflowLibraryFilterState {
   query: string;
@@ -12,13 +14,14 @@ interface WorkflowLibraryFilterState {
   sort: "updated-desc" | "name-asc" | "nodes-desc";
 }
 
-// ── WorkflowLibraryFilters ────────────────────────────────────────────────────
+// ── 工作流筛选栏 ──────────────────────────────────────────────────────────────
 
 interface FiltersProps {
   filters: WorkflowLibraryFilterState;
   onChange: (filters: WorkflowLibraryFilterState) => void;
 }
 
+/** 渲染工作流列表顶部的筛选与排序控件。 */
 function WorkflowLibraryFilters({ filters, onChange }: FiltersProps) {
   return (
     <div className="filters-bar">
@@ -56,7 +59,7 @@ function WorkflowLibraryFilters({ filters, onChange }: FiltersProps) {
   );
 }
 
-// ── WorkflowLibraryCard ───────────────────────────────────────────────────────
+// ── 工作流卡片 ────────────────────────────────────────────────────────────────
 
 interface WorkflowLibraryCardProps {
   summary: WorkflowSummary;
@@ -64,6 +67,7 @@ interface WorkflowLibraryCardProps {
   onDelete: () => void;
 }
 
+/** 渲染单个工作流摘要卡片，并提供运行与删除入口。 */
 function WorkflowLibraryCard({ summary, onExecute, onDelete }: WorkflowLibraryCardProps) {
   const navigate = useNavigate();
   const statusLabel: Record<string, string> = {
@@ -72,10 +76,22 @@ function WorkflowLibraryCard({ summary, onExecute, onDelete }: WorkflowLibraryCa
     archived: "已归档",
   };
 
+  /** 处理卡片键盘触发，让回车和空格键都能进入详情页。 */
+  function handleCardKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    navigate(`/workflows/${encodeURIComponent(summary.id)}`);
+  }
+
   return (
     <article
       className="workflow-card"
       onClick={() => navigate(`/workflows/${encodeURIComponent(summary.id)}`)}
+      role="button"
+      tabIndex={0}
+      aria-label={`查看工作流 ${summary.name}`}
+      onKeyDown={handleCardKeyDown}
     >
       <div className="wf-card-header">
         <span className="wf-card-name">{summary.name}</span>
@@ -106,22 +122,26 @@ function WorkflowLibraryCard({ summary, onExecute, onDelete }: WorkflowLibraryCa
   );
 }
 
-// ── Helper sort/filter functions ──────────────────────────────────────────────
+// ── 排序与筛选辅助方法 ────────────────────────────────────────────────────────
 
+/** 生成可安全比较的名称字段。 */
 function safeComparableName(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+/** 生成可安全比较的更新时间戳。 */
 function safeComparableUpdatedAt(value: unknown): number {
   return typeof value === "string" && Number.isFinite(Date.parse(value)) ? Date.parse(value) : -1;
 }
 
+/** 生成可安全比较的节点数量。 */
 function safeComparableNodeCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : -1;
 }
 
-// ── WorkflowsPage ─────────────────────────────────────────────────────────────
+// ── WorkflowsPage 页面 ────────────────────────────────────────────────────────
 
+/** 渲染工作流资源库，并负责创建、筛选与运行入口。 */
 export default function WorkflowsPage() {
   const workspace = useWorkspaceStore();
   const navigate = useNavigate();
@@ -133,11 +153,30 @@ export default function WorkflowsPage() {
   const [draftCode, setDraftCode] = useState("");
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
+  const createNameInputRef = useRef<HTMLInputElement>(null);
   const [filters, setFilters] = useState<WorkflowLibraryFilterState>({
     query: "",
     status: "all",
     sort: "updated-desc",
   });
+
+  /** 关闭工作流创建弹窗。 */
+  const closeCreateModal = useCallback(() => {
+    setShowCreateModal(false);
+  }, []);
+
+  const { captureTrigger: captureCreateTrigger } = useDialogA11y({
+    isOpen: showCreateModal,
+    onClose: closeCreateModal,
+    initialFocusRef: createNameInputRef,
+    dialogName: "workflow-create",
+  });
+
+  /** 打开工作流创建弹窗，并记录触发按钮。 */
+  const openCreateModal = useCallback((trigger?: HTMLElement | null) => {
+    captureCreateTrigger(trigger);
+    setShowCreateModal(true);
+  }, [captureCreateTrigger]);
 
   useEffect(() => {
     if (
@@ -151,6 +190,7 @@ export default function WorkflowsPage() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** 归一化工作流摘要来源，优先使用 summary map。 */
   function normalizeSummaries(): WorkflowSummary[] {
     const values = Object.values(workspace.workflowSummaries ?? {}) as WorkflowSummary[];
     const cleaned = values.filter(
@@ -187,6 +227,7 @@ export default function WorkflowsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace.workflowSummaries, workspace.workflows, filters]);
 
+  /** 启动指定工作流运行，并在失败时提示原因。 */
   async function handleExecute(workflowId: string) {
     try {
       const run = await workspace.startWorkflowRun(workflowId) as { id: string };
@@ -200,6 +241,7 @@ export default function WorkflowsPage() {
     }
   }
 
+  /** 处理工作流删除入口，当前仍处于占位交互阶段。 */
   async function handleDelete(workflowId: string) {
     if (
       !confirm(
@@ -210,6 +252,7 @@ export default function WorkflowsPage() {
     alert(`Delete operation for ${workflowId} called. UI update only for now.`);
   }
 
+  /** 创建新工作流，并写入一个最小可用的起止节点图。 */
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (isCreating) return;
@@ -280,7 +323,7 @@ export default function WorkflowsPage() {
         <div className="header-actions">
           <button
             className="btn-premium accent new-workflow-btn"
-            onClick={() => setShowCreateModal(true)}
+            onClick={(event) => openCreateModal(event.currentTarget)}
           >
             <Plus size={18} className="icon-plus" />
             <span>新建工作流</span>
@@ -318,15 +361,22 @@ export default function WorkflowsPage() {
         <div
           className="modal-overlay"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setShowCreateModal(false);
+            if (e.target === e.currentTarget) closeCreateModal();
           }}
         >
-          <div className="modal-content">
+          <div
+            className="modal-content"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workflow-create-dialog-title"
+          >
             <header className="modal-header">
-              <h3>新建工作流</h3>
+              <h3 id="workflow-create-dialog-title">新建工作流</h3>
               <button
+                type="button"
                 className="icon-button close-btn"
-                onClick={() => setShowCreateModal(false)}
+                aria-label="关闭新建工作流弹窗"
+                onClick={closeCreateModal}
               >
                 <X size={20} />
               </button>
@@ -348,6 +398,7 @@ export default function WorkflowsPage() {
               <label className="field">
                 <span>名称</span>
                 <input
+                  ref={createNameInputRef}
                   value={draftName}
                   onChange={(e) => setDraftName(e.target.value)}
                   data-testid="workflow-create-name"
@@ -370,7 +421,7 @@ export default function WorkflowsPage() {
                 <button
                   className="secondary"
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={closeCreateModal}
                 >
                   取消
                 </button>

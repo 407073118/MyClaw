@@ -3,8 +3,9 @@ import { Link } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { McpServer, McpServerConfig } from "@shared/contracts";
 
-// ── Helper ────────────────────────────────────────────────────────────────────
+// ── 辅助方法 ──────────────────────────────────────────────────────────────────
 
+/** 将运行时中的 MCP 服务对象转换成可提交的配置结构。 */
 function toServerConfig(server: McpServer, enabled = server.enabled): McpServerConfig {
   if (server.transport === "http") {
     return {
@@ -31,7 +32,7 @@ function toServerConfig(server: McpServer, enabled = server.enabled): McpServerC
   };
 }
 
-// ── McpLibraryCard ────────────────────────────────────────────────────────────
+// ── MCP 卡片组件 ──────────────────────────────────────────────────────────────
 
 interface McpLibraryCardProps {
   server: McpServer;
@@ -39,6 +40,7 @@ interface McpLibraryCardProps {
   onToggle: (id: string) => void;
 }
 
+/** 渲染单个 MCP 服务卡片，并暴露刷新与启停操作。 */
 function McpLibraryCard({ server, onRefresh, onToggle }: McpLibraryCardProps) {
   const health = server.state?.health ?? server.health ?? "unknown";
   const connected = server.state?.connected ?? false;
@@ -101,8 +103,9 @@ function McpLibraryCard({ server, onRefresh, onToggle }: McpLibraryCardProps) {
   );
 }
 
-// ── McpPage ───────────────────────────────────────────────────────────────────
+// ── McpPage 页面 ──────────────────────────────────────────────────────────────
 
+/** 展示全局 MCP 服务列表，并支持导入外部配置。 */
 export default function McpPage() {
   const workspace = useWorkspaceStore();
   const servers = workspace.mcpServers;

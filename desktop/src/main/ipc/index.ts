@@ -5,6 +5,7 @@ import { registerCloudHandlers } from "./cloud";
 import { registerEmployeeHandlers } from "./employees";
 import { registerMcpHandlers } from "./mcp";
 import { registerModelHandlers } from "./models";
+import { registerPersonalPromptHandlers } from "./personal-prompt";
 import { registerSessionHandlers } from "./sessions";
 import { registerToolHandlers } from "./tools";
 import { registerSkillFileHandlers } from "./skill-files";
@@ -19,6 +20,7 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerBootstrapHandlers(ctx);
   registerSessionHandlers(ctx);
   registerModelHandlers(ctx);
+  registerPersonalPromptHandlers(ctx);
   registerToolHandlers(ctx);
   registerMcpHandlers(ctx);
   registerApprovalHandlers(ctx);

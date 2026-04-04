@@ -11,8 +11,8 @@ import {
 } from "./workflow-canvas-geometry";
 import { getWorkflowNodeKindLabel, isGeneratedScopedReference } from "./workflow-node-factory";
 
-const NODE_WIDTH = 200;
-const NODE_HEIGHT = 80;
+const NODE_WIDTH = 260;
+const NODE_HEIGHT = 88;
 const TERMINAL_NODE_WIDTH = 120;
 const TERMINAL_NODE_HEIGHT = 48;
 const MIN_CANVAS_WIDTH = 1200;
@@ -90,6 +90,7 @@ const nodeIconMap: Record<string, React.ElementType> = {
   end: Square,
 };
 
+/** 根据节点类型返回画布节点的默认尺寸。 */
 function getNodeDimensions(kind: string) {
   if (kind === "start" || kind === "end") {
     return { width: TERMINAL_NODE_WIDTH, height: TERMINAL_NODE_HEIGHT };
@@ -97,6 +98,7 @@ function getNodeDimensions(kind: string) {
   return { width: NODE_WIDTH, height: NODE_HEIGHT };
 }
 
+/** 解析工作流定义中的 editor 字段，缺省时生成回退布局。 */
 function createResolvedEditor(definition: WorkflowDefinition): WorkflowEditorMetadata {
   const layouts = definition.editor?.canvas.nodes?.length
     ? definition.editor.canvas.nodes.map((layout) => ({
@@ -116,6 +118,7 @@ function createResolvedEditor(definition: WorkflowDefinition): WorkflowEditorMet
   };
 }
 
+/** 深拷贝 editor 数据，避免拖拽过程直接污染上游状态。 */
 function cloneEditor(editor: WorkflowEditorMetadata): WorkflowEditorMetadata {
   return {
     canvas: {
@@ -128,6 +131,7 @@ function cloneEditor(editor: WorkflowEditorMetadata): WorkflowEditorMetadata {
   };
 }
 
+/** 为连线生成三次贝塞尔曲线路径。 */
 function buildEdgePath(start: WorkflowCanvasPoint, end: WorkflowCanvasPoint): string {
   const controlOffset = Math.max(EDGE_CURVE_OFFSET, Math.abs(end.y - start.y) * 0.35);
   return [
@@ -136,11 +140,13 @@ function buildEdgePath(start: WorkflowCanvasPoint, end: WorkflowCanvasPoint): st
   ].join(" ");
 }
 
-function clipSummary(text: string, maxLength = 38) {
+/** 裁剪节点摘要长度，避免画布卡片被长文本撑爆。 */
+function clipSummary(text: string, maxLength = 64) {
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength)}…`;
 }
 
+/** 生成条件节点的摘要文案，方便在画布上快速浏览。 */
 function conditionNodeSummary(node: WorkflowConditionCarrier) {
   const config = node.condition ?? {};
   const operator = typeof config.operator === "string" && config.operator.trim() ? config.operator : "exists";
@@ -162,14 +168,15 @@ function conditionNodeSummary(node: WorkflowConditionCarrier) {
   return clipSummary(`${expression} | T:${trueNodeId || "-"} F:${falseNodeId || "-"}`, 72);
 }
 
+/** 生成节点摘要文案，按节点种类展示最关键配置。 */
 function nodeSummary(node: WorkflowNode): string {
   if (node.kind === "start") return "入口节点";
   if (node.kind === "end") return "结束节点";
   if (node.kind === "llm") {
     if (!node.llm.prompt || node.llm.prompt.includes("请补充") || node.llm.prompt.includes("请根据当前状态")) {
-      return "待配置提示词";
+      return "待配置个性";
     }
-    return clipSummary(node.llm.prompt || "未配置提示词");
+    return clipSummary(node.llm.prompt || "未配置个性");
   }
   if (node.kind === "tool") {
     if (isGeneratedScopedReference("tool", node.id, node.tool.toolId)) return "待选择工具";
@@ -190,6 +197,7 @@ function nodeSummary(node: WorkflowNode): string {
   return clipSummary((node as WorkflowNode).kind);
 }
 
+/** 渲染工作流画布，并处理拖拽、连线、平移等交互。 */
 export default function WorkflowCanvas({
   definition,
   selectedNodeId: propSelectedNodeId = null,
@@ -209,7 +217,7 @@ export default function WorkflowCanvas({
   const [connectionState, setConnectionState] = useState<ConnectionState | null>(null);
   const [localEditor, setLocalEditor] = useState<WorkflowEditorMetadata>(() => createResolvedEditor(definition));
 
-  // Mutable refs for event handlers to avoid stale closures
+  // 为事件处理器保留可变引用，避免闭包拿到过期状态。
   const dragStateRef = useRef(dragState);
   const panStateRef = useRef(panState);
   const connectionStateRef = useRef(connectionState);
@@ -223,7 +231,7 @@ export default function WorkflowCanvas({
   const selectedEdgeId = propSelectedEdgeId ?? null;
   const isDeleteNodeDisabled = selectedNodeId === definition.entryNodeId;
 
-  // Reset editor when definition changes
+  // 工作流定义变化后，重建本地 editor 状态并清空交互上下文。
   useEffect(() => {
     setLocalEditor(createResolvedEditor(definition));
     setDragState(null);
@@ -231,6 +239,7 @@ export default function WorkflowCanvas({
     setConnectionState(null);
   }, [definition]);
 
+  /** 获取指定节点在画布中的当前位置，缺省时退回到稳定默认值。 */
   function getNodePosition(nodeId: string): WorkflowCanvasPoint {
     const existingLayout = findNodeLayout(localEditor.canvas.nodes, nodeId);
     if (existingLayout) return existingLayout.position;
@@ -240,14 +249,17 @@ export default function WorkflowCanvas({
     return fallbackLayout?.position ?? { x: 300, y: 60 };
   }
 
+  /** 统计节点的出边数量。 */
   function countOutgoingEdges(nodeId: string) {
     return definition.edges.filter((edge) => edge.fromNodeId === nodeId).length;
   }
 
+  /** 按节点 ID 查询工作流节点。 */
   function findWorkflowNode(nodeId: string) {
     return definition.nodes.find((node) => node.id === nodeId) ?? null;
   }
 
+  /** 更新节点在画布中的位置，并同步 editor 草稿。 */
   function updateNodePosition(nodeId: string, position: WorkflowCanvasPoint) {
     setLocalEditor((prev) => {
       const layouts = [...prev.canvas.nodes];
@@ -482,7 +494,7 @@ export default function WorkflowCanvas({
         : point;
       setConnectionState((prev) => (prev ? { ...prev, pointer: canvasPoint } : null));
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleWindowPointerUp = useCallback(() => {
     const hadDrag = Boolean(dragStateRef.current || panStateRef.current);
@@ -731,6 +743,7 @@ export default function WorkflowCanvas({
                     ].filter(Boolean).join(" ")}
                     style={{
                       width: `${rn.width}px`,
+                      height: `${rn.height}px`,
                       transform: `translate(${rn.position.x}px, ${rn.position.y}px)`,
                     }}
                     onClick={(e) => { e.stopPropagation(); onSelectNode(rn.node.id); }}
@@ -1037,15 +1050,21 @@ export default function WorkflowCanvas({
           font-weight: 600;
           color: #f4f4f5;
           line-height: 1.3;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .node-summary {
           margin: 0;
           font-size: 11px;
-          line-height: 1.3;
+          line-height: 1.4;
           color: #71717a;
           overflow: hidden;
           text-overflow: ellipsis;
-          white-space: nowrap;
+          display: -webkit-box;
+          -webkit-line-clamp: 2;
+          -webkit-box-orient: vertical;
+          word-break: break-all;
         }
         .node-handle {
           position: absolute;

@@ -330,10 +330,10 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
 
     <Teleport to="body">
       <div v-if="showPublishModal" class="modal-overlay">
-        <div class="modal-content glass-card-nx">
+        <div class="modal-content glass-card-nx" role="dialog" aria-modal="true" aria-labelledby="mcp-publish-dialog-title">
           <header class="modal-header">
-            <h3>发布新版本</h3>
-            <button class="close-btn" @click="showPublishModal = false">&times;</button>
+            <h3 id="mcp-publish-dialog-title">发布新版本</h3>
+            <button type="button" class="close-btn" @click="showPublishModal = false">&times;</button>
           </header>
 
           <form class="publication-form" @submit.prevent="handlePublish">

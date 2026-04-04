@@ -1,9 +1,9 @@
 /**
- * OpenAI function calling schemas for builtin tools.
+ * 为内置工具定义 OpenAI function calling 所需的 schema。
  *
- * These schemas are sent to the model as the `tools` parameter so it can
- * invoke tools via function calling. Each tool has a JSON Schema for its
- * parameters — the model generates structured arguments instead of free-text.
+ * 这些 schema 会作为 `tools` 参数传给模型，
+ * 让模型通过函数调用来触发工具。每个工具都对应一份 JSON Schema，
+ * 因此模型返回的是结构化参数，而不是自由文本。
  */
 
 import type { McpTool, SkillDefinition } from "@shared/contracts";
@@ -18,8 +18,8 @@ export type OpenAIFunctionTool = {
 };
 
 /**
- * Build the OpenAI function calling tool definitions for all enabled builtin tools.
- * The `cwd` parameter is used in descriptions to tell the model the working directory.
+ * 为所有启用中的内置工具构建 OpenAI function calling 定义。
+ * `cwd` 会写入描述中，用于告诉模型当前工作目录。
  */
 export function buildToolSchemas(
   cwd: string,
@@ -512,10 +512,10 @@ export function buildToolSchemas(
     },
   ];
 
-  // Generate MCP tool schemas
+  // 生成 MCP 工具 schema
   if (mcpTools && mcpTools.length > 0) {
     for (const tool of mcpTools) {
-      // Function name: mcp__<serverId_short>__<toolName>
+      // 函数名格式：mcp__<serverId_short>__<toolName>
       const safeName = tool.id.replace(/[^a-zA-Z0-9_-]/g, "_");
       staticTools.push({
         type: "function",
@@ -532,7 +532,7 @@ export function buildToolSchemas(
     }
   }
 
-  // Generate skill invoke tools
+  // 生成 skill invoke 工具
   if (skills && skills.length > 0) {
     for (const skill of skills) {
       if (!skill.enabled || skill.disableModelInvocation) continue;
@@ -555,7 +555,7 @@ export function buildToolSchemas(
       });
     }
 
-    // skill_view — model calls this AFTER completing work to open an HTML panel with data
+    // skill_view：模型应在完成工作后调用它，并携带数据打开 HTML 面板
     const viewSkills = skills.filter((s) => s.enabled && s.hasViewFile && s.viewFiles && s.viewFiles.length > 0);
     if (viewSkills.length > 0) {
       const allPages = viewSkills.flatMap((s) => (s.viewFiles || []).map((f: string) => `${s.id}:${f}`));
@@ -591,8 +591,8 @@ export function buildToolSchemas(
 }
 
 /**
- * Map tool function names back to builtin tool IDs.
- * Function names use underscores (OpenAI convention), tool IDs use dots.
+ * 将工具函数名映射回内置工具 ID。
+ * 函数名使用下划线（OpenAI 约定），工具 ID 使用点号。
  */
 export function functionNameToToolId(name: string): string {
   if (name.startsWith("skill_invoke__")) {
@@ -601,8 +601,8 @@ export function functionNameToToolId(name: string): string {
   if (name === "skill_view") {
     return "skill.view";
   }
-  // browser tools: only replace the first underscore (after "browser")
-  // to preserve multi-word action names like "press_key" → "browser.press_key"
+  // browser 工具：只替换第一个下划线（位于 "browser" 之后）
+  // 以保留 press_key 这类多词动作名，映射为 "browser.press_key"
   if (name.startsWith("browser_")) {
     return "browser." + name.slice("browser_".length);
   }
@@ -610,7 +610,7 @@ export function functionNameToToolId(name: string): string {
 }
 
 /**
- * Convert structured tool call arguments into the label format expected by BuiltinToolExecutor.
+ * 将结构化工具参数转换成 BuiltinToolExecutor 期望的 label 格式。
  */
 export function buildToolLabel(functionName: string, args: Record<string, unknown>): string {
   const toolId = functionNameToToolId(functionName);
@@ -626,7 +626,7 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
     }
 
     case "fs.edit":
-      // Pass as JSON so the executor can parse structured args
+      // 以 JSON 形式传递，便于执行器解析结构化参数
       return JSON.stringify({
         path: args.path ?? "",
         old_string: args.old_string ?? "",
@@ -676,19 +676,19 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
     }
 
     case "skill.view":
-      // Pass the full args as JSON so executor can parse skill_id, page, and data
+      // 把完整参数作为 JSON 传递，便于执行器解析 skill_id、page 和 data
       return JSON.stringify(args);
 
     default: {
-      // browser.* — pass full args as JSON for the executor to parse
+      // browser.*：以完整 JSON 形式传递，供执行器解析
       if (toolId.startsWith("browser.")) {
         return JSON.stringify(args);
       }
-      // Check if it's a skill invoke
+      // 检查是否为 skill invoke
       if (toolId.startsWith("skill_invoke__")) {
         return String(args.input ?? "");
       }
-      // Fallback: join all values
+      // 兜底：直接拼接所有参数值
       return Object.values(args).map(String).join(" ");
     }
   }

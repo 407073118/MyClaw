@@ -8,13 +8,14 @@ import type { DiscoveredMcpServer } from "../services/mcp-server-manager";
 type CreateMcpServerInput = Omit<McpServerConfig, "id">;
 type UpdateMcpServerInput = Partial<Omit<McpServerConfig, "id">>;
 
+/** 注册 MCP 相关 IPC 处理器。 */
 export function registerMcpHandlers(ctx: RuntimeContext): void {
-  // List all configured MCP servers with their live state
+  // 列出全部 MCP 服务及其实时状态。
   ipcMain.handle("mcp:list-servers", async (): Promise<McpServer[]> => {
     return ctx.services.listMcpServers();
   });
 
-  // Create a new MCP server configuration
+  // 创建新的 MCP 服务配置。
   ipcMain.handle(
     "mcp:create-server",
     async (_event, input: CreateMcpServerInput): Promise<McpServer> => {
@@ -25,7 +26,7 @@ export function registerMcpHandlers(ctx: RuntimeContext): void {
     },
   );
 
-  // Update an existing MCP server configuration
+  // 更新现有 MCP 服务配置。
   ipcMain.handle(
     "mcp:update-server",
     async (_event, id: string, updates: UpdateMcpServerInput): Promise<McpServer> => {
@@ -40,7 +41,7 @@ export function registerMcpHandlers(ctx: RuntimeContext): void {
     },
   );
 
-  // Delete an MCP server configuration
+  // 删除 MCP 服务配置。
   ipcMain.handle("mcp:delete-server", async (_event, id: string): Promise<{ success: boolean }> => {
     if (!ctx.services.mcpManager) {
       return { success: false };
@@ -49,7 +50,7 @@ export function registerMcpHandlers(ctx: RuntimeContext): void {
     return { success: deleted };
   });
 
-  // Refresh (reconnect / re-probe) an MCP server
+  // 刷新 MCP 服务，包含重连和重新探测。
   ipcMain.handle(
     "mcp:refresh-server",
     async (_event, id: string): Promise<McpServer> => {
@@ -60,7 +61,7 @@ export function registerMcpHandlers(ctx: RuntimeContext): void {
     },
   );
 
-  // Connect a specific server
+  // 主动连接指定 MCP 服务。
   ipcMain.handle(
     "mcp:connect-server",
     async (_event, id: string): Promise<McpServer> => {
@@ -71,13 +72,13 @@ export function registerMcpHandlers(ctx: RuntimeContext): void {
     },
   );
 
-  // Discover MCP servers from external tools (Claude Desktop, Cursor)
+  // 从外部工具配置中发现 MCP 服务。
   ipcMain.handle("mcp:discover-external", async (): Promise<DiscoveredMcpServer[]> => {
     if (!ctx.services.mcpManager) return [];
     return ctx.services.mcpManager.discoverExternalServers();
   });
 
-  // Import selected discovered servers
+  // 导入选中的外部 MCP 服务。
   ipcMain.handle(
     "mcp:import-servers",
     async (_event, servers: DiscoveredMcpServer[]): Promise<McpServer[]> => {

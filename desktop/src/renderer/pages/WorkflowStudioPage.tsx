@@ -559,6 +559,7 @@ export default function WorkflowStudioPage() {
                   definition={workflowDefinition}
                   selectedNodeId={selectedNodeId}
                   selectedEdgeId={selectedEdgeId}
+                  compact
                 />
               ) : definitionError ? (
                 <p className="error-copy" style={{ padding: "20px" }}>
@@ -774,7 +775,8 @@ export default function WorkflowStudioPage() {
         .flex-fill { flex: 1; min-height: 0; }
 
         .studio-right-panel {
-          width: 360px;
+          width: 440px;
+          min-width: 400px;
           border-left: 1px solid #27272a;
           background: #161618;
           display: flex;
@@ -949,7 +951,10 @@ export default function WorkflowStudioPage() {
         }
 
         @media (max-width: 1200px) {
-          .studio-right-panel { width: 320px; }
+          .studio-right-panel {
+            width: 380px;
+            min-width: 340px;
+          }
         }
       `}</style>
     </div>

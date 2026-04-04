@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 
+/** 编辑员工实体的角色信息与绑定工作流。 */
 export default function EmployeeStudioPage() {
   const { id: employeeId = "" } = useParams<{ id: string }>();
   const workspace = useWorkspaceStore();
@@ -15,14 +16,14 @@ export default function EmployeeStudioPage() {
   const [saveError, setSaveError] = useState("");
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
 
-  // Draft state — mirrors employee
+  // 草稿状态，与当前员工实体保持同构。
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
   const [draftStatus, setDraftStatus] = useState<"draft" | "active" | "archived">("draft");
   const [draftSource, setDraftSource] = useState<"personal" | "enterprise" | "hub">("personal");
   const [draftWorkflowIds, setDraftWorkflowIds] = useState<string[]>([]);
 
-  // Sync draft from employee whenever employee changes
+  // 员工详情变化后，把最新数据同步到本地草稿。
   useEffect(() => {
     if (!employee) return;
     setDraftName(employee.name);
@@ -32,6 +33,7 @@ export default function EmployeeStudioPage() {
     setDraftWorkflowIds([...employee.workflowIds]);
   }, [employee]);
 
+  // 首次进入时补齐员工详情和工作流列表。
   useEffect(() => {
     async function init() {
       if (employeeId) {
@@ -44,11 +46,13 @@ export default function EmployeeStudioPage() {
     init();
   }, [employeeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** 绑定当前下拉中选中的工作流，避免重复添加。 */
   function bindWorkflow() {
     if (!selectedWorkflowId || draftWorkflowIds.includes(selectedWorkflowId)) return;
     setDraftWorkflowIds((prev) => [...prev, selectedWorkflowId]);
   }
 
+  /** 保存员工编辑内容。 */
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     if (!employeeId) return;

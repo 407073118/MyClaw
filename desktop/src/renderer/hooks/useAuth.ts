@@ -1,9 +1,6 @@
 import { useAuthStore, type DesktopAuthSession, type AuthUser } from "../stores/auth";
 
-/**
- * Convenience hook for consuming the auth store.
- * Provides typed access to session state and auth actions.
- */
+/** 便捷封装认证 store，统一暴露常用状态与动作。 */
 export function useAuth() {
   const session = useAuthStore((s) => s.session);
   const hydrated = useAuthStore((s) => s.hydrated);
@@ -22,24 +19,24 @@ export function useAuth() {
   const clearSession = useAuthStore((s) => s.clearSession);
 
   return {
-    // State
+    // 基础状态
     session,
     hydrated,
     validationChecked,
     restoring,
 
-    // Derived
+    // 派生状态
     isLoggedIn,
     isAuthenticated,
     isAccessTokenExpired,
 
-    /** Shortcut to the current user object. */
+    /** 当前登录用户对象的快捷访问入口。 */
     user: session.user as AuthUser | null,
 
-    /** Access token for use in API calls. */
+    /** 便于接口调用直接取用的 access token。 */
     accessToken: session.accessToken,
 
-    // Actions
+    // 动作
     login,
     logout,
     refreshSession,

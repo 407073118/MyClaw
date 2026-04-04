@@ -11,18 +11,20 @@ const DEFAULT_MODEL = {
   model: "qwen3.5-plus",
 };
 
+/** 首次启动引导页，帮助用户快速配置默认模型。 */
 export default function SetupPage() {
   const navigate = useNavigate();
   const workspace = useWorkspaceStore();
   const [saving, setSaving] = useState(false);
 
-  // Model config state
+  // 模型配置表单状态。
   const [modelName, setModelName] = useState(DEFAULT_MODEL.name);
   const [modelBaseUrl, setModelBaseUrl] = useState(DEFAULT_MODEL.baseUrl);
   const [modelApiKey, setModelApiKey] = useState(DEFAULT_MODEL.apiKey);
   const [modelId, setModelId] = useState(DEFAULT_MODEL.model);
   const [modelError, setModelError] = useState("");
 
+  /** 保存默认模型配置，并通知工作区退出初始化状态。 */
   async function handleFinish() {
     if (!modelApiKey.trim()) {
       setModelError("请输入 API Key。");
@@ -32,7 +34,7 @@ export default function SetupPage() {
     setModelError("");
 
     try {
-      // Create the default model profile via IPC
+      // 通过 IPC 创建默认模型配置。
       const result = await window.myClawAPI.createModelProfile({
         name: modelName,
         provider: DEFAULT_MODEL.provider,
@@ -42,7 +44,7 @@ export default function SetupPage() {
         model: modelId,
       } as any);
 
-      // Update workspace store so AppShell won't redirect back to /setup
+      // 更新工作区状态，避免 AppShell 再次跳回初始化页。
       workspace.addModelAndClearSetup(result.profile);
 
       navigate("/", { replace: true });
@@ -150,7 +152,7 @@ export default function SetupPage() {
           font-size: 14px;
         }
 
-        /* Step content */
+        /* 步骤内容区 */
         .setup-step {
           display: flex;
           gap: 16px;
@@ -162,7 +164,7 @@ export default function SetupPage() {
           gap: 14px;
         }
 
-        /* Model form */
+        /* 模型配置表单 */
         .model-form {
           display: grid;
           gap: 14px;
@@ -206,7 +208,7 @@ export default function SetupPage() {
           border: 1px solid rgba(248, 113, 113, 0.24);
         }
 
-        /* Buttons */
+        /* 操作按钮 */
         .continue-btn {
           height: 48px;
           border: none;

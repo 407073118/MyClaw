@@ -5,7 +5,7 @@
 import type { ModelCapability, ModelCapabilitySource } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
 export type CapabilitySummary = {

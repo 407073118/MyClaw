@@ -1,11 +1,11 @@
 /**
- * Phase 5: Parallel tool execution & API retry tests
+ * 第 5 阶段：并行工具执行与 API 重试测试。
  *
- * Tests:
- * - isReadOnlyTool classification (read-only vs write tools)
- * - isRetryableError classification (retryable vs non-retryable)
- * - Retry delay configuration
- * - Skill tools classified as read-only
+ * 测试内容：
+ * - `isReadOnlyTool` 的只读 / 写入分类是否正确
+ * - `isRetryableError` 的可重试 / 不可重试判断是否正确
+ * - 重试延迟配置是否符合约定
+ * - Skill 工具是否被归类为只读
  */
 
 import { describe, it, expect } from "vitest";
@@ -69,7 +69,7 @@ describe("isReadOnlyTool", () => {
 // ---------------------------------------------------------------------------
 
 describe("isRetryableError", () => {
-  // --- Retryable HTTP statuses ---
+  // --- 可重试的 HTTP 状态码 ---
 
   it("retries on 429 (rate limit)", () => {
     const response = { status: 429 } as Response;
@@ -91,7 +91,7 @@ describe("isRetryableError", () => {
     expect(isRetryableError(null, response)).toBe(true);
   });
 
-  // --- Non-retryable HTTP statuses ---
+  // --- 不可重试的 HTTP 状态码 ---
 
   it("does NOT retry on 400 (bad request)", () => {
     const response = { status: 400 } as Response;
@@ -113,7 +113,7 @@ describe("isRetryableError", () => {
     expect(isRetryableError(null, response)).toBe(false);
   });
 
-  // --- Network errors ---
+  // --- 网络错误 ---
 
   it("retries on TypeError (network failure from fetch)", () => {
     const err = new TypeError("Failed to fetch");
@@ -126,7 +126,7 @@ describe("isRetryableError", () => {
     expect(isRetryableError(err)).toBe(true);
   });
 
-  // --- Non-retryable errors ---
+  // --- 不可重试的错误 ---
 
   it("does NOT retry on AbortError (user cancelled)", () => {
     const err = new Error("Aborted");
@@ -134,7 +134,7 @@ describe("isRetryableError", () => {
     expect(isRetryableError(err)).toBe(false);
   });
 
-  // --- Edge cases ---
+  // --- 边界场景 ---
 
   it("returns false for null error with no response", () => {
     expect(isRetryableError(null, null)).toBe(false);
@@ -146,21 +146,20 @@ describe("isRetryableError", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Retry configuration
+// 重试配置
 // ---------------------------------------------------------------------------
 
 describe("retry configuration", () => {
   it("uses exponential backoff delays of 1s, 2s, 4s", () => {
-    // We can't directly import RETRY_DELAYS (it's a const, not exported),
-    // but we verify the documented contract here.
+    // 这里不能直接导入 `RETRY_DELAYS`（它未导出），因此通过契约行为来验证。
     const expectedDelays = [1000, 2000, 4000];
-    // Each delay should be 2x the previous
+    // 每一档延迟都应当是前一档的 2 倍。
     expect(expectedDelays[1]).toBe(expectedDelays[0] * 2);
     expect(expectedDelays[2]).toBe(expectedDelays[1] * 2);
   });
 
   it("max retries is 3", () => {
-    // Documenting the contract: 3 retries = 4 total attempts (0, 1, 2, 3)
+    // 约定是重试 3 次，总共尝试 4 次（0, 1, 2, 3）。
     const MAX_RETRIES = 3;
     expect(MAX_RETRIES).toBe(3);
   });

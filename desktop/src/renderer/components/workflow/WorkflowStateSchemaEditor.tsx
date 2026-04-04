@@ -58,6 +58,7 @@ function validateStateSchema(fields: WorkflowStateSchemaField[]): string[] {
   return errors;
 }
 
+/** 渲染工作流状态字段编辑器，并负责字段级校验。 */
 export default function WorkflowStateSchemaEditor({
   modelValue,
   onUpdateModelValue,
@@ -67,7 +68,7 @@ export default function WorkflowStateSchemaEditor({
   const [localErrors, setLocalErrors] = useState<string[]>([]);
   const errorText = localErrors.length ? localErrors.join("; ") : "";
 
-  // Run validation when modelValue changes (like Vue's watch with immediate)
+  // `modelValue` 变化时立即重新校验，保持错误提示与保存态同步。
   const prevModelValueRef = useRef<WorkflowStateSchemaField[] | null>(null);
   useEffect(() => {
     const errors = validateStateSchema(modelValue);
@@ -96,6 +97,7 @@ export default function WorkflowStateSchemaEditor({
     onValidation({ errors });
   }
 
+  /** 处理字段值类型切换，并约束到受支持的枚举值。 */
   function handleValueTypeChange(index: number, event: React.ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value as WorkflowStateValueType | undefined;
     const nextValue: WorkflowStateValueType =
@@ -110,6 +112,7 @@ export default function WorkflowStateSchemaEditor({
     handleFieldPatch(index, { valueType: nextValue });
   }
 
+  /** 处理合并策略切换，并约束到受支持的枚举值。 */
   function handleMergeStrategyChange(index: number, event: React.ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value as WorkflowMergeStrategy | undefined;
     const nextValue: WorkflowMergeStrategy =
@@ -131,7 +134,7 @@ export default function WorkflowStateSchemaEditor({
       )}
 
       {modelValue.map((field, index) => (
-        <div key={`${field.key}:${index}`} className="row">
+        <div key={index} className="row">
           <label className="field">
             <span>Key</span>
             <input

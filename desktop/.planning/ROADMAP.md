@@ -593,6 +593,16 @@ Plans:
 - [x] 10-02 — assistant replay payload 与 tool loop replay
 - [x] 10-03 — settings/catalog 对齐与回归矩阵
 
+### Phase 11: OpenAI / Anthropic compatibility bridge
+
+**Goal:** 在已落地的通用推理运行时和 MiniMax-first adapter 之上，为 OpenAI / Anthropic 补齐 compatibility bridge、统一降级语义与跨 provider 验证矩阵，避免 reasoning/tool/replay 行为继续分叉。
+**Requirements**: TBD
+**Depends on:** Phase 10
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 11 to break down)
+
 ---
 *Roadmap created: 2026-03-31*
-*Last updated: 2026-04-04 — Phase 9/10 已完成，通用推理运行时与 MiniMax-first provider adapter 已落地*
+*Last updated: 2026-04-04 — Phase 9/10 已完成，并新增 Phase 11 进入 OpenAI / Anthropic compatibility bridge 规划*

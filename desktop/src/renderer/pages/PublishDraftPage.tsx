@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useWorkspaceStore } from "../stores/workspace";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ── 类型定义 ──────────────────────────────────────────────────────────────────
 
 interface PublishDraftRecord {
   id: string;
@@ -13,8 +13,9 @@ interface PublishDraftRecord {
   };
 }
 
-// ── PublishDraftPage ──────────────────────────────────────────────────────────
+// ── PublishDraftPage 页面 ────────────────────────────────────────────────────
 
+/** 生成可发布的员工包或工作流包草稿。 */
 export default function PublishDraftPage() {
   const workspace = useWorkspaceStore();
 
@@ -39,7 +40,7 @@ export default function PublishDraftPage() {
     }));
   }, [kind, workspace.employees, workspace.workflows]);
 
-  // Sync sourceId when sourceOptions changes
+  // 来源选项变化后，同步修正当前选中的来源 ID。
   useEffect(() => {
     if (!sourceOptions.length) {
       setSourceId("");
@@ -50,7 +51,7 @@ export default function PublishDraftPage() {
     }
   }, [sourceOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reset feedback when kind changes
+  // 切换草稿类型时，清空上一次反馈和版本输入。
   useEffect(() => {
     setDraftFeedback("");
     setSubmitError("");
@@ -58,6 +59,7 @@ export default function PublishDraftPage() {
     setVersion("");
   }, [kind]);
 
+  // 页面首次进入时，按需补齐员工与工作流数据源。
   useEffect(() => {
     if (!workspace.employees.length) {
       void workspace.loadEmployees();
@@ -90,7 +92,7 @@ export default function PublishDraftPage() {
       console.info("[publish-draft-view] 开始创建发布草稿", payload);
       const { draft } = await workspace.createPublishDraft(payload);
       setLastDraft(draft as PublishDraftRecord);
-      setDraftFeedback(`Draft "${draft.id}" staged at ${draft.filePath}`);
+      setDraftFeedback(`草稿 "${draft.id}" 已生成，位置：${draft.filePath}`);
       console.info("[publish-draft-view] 发布草稿创建完成", {
         id: draft.id,
         kind: draft.kind,
@@ -101,7 +103,7 @@ export default function PublishDraftPage() {
     } catch (error) {
       console.error("[publish-draft-view] 发布草稿创建失败", error);
       setSubmitError(
-        error instanceof Error ? error.message : "Failed to create publish draft.",
+        error instanceof Error ? error.message : "创建发布草稿失败。",
       );
     } finally {
       setIsPublishing(false);

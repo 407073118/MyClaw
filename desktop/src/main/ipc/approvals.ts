@@ -23,6 +23,7 @@ export function registerApprovalHandlers(ctx: RuntimeContext): void {
       saveSettings(ctx.runtime.paths, {
         defaultModelProfileId: ctx.state.getDefaultModelProfileId(),
         approvalPolicy: updated,
+        personalPrompt: ctx.state.getPersonalPromptProfile(),
       }).catch((err) => {
         console.error("[approval:set-policy] failed to persist settings", err);
       });

@@ -2,10 +2,10 @@ import { Module } from "@nestjs/common";
 
 import { ArtifactModule } from "../artifact/artifact.module";
 import { DatabaseModule } from "../database/database.module";
-import { HubController } from "./hub.controller";
-import { HUB_REPOSITORY } from "./hub.repository";
-import { HubService } from "./hub.service";
-import { PrismaHubRepository } from "./prisma-hub.repository";
+import { HubController } from "./controllers/hub.controller";
+import { HUB_REPOSITORY } from "./ports/hub.repository";
+import { HubService } from "./services/hub.service";
+import { PrismaHubRepository } from "./repositories/prisma-hub.repository";
 
 @Module({
   imports: [ArtifactModule, DatabaseModule],

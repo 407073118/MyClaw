@@ -1,7 +1,7 @@
 /**
  * Phase 3: Tool Approval
  *
- * Tests:
+ * 测试内容：
  * - APPR-01: High-risk tools require approval
  * - APPR-04: Approval mode configurable (always-ask / always-allow / inherit)
  * - APPR-05: Read-only tools auto-approved

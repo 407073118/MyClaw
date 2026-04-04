@@ -6,9 +6,10 @@ import WebPanel from "../components/WebPanel";
 
 import { useAuthStore } from "../stores/auth";
 import { useWorkspaceStore } from "../stores/workspace";
+import { sidebarBranding } from "../utils/app-shell-branding";
 
 // ---------------------------------------------------------------------------
-// Inline SVG icon components
+// 内联 SVG 图标组件
 // ---------------------------------------------------------------------------
 
 const IconChat = () => (
@@ -78,20 +79,34 @@ const IconSettings = () => (
   </svg>
 );
 
+const IconPrompt = () => (
+  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+    <path d="M12 2l2.4 7.4h7.6l-6.2 4.5 2.4 7.4-6.2-4.5-6.2 4.5 2.4-7.4-6.2-4.5h7.6z" />
+  </svg>
+);
+
 const IconBrand = () => (
   <svg viewBox="0 0 24 24" width="24" height="24">
-    <path fill="currentColor" d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" />
+    <path
+      fill="currentColor"
+      d="M12.06 2.75 6.18 20h2.36l1.32-4.01h4.27L15.47 20h2.35L12.06 2.75Zm0 5.41 1.37 4.18h-2.76l1.39-4.18Z"
+    />
+    <path fill="currentColor" opacity="0.34" d="m12.08 9.84 2.05 6.15H9.86z" />
   </svg>
 );
 
 const IconBrandBootstrap = () => (
   <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
-    <path fill="currentColor" d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z" />
+    <path
+      fill="currentColor"
+      d="M12.06 2.75 6.18 20h2.36l1.32-4.01h4.27L15.47 20h2.35L12.06 2.75Zm0 5.41 1.37 4.18h-2.76l1.39-4.18Z"
+    />
+    <path fill="currentColor" opacity="0.34" d="m12.08 9.84 2.05 6.15H9.86z" />
   </svg>
 );
 
 // ---------------------------------------------------------------------------
-// Nav items config
+// 导航项配置
 // ---------------------------------------------------------------------------
 
 type NavItem = {
@@ -113,9 +128,10 @@ const navItems: NavItem[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Bootstrap splash screen
+// 启动引导屏
 // ---------------------------------------------------------------------------
 
+/** 渲染工作区启动中的引导界面与重试入口。 */
 function BootstrapSplash({
   error,
   message,
@@ -166,20 +182,23 @@ function BootstrapSplash({
 }
 
 // ---------------------------------------------------------------------------
-// AppShell
+// AppShell 主壳层
 // ---------------------------------------------------------------------------
 
+/** 渲染桌面端主壳层，并负责启动引导、导航和登出流程。 */
 export default function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
 
   const auth = useAuthStore();
   const workspace = useWorkspaceStore();
+  const loadBootstrap = workspace.loadBootstrap;
 
   const isAuthenticated = auth.isAuthenticated;
   const ready = workspace.ready;
   const loading = workspace.loading;
   const error = workspace.error;
+  const requiresInitialSetup = workspace.requiresInitialSetup;
 
   const showBootstrapError = !ready && Boolean(error);
   const showBootstrapSplash = loading || (!ready && !error);
@@ -195,8 +214,9 @@ export default function AppShell() {
 
   const currentUserDisplayName = auth.session.user?.displayName ?? "未登录用户";
   const currentUserAccount = auth.session.user?.account ?? "未绑定账号";
+  const runtimeStatusLabel = !ready ? (error ? "异常" : loading ? "连接中" : "未就绪") : "";
 
-  // Load bootstrap when authenticated and not yet ready
+  // 已登录但工作区尚未就绪时，主动拉起 bootstrap。
   useEffect(() => {
     if (!isAuthenticated) {
       return;
@@ -205,20 +225,21 @@ export default function AppShell() {
       return;
     }
     console.info("[app-shell] 开始加载桌面端启动引导数据", { routePath: location.pathname });
-    void workspace.loadBootstrap();
-  }, [isAuthenticated, ready, loading, location.pathname]);
+    void loadBootstrap();
+  }, [isAuthenticated, ready, loading, location.pathname, loadBootstrap]);
 
-  // After bootstrap, redirect to /settings on first launch with no model config
+  // bootstrap 完成后，如果首次启动且没有模型配置，则跳到初始化页。
   useEffect(() => {
     if (!ready || !isAuthenticated) {
       return;
     }
-    if (workspace.requiresInitialSetup && !location.pathname.startsWith("/setup")) {
+    if (requiresInitialSetup && !location.pathname.startsWith("/setup")) {
       console.info("[app-shell] 缺少模型配置，跳转初始设置页");
       void navigate("/setup", { replace: true });
     }
-  }, [ready, isAuthenticated, workspace.requiresInitialSetup, location.pathname]);
+  }, [ready, isAuthenticated, requiresInitialSetup, location.pathname, navigate]);
 
+  /** 执行登出并返回登录页。 */
   async function handleLogout() {
     console.info("[app-shell] 用户请求退出当前账号", {
       account: auth.session.user?.account ?? null,
@@ -227,11 +248,13 @@ export default function AppShell() {
     void navigate("/login", { replace: true });
   }
 
+  /** 触发一次工作区 bootstrap 重试。 */
   function handleBootstrapRetry() {
     console.info("[app-shell] 用户请求重新加载桌面端启动引导数据");
-    void workspace.loadBootstrap();
+    void loadBootstrap();
   }
 
+  /** 判断某个导航项是否处于当前激活状态。 */
   function isNavItemActive(targetPath: string): boolean {
     if (targetPath === "/") {
       return location.pathname === targetPath;
@@ -239,7 +262,7 @@ export default function AppShell() {
     return location.pathname === targetPath || location.pathname.startsWith(`${targetPath}/`);
   }
 
-  // Show bootstrap screen while loading workspace
+  // 启动过程中优先展示 bootstrap 屏。
   if (showBootstrapScreen) {
     return (
       <BootstrapSplash
@@ -258,13 +281,13 @@ export default function AppShell() {
       <aside data-testid="app-sidebar" className="app-sidebar">
         <div className="sidebar-content">
           <header className="sidebar-header">
-            <div className="brand">
+            <div className="brand-row" aria-label={`${sidebarBranding.title} ${sidebarBranding.descriptor}`}>
               <div className="brand-logo">
                 <IconBrand />
               </div>
               <div className="brand-meta">
-                <h2>MyClaw</h2>
-                <span className="version">v0.1.0</span>
+                <span className="brand-descriptor">{sidebarBranding.descriptor}</span>
+                <h2>{sidebarBranding.title}</h2>
               </div>
             </div>
           </header>
@@ -297,12 +320,31 @@ export default function AppShell() {
               <div className="user-info">
                 <strong className="user-name">{currentUserDisplayName}</strong>
                 <span className="user-model">
-                  <span className={["model-dot", ready ? "active" : ""].filter(Boolean).join(" ")} />
-                  {defaultModelName}
+                  <span className="user-model-name">{defaultModelName}</span>
+                  {runtimeStatusLabel && (
+                    <span
+                      className={["runtime-status-chip", error ? "is-error" : ""].filter(Boolean).join(" ")}
+                    >
+                      {runtimeStatusLabel}
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
             <div className="user-card-actions">
+              <NavLink
+                data-testid="nav-personal-prompt"
+                to="/me/prompt"
+                className={["user-action-btn", location.pathname.startsWith("/me/prompt") ? "active" : ""]
+                  .filter(Boolean)
+                  .join(" ")}
+                title="我的个性"
+              >
+                <div style={{ position: "relative", display: "inline-flex" }}>
+                  <IconPrompt />
+                </div>
+                <span>个性</span>
+              </NavLink>
               <NavLink
                 data-testid="nav-settings"
                 to="/settings"
@@ -361,41 +403,61 @@ export default function AppShell() {
         }
 
         .sidebar-header {
-          margin-bottom: 40px;
-          padding: 0 8px;
+          margin-bottom: 24px;
+          padding: 2px 10px 18px;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
         }
 
-        .brand {
+        .brand-row {
           display: flex;
           align-items: center;
-          gap: 14px;
+          gap: 10px;
+          min-height: 40px;
         }
 
         .brand-logo {
-          width: 32px;
-          height: 32px;
-          background: var(--text-primary);
-          border-radius: var(--radius-md);
+          width: 30px;
+          height: 30px;
+          background: rgba(255,255,255,0.035);
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 9px;
           display: flex;
           align-items: center;
           justify-content: center;
-          color: var(--bg-base);
+          color: rgba(255,255,255,0.92);
+          flex-shrink: 0;
+        }
+
+        .brand-meta {
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          gap: 2px;
+        }
+
+        .brand-descriptor {
+          font-size: 11px;
+          line-height: 1.25;
+          font-weight: 400;
+          color: var(--text-muted);
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .brand-meta h2 {
           font-size: 16px;
+          line-height: 1.1;
           font-weight: 600;
           letter-spacing: -0.01em;
           color: var(--text-primary);
           margin: 0;
-        }
-
-        .version {
-          font-size: 10px;
-          font-weight: 500;
-          color: var(--text-muted);
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .app-nav {
@@ -503,17 +565,30 @@ export default function AppShell() {
           text-overflow: ellipsis;
         }
 
-        .model-dot {
-          width: 5px;
-          height: 5px;
-          border-radius: 50%;
-          background: var(--text-muted);
+        .user-model-name {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .runtime-status-chip {
+          display: inline-flex;
+          align-items: center;
+          height: 18px;
+          padding: 0 6px;
+          border-radius: 999px;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(255,255,255,0.05);
+          color: var(--text-secondary);
+          font-size: 10px;
+          line-height: 1;
           flex-shrink: 0;
         }
 
-        .model-dot.active {
-          background: var(--accent-cyan);
-          box-shadow: 0 0 6px var(--accent-cyan);
+        .runtime-status-chip.is-error {
+          color: #fca5a5;
+          border-color: rgba(248, 113, 113, 0.22);
+          background: rgba(248, 113, 113, 0.12);
         }
 
         .user-card-actions {
@@ -578,8 +653,21 @@ export default function AppShell() {
           }
 
           .sidebar-header {
-            justify-content: center;
             padding: 0;
+            border-bottom: none;
+          }
+
+          .brand-row {
+            width: 36px;
+            min-height: 36px;
+            justify-content: center;
+            margin: 0 auto;
+          }
+
+          .brand-logo {
+            width: 36px;
+            height: 36px;
+            border-radius: 12px;
           }
         }
       `}</style>

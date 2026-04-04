@@ -1,7 +1,7 @@
 /**
  * Phase 1: SkillTool — model can invoke loaded skills
  *
- * Tests:
+ * 测试内容：
  * - SKILL-01: buildToolSchemas generates skill_invoke__ function tools
  * - SKILL-02: Skill content (SKILL.md) is read and returned
  * - SKILL-03: Skill execution result is proper format for tool result
@@ -11,9 +11,10 @@
 import { describe, it, expect } from "vitest";
 import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../src/main/services/tool-schemas";
 import type { SkillDefinition } from "../shared/contracts/skill";
+import { EXPECTED_BUILTIN_TOOL_NAMES } from "./shared/builtin-tool-contract";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助方法
 // ---------------------------------------------------------------------------
 
 function makeSkill(overrides: Partial<SkillDefinition> = {}): SkillDefinition {
@@ -40,15 +41,17 @@ function makeSkill(overrides: Partial<SkillDefinition> = {}): SkillDefinition {
 describe("Phase 1: SkillTool schemas", () => {
   it("should include builtin tools without skills", () => {
     const tools = buildToolSchemas("/test/cwd");
-    // Should have 14 builtin tools
-    expect(tools.length).toBe(14);
+    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_BUILTIN_TOOL_NAMES);
     expect(tools.every((t) => t.type === "function")).toBe(true);
   });
 
   it("should append skill_invoke__ tools for enabled skills", () => {
     const skills = [makeSkill()];
     const tools = buildToolSchemas("/test/cwd", skills);
-    expect(tools.length).toBe(15); // 14 builtin + 1 skill
+    expect(tools.map((tool) => tool.function.name)).toEqual([
+      ...EXPECTED_BUILTIN_TOOL_NAMES,
+      "skill_invoke__test-skill-1",
+    ]);
 
     const skillTool = tools.find((t) => t.function.name.startsWith("skill_invoke__"));
     expect(skillTool).toBeDefined();
@@ -61,13 +64,13 @@ describe("Phase 1: SkillTool schemas", () => {
   it("should NOT include disabled skills", () => {
     const skills = [makeSkill({ enabled: false })];
     const tools = buildToolSchemas("/test/cwd", skills);
-    expect(tools.length).toBe(14);
+    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_BUILTIN_TOOL_NAMES);
   });
 
   it("should NOT include skills with disableModelInvocation=true", () => {
     const skills = [makeSkill({ disableModelInvocation: true })];
     const tools = buildToolSchemas("/test/cwd", skills);
-    expect(tools.length).toBe(14);
+    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_BUILTIN_TOOL_NAMES);
   });
 
   it("should handle multiple skills", () => {
@@ -77,8 +80,11 @@ describe("Phase 1: SkillTool schemas", () => {
       makeSkill({ id: "skill-c", name: "Skill C", enabled: false }),
     ];
     const tools = buildToolSchemas("/test/cwd", skills);
-    // 14 builtin + 2 enabled skills = 16
-    expect(tools.length).toBe(16);
+    expect(tools.map((tool) => tool.function.name)).toEqual([
+      ...EXPECTED_BUILTIN_TOOL_NAMES,
+      "skill_invoke__skill-a",
+      "skill_invoke__skill-b",
+    ]);
   });
 
   it("should sanitize skill IDs in function names", () => {

@@ -1,13 +1,13 @@
 /**
- * Phase 16: Context Fallback & Degradation tests
+ * 第 16 阶段：上下文降级与兜底策略测试
  *
- * Tests:
- * - ContextAssembler degrades gracefully when capability is minimal
- * - MemoryService failure does not block context assembly
- * - Compactor falls back to summary stub when model summary unavailable
- * - resolveModelCapability always returns a usable capability even with empty profile
- * - buildBudgetSnapshot handles edge cases without throwing
- * - sanitizeToolOutput handles null/undefined gracefully
+ * 测试内容：
+ * - capability 很弱时，ContextAssembler 仍能平稳降级
+ * - MemoryService 失败不会阻断上下文组装
+ * - 模型摘要不可用时，Compactor 会回退到摘要占位逻辑
+ * - 即使 profile 为空，resolveModelCapability 也总能返回可用能力
+ * - buildBudgetSnapshot 能处理边界情况且不抛错
+ * - sanitizeToolOutput 能安全处理 null / undefined 风格输入
  */
 
 import { describe, it, expect } from "vitest";
@@ -24,7 +24,7 @@ import type { ModelProfile, ChatSession, ChatMessage, ModelCapability } from "@s
 import { DEFAULT_CONTEXT_BUDGET_POLICY } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助方法
 // ---------------------------------------------------------------------------
 
 function makeProfile(overrides?: Partial<ModelProfile>): ModelProfile {
@@ -60,7 +60,7 @@ function makeSession(messages: ChatMessage[]): ChatSession {
 }
 
 // ---------------------------------------------------------------------------
-// Capability resolution fallbacks
+// Capability 解析兜底
 // ---------------------------------------------------------------------------
 
 describe("capability resolution fallbacks", () => {
@@ -97,7 +97,7 @@ describe("capability resolution fallbacks", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Budget snapshot edge cases
+// Budget 快照边界情况
 // ---------------------------------------------------------------------------
 
 describe("budget snapshot edge cases", () => {
@@ -110,7 +110,7 @@ describe("budget snapshot edge cases", () => {
     };
     // 不应抛错，应降级到默认值
     const snapshot = buildBudgetSnapshot(cap, DEFAULT_CONTEXT_BUDGET_POLICY);
-    expect(snapshot.effectiveContextWindow).toBe(32768); // fallback
+    expect(snapshot.effectiveContextWindow).toBe(32768); // 回退到默认值
     expect(snapshot.safeInputBudget).toBeGreaterThanOrEqual(0);
   });
 
@@ -125,7 +125,7 @@ describe("budget snapshot edge cases", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Context assembly degradation
+// 上下文组装降级
 // ---------------------------------------------------------------------------
 
 describe("context assembly degradation", () => {
@@ -153,13 +153,13 @@ describe("context assembly degradation", () => {
       workingDir: "/test",
     });
 
-    expect(result.messages.length).toBe(1); // just system
+    expect(result.messages.length).toBe(1); // 仅保留 system 消息
     expect(result.wasCompacted).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Memory service isolation
+// Memory 服务隔离性
 // ---------------------------------------------------------------------------
 
 describe("memory service isolation", () => {
@@ -187,7 +187,7 @@ describe("memory service isolation", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Compactor fallback
+// Compactor 兜底行为
 // ---------------------------------------------------------------------------
 
 describe("compactor fallback behavior", () => {
@@ -212,7 +212,7 @@ describe("compactor fallback behavior", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tool output sanitizer edge cases
+// 工具输出清洗边界情况
 // ---------------------------------------------------------------------------
 
 describe("tool output sanitizer edge cases", () => {
@@ -229,7 +229,7 @@ describe("tool output sanitizer edge cases", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Token estimator edge cases
+// Token 估算边界情况
 // ---------------------------------------------------------------------------
 
 describe("token estimator edge cases", () => {

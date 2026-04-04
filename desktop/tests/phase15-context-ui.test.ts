@@ -4,7 +4,7 @@
  * 由于项目无 jsdom / @testing-library/react 测试基础设施，
  * 本文件测试 UI 层使用的数据转换和格式化逻辑。
  *
- * Tests:
+ * 测试内容：
  * - formatCapabilitySource returns correct Chinese labels
  * - formatTokenCount formats token numbers readably
  * - buildCapabilitySummary returns expected shape

@@ -45,6 +45,43 @@ model InstallLog {
   @@map("install_log")
 }
 
+// ─── Hub 条目与发布 ───
+
+model HubItem {
+  id            String       @id @db.VarChar(191)
+  type          String       @db.VarChar(50)
+  name          String       @db.VarChar(255)
+  summary       String       @db.Text
+  description   String       @db.Text
+  latestVersion String?      @map("latest_version") @db.VarChar(50)
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  releases      HubRelease[]
+
+  @@index([type])
+  @@map("hub_item")
+}
+
+model HubRelease {
+  id                      String   @id @db.VarChar(191)
+  itemId                  String   @map("item_id") @db.VarChar(191)
+  version                 String   @db.VarChar(50)
+  releaseNotes            String   @map("release_notes") @db.Text
+  manifestJson            Json     @map("manifest_json")
+  artifactFileName        String   @default("") @map("artifact_file_name") @db.VarChar(255)
+  artifactFileSize        Int      @default(0) @map("artifact_file_size")
+  artifactStoragePath     String   @default("") @map("artifact_storage_path") @db.VarChar(500)
+  artifactDownloadUrl     String   @default("") @map("artifact_download_url") @db.VarChar(500)
+  artifactDownloadExpires Int      @default(0) @map("artifact_download_expires")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+  item                    HubItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, version])
+  @@index([itemId])
+  @@map("hub_release")
+}
+
 // ─── MCP 服务 ───
 
 model McpServer {
@@ -52,7 +89,7 @@ model McpServer {
   name            String             @db.VarChar(255)
   summary         String             @db.Text
   description     String             @db.Text
-  icon            String             @default("") @db.Text
+  icon            String             @default("") @db.VarChar(500)
   author          String             @default("") @db.VarChar(100)
   downloadCount   Int                @default(0) @map("download_count")
   latestVersion   String?            @map("latest_version") @db.VarChar(50)
@@ -86,7 +123,7 @@ model Skill {
   name            String         @db.VarChar(255)
   summary         String         @db.Text
   description     String         @db.Text
-  icon            String         @default("") @db.Text
+  icon            String         @default("") @db.VarChar(500)
   category        String         @default("other") @db.VarChar(50)
   tags            Json           @default("[]")
   author          String         @default("") @db.VarChar(100)

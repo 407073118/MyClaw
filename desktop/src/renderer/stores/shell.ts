@@ -5,7 +5,7 @@ type ShellState = {
   attachedDirectory: string;
   runtimeBaseUrl: string;
 
-  // Actions
+  // 动作
   setAttachedDirectory: (path: string) => void;
 };
 

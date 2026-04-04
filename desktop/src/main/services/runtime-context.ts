@@ -5,6 +5,7 @@ import type {
   LocalEmployeeSummary,
   McpServer,
   ModelProfile,
+  PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
@@ -35,6 +36,8 @@ export type RuntimeContext = {
     getApprovals: () => ApprovalPolicy;
     getApprovalRequests: () => ApprovalRequest[];
     setApprovalRequests: (requests: ApprovalRequest[]) => void;
+    getPersonalPromptProfile: () => PersonalPromptProfile;
+    setPersonalPromptProfile: (profile: PersonalPromptProfile) => void;
   };
   services: {
     refreshSkills: () => Promise<SkillDefinition[]>;

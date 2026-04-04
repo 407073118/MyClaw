@@ -16,6 +16,27 @@ type WorkflowRun = {
   completedAt: string | null;
 };
 
+/** 归一化工作流定义，确保渲染层依赖的数组字段始终存在。 */
+function normalizeWorkflowDefinition(
+  summary: WorkflowSummary,
+  raw: Partial<WorkflowDefinition> | null | undefined,
+): WorkflowDefinition {
+  const merged = {
+    ...summary,
+    ...(raw ?? {}),
+    id: summary.id,
+  } as Partial<WorkflowDefinition>;
+
+  return {
+    ...merged,
+    id: summary.id,
+    entryNodeId: typeof merged.entryNodeId === "string" ? merged.entryNodeId : "",
+    nodes: Array.isArray(merged.nodes) ? merged.nodes : [],
+    edges: Array.isArray(merged.edges) ? merged.edges : [],
+    stateSchema: Array.isArray(merged.stateSchema) ? merged.stateSchema : [],
+  } as WorkflowDefinition;
+}
+
 export function registerWorkflowHandlers(ctx: RuntimeContext): void {
   // List all workflow summaries
   ipcMain.handle("workflow:list", async (): Promise<WorkflowSummary[]> => {
@@ -26,17 +47,18 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
   ipcMain.handle(
     "workflow:get",
     async (_event, workflowId: string): Promise<WorkflowDefinition | null> => {
+      const summary = ctx.state.getWorkflows().find((w) => w.id === workflowId);
       const definition = ctx.state.workflowDefinitions[workflowId];
-      if (definition) {
-        return definition;
+      if (definition && summary) {
+        console.info("[workflow:get] 返回归一化后的工作流定义", { workflowId });
+        return normalizeWorkflowDefinition(summary, definition);
       }
       // Fall back to summary if no full definition stored
-      const summary = ctx.state.getWorkflows().find((w) => w.id === workflowId);
       if (!summary) {
         return null;
       }
-      // Return summary as a partial definition
-      return { ...summary, nodes: [], edges: [], entryNodeId: "" } as unknown as WorkflowDefinition;
+      console.info("[workflow:get] 仅存在摘要，返回最小工作流定义", { workflowId });
+      return normalizeWorkflowDefinition(summary, null);
     },
   );
 
@@ -92,12 +114,19 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       if (!existing) {
         throw new Error(`Workflow not found: ${workflowId}`);
       }
+      const existingDefinition = ctx.state.workflowDefinitions[workflowId] as Partial<WorkflowDefinition> | undefined;
       // Store the definition update
-      ctx.state.workflowDefinitions[workflowId] = {
-        ...existing,
+      ctx.state.workflowDefinitions[workflowId] = normalizeWorkflowDefinition(existing, {
+        ...existingDefinition,
         ...updates,
         id: workflowId,
-      } as WorkflowDefinition;
+      });
+      console.info("[workflow:update] 已归一化并保存工作流定义", {
+        workflowId,
+        nodes: ctx.state.workflowDefinitions[workflowId].nodes.length,
+        edges: ctx.state.workflowDefinitions[workflowId].edges.length,
+        stateSchema: ctx.state.workflowDefinitions[workflowId].stateSchema.length,
+      });
       const updated: WorkflowSummary = {
         ...existing,
         updatedAt: new Date().toISOString(),

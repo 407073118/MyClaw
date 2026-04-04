@@ -14,7 +14,7 @@ import { estimateTokenCount } from "./token-estimator";
 import { sanitizeToolOutput } from "./tool-output-sanitizer";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
 export type CompactionInput = {

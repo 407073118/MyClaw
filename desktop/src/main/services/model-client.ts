@@ -1,15 +1,15 @@
 /**
- * OpenAI-compatible (and Anthropic) model client for the main process.
- * Uses native fetch only. Self-contained — no imports from desktop packages.
+ * 主进程使用的 OpenAI 兼容（以及 Anthropic）模型客户端。
+ * 仅使用原生 fetch，自包含实现，不依赖 desktop 其他包。
  */
 
-import type { JsonValue, ModelProfile } from "@shared/contracts";
+import type { ModelProfile } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
-// Types
+// 类型
 // ---------------------------------------------------------------------------
 
-/** Content can be a plain string or multimodal array (for vision/screenshot). */
+/** 内容可以是纯字符串，也可以是多模态数组（用于视觉/截图场景）。 */
 export type ChatMessageContent =
   | string
   | Array<
@@ -29,22 +29,9 @@ export type ChatMessage = {
   }>;
 };
 
-export type AssistantReplayPayload = {
-  mode: "full-assistant" | "compatibility";
-  degradedReason: string | null;
-  message: {
-    role: "assistant";
-    content: ChatMessageContent;
-    reasoning?: string | null;
-    tool_calls?: ChatMessage["tool_calls"];
-  };
-};
-
 export type ModelCallOptions = {
   profile: ModelProfile;
   messages: ChatMessage[];
-  bodyPatch?: Record<string, JsonValue>;
-  replayPolicy?: "none" | "required";
   tools?: Array<{
     type: "function";
     function: {
@@ -59,24 +46,23 @@ export type ModelCallOptions = {
   timeoutMs?: number;
 };
 
-/** Token usage from the API response. */
+/** API 响应中的 Token 使用量。 */
 export type TokenUsage = {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
 };
 
-/** Result returned after a single streaming model call. */
+/** 单次流式模型调用完成后返回的结果。 */
 export type ModelCallResult = {
   content: string;
   reasoning?: string;
   toolCalls: ResolvedToolCall[];
-  assistantReplay?: AssistantReplayPayload;
   finishReason: string | null;
   usage?: TokenUsage;
 };
 
-/** A fully materialised tool call after SSE accumulation. */
+/** SSE 累积完成后得到的完整工具调用对象。 */
 export type ResolvedToolCall = {
   id: string;
   name: string;
@@ -85,22 +71,23 @@ export type ResolvedToolCall = {
 };
 
 // ---------------------------------------------------------------------------
-// URL resolution
+// URL 解析
 // ---------------------------------------------------------------------------
 
 /**
- * Normalise a base URL by stripping trailing slashes.
+ * 规范化 base URL，移除尾部多余斜杠。
  */
 function normalizeBaseUrl(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
 /**
- * Strip known endpoint suffixes that users may accidentally include in the
- * baseUrl field, so that we can safely append the correct suffix ourselves.
+ * 去掉用户可能误填在 baseUrl 中的已知接口后缀，
+ * 以便后续由程序安全地补上正确的后缀。
  *
- * E.g. "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
- *  →   "https://dashscope.aliyuncs.com"
+ * 例如：
+ * "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+ * 会被规整为 "https://dashscope.aliyuncs.com"
  */
 function stripKnownEndpointSuffixes(baseUrl: string): string {
   const suffixes = [
@@ -123,16 +110,16 @@ function stripKnownEndpointSuffixes(baseUrl: string): string {
 type ProviderFlavor = "anthropic" | "qwen" | "qwen-coding" | "generic";
 
 /**
- * Determine which URL and header flavour to use for a given profile.
+ * 根据 profile 判定应使用哪种 URL 与请求头风格。
  *
- * Logic mirrors desktop runtime's resolveOpenAiCompatibleFlavor +
- * resolveProviderApiBaseUrl without importing those packages.
+ * 逻辑与 desktop runtime 中的 resolveOpenAiCompatibleFlavor +
+ * resolveProviderApiBaseUrl 保持一致，但不直接引入这些包。
  */
 function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
   const lowerUrl = normalizeBaseUrl(profile.baseUrl).toLowerCase();
   const lowerModel = profile.model.toLowerCase();
 
-  // MiniMax uses OpenAI-compatible protocol regardless of provider setting
+  // MiniMax 无论 provider 如何设置，都使用 OpenAI 兼容协议
   if (profile.providerFlavor === "minimax-anthropic"
     || lowerUrl.includes("minimax") || lowerUrl.includes("minimaxi")
     || lowerModel.startsWith("minimax")) {
@@ -144,7 +131,7 @@ function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
   }
 
   if (lowerUrl.includes("dashscope.aliyuncs.com") || lowerModel.startsWith("qwen")) {
-    // coding.dashscope uses the standard OpenAI path, not /compatible-mode
+    // coding.dashscope 使用标准 OpenAI 路径，而不是 /compatible-mode
     if (lowerUrl.includes("coding.dashscope")) {
       return "qwen-coding";
     }
@@ -155,31 +142,31 @@ function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
 }
 
 /**
- * Resolve the API root (everything before /chat/completions or /v1/messages).
+ * 解析 API 根地址（即 /chat/completions 或 /v1/messages 之前的部分）。
  *
- * When baseUrlMode is "provider-root" the user has supplied only the host/root
- * and we must append the correct path.  When it's "manual" (or absent) the
- * user has already given us a complete URL base and we just normalise it.
+ * 当 baseUrlMode 为 "provider-root" 时，用户只提供了服务根地址，
+ * 此时需要由程序补上正确路径；当它为 "manual"（或未提供）时，
+ * 说明用户已经给出了完整 base URL，我们只做规范化处理。
  */
 function resolveApiRoot(profile: ModelProfile): string {
   const normalized = normalizeBaseUrl(profile.baseUrl);
 
   if (profile.baseUrlMode !== "provider-root") {
-    // In manual mode the user may still have included path suffixes; keep as-is.
+    // manual 模式下，用户可能已经手动带上路径后缀，这里保持原样。
     return normalized;
   }
 
-  // provider-root: strip any accidental suffixes first.
+  // provider-root：先清理用户误带的路径后缀。
   const cleaned = stripKnownEndpointSuffixes(normalized);
   const flavor = resolveProviderFlavor(profile);
 
   switch (flavor) {
     case "anthropic":
-      // Anthropic root → append /v1
+      // Anthropic 根地址需要补上 /v1
       return appendIfMissing(cleaned, "/v1");
 
     case "qwen":
-      // Non-coding dashscope requires /compatible-mode/v1
+      // 非 coding 版 dashscope 需要补上 /compatible-mode/v1
       return appendIfMissing(cleaned, "/compatible-mode/v1");
 
     case "qwen-coding":
@@ -197,7 +184,7 @@ function appendIfMissing(base: string, suffix: string): string {
 }
 
 /**
- * Build the full chat completions (or Anthropic messages) endpoint URL.
+ * 构建完整的 chat completions（或 Anthropic messages）接口地址。
  */
 export function resolveModelEndpointUrl(profile: ModelProfile): string {
   const root = resolveApiRoot(profile);
@@ -211,7 +198,7 @@ export function resolveModelEndpointUrl(profile: ModelProfile): string {
 }
 
 // ---------------------------------------------------------------------------
-// Headers
+// 请求头
 // ---------------------------------------------------------------------------
 
 function buildRequestHeaders(profile: ModelProfile): Record<string, string> {
@@ -228,12 +215,12 @@ function buildRequestHeaders(profile: ModelProfile): Record<string, string> {
     base["authorization"] = `Bearer ${profile.apiKey}`;
   }
 
-  // Allow profile-level header overrides (e.g. custom auth schemes).
+  // 允许通过 profile 覆盖请求头（例如自定义认证方案）。
   return { ...base, ...(profile.headers ?? {}) };
 }
 
 // ---------------------------------------------------------------------------
-// SSE parsing helpers
+// SSE 解析辅助方法
 // ---------------------------------------------------------------------------
 
 type ToolCallAccumulator = {
@@ -266,8 +253,8 @@ function ensureToolCallAccumulator(
 }
 
 /**
- * Try to read a string out of a value that may be a plain string, an array of
- * content parts, or a nested object with a "text" field (Anthropic style).
+ * 尝试从值中读取字符串；该值可能是普通字符串、数组，
+ * 也可能是带有 "text" 字段的嵌套对象（Anthropic 风格）。
  */
 function extractText(value: unknown): string | null {
   if (typeof value === "string") return value || null;
@@ -291,8 +278,8 @@ function extractText(value: unknown): string | null {
 }
 
 /**
- * Read reasoning/thinking delta from an OpenAI-compatible delta object.
- * Checks all known field names used across providers.
+ * 从 OpenAI 兼容格式的 delta 对象中读取 reasoning / thinking 增量。
+ * 这里会检查不同提供商常见的字段命名。
  */
 function readReasoningDelta(delta: Record<string, unknown>): string | null {
   return (
@@ -305,8 +292,8 @@ function readReasoningDelta(delta: Record<string, unknown>): string | null {
 }
 
 /**
- * Apply a single parsed SSE payload chunk to the accumulated state and fire
- * the onDelta callback.
+ * 将单个已解析的 SSE chunk 应用到累计状态中，
+ * 并触发 onDelta 回调。
  */
 function applySseChunk(
   payload: unknown,
@@ -340,7 +327,7 @@ function applySseChunk(
     onDelta?.({ reasoning: reasoningVal });
   }
 
-  // --- tool_calls (index-keyed accumulation for parallel tool calls) ---
+  // --- tool_calls（按 index 聚合，支持并行工具调用） ---
   const rawToolCalls = Array.isArray(delta["tool_calls"])
     ? (delta["tool_calls"] as unknown[])
     : [];
@@ -382,7 +369,7 @@ function applySseChunk(
     if (fr) state.finishReason = fr;
   }
 
-  // --- usage (some providers send usage in the final SSE chunk) ---
+  // --- usage（部分提供商会在最后一个 SSE chunk 中返回） ---
   const rawUsage = (payload as Record<string, unknown>)["usage"];
   if (rawUsage && typeof rawUsage === "object") {
     const u = rawUsage as Record<string, unknown>;
@@ -398,7 +385,7 @@ function applySseChunk(
 }
 
 /**
- * Parse a JSON string — returns null on any error.
+ * 解析 JSON 字符串；只要出错就返回 null。
  */
 function tryParseJson(s: string): unknown {
   try {
@@ -409,7 +396,7 @@ function tryParseJson(s: string): unknown {
 }
 
 /**
- * Materialise accumulated tool-call fragments into resolved calls.
+ * 将累计的 tool-call 片段整理成最终可用的 resolved calls。
  */
 function materializeToolCalls(state: SseState): ResolvedToolCall[] {
   return [...state.toolCallsByIndex.entries()]
@@ -425,49 +412,20 @@ function materializeToolCalls(state: SseState): ResolvedToolCall[] {
           input = parsed as Record<string, unknown>;
         }
       } catch {
-        // keep empty object
+        // 保持为空对象
       }
       return { id: acc.id, name: acc.name, argumentsJson, input };
     });
 }
 
-/**
- * 将一次 assistant 响应规范化为可回放 payload，供后续 tool loop 保留完整轨迹。
- */
-export function buildAssistantReplayPayload(input: {
-  content: string;
-  reasoning?: string;
-  toolCalls: ResolvedToolCall[];
-}): AssistantReplayPayload {
-  const tool_calls = input.toolCalls.map((toolCall) => ({
-    id: toolCall.id,
-    type: "function" as const,
-    function: {
-      name: toolCall.name,
-      arguments: toolCall.argumentsJson,
-    },
-  }));
-
-  return {
-    mode: input.reasoning || tool_calls.length > 0 ? "full-assistant" : "compatibility",
-    degradedReason: null,
-    message: {
-      role: "assistant",
-      content: input.content,
-      ...(input.reasoning ? { reasoning: input.reasoning } : {}),
-      ...(tool_calls.length > 0 ? { tool_calls } : {}),
-    },
-  };
-}
-
 // ---------------------------------------------------------------------------
-// Core streaming consumer
+// 核心流式消费逻辑
 // ---------------------------------------------------------------------------
 
 /**
- * Read an SSE response body and accumulate content, reasoning, and tool calls.
+ * 读取 SSE 响应体，并累计 content、reasoning 与 tool calls。
  *
- * Handles \r\n and \n line endings, trailing buffer, and malformed chunks.
+ * 兼容处理 \r\n / \n 行尾、尾部缓冲区以及格式异常的 chunk。
  */
 async function consumeSseStream(
   response: Response,
@@ -482,8 +440,8 @@ async function consumeSseStream(
   };
 
   if (!response.body) {
-    // No streaming body — fall back to reading the full text and treating each
-    // line as a potential SSE data line.
+    // 如果没有流式响应体，就退回到读取完整文本，
+    // 并把每一行都当作可能的 SSE data 行来处理。
     const rawText = await response.text();
     for (const rawLine of rawText.split(/\r?\n/)) {
       const line = rawLine.trim();
@@ -512,7 +470,7 @@ async function consumeSseStream(
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-    // Normalise Windows line endings
+    // 统一处理 Windows 风格换行
     buffer = buffer.replace(/\r\n/g, "\n");
 
     let newlineIndex = buffer.indexOf("\n");
@@ -526,7 +484,7 @@ async function consumeSseStream(
     if (done) break;
   }
 
-  // Flush any remaining content in the buffer (no trailing newline)
+  // 刷新缓冲区中剩余内容（例如最后没有换行符的情况）
   if (buffer.trim()) {
     processLine(buffer);
   }
@@ -551,61 +509,60 @@ function finaliseSseState(state: SseState): {
 }
 
 // ---------------------------------------------------------------------------
-// Retry logic
+// 重试逻辑
 // ---------------------------------------------------------------------------
 
-/** Maximum number of retry attempts for transient API errors. */
+/** 临时性 API 错误的最大重试次数。 */
 const MAX_RETRIES = 3;
 
-/** Exponential backoff delays in milliseconds: 1s → 2s → 4s. */
+/** 指数退避等待时长（毫秒）：1s → 2s → 4s。 */
 const RETRY_DELAYS = [1000, 2000, 4000];
 
 /**
- * Determine whether an error or HTTP response status is retryable.
+ * 判断某个错误或 HTTP 状态码是否适合重试。
  *
- * Retryable: network errors, timeouts, 429 (rate limit), 5xx (server errors).
- * Not retryable: user abort, 400/401/403/404 (client errors).
+ * 可重试：网络错误、超时、429（限流）、5xx（服务端错误）。
+ * 不可重试：用户主动中断、400/401/403/404（客户端错误）。
  */
 export function isRetryableError(err: unknown, response?: Response | null): boolean {
-  // User-initiated abort is never retryable
+  // 用户主动中断永远不应重试
   if (err instanceof Error && err.name === "AbortError") return false;
 
-  // Network errors (TypeError from fetch) and timeouts are retryable
+  // 网络错误（fetch 抛出的 TypeError）和超时可以重试
   if (err instanceof TypeError) return true;
   if (err instanceof Error && err.name === "TimeoutError") return true;
 
-  // HTTP status based retryability
+  // 基于 HTTP 状态码判断是否可重试
   if (response) {
     const status = response.status;
     return status === 429 || status >= 500;
   }
 
-  // Unknown errors with no response — assume retryable (network issue)
+  // 对于没有 response 的未知错误，默认按可重试处理（通常是网络问题）
   if (err) return true;
 
   return false;
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// 对外 API
 // ---------------------------------------------------------------------------
 
 /**
- * Call a model and stream back content.
+ * 调用模型并流式返回内容。
  *
- * Supports OpenAI-compatible providers (including dashscope / Qwen variants)
- * as well as Anthropic.  Provider-specific headers and URL paths are resolved
- * automatically from `options.profile`.
+ * 支持 OpenAI 兼容提供商（包括 dashscope / Qwen 变体）以及 Anthropic。
+ * 提供商特定的请求头与 URL 路径会根据 `options.profile` 自动解析。
  *
- * Tool calls are accumulated across SSE frames and returned in `toolCalls`.
+ * 工具调用会跨多个 SSE 帧累计，最终通过 `toolCalls` 返回。
  */
 export async function callModel(options: ModelCallOptions): Promise<ModelCallResult> {
-  const { profile, messages, bodyPatch, replayPolicy = "none", tools, onDelta, signal, timeoutMs = 120_000 } = options;
+  const { profile, messages, tools, onDelta, signal, timeoutMs = 120_000 } = options;
 
   const url = resolveModelEndpointUrl(profile);
   const headers = buildRequestHeaders(profile);
 
-  // Build the wire-format message list; strip internal fields (reasoning, etc.)
+  // 构建发送给接口的消息列表，并移除内部字段（如 reasoning）
   const wireMessages = messages.map((m) => {
     const base: Record<string, unknown> = {
       role: m.role,
@@ -613,38 +570,26 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     };
     if (m.tool_call_id) base["tool_call_id"] = m.tool_call_id;
     if (m.tool_calls && m.tool_calls.length > 0) base["tool_calls"] = m.tool_calls;
-    if (replayPolicy === "required" && m.role === "assistant" && typeof m.reasoning === "string" && m.reasoning.trim()) {
-      base["reasoning"] = m.reasoning;
-    }
     return base;
   });
 
   const hasTools = tools && tools.length > 0;
-  const hasReasoningPatch = !!bodyPatch && Object.keys(bodyPatch).length > 0;
   const requestBody: Record<string, unknown> = {
     model: profile.model,
     messages: wireMessages,
     stream: true,
     ...(hasTools ? { tools, tool_choice: "auto" } : {}),
-    ...(bodyPatch ?? {}),
     ...(profile.requestBody ?? {}),
   };
 
-  console.info("[model-client] 请求体 reasoning patch 已解析", {
-    providerFlavor: profile.providerFlavor ?? profile.provider,
-    hasReasoningPatch,
-    replayPolicy,
-    requestBodyOverridesKeys: Object.keys(profile.requestBody ?? {}),
-  });
-
-  // Set up timeout via AbortController, composing with any caller-supplied signal.
+  // 使用 AbortController 处理超时，并与调用方传入的 signal 组合
   const timeoutController = new AbortController();
   const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
 
-  // Compose signals: abort if either the caller cancels or timeout fires.
+  // 组合中止信号：调用方取消或超时任一触发都应中止请求
   let effectiveSignal: AbortSignal;
   if (signal) {
-    // If the caller provided a signal, chain them.
+    // 如果调用方传入了 signal，则把它与当前 signal 串联
     const composite = new AbortController();
     const cancelOnCaller = () => composite.abort(signal.reason);
     const cancelOnTimeout = () => composite.abort(new DOMException("Model request timed out", "TimeoutError"));
@@ -658,7 +603,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   let response: Response;
   let lastError: Error | null = null;
 
-  // DEBUG: log the actual URL and masked apiKey being sent
+  // DEBUG：记录实际请求 URL 与打码后的 apiKey
   const maskedKey = profile.apiKey
     ? `${profile.apiKey.slice(0, 6)}...${profile.apiKey.slice(-4)} (len=${profile.apiKey.length})`
     : "(empty)";
@@ -683,7 +628,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
           await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
           continue;
         }
-        // Non-retryable HTTP error
+        // 不可重试的 HTTP 错误
         clearTimeout(timeoutHandle);
         const detail = await response.text().catch(() => "(no body)");
         throw new Error(
@@ -691,10 +636,10 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
         );
       }
 
-      // Success — break out of retry loop
+      // 成功后跳出重试循环
       break;
     } catch (err) {
-      // User abort — never retry
+      // 用户主动中断，不进行重试
       if (err instanceof Error && err.name === "AbortError") {
         clearTimeout(timeoutHandle);
         throw new Error(`Model request timed out after ${timeoutMs}ms`);
@@ -714,7 +659,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     }
   }
 
-  // If we exhausted retries without a successful response, throw the last error
+  // 如果重试耗尽仍未成功，则抛出最后一次错误
   if (!response!) {
     clearTimeout(timeoutHandle);
     throw lastError ?? new Error("Model request failed after retries");
@@ -727,28 +672,16 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
 
   if (isEventStream || response.body) {
     const result = await consumeSseStream(response, onDelta);
-    const assistantReplay = buildAssistantReplayPayload({
-      content: result.content,
-      reasoning: result.reasoning || undefined,
-      toolCalls: result.toolCalls,
-    });
-    console.info("[model-client] 已生成 assistant replay payload", {
-      providerFlavor: profile.providerFlavor ?? profile.provider,
-      replayMode: assistantReplay.mode,
-      hasReasoning: Boolean(result.reasoning),
-      toolCallCount: result.toolCalls.length,
-    });
     return {
       content: result.content,
       ...(result.reasoning ? { reasoning: result.reasoning } : {}),
       toolCalls: result.toolCalls,
-      assistantReplay,
       finishReason: result.finishReason,
       ...(result.usage ? { usage: result.usage } : {}),
     };
   }
 
-  // Non-streaming JSON response (e.g., connectivity test with stream: false)
+  // 非流式 JSON 响应（例如 stream: false 的连通性测试）
   const rawBody = await response.text();
   const parsed = tryParseJson(rawBody);
   const content = extractText(
@@ -762,10 +695,6 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   return {
     content,
     toolCalls: [],
-    assistantReplay: buildAssistantReplayPayload({
-      content,
-      toolCalls: [],
-    }),
     finishReason: null,
   };
 }

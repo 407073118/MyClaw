@@ -26,7 +26,7 @@ const envMap: Record<EnvName, AppEnvConfig> = {
 };
 
 function resolveEnvName(): EnvName {
-  // 运行时环境变量优先（调试用），否则用构建时写入的值
+  // 运行时环境变量优先（便于调试），否则使用构建时写入的值
   const raw = process.env.APP_ENV ?? RESOLVED_ENV;
   if (raw in envMap) return raw as EnvName;
   return "development";

@@ -10,6 +10,7 @@ import type {
   McpServerConfig,
   ModelCatalogItem,
   ModelProfile,
+  PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
@@ -65,6 +66,7 @@ type BootstrapPayload = {
   cloudHubManifest?: CloudHubManifest | null;
   approvals: ApprovalPolicy;
   approvalRequests: ApprovalRequest[];
+  personalPrompt: PersonalPromptProfile;
 };
 
 type SessionPayload = {
@@ -142,14 +144,8 @@ declare global {
         title?: string;
         modelProfileId?: string;
         attachedDirectory?: string | null;
-        thinkingEnabled?: boolean;
-        thinkingSource?: "default" | "user-toggle";
       }) => Promise<SessionPayload>;
       deleteSession: (sessionId: string) => Promise<SessionsPayload>;
-      updateSessionThinking: (
-        sessionId: string,
-        input: { thinkingEnabled: boolean; thinkingSource?: "default" | "user-toggle" },
-      ) => Promise<SessionPayload>;
       sendMessage: (
         sessionId: string,
         content: string,
@@ -218,6 +214,10 @@ declare global {
         autoApproveReadOnly: boolean;
         autoApproveSkills: boolean;
       }) => Promise<ApprovalsPayload>;
+
+      // --- 个人长期 Prompt ---
+      getPersonalPrompt: () => Promise<PersonalPromptProfile>;
+      updatePersonalPrompt: (input: { prompt: string }) => Promise<PersonalPromptProfile>;
 
       // --- Cloud Hub ---
       fetchCloudHubItems: (type?: "all" | CloudHubItemType) => Promise<CloudHubItem[]>;

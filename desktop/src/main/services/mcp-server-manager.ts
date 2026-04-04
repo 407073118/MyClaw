@@ -1,11 +1,11 @@
 /**
- * MCP Server Manager — manages MCP server configurations, persistence,
- * and live connections via McpClient instances.
+ * MCP Server Manager：负责 MCP 服务配置、持久化以及
+ * 通过 McpClient 实例维护在线连接。
  *
- * Responsibilities:
- * - CRUD for server configs (persisted to mcp-servers.json)
- * - Lifecycle management (connect / disconnect / refresh)
- * - Tool aggregation across all connected servers
+ * 职责：
+ * - 对服务配置执行 CRUD（持久化到 mcp-servers.json）
+ * - 管理生命周期（连接 / 断开 / 刷新）
+ * - 聚合所有已连接服务的工具列表
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -27,7 +27,7 @@ import { McpClient, type McpToolInfo } from "./mcp-client";
 import { McpHttpClient } from "./mcp-http-client";
 import { createLogger } from "./logger";
 
-/** Unified interface for both stdio and HTTP MCP clients. */
+/** stdio 与 HTTP 两类 MCP 客户端共用的统一接口。 */
 type McpClientLike = {
   connected: boolean;
   tools: McpToolInfo[];
@@ -43,10 +43,10 @@ type McpClientLike = {
 const log = createLogger("mcp-manager");
 
 // ---------------------------------------------------------------------------
-// Discovered server type (for external import)
+// 外部导入发现结果类型
 // ---------------------------------------------------------------------------
 
-/** Discovered MCP server from external config (Claude Desktop, Cursor). */
+/** 从外部配置（Claude Desktop、Cursor）中发现的 MCP 服务。 */
 export type DiscoveredMcpServer = {
   source: "claude-desktop" | "cursor" | "codex";
   name: string;
@@ -57,7 +57,7 @@ export type DiscoveredMcpServer = {
 };
 
 // ---------------------------------------------------------------------------
-// Persistence helpers
+// 持久化辅助方法
 // ---------------------------------------------------------------------------
 
 function loadConfigs(filePath: string): McpServerConfig[] {
@@ -73,6 +73,7 @@ function loadConfigs(filePath: string): McpServerConfig[] {
   return [];
 }
 
+/** 把 MCP 服务配置写回磁盘。 */
 function saveConfigs(filePath: string, configs: McpServerConfig[]): void {
   try {
     mkdirSync(dirname(filePath), { recursive: true });
@@ -83,7 +84,7 @@ function saveConfigs(filePath: string, configs: McpServerConfig[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Risk heuristic for MCP tools
+// MCP 工具风险启发式判断
 // ---------------------------------------------------------------------------
 
 export function inferToolRisk(toolName: string): ToolRiskCategory {
@@ -97,12 +98,12 @@ export function inferToolRisk(toolName: string): ToolRiskCategory {
   if (/fetch|request|http|curl|download|upload/.test(lower)) {
     return ToolRiskCategory.Network;
   }
-  // Default to Read for everything else
+  // 其他情况默认按 Read 风险处理
   return ToolRiskCategory.Read;
 }
 
 // ---------------------------------------------------------------------------
-// McpServerManager
+// McpServerManager 主体
 // ---------------------------------------------------------------------------
 
 export class McpServerManager {
@@ -116,15 +117,15 @@ export class McpServerManager {
   }
 
   // -----------------------------------------------------------------------
-  // CRUD
+  // 配置 CRUD
   // -----------------------------------------------------------------------
 
-  /** List all servers with their live state and tools. */
+  /** 列出所有服务及其当前连接状态与工具列表。 */
   listServers(): McpServer[] {
     return this.configs.map((config) => this.toMcpServer(config));
   }
 
-  /** Create a new server config, persist, and optionally auto-connect. */
+  /** 创建新的服务配置，持久化保存，并按需自动连接。 */
   async createServer(input: Omit<McpServerConfig, "id">): Promise<McpServer> {
     const config: McpServerConfig = {
       id: randomUUID(),
@@ -134,7 +135,7 @@ export class McpServerManager {
     this.configs.push(config);
     this.persist();
 
-    // Auto-connect if enabled
+    // 若已启用则自动连接
     if (config.enabled) {
       try {
         await this.connectServer(config.id);
@@ -146,12 +147,12 @@ export class McpServerManager {
     return this.toMcpServer(config);
   }
 
-  /** Delete a server config, disconnect its process, and persist. */
+  /** 删除服务配置、断开进程连接，并持久化保存。 */
   async deleteServer(id: string): Promise<boolean> {
     const idx = this.configs.findIndex((c) => c.id === id);
     if (idx === -1) return false;
 
-    // Disconnect if running
+    // 若当前正在运行则先断开连接
     await this.disconnectServer(id);
 
     this.configs.splice(idx, 1);
@@ -159,7 +160,7 @@ export class McpServerManager {
     return true;
   }
 
-  /** Update a server config and persist. */
+  /** 更新服务配置并持久化保存。 */
   async updateServer(id: string, updates: Partial<Omit<McpServerConfig, "id">>): Promise<McpServer | null> {
     const config = this.configs.find((c) => c.id === id);
     if (!config) return null;
@@ -171,15 +172,15 @@ export class McpServerManager {
   }
 
   // -----------------------------------------------------------------------
-  // Connection lifecycle
+  // 连接生命周期
   // -----------------------------------------------------------------------
 
-  /** Connect to a single server (stdio or HTTP). */
+  /** 连接单个服务（stdio 或 HTTP）。 */
   async connectServer(id: string): Promise<McpServer> {
     const config = this.configs.find((c) => c.id === id);
     if (!config) throw new Error(`MCP server not found: ${id}`);
 
-    // Disconnect existing client if any
+    // 若已有已连接客户端则先断开
     await this.disconnectServer(id);
 
     let client: McpClientLike;
@@ -221,7 +222,7 @@ export class McpServerManager {
     return this.toMcpServer(config);
   }
 
-  /** Disconnect a single server. */
+  /** 断开单个服务连接。 */
   async disconnectServer(id: string): Promise<void> {
     const client = this.clients.get(id);
     if (client) {
@@ -231,7 +232,7 @@ export class McpServerManager {
     }
   }
 
-  /** Refresh (reconnect) a server and re-fetch tools. */
+  /** 刷新服务连接（重连）并重新拉取工具列表。 */
   async refreshServer(id: string): Promise<McpServer> {
     const config = this.configs.find((c) => c.id === id);
     if (!config) throw new Error(`MCP server not found: ${id}`);
@@ -246,7 +247,7 @@ export class McpServerManager {
     return this.toMcpServer(config);
   }
 
-  /** Connect all enabled servers (called at app startup). */
+  /** 连接所有启用中的服务（应用启动时调用）。 */
   async connectAllEnabled(): Promise<void> {
     const promises = this.configs
       .filter((c) => c.enabled)

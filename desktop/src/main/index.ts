@@ -7,6 +7,7 @@ import type {
   ChatSession,
   LocalEmployeeSummary,
   ModelProfile,
+  PersonalPromptProfile,
   SkillDefinition,
   WorkflowDefinition,
   WorkflowSummary,
@@ -19,7 +20,7 @@ import { initLogger, createLogger } from "./services/logger";
 
 const log = createLogger("main");
 
-/** Track pending save operations for graceful shutdown */
+/** 记录待完成的保存操作，便于优雅退出。 */
 const pendingSaves = new Set<Promise<unknown>>();
 
 export function trackSave(promise: Promise<unknown>): void {
@@ -34,18 +35,18 @@ import { McpServerManager } from "./services/mcp-server-manager";
 import { shutdownToolExecutor } from "./ipc/sessions";
 
 // ---------------------------------------------------------------------------
-// Constants
+// 常量
 // ---------------------------------------------------------------------------
 
 const IS_DEV = process.env.NODE_ENV === "development";
 const RENDERER_DEV_URL = "http://localhost:1420";
 const RENDERER_PROD_FILE = join(__dirname, "../../renderer/index.html");
 
-// Redirect Electron userData to portable location BEFORE app.whenReady()
+// 必须在 app.whenReady() 之前把 Electron userData 重定向到便携目录
 redirectUserData();
 
 // ---------------------------------------------------------------------------
-// Window management
+// 窗口管理
 // ---------------------------------------------------------------------------
 
 let mainWindow: BrowserWindow | null = null;
@@ -79,12 +80,12 @@ function createMainWindow(): BrowserWindow {
     show: false,
   });
 
-  // Show the window only once ready to avoid blank flash
+  // 等窗口 ready 后再显示，避免出现白屏闪烁
   win.once("ready-to-show", () => {
     win.show();
   });
 
-  // Open external links in the system browser
+  // 外部链接统一交给系统浏览器打开
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
@@ -101,12 +102,12 @@ function createMainWindow(): BrowserWindow {
 }
 
 // ---------------------------------------------------------------------------
-// Builtin skills seeder — 首次启动时将内置示例复制到用户 skills 目录
+// 内置技能种子器：首次启动时将内置示例复制到用户 skills 目录
 // ---------------------------------------------------------------------------
 
 /**
- * Recursively copy a directory tree.
- * Works with asar archives (unlike cpSync which Electron may not fully patch).
+ * 递归复制整个目录树。
+ * 可兼容 asar 归档（cpSync 在 Electron 中未必完全可用）。
  */
 function copyDirRecursive(src: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
@@ -125,7 +126,7 @@ function copyDirRecursive(src: string, dest: string): void {
 }
 
 function seedBuiltinSkills(skillsDir: string): void {
-  // builtin-skills 在打包后位于 app.asar 根目录
+  // 打包后 builtin-skills 位于 app.asar 根目录
   const candidates = [
     join(app.getAppPath(), "builtin-skills"),           // works for both dev and packed
     join(__dirname, "../../builtin-skills"),             // dev: dist/src/main → builtin-skills
@@ -147,7 +148,7 @@ function seedBuiltinSkills(skillsDir: string): void {
     for (const entry of entries) {
       const src = join(builtinDir, entry);
       const dest = join(skillsDir, entry);
-      // 只在用户目录中不存在时复制（不覆盖用户修改）
+      // 仅当用户目录中不存在时才复制，避免覆盖用户修改
       if (!existsSync(dest)) {
         copyDirRecursive(src, dest);
         log.info(`Seeded builtin skill: ${entry}`);
@@ -159,21 +160,21 @@ function seedBuiltinSkills(skillsDir: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Skills loader
+// 技能加载器
 // ---------------------------------------------------------------------------
 
 /**
- * Scan `skillsDir` for skill definitions.
+ * 扫描 `skillsDir` 中的技能定义。
  *
- * Supports two on-disk formats:
+ * 支持两种磁盘格式：
  *
- * 1. JSON manifest — a `<name>.json` file whose contents conform to
- *    `SkillDefinition`.  This is the lightweight format used by newApp.
+ * 1. JSON manifest：即 `<name>.json` 文件，内容符合
+ *    `SkillDefinition` 结构，这是 newApp 使用的轻量格式。
  *
- * 2. SKILL.md directory — a sub-directory containing a `SKILL.md` file,
- *    compatible with skills installed by the desktop app.  A minimal
- *    `SkillDefinition` is synthesised from the directory name and first
- *    non-heading line of the markdown body.
+ * 2. SKILL.md 目录：即包含 `SKILL.md` 文件的子目录，
+ *    与 desktop 应用安装的技能兼容。系统会自动推导出最小
+ *    `SkillDefinition`，信息来源于目录名以及
+ *    markdown 正文中第一条非标题文本。
  */
 function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
   if (!existsSync(skillsDir)) {
@@ -192,7 +193,7 @@ function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
   for (const entry of entries) {
     const fullPath = resolve(skillsDir, entry);
 
-    // --- Format 1: JSON manifest file ---
+    // --- 形式 1：JSON manifest 文件 ---
     if (entry.endsWith(".json")) {
       try {
         const raw = readFileSync(fullPath, "utf-8");
@@ -229,8 +230,8 @@ function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
       continue;
     }
 
-    // --- Format 2: SKILL.md directory ---
-    // Entry must be a directory containing a SKILL.md file.
+    // --- 形式 2：SKILL.md 目录 ---
+    // 当前条目必须是一个包含 SKILL.md 的目录。
     const skillMdPath = join(fullPath, "SKILL.md");
     if (!existsSync(skillMdPath)) {
       continue;
@@ -240,14 +241,14 @@ function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
       const markdown = readFileSync(skillMdPath, "utf-8");
       const { name, description, workspaceDir } = extractSkillMeta(entry, markdown);
 
-      // Detect standard sub-directory conventions.
+      // 识别标准子目录约定。
       let subEntries: string[] = [];
       try { subEntries = readdirSync(fullPath); } catch { /* ignore */ }
       const subDirs = new Set(subEntries.map((e) => e.toLowerCase()));
 
       const skillId = `skill-${name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")}`;
 
-      // Detect all .html view files in the skill root directory
+      // 扫描技能根目录中的所有 .html 视图文件
       const viewFiles = subEntries.filter((f) => f.endsWith(".html"));
 
       skills.push({
@@ -278,9 +279,9 @@ function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
 }
 
 /**
- * Extract `name` and `description` from a SKILL.md file.
- * Reads YAML-like frontmatter between `---` delimiters when present.
- * Falls back to the directory name and the first non-heading line of the body.
+ * 从 SKILL.md 中提取 `name` 与 `description`。
+ * 如果存在 `---` 包裹的 YAML 风格 frontmatter，则优先读取；
+ * 否则回退到目录名以及正文中第一条非标题文本。
  */
 function extractSkillMeta(dirName: string, markdown: string): { name: string; description: string; workspaceDir: string | null } {
   const lines = markdown.split(/\r?\n/);
@@ -301,7 +302,7 @@ function extractSkillMeta(dirName: string, markdown: string): { name: string; de
         if (key === "description" && value) description = value;
         if (key === "workspacedir" && value) workspaceDir = value;
       }
-      // If description not found in frontmatter, extract from body.
+      // 如果 frontmatter 中没有 description，则改为从正文提取。
       if (!description) {
         const bodyLines = lines.slice(closingIdx + 1);
         description = bodyLines.find((l) => l.trim() && !l.trim().startsWith("#"))?.trim() ?? "";
@@ -310,20 +311,20 @@ function extractSkillMeta(dirName: string, markdown: string): { name: string; de
     }
   }
 
-  // No frontmatter — extract description from first non-heading body line.
+  // 如果没有 frontmatter，就从正文第一条非标题文本中提取描述。
   description = lines.find((l) => l.trim() && !l.trim().startsWith("#"))?.trim() ?? "";
   return { name, description, workspaceDir };
 }
 
 // ---------------------------------------------------------------------------
-// Runtime context bootstrap (stub state — replace with real persistence)
+// 运行时上下文启动（先用启动时加载出的状态初始化）
 // ---------------------------------------------------------------------------
 
 function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
-  // Load all persisted state from disk
+  // 从磁盘加载所有已持久化状态
   const persisted = loadPersistedState(paths);
 
-  // Mutable in-memory mirrors hydrated from disk
+  // 基于磁盘数据构建可变的内存镜像
   const sessions: ChatSession[] = persisted.sessions;
   const models: ModelProfile[] = persisted.models;
   const employees: LocalEmployeeSummary[] = persisted.employees;
@@ -333,6 +334,7 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
   let approvalRequests: ApprovalRequest[] = [];
   let defaultModelProfileId: string | null = persisted.defaultModelProfileId;
   const approvalPolicy = persisted.approvalPolicy;
+  let personalPromptProfile: PersonalPromptProfile = persisted.personalPrompt;
 
   return createRuntimeContext({
     runtime: {
@@ -348,11 +350,11 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
       skills,
       workflowDefinitions,
       getDefaultModelProfileId: () => {
-        // Return stored default if it still points to a valid model
+        // 如果已存储的默认模型仍然有效，则直接返回
         if (defaultModelProfileId && models.some((m) => m.id === defaultModelProfileId)) {
           return defaultModelProfileId;
         }
-        // Fall back to first model
+        // 否则回退到第一个模型
         return models[0]?.id ?? null;
       },
       setDefaultModelProfileId: (id: string | null) => {
@@ -364,11 +366,15 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
       setApprovalRequests: (updated) => {
         approvalRequests = updated;
       },
+      getPersonalPromptProfile: () => personalPromptProfile,
+      setPersonalPromptProfile: (profile) => {
+        personalPromptProfile = profile;
+      },
     },
     services: {
       refreshSkills: async () => {
         const loaded = loadSkillsFromDisk(paths.skillsDir);
-        // Keep the in-memory skills array in sync so skill:detail lookups work.
+        // 保持内存中的 skills 数组同步，确保 skill:detail 查询可用。
         skills.splice(0, skills.length, ...loaded);
         return loaded;
       },
@@ -389,27 +395,27 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
 }
 
 // ---------------------------------------------------------------------------
-// App lifecycle
+// 应用生命周期
 // ---------------------------------------------------------------------------
 
 app.whenReady().then(async () => {
-  // Initialize data directories (portable — next to the executable)
+  // 初始化数据目录（便携模式下位于可执行文件旁边）
   const paths = await initializeDirectories();
 
-  // Initialize structured logger
+  // 初始化结构化日志
   initLogger(paths.myClawDir);
 
-  // Seed builtin example skills (only copies if not already present)
+  // 初始化内置示例技能（仅在目标不存在时复制）
   seedBuiltinSkills(paths.skillsDir);
 
-  // Initialize MCP server manager
+  // 初始化 MCP 服务管理器
   const mcpManager = new McpServerManager(paths.myClawDir);
 
-  // Initialize runtime context and register all IPC handlers
+  // 初始化运行时上下文并注册所有 IPC 处理器
   const ctx = buildRuntimeContext(paths, mcpManager);
   registerAllIpcHandlers(ctx);
 
-  // Auto-connect enabled MCP servers in the background
+  // 在后台自动连接所有启用中的 MCP 服务
   mcpManager.connectAllEnabled().catch((err) => {
     log.warn("MCP auto-connect failed", { error: String(err) });
   });
@@ -436,7 +442,7 @@ app.whenReady().then(async () => {
     return mainWindow?.isMaximized() ?? false;
   });
 
-  // Create the main window
+  // 创建主窗口
   mainWindow = createMainWindow();
 
   // 窗口最大化状态变化时通知渲染进程
@@ -447,7 +453,7 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send("window:maximized-changed", false);
   });
 
-  // macOS: re-create the window when the dock icon is clicked
+  // macOS：点击 Dock 图标时重新创建窗口
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       mainWindow = createMainWindow();
@@ -455,18 +461,18 @@ app.whenReady().then(async () => {
   });
 });
 
-// Quit the app when all windows are closed (except on macOS)
+// 当所有窗口关闭时退出应用（macOS 除外）
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
-// Ensure the app fully quits when asked, waiting for pending saves
+// 确保应用在退出前等待待完成保存任务结束
 let isQuitting = false;
 
 app.on("before-quit", (event) => {
-  // Close browser process (if any) to prevent orphaned Chrome
+  // 关闭浏览器进程（如果存在），避免遗留孤儿 Chrome 进程
   shutdownToolExecutor().catch(() => {});
 
   if (pendingSaves.size > 0 && !isQuitting) {

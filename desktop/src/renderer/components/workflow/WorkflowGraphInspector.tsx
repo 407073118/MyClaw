@@ -12,13 +12,15 @@ interface WorkflowGraphInspectorProps {
   selectedNodeId?: string | null;
   selectedEdgeId?: string | null;
   showGraphList?: boolean;
+  compact?: boolean;
 }
 
+/** 深拷贝工作流定义，避免编辑草稿和上游引用共享对象。 */
 function cloneDefinition(definition: WorkflowDefinition): WorkflowDefinition {
   return JSON.parse(JSON.stringify(definition)) as WorkflowDefinition;
 }
 
-/** 校验 workflow graph 的引用合法性（entryNodeId/edges/join upstream）。 */
+/** 校验工作流图引用是否合法，包括入口、边关系和 join/condition 约束。 */
 function validateGraph(definition: WorkflowDefinition): string[] {
   const errors: string[] = [];
   const nodeIds = new Set(definition.nodes.map((node) => node.id));
@@ -80,14 +82,17 @@ function validateGraph(definition: WorkflowDefinition): string[] {
   return errors;
 }
 
+/** 渲染工作流图检查器，负责节点/连线编辑与保存。 */
 export default function WorkflowGraphInspector({
   workflowId,
   definition,
   selectedNodeId: propSelectedNodeId = null,
   selectedEdgeId: propSelectedEdgeId = null,
   showGraphList = true,
+  compact = false,
 }: WorkflowGraphInspectorProps) {
   const workspace = useWorkspaceStore();
+  const useSingleColumnLayout = compact || !showGraphList;
 
   const [draft, setDraft] = useState<WorkflowDefinition>(() => cloneDefinition(definition));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -96,7 +101,7 @@ export default function WorkflowGraphInspector({
   const [saveError, setSaveError] = useState("");
   const [schemaErrors, setSchemaErrors] = useState<string[]>([]);
 
-  // Sync draft when definition changes
+  // 外部定义变化后，同步刷新本地草稿。
   const prevDefinitionRef = useRef<WorkflowDefinition | null>(null);
   useEffect(() => {
     if (prevDefinitionRef.current === definition) return;
@@ -106,7 +111,7 @@ export default function WorkflowGraphInspector({
     prevDefinitionRef.current = definition;
   }, [definition, workflowId]);
 
-  // Sync selected node/edge from props
+  // 根据外部选中状态同步节点或连线高亮。
   useEffect(() => {
     if (propSelectedNodeId && draft.nodes.some((node) => node.id === propSelectedNodeId)) {
       setSelectedNodeId(propSelectedNodeId);
@@ -180,18 +185,21 @@ export default function WorkflowGraphInspector({
   const graphErrorText = graphErrors.length ? graphErrors.join("; ") : "";
   const canSave = !isSaving && schemaErrors.length === 0 && graphErrors.length === 0;
 
+  /** 选中节点，并清空连线选中态。 */
   function selectNode(nodeId: string) {
     console.info("[workflow] 选择节点", { workflowId, nodeId });
     setSelectedNodeId(nodeId);
     setSelectedEdgeId(null);
   }
 
+  /** 选中连线，并清空节点选中态。 */
   function selectEdge(edgeId: string) {
     console.info("[workflow] 选择连线", { workflowId, edgeId });
     setSelectedEdgeId(edgeId);
     setSelectedNodeId(null);
   }
 
+  /** 更新草稿中的节点定义。 */
   function handleNodeUpdate(nextNode: WorkflowNode) {
     setDraft((prev) => {
       const nodes = [...prev.nodes];
@@ -203,6 +211,7 @@ export default function WorkflowGraphInspector({
     });
   }
 
+  /** 更新草稿中的连线定义。 */
   function handleEdgeUpdate(nextEdge: WorkflowEdge) {
     setDraft((prev) => {
       const edges = [...prev.edges];
@@ -214,6 +223,7 @@ export default function WorkflowGraphInspector({
     });
   }
 
+  /** 更新状态字段定义，并记录调试日志。 */
   function handleStateSchemaUpdate(nextSchema: WorkflowDefinition["stateSchema"]) {
     setDraft((prev) => {
       console.info("[workflow] 更新草稿 state schema", { workflowId, fields: nextSchema.length });
@@ -262,7 +272,10 @@ export default function WorkflowGraphInspector({
   }
 
   return (
-    <section data-testid="workflow-graph-inspector" className="inspector">
+    <section
+      data-testid="workflow-graph-inspector"
+      className={`inspector${compact ? " inspector--compact" : ""}`}
+    >
       <header className="inspector-header">
         <div>
           <h3 className="title">工作流图检查器</h3>
@@ -287,7 +300,7 @@ export default function WorkflowGraphInspector({
         </div>
       </header>
 
-      <section className={`grid${!showGraphList ? " grid--single" : ""}`}>
+      <section className={`grid${useSingleColumnLayout ? " grid--single" : ""}`}>
         {showGraphList && (
           <section className="panel">
             <h4 className="panel-title">节点列表</h4>
@@ -409,6 +422,41 @@ export default function WorkflowGraphInspector({
         }
         .inspector .grid--single {
           grid-template-columns: 1fr;
+        }
+        .inspector--compact .inspector-header {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .inspector--compact .actions {
+          justify-content: flex-start;
+        }
+        .inspector--compact .panel,
+        .inspector--compact .row,
+        .inspector--compact .node-editor,
+        .inspector--compact .schema-editor {
+          min-width: 0;
+        }
+        .inspector--compact .edge-label {
+          overflow-wrap: anywhere;
+        }
+        .inspector--compact .node-editor .field input,
+        .inspector--compact .node-editor .field textarea,
+        .inspector--compact .node-editor .field select,
+        .inspector--compact .schema-editor input,
+        .inspector--compact .schema-editor select {
+          width: 100%;
+          min-width: 0;
+          box-sizing: border-box;
+        }
+        .inspector--compact .schema-editor .header {
+          flex-direction: column;
+          align-items: stretch;
+        }
+        .inspector--compact .schema-editor .row {
+          grid-template-columns: 1fr;
+        }
+        .inspector--compact .node-editor .candidate-toggle {
+          align-items: flex-start;
         }
         .inspector .panel {
           border: 1px solid var(--glass-border);

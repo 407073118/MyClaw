@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { marked } from "marked";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { SkillDefinition, SkillDetail } from "@shared/contracts";
+import { useDialogA11y } from "../hooks/useDialogA11y";
+import { renderSafeSkillMarkdown } from "../utils/skill-preview";
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 
@@ -33,13 +34,30 @@ export default function SkillsPage() {
   const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const detailModalRef = useRef<HTMLElement>(null);
 
   const selectedEntryPath = selectedSkill
     ? selectedSkillDetail?.entryPath ?? buildFallbackEntryPath(selectedSkill.path)
     : "";
 
+  /** 关闭 Skill 详情弹层，并清理当前错误与加载状态。 */
+  const closeSkillDetail = useCallback(() => {
+    setSelectedSkill(null);
+    setSelectedSkillDetail(null);
+    setDetailLoading(false);
+    setDetailError(null);
+  }, []);
+
+  const { captureTrigger: captureDialogTrigger } = useDialogA11y({
+    isOpen: Boolean(selectedSkill),
+    onClose: closeSkillDetail,
+    initialFocusRef: detailModalRef,
+    dialogName: "skills-detail",
+  });
+
   /** 打开指定 Skill 的详情弹层，并按需加载完整的 SKILL.md。 */
-  async function openSkillDetail(skill: SkillDefinition) {
+  async function openSkillDetail(skill: SkillDefinition, trigger?: HTMLElement | null) {
+    captureDialogTrigger(trigger);
     setSelectedSkill(skill);
     setSelectedSkillDetail((workspace.skillDetails[skill.id] as SkillDetail | undefined) ?? null);
     setDetailLoading(true);
@@ -56,14 +74,6 @@ export default function SkillsPage() {
     } finally {
       setDetailLoading(false);
     }
-  }
-
-  /** 关闭 Skill 详情弹层，并清理当前错误与加载状态。 */
-  function closeSkillDetail() {
-    setSelectedSkill(null);
-    setSelectedSkillDetail(null);
-    setDetailLoading(false);
-    setDetailError(null);
   }
 
   /** 为带有 view.html 的 Skill 打开 WebPanel。 */
@@ -98,7 +108,12 @@ export default function SkillsPage() {
               className="skill-card"
               data-testid={`skill-card-${skill.id}`}
             >
-              <div className="skill-header" onClick={() => openSkillDetail(skill)}>
+              <button
+                type="button"
+                className="skill-header skill-header-button"
+                aria-label={`打开 ${skill.name} 详情`}
+                onClick={(event) => void openSkillDetail(skill, event.currentTarget)}
+              >
                 <div className="skill-title-block">
                   <h3>{skill.name}</h3>
                   <span className={`status-badge${skill.enabled ? " enabled" : ""}`}>
@@ -106,7 +121,7 @@ export default function SkillsPage() {
                   </span>
                 </div>
                 <p className="skill-desc">{skill.description}</p>
-              </div>
+              </button>
 
               <div className="skill-chips">
                 {describeSkillPackage(skill).map((feature) => (
@@ -141,11 +156,18 @@ export default function SkillsPage() {
 
       {selectedSkill && (
         <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeSkillDetail(); }}>
-          <section className="detail-modal">
+          <section
+            ref={detailModalRef}
+            className="detail-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="skill-detail-title"
+            tabIndex={-1}
+          >
             <header className="detail-header">
               <div className="detail-header-copy">
                 <span className="eyebrow">Skill Detail</span>
-                <h3 className="detail-title" data-testid="skill-detail-title">{selectedSkill.name}</h3>
+                <h3 id="skill-detail-title" className="detail-title" data-testid="skill-detail-title">{selectedSkill.name}</h3>
                 <p className="detail-summary">{selectedSkill.description}</p>
               </div>
               <button
@@ -183,7 +205,7 @@ export default function SkillsPage() {
               <div
                 className="detail-content markdown-preview"
                 data-testid="skill-detail-content"
-                dangerouslySetInnerHTML={{ __html: marked.parse(selectedSkillDetail.content) as string }}
+                dangerouslySetInnerHTML={{ __html: renderSafeSkillMarkdown(selectedSkillDetail.content) }}
               />
             ) : selectedSkillDetail ? (
               <p className="detail-loading">该 Skill 没有 SKILL.md 文件</p>
@@ -267,6 +289,21 @@ export default function SkillsPage() {
           padding: 16px 16px 12px;
           cursor: pointer;
           flex: 1;
+        }
+
+        .skill-header-button {
+          width: 100%;
+          border: none;
+          background: transparent;
+          text-align: left;
+          appearance: none;
+          color: inherit;
+          font: inherit;
+        }
+
+        .skill-header-button:focus-visible {
+          outline: 2px solid rgba(103, 232, 249, 0.65);
+          outline-offset: -2px;
         }
 
         .skill-title-block {

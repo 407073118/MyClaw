@@ -1,7 +1,7 @@
 /**
  * Phase 13: Context Assembly & Compaction Pipeline tests
  *
- * Tests:
+ * 测试内容：
  * - ContextAssembler builds correct message structure
  * - Recent-turn retention respects minRecentTurnsToKeep
  * - ToolOutputSanitizer trims oversized tool output
@@ -41,7 +41,7 @@ import type {
 import { DEFAULT_CONTEXT_BUDGET_POLICY } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助方法
 // ---------------------------------------------------------------------------
 
 function makeMessage(

@@ -1,13 +1,12 @@
 /**
- * MCP (Model Context Protocol) HTTP/SSE client.
+ * MCP 的 HTTP/SSE 客户端实现。
  *
- * Communicates with MCP servers over HTTP using JSON-RPC 2.0.
- * Supports the "Streamable HTTP" transport:
- * - POST requests for JSON-RPC request/response
- * - Optional SSE for server-initiated notifications
+ * 通过 JSON-RPC 2.0 与 MCP 服务端通信，支持：
+ * - 通过 POST 发送请求 / 响应
+ * - 使用可选 SSE 接收服务端推送通知
  *
- * Exposes the same public API surface as McpClient (stdio) so the
- * manager can treat both transports uniformly.
+ * 它对外暴露与 `McpClient`（stdio 版）一致的公共接口，
+ * 这样上层 manager 就能统一处理两种传输方式。
  */
 
 import { EventEmitter } from "node:events";
@@ -17,7 +16,7 @@ import type { McpToolInfo, McpCallResult } from "./mcp-client";
 const log = createLogger("mcp-http-client");
 
 // ---------------------------------------------------------------------------
-// McpHttpClient
+// McpHttpClient 主体
 // ---------------------------------------------------------------------------
 
 export class McpHttpClient extends EventEmitter {
@@ -40,7 +39,7 @@ export class McpHttpClient extends EventEmitter {
   get error(): string | null { return this._error; }
 
   // -------------------------------------------------------------------------
-  // Lifecycle
+  // 生命周期
   // -------------------------------------------------------------------------
 
   async connect(): Promise<McpToolInfo[]> {
@@ -77,7 +76,7 @@ export class McpHttpClient extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
-  // Public API
+  // 对外 API
   // -------------------------------------------------------------------------
 
   async callTool(
@@ -105,7 +104,7 @@ export class McpHttpClient extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
-  // Private: HTTP JSON-RPC transport
+  // 私有方法：HTTP JSON-RPC 传输层
   // -------------------------------------------------------------------------
 
   private async sendRequest(method: string, params?: Record<string, unknown>): Promise<unknown> {
@@ -148,7 +147,7 @@ export class McpHttpClient extends EventEmitter {
       throw new Error(msg);
     }
 
-    // Capture session ID from response headers
+    // 从响应头中提取会话 ID。
     const newSessionId = response.headers.get("mcp-session-id");
     if (newSessionId) {
       this.sessionId = newSessionId;
@@ -156,15 +155,15 @@ export class McpHttpClient extends EventEmitter {
 
     const contentType = response.headers.get("content-type") ?? "";
 
-    // Handle SSE response (text/event-stream)
+    // 处理 SSE 响应（`text/event-stream`）。
     if (contentType.includes("text/event-stream")) {
       return this.parseSSEResponse(response, id);
     }
 
-    // Standard JSON response
+    // 处理标准 JSON 响应。
     const json = await response.json();
 
-    // Handle batched responses
+    // 兼容批量 JSON-RPC 响应。
     if (Array.isArray(json)) {
       const match = json.find((r: { id?: number | string }) => r.id === id);
       if (match?.error) {
@@ -207,7 +206,7 @@ export class McpHttpClient extends EventEmitter {
   }
 
   // -------------------------------------------------------------------------
-  // Private: MCP protocol methods
+  // 私有方法：MCP 协议调用
   // -------------------------------------------------------------------------
 
   private async initialize(): Promise<void> {
@@ -222,7 +221,7 @@ export class McpHttpClient extends EventEmitter {
       },
     });
 
-    // Send initialized notification
+    // 发送 `initialized` 通知，完成握手。
     await this.sendNotification("initialized");
 
     log.info("initialized (HTTP)", { result: JSON.stringify(result).slice(0, 200) });

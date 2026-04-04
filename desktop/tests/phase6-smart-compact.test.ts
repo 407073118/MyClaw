@@ -1,12 +1,12 @@
 /**
- * Phase 6: Smart Compact & Token UI tests
+ * 第 6 阶段：智能压缩与 Token UI 相关测试
  *
- * Tests:
- * - calculateSessionTokens sums all usage correctly
- * - smartCompactMessages does NOT compact when under threshold
- * - fallbackSummary returns correct format
- * - contextWindow defaults to 32768 when not set
- * - ChatMessage with usage field can be serialized/deserialized
+ * 测试内容：
+ * - calculateSessionTokens 能正确汇总所有 usage
+ * - smartCompactMessages 在未达到阈值时不会压缩
+ * - fallbackSummary 返回正确格式
+ * - contextWindow 未设置时默认按 32768 处理
+ * - 带 usage 字段的 ChatMessage 可以正确序列化和反序列化
  */
 
 import { describe, it, expect } from "vitest";
@@ -15,7 +15,7 @@ import { calculateSessionTokens, fallbackSummary } from "../src/main/ipc/session
 import type { ChatSession, ChatMessage, MessageTokenUsage, ModelProfile } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// 辅助方法
 // ---------------------------------------------------------------------------
 
 function makeSession(messages: ChatMessage[]): ChatSession {
@@ -120,7 +120,7 @@ describe("fallbackSummary", () => {
 });
 
 // ---------------------------------------------------------------------------
-// contextWindow default
+// contextWindow 默认值
 // ---------------------------------------------------------------------------
 
 describe("contextWindow default", () => {
@@ -133,10 +133,10 @@ describe("contextWindow default", () => {
       apiKey: "test-key",
       model: "gpt-4",
     };
-    // contextWindow is optional and defaults to undefined
+    // contextWindow 为可选字段，默认值应为 undefined
     expect(profile.contextWindow).toBeUndefined();
 
-    // The caller should use ?? 32768
+    // 调用方应通过 ?? 32768 提供默认上下文窗口
     const contextWindow = profile.contextWindow ?? 32768;
     expect(contextWindow).toBe(32768);
   });
@@ -158,7 +158,7 @@ describe("contextWindow default", () => {
 });
 
 // ---------------------------------------------------------------------------
-// ChatMessage usage serialization
+// ChatMessage 的 usage 序列化
 // ---------------------------------------------------------------------------
 
 describe("ChatMessage with usage serialization", () => {
