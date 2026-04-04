@@ -9,3 +9,4 @@
 *.dll
 *.asar
 Thumbs.db
+.worktrees/
