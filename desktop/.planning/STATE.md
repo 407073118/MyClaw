@@ -5,14 +5,14 @@
 Phase: v1.1 Phase 5~8 all completed
 Plan: Next milestone planning
 Status: v1.0 + v1.1 全部完成，116 个测试通过
-Last activity: 2026-04-04 -- 新增 Phase 10，围绕通用推理运行时继续推进 MiniMax-first provider adapter 路线
+Last activity: 2026-04-04 -- Phase 9 已完成，通用推理运行时、request-body patch 链路和 Chat Thinking UI 已落地
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** 用户可以通过自然语言与 AI 对话，AI 自动调用工具完成复杂的编码和系统管理任务。
-**Current focus:** 下一里程碑定义中，先落 Phase 9 的推理运行时内核，再推进 Phase 10 的 MiniMax-first provider adapter。
+**Current focus:** Phase 9 已完成，下一步推进 Phase 10 的 MiniMax-first provider adapter，在保持现有调用方式可用的前提下做 first-class 支持。
 
 ## Completed Phases
 
