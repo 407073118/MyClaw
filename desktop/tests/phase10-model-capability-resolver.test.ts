@@ -17,6 +17,24 @@ function buildProfile(overrides: Partial<ModelProfile> = {}): ModelProfile {
 }
 
 describe("resolveModelCapability", () => {
+  it("loads MiniMax capability profile from registry with replay semantics", () => {
+    const profile = buildProfile({
+      providerFlavor: "minimax-anthropic",
+      baseUrl: "https://api.minimaxi.com",
+      model: "MiniMax-M2.5",
+    });
+
+    const resolved = resolveModelCapability(profile);
+
+    expect(resolved.registry).not.toBeNull();
+    expect(resolved.effective.source).toBe("registry");
+    expect(resolved.effective.supportsReasoning).toBe(true);
+    expect(resolved.effective.supportsEffort).toBe(true);
+    expect(resolved.effective.requiresReasoningReplay).toBe(true);
+    expect(resolved.effective.preferredProtocol).toBe("anthropic");
+    expect(resolved.effective.raw?.supportsReasoningSplit).toBe(true);
+  });
+
   it("uses manual override over discovered and registry", () => {
     const profile = buildProfile({
       providerFlavor: "openrouter",
@@ -103,6 +121,21 @@ describe("resolveModelCapability", () => {
 });
 
 describe("findRegistryCapability", () => {
+  it("returns MiniMax registry capability for known minimax flavor", () => {
+    const profile = buildProfile({
+      providerFlavor: "minimax-anthropic",
+      baseUrl: "https://api.minimaxi.com",
+      model: "MiniMax-M2.5",
+    });
+
+    const capability = findRegistryCapability(profile);
+
+    expect(capability).not.toBeNull();
+    expect(capability?.supportsReasoning).toBe(true);
+    expect(capability?.supportsEffort).toBe(true);
+    expect(capability?.requiresReasoningReplay).toBe(true);
+  });
+
   it("returns capability from registry for known provider flavor", () => {
     const profile = buildProfile({
       providerFlavor: "openrouter",

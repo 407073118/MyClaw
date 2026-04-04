@@ -40,6 +40,25 @@ const REGISTRY_ENTRIES: RegistryEntry[] = [
     },
   },
   {
+    providerFlavor: "minimax-anthropic",
+    modelPattern: /^minimax/i,
+    capability: {
+      contextWindowTokens: 204800,
+      maxInputTokens: 196608,
+      maxOutputTokens: 8192,
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsEffort: true,
+      supportsStreaming: true,
+      requiresReasoningReplay: true,
+      preferredProtocol: "anthropic",
+      tokenCountingMode: "openai-compatible-estimate",
+      raw: {
+        supportsReasoningSplit: true,
+      },
+    },
+  },
+  {
     providerFlavor: "qwen",
     modelPattern: /^qwen/i,
     capability: {
@@ -108,6 +127,7 @@ function inferProviderFlavor(profile: ModelProfile): ProviderFlavor | undefined 
 
   if (baseUrl.includes("openrouter.ai")) return "openrouter";
   if (baseUrl.includes("vercel.com") && baseUrl.includes("gateway")) return "vercel-ai-gateway";
+  if (baseUrl.includes("minimax") || baseUrl.includes("minimaxi") || model.startsWith("minimax")) return "minimax-anthropic";
   if (baseUrl.includes("anthropic.com") || profile.provider === "anthropic") return "anthropic";
   if (baseUrl.includes("dashscope.aliyuncs.com") || model.startsWith("qwen")) return "qwen";
   if (baseUrl.includes("ollama") || model.startsWith("ollama")) return "ollama";
@@ -135,4 +155,3 @@ export function findRegistryCapability(profile: ModelProfile): ModelCapability |
 
   return null;
 }
-

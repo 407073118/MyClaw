@@ -57,7 +57,7 @@ function resolveModelsListUrl(profile: ModelProfile): string {
 /**
  * 根据配置推断 provider flavor，优先使用用户显式配置。
  */
-function resolveProviderFlavor(
+export function resolveProviderFlavor(
   profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "model">,
 ): ProviderFlavor {
   if (profile.providerFlavor) return profile.providerFlavor;
@@ -87,7 +87,7 @@ function resolveProviderFlavor(
 /**
  * 按 provider flavor 选择目录归一化策略。
  */
-function normalizeCatalogPayload(
+export function normalizeCatalogPayload(
   payload: unknown,
   provider: ModelProfile["provider"],
   providerFlavor: ProviderFlavor,
@@ -104,7 +104,7 @@ function normalizeCatalogPayload(
     return normalizeOllamaCatalog(payload, provider, providerFlavor);
   }
 
-  if (provider === "anthropic" || providerFlavor === "anthropic" || providerFlavor === "minimax-anthropic") {
+  if (provider === "anthropic" || providerFlavor === "anthropic") {
     return normalizeAnthropicCatalog(payload, provider, providerFlavor);
   }
 
