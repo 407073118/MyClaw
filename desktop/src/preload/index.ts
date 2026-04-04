@@ -68,10 +68,21 @@ const myClawAPI = {
   },
 
   // ---- Sessions ------------------------------------------------------------
-  createSession: (data?: { title?: string; modelProfileId?: string; attachedDirectory?: string | null }) =>
+  createSession: (data?: {
+    title?: string;
+    modelProfileId?: string;
+    attachedDirectory?: string | null;
+    thinkingEnabled?: boolean;
+    thinkingSource?: "default" | "user-toggle";
+  }) =>
     ipcRenderer.invoke("session:create", data ?? {}),
 
   deleteSession: (id: string) => ipcRenderer.invoke("session:delete", id),
+
+  updateSessionThinking: (
+    sessionId: string,
+    input: { thinkingEnabled: boolean; thinkingSource?: "default" | "user-toggle" },
+  ) => ipcRenderer.invoke("session:update-thinking", sessionId, input),
 
   sendMessage: (
     sessionId: string,

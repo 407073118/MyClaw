@@ -142,8 +142,14 @@ declare global {
         title?: string;
         modelProfileId?: string;
         attachedDirectory?: string | null;
+        thinkingEnabled?: boolean;
+        thinkingSource?: "default" | "user-toggle";
       }) => Promise<SessionPayload>;
       deleteSession: (sessionId: string) => Promise<SessionsPayload>;
+      updateSessionThinking: (
+        sessionId: string,
+        input: { thinkingEnabled: boolean; thinkingSource?: "default" | "user-toggle" },
+      ) => Promise<SessionPayload>;
       sendMessage: (
         sessionId: string,
         content: string,

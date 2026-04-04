@@ -3,7 +3,17 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode } from "@shared/contracts";
+import type {
+  ChatSession,
+  ChatMessage as SessionChatMessage,
+  ChatSessionThinkingSource,
+  ExecutionIntent,
+  SkillDefinition,
+  ApprovalRequest,
+  ModelProfile,
+  ApprovalDecision,
+  ApprovalMode,
+} from "@shared/contracts";
 import { EventType, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
@@ -14,6 +24,7 @@ import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../servi
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
+import { buildReasoningExecutionPlan, resolveSessionThinkingState } from "../services/reasoning-runtime";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -171,11 +182,18 @@ type CreateSessionInput = {
   title?: string;
   modelProfileId?: string;
   attachedDirectory?: string | null;
+  thinkingEnabled?: boolean;
+  thinkingSource?: ChatSessionThinkingSource;
 };
 
 type SendMessageInput = {
   content: string;
   attachedDirectory?: string | null;
+};
+
+type UpdateSessionThinkingInput = {
+  thinkingEnabled: boolean;
+  thinkingSource?: ChatSessionThinkingSource;
 };
 
 type SessionPayload = {
@@ -313,6 +331,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       title: input?.title ?? "New Chat",
       modelProfileId: input?.modelProfileId ?? ctx.state.getDefaultModelProfileId() ?? "",
       attachedDirectory: input?.attachedDirectory ?? null,
+      thinkingEnabled: input?.thinkingEnabled ?? false,
+      thinkingSource: input?.thinkingSource ?? "default",
       createdAt: now,
       messages: [],
     };
@@ -338,6 +358,31 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       approvalRequests: ctx.state.getApprovalRequests().filter((r) => r.sessionId !== sessionId),
     };
   });
+
+  /**
+   * 更新会话级 thinking 抽象状态，保持 renderer 不直接写 provider 细节。
+   */
+  ipcMain.handle(
+    "session:update-thinking",
+    async (_event, sessionId: string, input: UpdateSessionThinkingInput): Promise<SessionPayload> => {
+      const session = ctx.state.sessions.find((s) => s.id === sessionId);
+      if (!session) {
+        throw new Error(`Session not found: ${sessionId}`);
+      }
+
+      session.thinkingEnabled = input.thinkingEnabled;
+      session.thinkingSource = input.thinkingSource ?? "user-toggle";
+
+      console.info("[session:thinking] 已更新会话 thinking 状态", {
+        sessionId,
+        thinkingEnabled: session.thinkingEnabled,
+        thinkingSource: session.thinkingSource,
+      });
+
+      await saveSession(ctx.runtime.paths, session);
+      return { session };
+    },
+  );
 
   // -------------------------------------------------------------------------
   // Send a message — agentic tool loop
@@ -445,11 +490,25 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               ` (${assembled.compactionReason}), budget used: ${assembled.budgetUsed}`,
             );
           }
+          const thinkingState = resolveSessionThinkingState(session);
+          const executionPlan = buildReasoningExecutionPlan({
+            thinkingState,
+            capability: resolved.effective,
+            profile: modelProfile,
+          });
+          console.info("[session:thinking] 本轮 reasoning 执行计划已生成", {
+            sessionId,
+            providerFlavor: modelProfile.providerFlavor ?? modelProfile.provider,
+            thinkingEnabled: thinkingState.enabled,
+            hasBodyPatch: Object.keys(executionPlan.bodyPatch).length > 0,
+            degradedReason: executionPlan.degradedReason,
+          });
           const modelMessages = assembled.messages as ModelChatMessage[];
 
           const result = await callModel({
             profile: modelProfile,
             messages: modelMessages,
+            bodyPatch: executionPlan.bodyPatch,
             tools,
             onDelta: (delta) => {
               broadcastToRenderers("session:stream", {

@@ -3,7 +3,7 @@
  * Uses native fetch only. Self-contained — no imports from desktop packages.
  */
 
-import type { ModelProfile } from "@shared/contracts";
+import type { JsonValue, ModelProfile } from "@shared/contracts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,6 +32,7 @@ export type ChatMessage = {
 export type ModelCallOptions = {
   profile: ModelProfile;
   messages: ChatMessage[];
+  bodyPatch?: Record<string, JsonValue>;
   tools?: Array<{
     type: "function";
     function: {
@@ -557,7 +558,7 @@ export function isRetryableError(err: unknown, response?: Response | null): bool
  * Tool calls are accumulated across SSE frames and returned in `toolCalls`.
  */
 export async function callModel(options: ModelCallOptions): Promise<ModelCallResult> {
-  const { profile, messages, tools, onDelta, signal, timeoutMs = 120_000 } = options;
+  const { profile, messages, bodyPatch, tools, onDelta, signal, timeoutMs = 120_000 } = options;
 
   const url = resolveModelEndpointUrl(profile);
   const headers = buildRequestHeaders(profile);
@@ -574,13 +575,21 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   });
 
   const hasTools = tools && tools.length > 0;
+  const hasReasoningPatch = !!bodyPatch && Object.keys(bodyPatch).length > 0;
   const requestBody: Record<string, unknown> = {
     model: profile.model,
     messages: wireMessages,
     stream: true,
     ...(hasTools ? { tools, tool_choice: "auto" } : {}),
+    ...(bodyPatch ?? {}),
     ...(profile.requestBody ?? {}),
   };
+
+  console.info("[model-client] 请求体 reasoning patch 已解析", {
+    providerFlavor: profile.providerFlavor ?? profile.provider,
+    hasReasoningPatch,
+    requestBodyOverridesKeys: Object.keys(profile.requestBody ?? {}),
+  });
 
   // Set up timeout via AbortController, composing with any caller-supplied signal.
   const timeoutController = new AbortController();
