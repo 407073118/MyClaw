@@ -574,21 +574,25 @@ Phase 5/6/7/8 之间无依赖，可完全并行开发。
 **Goal:** 以运行时为核心，在聊天窗口接入单一、可控、可持续打磨的 thinking/effort 模式，而不是先做多档位复杂选择器。
 **Requirements**: TBD
 **Depends on:** Phase 8
-**Plans:** 0 plans
+**Plans:** 3 plans (completed)
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 9 to break down)
+- [x] 09-01 — 基础契约和 reasoning runtime 骨架
+- [x] 09-02 — 主进程 reasoning 链路与 request-body patch
+- [x] 09-03 — Chat thinking UI 与确认交互
 
 ### Phase 10: Provider adapters for MiniMax-first reasoning runtime
 
 **Goal:** 在不破坏现有 MiniMax 调用方式的前提下，把 MiniMax 从 generic-compatible 处理提升为 first-class provider adapter，并为后续 OpenAI / Anthropic 兼容桥接预留稳定扩展点。
 **Requirements**: TBD
 **Depends on:** Phase 9
-**Plans:** 0 plans
+**Plans:** 3 plans (completed)
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 10 to break down)
+- [x] 10-01 — MiniMax adapter contract 与 capability profile
+- [x] 10-02 — assistant replay payload 与 tool loop replay
+- [x] 10-03 — settings/catalog 对齐与回归矩阵
 
 ---
 *Roadmap created: 2026-03-31*
-*Last updated: 2026-04-04 — 新增 Phase 9/10，开始规划通用推理运行时与 MiniMax-first provider adapter 路线*
+*Last updated: 2026-04-04 — Phase 9/10 已完成，通用推理运行时与 MiniMax-first provider adapter 已落地*

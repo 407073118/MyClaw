@@ -5,14 +5,14 @@
 Phase: v1.1 Phase 5~8 all completed
 Plan: Next milestone planning
 Status: v1.0 + v1.1 全部完成，116 个测试通过
-Last activity: 2026-04-04 -- Phase 10 已完成规划，MiniMax-first adapter 的 research/context/validation/plan 已落盘
+Last activity: 2026-04-04 -- Phase 10 已完成，MiniMax-first adapter、assistant replay 与 settings verification 已落地
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** 用户可以通过自然语言与 AI 对话，AI 自动调用工具完成复杂的编码和系统管理任务。
-**Current focus:** Phase 10 已完成规划，下一步执行 MiniMax-first provider adapter，在保持现有调用方式可用的前提下做 first-class 支持。
+**Current focus:** Phase 10 已完成，当前可进入下一阶段规划，或继续做 OpenAI / Anthropic compatibility bridge。
 
 ## Completed Phases
 
