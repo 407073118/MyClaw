@@ -133,6 +133,7 @@ type WorkspaceState = {
   selectSession: (sessionId: string) => void;
   createSession: () => Promise<ChatSession>;
   deleteSession: (sessionId: string) => Promise<unknown>;
+  updateSessionThinking: (sessionId: string, enabled: boolean) => Promise<ChatSession | null>;
   sendMessage: (content: string, options?: {
     onMessageStream?: (snapshot: unknown) => void;
   }) => Promise<void>;
@@ -431,6 +432,27 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       return { sessions, approvalRequests, activeSessionId };
     });
     return payload;
+  },
+
+  async updateSessionThinking(sessionId, enabled) {
+    const current = get().sessions.find((item) => item.id === sessionId) ?? null;
+    if (!current) return null;
+
+    const payload = await window.myClawAPI.updateSessionThinking(sessionId, {
+      thinkingEnabled: enabled,
+      thinkingSource: "user-toggle",
+    });
+
+    set((s) => {
+      const sessions = [...s.sessions];
+      const index = sessions.findIndex((item) => item.id === sessionId);
+      if (index >= 0) {
+        sessions[index] = payload.session;
+      }
+      return { sessions };
+    });
+
+    return payload.session;
   },
 
   // -------------------------------------------------------------------------
@@ -965,6 +987,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
 
   async testModelProfileConnectivity(profileId) {
     return window.myClawAPI.testModelProfile(profileId);
+  },
+
+  async fetchModelCatalog(input) {
+    const result = await window.myClawAPI.fetchModelCatalog(input);
+    return result.modelIds;
   },
 
   async fetchAvailableModelIds(input) {

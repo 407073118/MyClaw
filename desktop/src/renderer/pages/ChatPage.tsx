@@ -245,7 +245,12 @@ export default function ChatPage() {
   const [formDrafts, setFormDrafts] = useState<Record<string, Record<string, string>>>({});
   const [submittedFormIds, setSubmittedFormIds] = useState<string[]>([]);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
-  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string;
+    confirmLabel?: string;
+    confirmTone?: "default" | "danger";
+    onConfirm: () => void;
+  } | null>(null);
   const timelinePanelRef = useRef<HTMLElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -256,6 +261,7 @@ export default function ChatPage() {
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
 
   const session = workspace.currentSession;
+  const thinkingEnabled = session?.thinkingEnabled ?? false;
 
   const sessionMessages = session?.messages;
 
@@ -533,6 +539,8 @@ export default function ChatPage() {
     if (isDeletingSession(sessionId)) return;
     setConfirmDialog({
       message: "删除这条对话记录？",
+      confirmLabel: "确认删除",
+      confirmTone: "danger",
       onConfirm: async () => {
         setConfirmDialog(null);
         setDeletingSessionIds((prev) => new Set([...prev, sessionId]));
@@ -545,6 +553,37 @@ export default function ChatPage() {
         }
       },
     });
+  }
+
+  function hasAssistantMessages(targetSession: ChatSession | null | undefined) {
+    return !!targetSession?.messages.some((message) => message.role === "assistant");
+  }
+
+  async function applyThinkingToggle(nextEnabled: boolean) {
+    if (!session) return;
+    try {
+      await workspace.updateSessionThinking(session.id, nextEnabled);
+    } catch (error) {
+      reportChatError(error);
+    }
+  }
+
+  function handleThinkingToggle() {
+    if (!session) return;
+    const nextEnabled = !thinkingEnabled;
+    if (hasAssistantMessages(session)) {
+      setConfirmDialog({
+        message: "中途切换会改变后续回复延迟与风格，确认继续吗？",
+        confirmLabel: "继续切换",
+        confirmTone: "default",
+        onConfirm: async () => {
+          setConfirmDialog(null);
+          await applyThinkingToggle(nextEnabled);
+        },
+      });
+      return;
+    }
+    void applyThinkingToggle(nextEnabled);
   }
 
   async function sendMessageToRuntime(draft: string): Promise<boolean> {
@@ -782,6 +821,18 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="header-right">
+            <button
+              type="button"
+              data-testid="thinking-toggle"
+              className={`thinking-toggle ${thinkingEnabled ? "is-enabled" : ""}`}
+              aria-pressed={thinkingEnabled}
+              onClick={handleThinkingToggle}
+              disabled={!session}
+              title="切换会话级 Thinking 状态"
+            >
+              <span className="thinking-dot" aria-hidden="true"></span>
+              <span>{`Thinking: ${thinkingEnabled ? "On" : "Off"}`}</span>
+            </button>
             <button
               data-testid="new-chat-button"
               className="primary new-chat-btn"
@@ -1092,7 +1143,12 @@ export default function ChatPage() {
             <p className="confirm-message">{confirmDialog.message}</p>
             <div className="confirm-actions">
               <button className="confirm-cancel" onClick={() => setConfirmDialog(null)}>取消</button>
-              <button className="confirm-ok" onClick={() => confirmDialog.onConfirm()}>确认删除</button>
+              <button
+                className={`confirm-ok ${confirmDialog.confirmTone === "default" ? "confirm-ok--default" : ""}`}
+                onClick={() => confirmDialog.onConfirm()}
+              >
+                {confirmDialog.confirmLabel ?? "确认"}
+              </button>
             </div>
           </div>
         </div>
@@ -1110,6 +1166,12 @@ export default function ChatPage() {
         .session-dropdown-menu { position: absolute; top: calc(100% + 8px); left: -12px; width: 320px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-lg); box-shadow: 0 12px 40px rgba(0,0,0,0.4); opacity: 0; visibility: hidden; transform: translateY(-8px); transition: all 0.2s cubic-bezier(0.16,1,0.3,1); display: flex; flex-direction: column; max-height: 60vh; }
         .session-dropdown-container:hover .session-dropdown-menu, .session-dropdown-container:focus-within .session-dropdown-menu { opacity: 1; visibility: visible; transform: translateY(0); }
         .dropdown-header { padding: 16px; border-bottom: 1px solid var(--glass-border); font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .thinking-toggle { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--glass-border); background: var(--bg-card); color: var(--text-secondary); cursor: pointer; transition: all 0.2s ease; font-size: 12px; font-weight: 600; }
+        .thinking-toggle:hover:not(:disabled) { border-color: var(--text-muted); color: var(--text-primary); }
+        .thinking-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+        .thinking-toggle.is-enabled { color: var(--accent-cyan); border-color: rgba(34, 211, 238, 0.4); background: rgba(34, 211, 238, 0.08); }
+        .thinking-dot { width: 8px; height: 8px; border-radius: 999px; background: currentColor; opacity: 0.8; }
         .new-chat-btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; }
         .session-list-dropdown { flex: 1; overflow-y: auto; padding: 8px; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
         .session-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: all 0.2s ease; }
@@ -1265,6 +1327,8 @@ export default function ChatPage() {
         .confirm-cancel:hover { background: var(--glass-reflection); color: var(--text-primary); }
         .confirm-ok { background: #ef4444; color: #fff; border-color: transparent; }
         .confirm-ok:hover { background: #dc2626; }
+        .confirm-ok--default { background: var(--text-primary); color: var(--bg-base); }
+        .confirm-ok--default:hover { background: #d4d4d8; }
       `}</style>
     </section>
   );
