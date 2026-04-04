@@ -29,10 +29,22 @@ export type ChatMessage = {
   }>;
 };
 
+export type AssistantReplayPayload = {
+  mode: "full-assistant" | "compatibility";
+  degradedReason: string | null;
+  message: {
+    role: "assistant";
+    content: ChatMessageContent;
+    reasoning?: string | null;
+    tool_calls?: ChatMessage["tool_calls"];
+  };
+};
+
 export type ModelCallOptions = {
   profile: ModelProfile;
   messages: ChatMessage[];
   bodyPatch?: Record<string, JsonValue>;
+  replayPolicy?: "none" | "required";
   tools?: Array<{
     type: "function";
     function: {
@@ -59,6 +71,7 @@ export type ModelCallResult = {
   content: string;
   reasoning?: string;
   toolCalls: ResolvedToolCall[];
+  assistantReplay?: AssistantReplayPayload;
   finishReason: string | null;
   usage?: TokenUsage;
 };
@@ -418,6 +431,35 @@ function materializeToolCalls(state: SseState): ResolvedToolCall[] {
     });
 }
 
+/**
+ * 将一次 assistant 响应规范化为可回放 payload，供后续 tool loop 保留完整轨迹。
+ */
+export function buildAssistantReplayPayload(input: {
+  content: string;
+  reasoning?: string;
+  toolCalls: ResolvedToolCall[];
+}): AssistantReplayPayload {
+  const tool_calls = input.toolCalls.map((toolCall) => ({
+    id: toolCall.id,
+    type: "function" as const,
+    function: {
+      name: toolCall.name,
+      arguments: toolCall.argumentsJson,
+    },
+  }));
+
+  return {
+    mode: input.reasoning || tool_calls.length > 0 ? "full-assistant" : "compatibility",
+    degradedReason: null,
+    message: {
+      role: "assistant",
+      content: input.content,
+      ...(input.reasoning ? { reasoning: input.reasoning } : {}),
+      ...(tool_calls.length > 0 ? { tool_calls } : {}),
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Core streaming consumer
 // ---------------------------------------------------------------------------
@@ -558,7 +600,7 @@ export function isRetryableError(err: unknown, response?: Response | null): bool
  * Tool calls are accumulated across SSE frames and returned in `toolCalls`.
  */
 export async function callModel(options: ModelCallOptions): Promise<ModelCallResult> {
-  const { profile, messages, bodyPatch, tools, onDelta, signal, timeoutMs = 120_000 } = options;
+  const { profile, messages, bodyPatch, replayPolicy = "none", tools, onDelta, signal, timeoutMs = 120_000 } = options;
 
   const url = resolveModelEndpointUrl(profile);
   const headers = buildRequestHeaders(profile);
@@ -571,6 +613,9 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     };
     if (m.tool_call_id) base["tool_call_id"] = m.tool_call_id;
     if (m.tool_calls && m.tool_calls.length > 0) base["tool_calls"] = m.tool_calls;
+    if (replayPolicy === "required" && m.role === "assistant" && typeof m.reasoning === "string" && m.reasoning.trim()) {
+      base["reasoning"] = m.reasoning;
+    }
     return base;
   });
 
@@ -588,6 +633,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   console.info("[model-client] 请求体 reasoning patch 已解析", {
     providerFlavor: profile.providerFlavor ?? profile.provider,
     hasReasoningPatch,
+    replayPolicy,
     requestBodyOverridesKeys: Object.keys(profile.requestBody ?? {}),
   });
 
@@ -681,10 +727,22 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
 
   if (isEventStream || response.body) {
     const result = await consumeSseStream(response, onDelta);
+    const assistantReplay = buildAssistantReplayPayload({
+      content: result.content,
+      reasoning: result.reasoning || undefined,
+      toolCalls: result.toolCalls,
+    });
+    console.info("[model-client] 已生成 assistant replay payload", {
+      providerFlavor: profile.providerFlavor ?? profile.provider,
+      replayMode: assistantReplay.mode,
+      hasReasoning: Boolean(result.reasoning),
+      toolCallCount: result.toolCalls.length,
+    });
     return {
       content: result.content,
       ...(result.reasoning ? { reasoning: result.reasoning } : {}),
       toolCalls: result.toolCalls,
+      assistantReplay,
       finishReason: result.finishReason,
       ...(result.usage ? { usage: result.usage } : {}),
     };
@@ -704,6 +762,10 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   return {
     content,
     toolCalls: [],
+    assistantReplay: buildAssistantReplayPayload({
+      content,
+      toolCalls: [],
+    }),
     finishReason: null,
   };
 }
