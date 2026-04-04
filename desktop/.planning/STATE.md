@@ -5,14 +5,14 @@
 Phase: v1.1 Phase 5~8 all completed
 Plan: Next milestone planning
 Status: v1.0 + v1.1 全部完成，116 个测试通过
-Last activity: 2026-04-01 -- v1.1 Phase 5~8 implemented and tested
+Last activity: 2026-04-04 -- 新增 Phase 10，围绕通用推理运行时继续推进 MiniMax-first provider adapter 路线
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** 用户可以通过自然语言与 AI 对话，AI 自动调用工具完成复杂的编码和系统管理任务。
-**Current focus:** v1.1 complete. All core features implemented.
+**Current focus:** 下一里程碑定义中，先落 Phase 9 的推理运行时内核，再推进 Phase 10 的 MiniMax-first provider adapter。
 
 ## Completed Phases
 
@@ -49,6 +49,16 @@ See: .planning/PROJECT.md (updated 2026-04-01)
 - **ErrorBoundary** — 渲染进程崩溃友好展示 + 重试
 - 116 个单元测试全部通过（Phase 1~8 核心逻辑覆盖）
 - MCP SSE/HTTP 模式、Cloud Hub、Workflow 运行时仍是 stub
+
+### Roadmap Evolution
+
+- Phase 9 added: Chat 推理等级与 Thinking/Effort 适配
+- Phase 10 added: Provider adapters for MiniMax-first reasoning runtime
+
+### Decisions
+
+- Phase 9 先聚焦运行时能力落地，不预设 low / medium / high 等多档位；优先打磨一种稳定、好用的 thinking/effort 模式。
+- Phase 10 明确保持现有 MiniMax 调用方式继续可用，在此基础上引入 first-class provider adapter，而不是强制切换到单一路径。
 
 ## Key Files Changed (v1.1)
 

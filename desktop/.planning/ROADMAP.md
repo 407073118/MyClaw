@@ -569,6 +569,26 @@ Phase 8 (Infrastructure)          ← 独立，无依赖
 Phase 5/6/7/8 之间无依赖，可完全并行开发。
 ```
 
+### Phase 9: Chat 推理等级与 Thinking/Effort 适配
+
+**Goal:** 以运行时为核心，在聊天窗口接入单一、可控、可持续打磨的 thinking/effort 模式，而不是先做多档位复杂选择器。
+**Requirements**: TBD
+**Depends on:** Phase 8
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 9 to break down)
+
+### Phase 10: Provider adapters for MiniMax-first reasoning runtime
+
+**Goal:** 在不破坏现有 MiniMax 调用方式的前提下，把 MiniMax 从 generic-compatible 处理提升为 first-class provider adapter，并为后续 OpenAI / Anthropic 兼容桥接预留稳定扩展点。
+**Requirements**: TBD
+**Depends on:** Phase 9
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 10 to break down)
+
 ---
 *Roadmap created: 2026-03-31*
-*Last updated: 2026-04-01 — v1.0 completed, v1.1 phases 5~8 planned*
+*Last updated: 2026-04-04 — 新增 Phase 9/10，开始规划通用推理运行时与 MiniMax-first provider adapter 路线*
