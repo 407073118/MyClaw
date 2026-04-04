@@ -509,6 +509,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             profile: modelProfile,
             messages: modelMessages,
             bodyPatch: executionPlan.bodyPatch,
+            replayPolicy: executionPlan.replayPolicy,
             tools,
             onDelta: (delta) => {
               broadcastToRenderers("session:stream", {
@@ -525,13 +526,18 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
           if (hasToolCalls) {
             // Append the assistant message WITH tool_calls (content may be empty)
+            const replayMessage = result.assistantReplay?.message;
             const assistantMsg = {
               id: currentMessageId,
               role: "assistant" as const,
-              content: result.content || "",
-              ...(result.reasoning ? { reasoning: result.reasoning } : {}),
+              content: replayMessage?.content ?? (result.content || ""),
+              ...((typeof replayMessage?.reasoning === "string" && replayMessage.reasoning)
+                ? { reasoning: replayMessage.reasoning }
+                : result.reasoning
+                  ? { reasoning: result.reasoning }
+                  : {}),
               ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
-              tool_calls: result.toolCalls.map((tc) => ({
+              tool_calls: replayMessage?.tool_calls ?? result.toolCalls.map((tc) => ({
                 id: tc.id,
                 type: "function" as const,
                 function: { name: tc.name, arguments: tc.argumentsJson },
@@ -539,6 +545,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               createdAt: new Date().toISOString(),
             };
             session.messages.push(assistantMsg);
+            console.info("[session:thinking] 已写入 assistant replay payload", {
+              sessionId,
+              replayPolicy: executionPlan.replayPolicy,
+              replayMode: result.assistantReplay?.mode ?? "compatibility",
+              degradedReason: result.assistantReplay?.degradedReason ?? executionPlan.degradedReason,
+            });
 
             // Broadcast the assistant message with tool calls info
             broadcastToRenderers("session:stream", {
@@ -826,11 +838,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             });
           } else {
             // No tool calls — this is the final response
+            const replayMessage = result.assistantReplay?.message;
             session.messages.push({
               id: currentMessageId,
               role: "assistant",
-              content: result.content,
-              ...(result.reasoning ? { reasoning: result.reasoning } : {}),
+              content: replayMessage?.content ?? result.content,
+              ...((typeof replayMessage?.reasoning === "string" && replayMessage.reasoning)
+                ? { reasoning: replayMessage.reasoning }
+                : result.reasoning
+                  ? { reasoning: result.reasoning }
+                  : {}),
               ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
               createdAt: new Date().toISOString(),
             });
