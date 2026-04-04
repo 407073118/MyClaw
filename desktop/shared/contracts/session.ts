@@ -1,6 +1,7 @@
 import type { A2UiPayload } from "./ui";
 
 export type ChatMessageRole = "system" | "user" | "assistant" | "tool";
+export type ChatSessionThinkingSource = "default" | "user-toggle";
 
 export type MessageTokenUsage = {
   promptTokens: number;
@@ -51,6 +52,10 @@ export type ChatSession = {
   title: string;
   modelProfileId: string;
   attachedDirectory: string | null;
+  /** 会话层只保存产品抽象的 thinking 状态，不直接暴露 provider 参数。 */
+  thinkingEnabled?: boolean;
+  /** thinking 状态来源仅用于产品行为解释，provider 细节由 runtime 负责。 */
+  thinkingSource?: ChatSessionThinkingSource;
   createdAt: string;
   messages: ChatMessage[];
 };

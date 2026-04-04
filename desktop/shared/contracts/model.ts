@@ -65,6 +65,14 @@ export const TOKEN_COUNTING_MODE_VALUES = [
   "character-fallback",
 ] as const satisfies readonly TokenCountingMode[];
 
+export type ReasoningProtocol = "openai-compatible" | "anthropic" | "local-gateway";
+
+export const REASONING_PROTOCOL_VALUES = [
+  "openai-compatible",
+  "anthropic",
+  "local-gateway",
+] as const satisfies readonly ReasoningProtocol[];
+
 export type JsonValue =
   | string
   | number
@@ -79,9 +87,12 @@ export type ModelCapability = {
   maxOutputTokens?: number;
   supportsTools?: boolean;
   supportsReasoning?: boolean;
+  supportsEffort?: boolean;
   supportsStreaming?: boolean;
   supportsPromptCaching?: boolean;
   supportsVision?: boolean;
+  requiresReasoningReplay?: boolean;
+  preferredProtocol?: ReasoningProtocol;
   tokenCountingMode?: TokenCountingMode;
   source: ModelCapabilitySource;
   lastValidatedAt?: string | null;

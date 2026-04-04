@@ -97,6 +97,17 @@ function workflowsDir(paths: MyClawPaths): string {
   return join(paths.myClawDir, "workflows");
 }
 
+/**
+ * 统一补齐旧会话缺失的 thinking 抽象字段，确保恢复后的运行时状态稳定。
+ */
+function normalizeSession(session: ChatSession): ChatSession {
+  return {
+    ...session,
+    thinkingEnabled: session.thinkingEnabled ?? false,
+    thinkingSource: session.thinkingSource ?? "default",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Load all state from disk (synchronous — called once at startup)
 // ---------------------------------------------------------------------------
@@ -140,7 +151,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       const meta = tryReadJson<Omit<ChatSession, "messages">>(metaFile);
       if (!meta || !meta.id) continue;
       const messages = tryReadJson<ChatSession["messages"]>(messagesFile) ?? [];
-      sessions.push({ ...meta, messages });
+      sessions.push(normalizeSession({ ...meta, messages }));
     }
   } catch {
     // sessionsDir unreadable — start empty
@@ -231,12 +242,13 @@ export async function saveSession(
   paths: MyClawPaths,
   session: ChatSession,
 ): Promise<void> {
-  const sessionDir = join(paths.sessionsDir, session.id);
+  const normalizedSession = normalizeSession(session);
+  const sessionDir = join(paths.sessionsDir, normalizedSession.id);
   await mkdir(sessionDir, { recursive: true });
 
   // Split: metadata (without messages) and messages separately
   // Both use atomic writes (temp + rename) to prevent data corruption
-  const { messages, ...meta } = session;
+  const { messages, ...meta } = normalizedSession;
   await atomicWriteFile(join(sessionDir, "session.json"), JSON.stringify(meta, null, 2));
   await atomicWriteFile(join(sessionDir, "messages.json"), JSON.stringify(messages, null, 2));
 }
