@@ -7,6 +7,11 @@ import type {
 } from "@shared/contracts";
 
 import { createLogger } from "./logger";
+import {
+  resolveProviderReasoningAdapter,
+  type ProviderReasoningMode,
+  type ReasoningReplayPolicy,
+} from "./provider-adapters";
 
 const log = createLogger("reasoning-runtime");
 
@@ -15,14 +20,14 @@ export type SessionThinkingState = {
   source: ChatSessionThinkingSource;
 };
 
-export type ReasoningReplayPolicy = "none" | "required";
-
 export type ReasoningExecutionPlan = {
   enabled: boolean;
   bodyPatch: Record<string, JsonValue>;
   replayPolicy: ReasoningReplayPolicy;
   degradedReason: string | null;
   preferredProtocol: ReasoningProtocol | null;
+  adapterKey?: string;
+  mode?: ProviderReasoningMode | null;
 };
 
 /**
@@ -51,7 +56,7 @@ export function resolveSessionThinkingState(input?: {
 export function buildReasoningExecutionPlan(input: {
   thinkingState: SessionThinkingState;
   capability: ModelCapability;
-  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "model">;
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "model" | "baseUrl" | "baseUrlMode">;
 }): ReasoningExecutionPlan {
   const preferredProtocol = input.capability.preferredProtocol ?? null;
 
@@ -62,6 +67,8 @@ export function buildReasoningExecutionPlan(input: {
       replayPolicy: input.capability.requiresReasoningReplay ? "required" : "none",
       degradedReason: null,
       preferredProtocol,
+      adapterKey: undefined,
+      mode: null,
     };
   }
 
@@ -77,38 +84,30 @@ export function buildReasoningExecutionPlan(input: {
       replayPolicy: input.capability.requiresReasoningReplay ? "required" : "none",
       degradedReason,
       preferredProtocol,
+      adapterKey: undefined,
+      mode: null,
     };
   }
 
-  if (preferredProtocol === "openai-compatible" && input.capability.supportsEffort) {
-    const bodyPatch: Record<string, JsonValue> = {
-      reasoning: {
-        effort: "medium",
-      },
-    };
-    log.info("reasoning runtime 应用 OpenAI-compatible patch", {
-      providerFlavor: input.profile.providerFlavor ?? input.profile.provider,
-      thinkingEnabled: true,
-    });
-    return {
-      enabled: true,
-      bodyPatch,
-      replayPolicy: input.capability.requiresReasoningReplay ? "required" : "none",
-      degradedReason: null,
-      preferredProtocol,
-    };
-  }
-
-  const degradedReason = "reasoning-patch-not-supported-in-phase9";
-  log.info("reasoning runtime 降级为空 patch", {
-    providerFlavor: input.profile.providerFlavor ?? input.profile.provider,
-    degradedReason,
+  const adapter = resolveProviderReasoningAdapter(input.profile);
+  const decision = adapter.buildRequestPatch({
+    capability: input.capability,
+    profile: input.profile,
   });
+  log.info("reasoning runtime 已通过 provider adapter 生成执行计划", {
+    providerFlavor: input.profile.providerFlavor ?? input.profile.provider,
+    adapterKey: decision.adapterKey,
+    mode: decision.mode,
+    degradedReason: decision.degradedReason,
+  });
+
   return {
     enabled: true,
-    bodyPatch: {},
-    replayPolicy: input.capability.requiresReasoningReplay ? "required" : "none",
-    degradedReason,
-    preferredProtocol,
+    bodyPatch: decision.bodyPatch,
+    replayPolicy: decision.replayPolicy,
+    degradedReason: decision.degradedReason,
+    preferredProtocol: decision.preferredProtocol ?? preferredProtocol,
+    adapterKey: decision.adapterKey,
+    mode: decision.mode,
   };
 }
