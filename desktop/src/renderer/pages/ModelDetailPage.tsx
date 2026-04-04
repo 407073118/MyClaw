@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
-import type { ModelProfile, ProviderKind } from "@shared/contracts";
+import type { ModelProfile, ProviderFlavor, ProviderKind } from "@shared/contracts";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
 import { formatTokenCount, formatCapabilitySource } from "../utils/context-ui-helpers";
 
@@ -13,27 +13,76 @@ type ProviderPreset = {
   baseUrl: string;
   baseUrlMode: "provider-root" | "manual";
   provider: ProviderKind;
+  providerFlavor?: ProviderFlavor;
 };
 
 const providerPresets: ProviderPreset[] = [
-  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
-  { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimaxi.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
-  { id: "moonshot", label: "Moonshot", baseUrl: "https://api.moonshot.cn", baseUrlMode: "provider-root", provider: "openai-compatible" },
-  { id: "qwen", label: "Qwen", baseUrl: "https://dashscope.aliyuncs.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
-  { id: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com", baseUrlMode: "provider-root", provider: "anthropic" },
+  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "openai" },
+  { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimaxi.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "minimax-anthropic" },
+  { id: "moonshot", label: "Moonshot", baseUrl: "https://api.moonshot.cn", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "moonshot" },
+  { id: "qwen", label: "Qwen", baseUrl: "https://dashscope.aliyuncs.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "qwen" },
+  { id: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com", baseUrlMode: "provider-root", provider: "anthropic", providerFlavor: "anthropic" },
   { id: "custom", label: "Custom", baseUrl: "", baseUrlMode: "manual", provider: "openai-compatible" },
 ];
 
-function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "baseUrl" | "model">): string {
+/**
+ * 根据现有 profile 反推出最合适的 provider preset，保持设置页体验稳定。
+ */
+export function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "model">): string {
   const normalizedBaseUrl = profile.baseUrl.trim().toLowerCase();
   const normalizedModel = profile.model.trim().toLowerCase();
 
+  if (profile.providerFlavor === "minimax-anthropic") return "minimax";
   if (normalizedBaseUrl.includes("minimax") || normalizedBaseUrl.includes("minimaxi") || normalizedModel.startsWith("minimax")) return "minimax";
   if (profile.provider === "anthropic" || normalizedBaseUrl.includes("anthropic")) return "anthropic";
   if (normalizedBaseUrl.includes("dashscope.aliyuncs.com") || normalizedModel.startsWith("qwen")) return "qwen";
   if (normalizedBaseUrl.includes("moonshot")) return "moonshot";
   if (normalizedBaseUrl.includes("openai.com")) return "openai";
   return "custom";
+}
+
+/**
+ * 生成 Base URL 的产品层说明文案，避免泄露底层协议细节。
+ */
+export function resolveProviderBaseUrlHint(profile: Pick<ModelProfile, "baseUrlMode" | "providerFlavor" | "baseUrl" | "model">): string {
+  const presetId = resolveProviderPresetId({
+    provider: profile.providerFlavor === "anthropic" ? "anthropic" : "openai-compatible",
+    providerFlavor: profile.providerFlavor,
+    baseUrl: profile.baseUrl,
+    model: profile.model,
+  });
+
+  if (presetId === "minimax" && profile.baseUrlMode === "provider-root") {
+    return "MiniMax 预设会保留当前配置方式，并优先启用更完整的推理与回放能力。";
+  }
+
+  if (presetId === "minimax" && profile.baseUrlMode === "manual") {
+    return "MiniMax 的 manual 地址会保持兼容模式，适合已有网关或代理转发。";
+  }
+
+  return profile.baseUrlMode === "provider-root"
+    ? "当前预设只需填写服务根地址，系统会自动补全对应厂商接口路径。"
+    : "Custom 模式需要填写完整兼容地址，例如 https://gateway.example.com/v1。";
+}
+
+/**
+ * 生成 MiniMax 模式提示，帮助用户理解当前配置走的是增强还是兼容路径。
+ */
+export function resolveMiniMaxModeHint(profile: Pick<ModelProfile, "baseUrlMode" | "providerFlavor" | "baseUrl" | "model">): string | null {
+  const presetId = resolveProviderPresetId({
+    provider: profile.providerFlavor === "anthropic" ? "anthropic" : "openai-compatible",
+    providerFlavor: profile.providerFlavor,
+    baseUrl: profile.baseUrl,
+    model: profile.model,
+  });
+
+  if (presetId !== "minimax") return null;
+
+  if (profile.baseUrlMode === "provider-root") {
+    return "当前配置将优先使用增强推理与更完整的上下文回放。";
+  }
+
+  return "当前配置保持兼容模式，不要求迁移你已有的调用方式。";
 }
 
 // ── ModelDetailPage ───────────────────────────────────────────────────────────
@@ -71,9 +120,8 @@ export default function ModelDetailPage() {
     ? "https://api.minimaxi.com"
     : "https://gateway.example.com/v1";
 
-  const baseUrlHint = profile.baseUrlMode === "provider-root"
-    ? "当前预设只需填写服务根地址，系统会自动补全对应厂商接口路径。"
-    : "Custom 模式需要填写完整兼容地址，例如 https://gateway.example.com/v1。";
+  const baseUrlHint = resolveProviderBaseUrlHint(profile);
+  const minimaxModeHint = resolveMiniMaxModeHint(profile);
 
   function applyPreset(presetId?: string) {
     const id = presetId ?? selectedPresetId;
@@ -82,6 +130,7 @@ export default function ModelDetailPage() {
       setProfile((prev) => ({
         ...prev,
         provider: preset.provider,
+        providerFlavor: preset.providerFlavor,
         baseUrl: preset.baseUrl,
         baseUrlMode: preset.baseUrlMode,
         ...(isNew ? { name: `New ${preset.label} Config` } : {}),
@@ -180,6 +229,7 @@ export default function ModelDetailPage() {
       const parsedBody = requestBodyText.trim() ? JSON.parse(requestBodyText) : {};
       const modelIds = await workspace.fetchAvailableModelIds({
         provider: profile.provider,
+        providerFlavor: profile.providerFlavor,
         baseUrl: profile.baseUrl.trim(),
         baseUrlMode: profile.baseUrlMode,
         apiKey: profile.apiKey.trim(),
@@ -370,6 +420,9 @@ export default function ModelDetailPage() {
                   readOnly
                 />
                 <div className="field-hint">{baseUrlHint}</div>
+                {minimaxModeHint && (
+                  <div className="field-hint" data-testid="minimax-mode-hint">{minimaxModeHint}</div>
+                )}
               </label>
               <label className="field full-width">
                 <span className="label">API Key / Token</span>
