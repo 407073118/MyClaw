@@ -5,7 +5,7 @@ import {
   type BrMiniMaxRuntimeDiagnostics,
 } from "@shared/br-minimax";
 
-import { resolveModelEndpointUrl } from "./model-client";
+import { buildRequestHeaders, resolveModelEndpointUrl } from "./model-client";
 
 type FetchLike = typeof fetch;
 
@@ -15,15 +15,6 @@ export type BrMiniMaxProbeResult = {
   diagnostics: BrMiniMaxRuntimeDiagnostics;
   error?: string;
 };
-
-/** 为 BR MiniMax 运行时探测构建请求头。 */
-function buildProbeHeaders(profile: ModelProfile): Record<string, string> {
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${profile.apiKey}`,
-    ...(profile.headers ?? {}),
-  };
-}
 
 /** 为 BR MiniMax 运行时探测构建请求体。 */
 function buildProbeBody(profile: ModelProfile, reasoningSplit: boolean): Record<string, unknown> {
@@ -61,7 +52,7 @@ export async function probeBrMiniMaxRuntime(
   fetchImpl: FetchLike = fetch,
 ): Promise<BrMiniMaxProbeResult> {
   const url = resolveModelEndpointUrl(profile);
-  const headers = buildProbeHeaders(profile);
+  const headers = buildRequestHeaders(profile);
   const startedAt = Date.now();
 
   console.info("[br-minimax:probe] 开始探测 reasoning_split 支持状态", {

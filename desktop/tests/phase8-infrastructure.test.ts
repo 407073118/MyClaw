@@ -108,6 +108,58 @@ describe("Model Client URL Resolution", () => {
     });
     expect(url).toBe("https://api.anthropic.com/v1/messages");
   });
+
+  it("keeps manual base URLs unchanged before appending the chat endpoint", async () => {
+    const { resolveModelEndpointUrl } = await import("../src/main/services/model-client");
+    const url = resolveModelEndpointUrl({
+      id: "test",
+      name: "Test",
+      provider: "openai-compatible",
+      baseUrl: "https://custom.example.com/custom-root",
+      baseUrlMode: "manual",
+      apiKey: "test",
+      model: "gpt-4",
+    });
+    expect(url).toBe("https://custom.example.com/custom-root/chat/completions");
+  });
+});
+
+describe("Model Client request headers", () => {
+  it("builds bearer auth headers for openai-compatible providers", async () => {
+    const { buildRequestHeaders } = await import("../src/main/services/model-client");
+    const headers = buildRequestHeaders({
+      id: "test",
+      name: "Test",
+      provider: "openai-compatible",
+      baseUrl: "https://api.openai.com",
+      apiKey: "test-key",
+      model: "gpt-4",
+      headers: { "x-extra": "1" },
+    });
+    expect(headers).toMatchObject({
+      "content-type": "application/json",
+      authorization: "Bearer test-key",
+      "x-extra": "1",
+    });
+  });
+
+  it("builds anthropic auth headers with anthropic-version", async () => {
+    const { buildRequestHeaders } = await import("../src/main/services/model-client");
+    const headers = buildRequestHeaders({
+      id: "test",
+      name: "Test",
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "test-key",
+      model: "claude-sonnet",
+      headers: {},
+    });
+    expect(headers).toMatchObject({
+      "content-type": "application/json",
+      "x-api-key": "test-key",
+      "anthropic-version": "2023-06-01",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

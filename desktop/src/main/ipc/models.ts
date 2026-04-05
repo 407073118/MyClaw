@@ -14,7 +14,7 @@ import {
   deleteModelProfileFile,
   saveSettings,
 } from "../services/state-persistence";
-import { resolveModelEndpointUrl } from "../services/model-client";
+import { buildRequestHeaders, resolveModelEndpointUrl } from "../services/model-client";
 import { probeBrMiniMaxRuntime } from "../services/br-minimax-runtime";
 import { coerceManagedProfileWrite } from "../services/managed-model-profile";
 import { normalizeAnthropicCatalog } from "../services/provider-capability-probers/anthropic";
@@ -283,14 +283,8 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
       const timeout = setTimeout(() => controller.abort(), 8000);
       const startTime = Date.now();
 
-      // Build provider-specific headers for the connectivity probe.
-      const testHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-        ...(profile.provider === "anthropic"
-          ? { "x-api-key": profile.apiKey, "anthropic-version": "2023-06-01" }
-          : { Authorization: `Bearer ${profile.apiKey}` }),
-        ...(profile.headers ?? {}),
-      };
+      // 统一复用模型客户端的鉴权头构造，避免探测链路与聊天链路漂移。
+      const testHeaders = buildRequestHeaders(profile);
 
       try {
         const response = await fetch(url, {
@@ -351,13 +345,8 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
       const timeout = setTimeout(() => controller.abort(), 8000);
 
       try {
-        // Use provider-appropriate auth headers.
-        const catalogHeaders: Record<string, string> = {
-          ...(profile.provider === "anthropic"
-            ? { "x-api-key": profile.apiKey, "anthropic-version": "2023-06-01" }
-            : { Authorization: `Bearer ${profile.apiKey}` }),
-          ...(profile.headers ?? {}),
-        };
+        // 统一复用模型客户端的鉴权头构造，避免目录链路与聊天链路漂移。
+        const catalogHeaders = buildRequestHeaders(profile);
         const response = await fetch(url, {
           method: "GET",
           headers: catalogHeaders,
@@ -409,12 +398,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
       const timeout = setTimeout(() => controller.abort(), 8000);
 
       try {
-        const catalogHeaders: Record<string, string> = {
-          ...(tempProfile.provider === "anthropic"
-            ? { "x-api-key": tempProfile.apiKey, "anthropic-version": "2023-06-01" }
-            : { Authorization: `Bearer ${tempProfile.apiKey}` }),
-          ...(tempProfile.headers ?? {}),
-        };
+        const catalogHeaders = buildRequestHeaders(tempProfile);
         const response = await fetch(url, {
           method: "GET",
           headers: catalogHeaders,

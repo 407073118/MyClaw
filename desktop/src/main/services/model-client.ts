@@ -3,14 +3,21 @@
  * 仅使用原生 fetch，自包含实现，不依赖 desktop 其他包。
  */
 
-import type { ModelProfile } from "@shared/contracts";
+import type {
+  ExecutionPlan,
+  ModelProfile,
+  SessionReplayPolicy,
+} from "@shared/contracts";
+import { isBrMiniMaxProfile } from "@shared/br-minimax";
+
 import {
-  BR_MINIMAX_MODEL,
-  BR_MINIMAX_PROVIDER_FLAVOR,
-  BR_MINIMAX_REQUEST_BODY,
-  isBrMiniMaxProfile,
-  readBrMiniMaxRuntimeDiagnostics,
-} from "@shared/br-minimax";
+  getProviderAdapter,
+  type ProviderAdapterMessage,
+  type ProviderAdapterRequestInput,
+  type ProviderAdapterTool,
+} from "./provider-adapters";
+import { consumeSseStream, extractText, tryParseJson } from "./model-sse-parser";
+import { executeRequestVariants } from "./model-transport";
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -49,6 +56,7 @@ export type ModelCallOptions = {
   }>;
   onDelta?: (delta: { content?: string; reasoning?: string }) => void;
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void;
+  executionPlan?: Pick<ExecutionPlan, "adapterId" | "replayPolicy"> | null;
   signal?: AbortSignal;
   timeoutMs?: number;
 };
@@ -82,31 +90,8 @@ type BuildRequestBodyVariantsInput = {
   profile: ModelProfile;
   messages: Array<Record<string, unknown>>;
   tools?: RequestTool[];
+  adapterId?: ExecutionPlan["adapterId"];
 };
-
-function materializeBrMiniMaxMessage(message: Record<string, unknown>): Record<string, unknown> {
-  if (message.role !== "assistant") return message;
-
-  const content = typeof message.content === "string" ? message.content : null;
-  const reasoning = typeof message.reasoning === "string" ? message.reasoning.trim() : "";
-  if (!reasoning) return message;
-
-  return {
-    ...message,
-    content: content && content.trim().length > 0
-      ? `<think>${reasoning}</think>\n\n${content}`
-      : `<think>${reasoning}</think>`,
-  };
-}
-
-function sanitizeBrMiniMaxRequestBody(requestBody: Record<string, unknown>): Record<string, unknown> {
-  const next = { ...requestBody };
-  delete next["presence_penalty"];
-  delete next["frequency_penalty"];
-  delete next["logit_bias"];
-  delete next["function_call"];
-  return next;
-}
 
 // ---------------------------------------------------------------------------
 // URL 解析
@@ -158,7 +143,7 @@ function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
   const lowerModel = profile.model.toLowerCase();
 
   // MiniMax 无论 provider 如何设置，都使用 OpenAI 兼容协议
-  if (profile.providerFlavor === BR_MINIMAX_PROVIDER_FLAVOR
+  if (isBrMiniMaxProfile(profile)
     || profile.providerFlavor === "minimax-anthropic"
     || lowerUrl.includes("minimax") || lowerUrl.includes("minimaxi")
     || lowerModel.startsWith("minimax")) {
@@ -240,7 +225,8 @@ export function resolveModelEndpointUrl(profile: ModelProfile): string {
 // 请求头
 // ---------------------------------------------------------------------------
 
-function buildRequestHeaders(profile: ModelProfile): Record<string, string> {
+/** 根据 provider 类型构造统一请求头，供聊天、探测与目录接口复用。 */
+export function buildRequestHeaders(profile: ModelProfile): Record<string, string> {
   const flavor = resolveProviderFlavor(profile);
 
   const base: Record<string, string> = {
@@ -256,295 +242,6 @@ function buildRequestHeaders(profile: ModelProfile): Record<string, string> {
 
   // 允许通过 profile 覆盖请求头（例如自定义认证方案）。
   return { ...base, ...(profile.headers ?? {}) };
-}
-
-// ---------------------------------------------------------------------------
-// SSE 解析辅助方法
-// ---------------------------------------------------------------------------
-
-type ToolCallAccumulator = {
-  id: string;
-  name: string;
-  argumentsJson: string;
-};
-
-type SseState = {
-  contentParts: string[];
-  reasoningParts: string[];
-  toolCallsByIndex: Map<number, ToolCallAccumulator>;
-  finishReason: string | null;
-  usage: TokenUsage | null;
-};
-
-function ensureToolCallAccumulator(
-  map: Map<number, ToolCallAccumulator>,
-  index: number,
-): ToolCallAccumulator {
-  const existing = map.get(index);
-  if (existing) return existing;
-  const next: ToolCallAccumulator = {
-    id: `toolcall-${Math.random().toString(36).slice(2)}`,
-    name: "",
-    argumentsJson: "",
-  };
-  map.set(index, next);
-  return next;
-}
-
-/**
- * 尝试从值中读取字符串；该值可能是普通字符串、数组，
- * 也可能是带有 "text" 字段的嵌套对象（Anthropic 风格）。
- */
-function extractText(value: unknown): string | null {
-  if (typeof value === "string") return value || null;
-  if (Array.isArray(value)) {
-    const parts: string[] = [];
-    for (const item of value) {
-      if (item && typeof item === "object") {
-        const text = (item as { text?: unknown }).text;
-        if (typeof text === "string" && text) parts.push(text);
-      } else if (typeof item === "string" && item) {
-        parts.push(item);
-      }
-    }
-    return parts.join("") || null;
-  }
-  if (value && typeof value === "object") {
-    const text = (value as { text?: unknown }).text;
-    if (typeof text === "string" && text) return text;
-  }
-  return null;
-}
-
-/**
- * 从 OpenAI 兼容格式的 delta 对象中读取 reasoning / thinking 增量。
- * 这里会检查不同提供商常见的字段命名。
- */
-function readReasoningDelta(delta: Record<string, unknown>): string | null {
-  return (
-    extractText(delta["reasoning_content"]) ??
-    extractText(delta["reasoning_details"]) ??
-    extractText(delta["reasoning"]) ??
-    extractText(delta["thinking"]) ??
-    null
-  );
-}
-
-/**
- * 将单个已解析的 SSE chunk 应用到累计状态中，
- * 并触发 onDelta 回调。
- */
-function applySseChunk(
-  payload: unknown,
-  state: SseState,
-  onDelta?: (delta: { content?: string; reasoning?: string }) => void,
-): void {
-  if (!payload || typeof payload !== "object") return;
-
-  const choices = (payload as { choices?: unknown }).choices;
-  const firstChoice =
-    Array.isArray(choices) && choices.length > 0
-      ? (choices[0] as Record<string, unknown>)
-      : null;
-
-  const delta =
-    firstChoice && typeof firstChoice.delta === "object" && firstChoice.delta !== null
-      ? (firstChoice.delta as Record<string, unknown>)
-      : {};
-
-  // --- content ---
-  const contentVal = extractText(delta["content"]);
-  if (contentVal) {
-    state.contentParts.push(contentVal);
-    onDelta?.({ content: contentVal });
-  }
-
-  // --- reasoning ---
-  const reasoningVal = readReasoningDelta(delta);
-  if (reasoningVal) {
-    state.reasoningParts.push(reasoningVal);
-    onDelta?.({ reasoning: reasoningVal });
-  }
-
-  // --- tool_calls（按 index 聚合，支持并行工具调用） ---
-  const rawToolCalls = Array.isArray(delta["tool_calls"])
-    ? (delta["tool_calls"] as unknown[])
-    : [];
-
-  for (const rawEntry of rawToolCalls) {
-    if (!rawEntry || typeof rawEntry !== "object") continue;
-    const entry = rawEntry as Record<string, unknown>;
-
-    const rawIndex = entry["index"];
-    const parsedIndex =
-      typeof rawIndex === "number" && Number.isFinite(rawIndex)
-        ? rawIndex
-        : Number.parseInt(String(rawIndex ?? state.toolCallsByIndex.size), 10);
-    const index = Number.isFinite(parsedIndex)
-      ? parsedIndex
-      : state.toolCallsByIndex.size;
-
-    const acc = ensureToolCallAccumulator(state.toolCallsByIndex, index);
-
-    if (typeof entry["id"] === "string" && entry["id"].trim()) {
-      acc.id = entry["id"].trim();
-    }
-
-    const fn =
-      entry["function"] && typeof entry["function"] === "object"
-        ? (entry["function"] as Record<string, unknown>)
-        : {};
-    if (typeof fn["name"] === "string" && fn["name"].trim()) {
-      acc.name = fn["name"].trim();
-    }
-    if (typeof fn["arguments"] === "string") {
-      acc.argumentsJson += fn["arguments"];
-    }
-  }
-
-  // --- finish_reason ---
-  if (firstChoice && typeof firstChoice["finish_reason"] === "string") {
-    const fr = firstChoice["finish_reason"].trim();
-    if (fr) state.finishReason = fr;
-  }
-
-  // --- usage（部分提供商会在最后一个 SSE chunk 中返回） ---
-  const rawUsage = (payload as Record<string, unknown>)["usage"];
-  if (rawUsage && typeof rawUsage === "object") {
-    const u = rawUsage as Record<string, unknown>;
-    state.usage = {
-      promptTokens: Number(u["prompt_tokens"] ?? u["input_tokens"] ?? 0),
-      completionTokens: Number(u["completion_tokens"] ?? u["output_tokens"] ?? 0),
-      totalTokens: Number(u["total_tokens"] ?? 0),
-    };
-    if (state.usage.totalTokens === 0) {
-      state.usage.totalTokens = state.usage.promptTokens + state.usage.completionTokens;
-    }
-  }
-}
-
-/**
- * 解析 JSON 字符串；只要出错就返回 null。
- */
-function tryParseJson(s: string): unknown {
-  try {
-    return JSON.parse(s);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * 将累计的 tool-call 片段整理成最终可用的 resolved calls。
- */
-function materializeToolCalls(state: SseState): ResolvedToolCall[] {
-  return [...state.toolCallsByIndex.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, acc]) => acc)
-    .filter((acc) => acc.name.trim().length > 0)
-    .map((acc) => {
-      const argumentsJson = acc.argumentsJson.trim() || "{}";
-      let input: Record<string, unknown> = {};
-      try {
-        const parsed = JSON.parse(argumentsJson);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          input = parsed as Record<string, unknown>;
-        }
-      } catch {
-        // 保持为空对象
-      }
-      return { id: acc.id, name: acc.name, argumentsJson, input };
-    });
-}
-
-// ---------------------------------------------------------------------------
-// 核心流式消费逻辑
-// ---------------------------------------------------------------------------
-
-/**
- * 读取 SSE 响应体，并累计 content、reasoning 与 tool calls。
- *
- * 兼容处理 \r\n / \n 行尾、尾部缓冲区以及格式异常的 chunk。
- */
-async function consumeSseStream(
-  response: Response,
-  onDelta?: (delta: { content?: string; reasoning?: string }) => void,
-): Promise<{ content: string; reasoning: string; toolCalls: ResolvedToolCall[]; finishReason: string | null; usage: TokenUsage | null }> {
-  const state: SseState = {
-    contentParts: [],
-    reasoningParts: [],
-    toolCallsByIndex: new Map(),
-    finishReason: null,
-    usage: null,
-  };
-
-  if (!response.body) {
-    // 如果没有流式响应体，就退回到读取完整文本，
-    // 并把每一行都当作可能的 SSE data 行来处理。
-    const rawText = await response.text();
-    for (const rawLine of rawText.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice("data:".length).trim();
-      if (!payload || payload === "[DONE]") continue;
-      const parsed = tryParseJson(payload);
-      if (parsed !== null) applySseChunk(parsed, state, onDelta);
-    }
-    return finaliseSseState(state);
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  const processLine = (line: string): void => {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith("data:")) return;
-    const payload = trimmed.slice("data:".length).trim();
-    if (!payload || payload === "[DONE]") return;
-    const parsed = tryParseJson(payload);
-    if (parsed !== null) applySseChunk(parsed, state, onDelta);
-  };
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-    // 统一处理 Windows 风格换行
-    buffer = buffer.replace(/\r\n/g, "\n");
-
-    let newlineIndex = buffer.indexOf("\n");
-    while (newlineIndex >= 0) {
-      const line = buffer.slice(0, newlineIndex);
-      buffer = buffer.slice(newlineIndex + 1);
-      processLine(line);
-      newlineIndex = buffer.indexOf("\n");
-    }
-
-    if (done) break;
-  }
-
-  // 刷新缓冲区中剩余内容（例如最后没有换行符的情况）
-  if (buffer.trim()) {
-    processLine(buffer);
-  }
-
-  return finaliseSseState(state);
-}
-
-function finaliseSseState(state: SseState): {
-  content: string;
-  reasoning: string;
-  toolCalls: ResolvedToolCall[];
-  finishReason: string | null;
-  usage: TokenUsage | null;
-} {
-  return {
-    content: state.contentParts.join(""),
-    reasoning: state.reasoningParts.join(""),
-    toolCalls: materializeToolCalls(state),
-    finishReason: state.finishReason,
-    usage: state.usage,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -587,56 +284,58 @@ export function isRetryableError(err: unknown, response?: Response | null): bool
 // 对外 API
 // ---------------------------------------------------------------------------
 
+/** 解析本轮请求应采用的 replay 策略，优先使用 execution plan。 */
+function resolveReplayPolicy(
+  profile: ModelProfile,
+  executionPlan?: Pick<ExecutionPlan, "replayPolicy"> | null,
+): SessionReplayPolicy {
+  if (executionPlan?.replayPolicy) {
+    return executionPlan.replayPolicy;
+  }
+  return isBrMiniMaxProfile(profile) ? "assistant-turn-with-reasoning" : "content-only";
+}
+
+/** 根据 replay 策略物化发送给 adapter 的标准消息数组。 */
+function buildWireMessages(
+  messages: ChatMessage[],
+  replayPolicy: SessionReplayPolicy,
+): Array<Record<string, unknown>> {
+  return messages.map((message) => {
+    const base: Record<string, unknown> = {
+      role: message.role,
+      content: message.content,
+    };
+
+    const shouldReplayReasoning = message.role === "assistant"
+      && replayPolicy === "assistant-turn-with-reasoning";
+    if (shouldReplayReasoning && message.reasoning) {
+      base["reasoning"] = message.reasoning;
+    }
+    if (message.tool_call_id) {
+      base["tool_call_id"] = message.tool_call_id;
+    }
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      base["tool_calls"] = message.tool_calls;
+    }
+    return base;
+  });
+}
+
 /** 构建 provider-aware 请求体变体，优先返回最佳实践请求，再返回兼容回退。 */
 export function buildRequestBodyVariants(input: BuildRequestBodyVariantsInput): Record<string, unknown>[] {
-  const { profile, messages, tools } = input;
-  const hasTools = !!(tools && tools.length > 0);
-  const normalizedMessages = isBrMiniMaxProfile(profile)
-    ? messages.map((message) => materializeBrMiniMaxMessage(message))
-    : messages;
-  const isManagedBrMiniMax = isBrMiniMaxProfile(profile);
-  const baseBody: Record<string, unknown> = {
-    model: profile.model,
-    messages: normalizedMessages,
-    stream: true,
-    ...(hasTools ? { tools, tool_choice: "auto" } : {}),
-    ...(!isManagedBrMiniMax ? (profile.requestBody ?? {}) : {}),
+  const adapter = getProviderAdapter(input.adapterId ?? input.profile);
+  const adapterInput: ProviderAdapterRequestInput = {
+    messages: input.messages as ProviderAdapterMessage[],
+    tools: input.tools as ProviderAdapterTool[] | undefined,
   };
-
-  if (!isManagedBrMiniMax) {
-    return [baseBody];
-  }
-
-  const profileRequestBody = sanitizeBrMiniMaxRequestBody((profile.requestBody ?? {}) as Record<string, unknown>);
-  const mergedBody: Record<string, unknown> = {
-    ...baseBody,
-    model: BR_MINIMAX_MODEL,
-    ...BR_MINIMAX_REQUEST_BODY,
-    ...profileRequestBody,
-    chat_template_kwargs: {
-      ...(BR_MINIMAX_REQUEST_BODY.chat_template_kwargs ?? {}),
-      ...((profileRequestBody.chat_template_kwargs as Record<string, unknown> | undefined) ?? {}),
-    },
-  };
-
-  const diagnostics = readBrMiniMaxRuntimeDiagnostics(profile);
-  if (diagnostics.reasoningSplitSupported === true) {
-    return [{
-      ...mergedBody,
-      reasoning_split: true,
-    }];
-  }
-  if (diagnostics.reasoningSplitSupported === false) {
-    return [mergedBody];
-  }
-
-  return [
-    {
-      ...mergedBody,
-      reasoning_split: true,
-    },
-    mergedBody,
-  ];
+  const replayMessages = adapter.materializeReplayMessages(
+    { profile: input.profile },
+    adapterInput,
+  );
+  return adapter.prepareRequest(
+    { profile: input.profile },
+    { ...adapterInput, messages: replayMessages },
+  ).map((variant) => variant.body);
 }
 
 /**
@@ -648,124 +347,51 @@ export function buildRequestBodyVariants(input: BuildRequestBodyVariantsInput): 
  * 工具调用会跨多个 SSE 帧累计，最终通过 `toolCalls` 返回。
  */
 export async function callModel(options: ModelCallOptions): Promise<ModelCallResult> {
-  const { profile, messages, tools, onDelta, signal, timeoutMs = 120_000 } = options;
+  const {
+    profile,
+    messages,
+    tools,
+    onDelta,
+    signal,
+    timeoutMs = 120_000,
+    executionPlan,
+  } = options;
 
   const url = resolveModelEndpointUrl(profile);
   const headers = buildRequestHeaders(profile);
+  const adapter = getProviderAdapter(executionPlan?.adapterId ?? profile);
+  const replayPolicy = resolveReplayPolicy(profile, executionPlan ?? null);
 
-  // 构建发送给接口的消息列表，并移除内部字段（如 reasoning）
-  const wireMessages = messages.map((m) => {
-    const base: Record<string, unknown> = {
-      role: m.role,
-      content: m.content,
-    };
-    if (isBrMiniMaxProfile(profile) && m.reasoning) base["reasoning"] = m.reasoning;
-    if (m.tool_call_id) base["tool_call_id"] = m.tool_call_id;
-    if (m.tool_calls && m.tool_calls.length > 0) base["tool_calls"] = m.tool_calls;
-    return base;
-  });
-
-  const requestBodyVariants = buildRequestBodyVariants({
-    profile,
-    messages: wireMessages,
-    tools,
-  });
-
-  // 使用 AbortController 处理超时，并与调用方传入的 signal 组合
-  const timeoutController = new AbortController();
-  const timeoutHandle = setTimeout(() => timeoutController.abort(), timeoutMs);
-
-  // 组合中止信号：调用方取消或超时任一触发都应中止请求
-  let effectiveSignal: AbortSignal;
-  if (signal) {
-    // 如果调用方传入了 signal，则把它与当前 signal 串联
-    const composite = new AbortController();
-    const cancelOnCaller = () => composite.abort(signal.reason);
-    const cancelOnTimeout = () => composite.abort(new DOMException("Model request timed out", "TimeoutError"));
-    signal.addEventListener("abort", cancelOnCaller, { once: true });
-    timeoutController.signal.addEventListener("abort", cancelOnTimeout, { once: true });
-    effectiveSignal = composite.signal;
-  } else {
-    effectiveSignal = timeoutController.signal;
-  }
-
-  let response: Response | undefined;
-  let lastError: Error | null = null;
+  // 构建发送给接口的消息列表，并按 replay policy 决定是否保留 reasoning。
+  const wireMessages = buildWireMessages(messages, replayPolicy);
+  const adapterInput: ProviderAdapterRequestInput = {
+    messages: wireMessages as ProviderAdapterMessage[],
+    tools: tools as ProviderAdapterTool[] | undefined,
+  };
+  const replayMessages = adapter.materializeReplayMessages(
+    { profile },
+    adapterInput,
+  );
+  const requestVariants = adapter.prepareRequest(
+    { profile },
+    { ...adapterInput, messages: replayMessages },
+  );
 
   // DEBUG：记录实际请求 URL 与打码后的 apiKey
   const maskedKey = profile.apiKey
     ? `${profile.apiKey.slice(0, 6)}...${profile.apiKey.slice(-4)} (len=${profile.apiKey.length})`
     : "(empty)";
   console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model}`);
-
-  requestLoop:
-  for (let variantIndex = 0; variantIndex < requestBodyVariants.length; variantIndex++) {
-    const requestBody = requestBodyVariants[variantIndex]!;
-
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        response = await fetch(url, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(requestBody),
-          signal: effectiveSignal,
-        });
-
-        if (!response.ok) {
-          const shouldFallback = response.status === 400 && variantIndex < requestBodyVariants.length - 1;
-          if (shouldFallback) {
-            const detail = await response.text().catch(() => "(no body)");
-            lastError = new Error(`Model API error ${response.status}: ${detail}`);
-            console.warn("[model-client] Primary request body rejected, retrying with compatibility fallback.");
-            break;
-          }
-
-          if (isRetryableError(null, response) && attempt < MAX_RETRIES) {
-            const detail = await response.text().catch(() => "(no body)");
-            lastError = new Error(`Model API error ${response.status}: ${detail}`);
-            console.warn(
-              `[model-client] Retryable error ${response.status}, attempt ${attempt + 1}/${MAX_RETRIES}. Retrying in ${RETRY_DELAYS[attempt]}ms...`,
-            );
-            await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
-            continue;
-          }
-
-          clearTimeout(timeoutHandle);
-          const detail = await response.text().catch(() => "(no body)");
-          throw new Error(
-            `Model API error ${response.status} ${response.statusText}: ${detail}`,
-          );
-        }
-
-        break requestLoop;
-      } catch (err) {
-        if (err instanceof Error && err.name === "AbortError") {
-          clearTimeout(timeoutHandle);
-          throw new Error(`Model request timed out after ${timeoutMs}ms`);
-        }
-
-        if (isRetryableError(err) && attempt < MAX_RETRIES) {
-          lastError = err instanceof Error ? err : new Error(String(err));
-          console.warn(
-            `[model-client] Network error, attempt ${attempt + 1}/${MAX_RETRIES}. Retrying in ${RETRY_DELAYS[attempt]}ms...`,
-          );
-          await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
-          continue;
-        }
-
-        clearTimeout(timeoutHandle);
-        throw err;
-      }
-    }
-  }
-
-  // 如果重试耗尽仍未成功，则抛出最后一次错误
-  if (!response) {
-    clearTimeout(timeoutHandle);
-    throw lastError ?? new Error("Model request failed after retries");
-  }
-
-  clearTimeout(timeoutHandle);
+  const { response } = await executeRequestVariants({
+    url,
+    headers,
+    requestVariants,
+    signal,
+    timeoutMs,
+    maxRetries: MAX_RETRIES,
+    retryDelaysMs: RETRY_DELAYS,
+    isRetryableError,
+  });
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   const isEventStream = contentType.includes("text/event-stream");

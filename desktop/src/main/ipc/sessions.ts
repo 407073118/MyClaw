@@ -4,7 +4,7 @@ import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
 import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile } from "@shared/contracts";
-import { EventType, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
+import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
 import { callModel } from "../services/model-client";
@@ -15,6 +15,7 @@ import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
+import { buildExecutionPlan } from "../services/reasoning-runtime";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -211,6 +212,13 @@ function broadcastToRenderers(channel: string, payload: unknown): void {
   }
 }
 
+/** 确保旧会话在进入新链路前拥有 runtime version，便于后续做版本化迁移。 */
+function ensureSessionRuntimeVersion(session: ChatSession): void {
+  if (!session.runtimeVersion) {
+    session.runtimeVersion = SESSION_RUNTIME_VERSION;
+  }
+}
+
 /**
  * 为会话构建内容更完整的 system prompt。
  * 可选的 `gitBranch` 参数用于避免在主线程调用 execSync。
@@ -326,6 +334,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       modelProfileId: input?.modelProfileId ?? ctx.state.getDefaultModelProfileId() ?? "",
       attachedDirectory: input?.attachedDirectory ?? null,
       createdAt: now,
+      runtimeVersion: SESSION_RUNTIME_VERSION,
       messages: [],
     };
 
@@ -362,6 +371,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       if (!session) {
         throw new Error(`Session not found: ${sessionId}`);
       }
+      ensureSessionRuntimeVersion(session);
 
       const messageId = randomUUID();
       const now = new Date().toISOString();
@@ -444,6 +454,19 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           round++;
           // 使用上下文工程管线：能力解析 → 预算计算 → 压缩 → 组装
           const resolved = resolveModelCapability(modelProfile);
+          const executionPlan = buildExecutionPlan({
+            session,
+            profile: modelProfile,
+            capability: resolved.effective,
+          });
+          session.runtimeVersion = executionPlan.runtimeVersion;
+          console.info("[session:runtime] 已生成执行计划", {
+            sessionId,
+            round,
+            adapterId: executionPlan.adapterId,
+            replayPolicy: executionPlan.replayPolicy,
+            fallbackAdapterIds: executionPlan.fallbackAdapterIds,
+          });
           const assembled = assembleContext({
             session,
             capability: resolved.effective,
@@ -464,6 +487,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             profile: modelProfile,
             messages: modelMessages,
             tools,
+            executionPlan,
             onDelta: (delta) => {
               broadcastToRenderers("session:stream", {
                 type: EventType.MessageDelta,

@@ -1,4 +1,5 @@
 import type { A2UiPayload } from "./ui";
+import type { SessionRuntimeIntent, SessionRuntimeVersion } from "./session-runtime";
 
 export type ChatMessageRole = "system" | "user" | "assistant" | "tool";
 
@@ -52,5 +53,7 @@ export type ChatSession = {
   modelProfileId: string;
   attachedDirectory: string | null;
   createdAt: string;
+  runtimeVersion?: SessionRuntimeVersion;
+  runtimeIntent?: SessionRuntimeIntent | null;
   messages: ChatMessage[];
 };
