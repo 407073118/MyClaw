@@ -16,6 +16,20 @@ type RegistryEntry = {
 
 const REGISTRY_ENTRIES: RegistryEntry[] = [
   {
+    providerFlavor: "br-minimax",
+    modelPattern: /^minimax-m2-5$/i,
+    capability: {
+      contextWindowTokens: 102400,
+      maxInputTokens: 98304,
+      maxOutputTokens: 8192,
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsStreaming: true,
+      supportsPromptCaching: true,
+      tokenCountingMode: "openai-compatible-estimate",
+    },
+  },
+  {
     providerFlavor: "openrouter",
     modelPattern: /^openai\/gpt-4\.1/i,
     capability: {
@@ -109,6 +123,7 @@ function inferProviderFlavor(profile: ModelProfile): ProviderFlavor | undefined 
   if (baseUrl.includes("openrouter.ai")) return "openrouter";
   if (baseUrl.includes("vercel.com") && baseUrl.includes("gateway")) return "vercel-ai-gateway";
   if (baseUrl.includes("anthropic.com") || profile.provider === "anthropic") return "anthropic";
+  if (baseUrl.includes("cybotforge.100credit.cn") || model === "minimax-m2-5") return "br-minimax";
   if (baseUrl.includes("dashscope.aliyuncs.com") || model.startsWith("qwen")) return "qwen";
   if (baseUrl.includes("ollama") || model.startsWith("ollama")) return "ollama";
 
@@ -135,4 +150,3 @@ export function findRegistryCapability(profile: ModelProfile): ModelCapability |
 
   return null;
 }
-

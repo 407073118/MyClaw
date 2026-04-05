@@ -179,6 +179,26 @@ describe("assembleContext", () => {
     const nonSystemMessages = result.messages.filter(m => m.role !== "system");
     expect(nonSystemMessages.length).toBeGreaterThanOrEqual(6);
   });
+
+  it("preserves assistant reasoning metadata for provider-aware replay", () => {
+    const messages = [
+      makeMessage("user", "请先分析"),
+      makeMessage("assistant", "最终回答", { reasoning: "先拆解问题，再调用工具" }),
+    ];
+    const session = makeSession(messages);
+    const result = assembleContext({
+      session,
+      capability: defaultCapability,
+      policy: DEFAULT_CONTEXT_BUDGET_POLICY,
+      workingDir: "/test/project",
+    });
+
+    expect(result.messages[2]).toMatchObject({
+      role: "assistant",
+      content: "最终回答",
+      reasoning: "先拆解问题，再调用工具",
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

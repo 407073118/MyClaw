@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "@/stores/workspace";
+import { readBrMiniMaxRuntimeDiagnostics } from "@shared/br-minimax";
 
 type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
 
@@ -18,6 +19,7 @@ function createDefaultApprovalPolicy() {
 
 /** 根据完整 profile 推断供应商标签 */
 function getProviderLabel(profile: any): string {
+  if (profile.providerFlavor === "br-minimax") return "BR MiniMax";
   const url = profile.baseUrl ?? "";
   if (url.includes("anthropic")) return "Anthropic";
   if (url.includes("openai")) return "OpenAI";
@@ -73,9 +75,24 @@ export default function SettingsPage() {
     setModelConnectivityStatus((prev) => ({ ...prev, [profileId]: "测试中..." }));
     try {
       const payload = await workspace.testModelProfileConnectivity(profileId);
-      const result = payload as { success: boolean; ok?: boolean; latencyMs?: number; error?: string };
+      const result = payload as {
+        success: boolean;
+        ok?: boolean;
+        latencyMs?: number;
+        error?: string;
+        diagnostics?: { thinkingPath?: string };
+      };
       const latency = typeof result.latencyMs === "number" ? `${Math.round(result.latencyMs)}ms` : "--";
-      setModelConnectivityStatus((prev) => ({ ...prev, [profileId]: (result.ok ?? result.success) ? `可用 (${latency})` : "失败" }));
+      const diagnosticsLabel = result.diagnostics?.thinkingPath
+        && result.diagnostics.thinkingPath !== "unverified"
+        ? ` · ${result.diagnostics.thinkingPath}`
+        : "";
+      setModelConnectivityStatus((prev) => ({
+        ...prev,
+        [profileId]: (result.ok ?? result.success)
+          ? `可用 (${latency})${diagnosticsLabel}`
+          : "失败",
+      }));
     } catch (error) {
       setModelConnectivityStatus((prev) => ({ ...prev, [profileId]: `失败: ${error instanceof Error ? error.message : "未知错误"}` }));
     } finally {
@@ -168,6 +185,11 @@ export default function SettingsPage() {
                     </div>
                     <p className="model-id"><span>ID:</span> {profile.model}</p>
                     <p className="model-url"><span>URL:</span> {profile.baseUrl}</p>
+                    {profile.providerFlavor === "br-minimax" && (
+                      <p className="model-url">
+                        <span>Thinking:</span> {readBrMiniMaxRuntimeDiagnostics(profile).thinkingPath}
+                      </p>
+                    )}
                   </div>
                   {modelConnectivityStatus[profile.id] && (
                     <div className="connectivity-info">

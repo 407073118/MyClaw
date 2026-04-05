@@ -16,6 +16,7 @@ import type {
   SkillDefinition,
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
+import type { BrMiniMaxRuntimeDiagnostics } from "../../../shared/br-minimax";
 
 import type {
   CloudDownloadToken,
@@ -166,7 +167,14 @@ declare global {
       ) => Promise<ModelProfilePayload>;
       deleteModelProfile: (profileId: string) => Promise<ModelProfilesPayload>;
       setDefaultModelProfile: (profileId: string) => Promise<DefaultModelPayload>;
-      testModelProfile: (profileId: string) => Promise<{ success: boolean; error?: string }>;
+      testModelProfile: (profileId: string) => Promise<{
+        success: boolean;
+        ok?: boolean;
+        latencyMs?: number;
+        error?: string;
+        diagnostics?: BrMiniMaxRuntimeDiagnostics;
+        profile?: ModelProfile;
+      }>;
       fetchModelCatalog: (
         input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
       ) => Promise<{ modelIds: ModelCatalogItem[] }>;

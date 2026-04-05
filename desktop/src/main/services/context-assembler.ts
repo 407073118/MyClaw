@@ -22,7 +22,7 @@ import { compactMessages } from "./context-compactor";
 /** 组装后的上下文结果 */
 export type AssembledContext = {
   /** 最终发送给模型的消息列表 */
-  messages: Array<{ role: string; content: string; tool_call_id?: string; tool_calls?: unknown[] }>;
+  messages: Array<{ role: string; content: string; reasoning?: string | null; tool_call_id?: string; tool_calls?: unknown[] }>;
   /** 估算的总 token 数 */
   budgetUsed: number;
   /** 是否执行了压缩 */
@@ -126,6 +126,7 @@ export function assembleContext(input: AssembleInput): AssembledContext {
       role: msg.role,
       content: typeof msg.content === "string" ? msg.content : msg.content.filter((c): c is { type: "text"; text: string } => c.type === "text").map(c => c.text).join("\n"),
     };
+    if (msg.reasoning) entry.reasoning = msg.reasoning;
     if (msg.tool_call_id) entry.tool_call_id = msg.tool_call_id;
     if (msg.tool_calls && msg.tool_calls.length > 0) entry.tool_calls = msg.tool_calls;
     finalMessages.push(entry);

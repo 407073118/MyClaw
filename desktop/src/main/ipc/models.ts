@@ -2,6 +2,11 @@ import { ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 
 import type { ModelCatalogItem, ModelProfile, ProviderFlavor } from "@shared/contracts";
+import {
+  isBrMiniMaxProfile,
+  type BrMiniMaxRuntimeDiagnostics,
+  withBrMiniMaxRuntimeDiagnostics,
+} from "@shared/br-minimax";
 
 import type { RuntimeContext } from "../services/runtime-context";
 import {
@@ -10,6 +15,8 @@ import {
   saveSettings,
 } from "../services/state-persistence";
 import { resolveModelEndpointUrl } from "../services/model-client";
+import { probeBrMiniMaxRuntime } from "../services/br-minimax-runtime";
+import { coerceManagedProfileWrite } from "../services/managed-model-profile";
 import { normalizeAnthropicCatalog } from "../services/provider-capability-probers/anthropic";
 import { normalizeLocalGatewayCatalog } from "../services/provider-capability-probers/local-gateway";
 import { normalizeOllamaCatalog } from "../services/provider-capability-probers/ollama";
@@ -125,7 +132,8 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
 
   // 创建新的模型配置。
   ipcMain.handle("model:create", async (_event, input: CreateModelInput): Promise<ModelProfile> => {
-    const { id: _discardId, ...safeInput } = input as ModelProfile;
+    const { id: _discardId, ...unsafeInput } = input as ModelProfile;
+    const safeInput = coerceManagedProfileWrite(null, unsafeInput) as Omit<ModelProfile, "id">;
     const profile: ModelProfile = {
       ...safeInput,
       id: randomUUID(),
@@ -158,7 +166,8 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
       if (index === -1) {
         throw new Error(`Model profile not found: ${id}`);
       }
-      const updated: ModelProfile = { ...ctx.state.models[index], ...updates, id };
+      const nextUpdates = coerceManagedProfileWrite(ctx.state.models[index] ?? null, updates);
+      const updated: ModelProfile = { ...ctx.state.models[index], ...nextUpdates, id };
       ctx.state.models[index] = updated;
 
       await saveModelProfile(ctx.runtime.paths, updated);
@@ -228,10 +237,45 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
     async (
       _event,
       id: string,
-    ): Promise<{ success: boolean; ok: boolean; latencyMs?: number; error?: string }> => {
+    ): Promise<{
+      success: boolean;
+      ok: boolean;
+      latencyMs?: number;
+      error?: string;
+      diagnostics?: BrMiniMaxRuntimeDiagnostics;
+      profile?: ModelProfile;
+    }> => {
       const profile = ctx.state.models.find((m) => m.id === id);
       if (!profile) {
         return { success: false, ok: false, error: `Model profile not found: ${id}` };
+      }
+
+      if (isBrMiniMaxProfile(profile)) {
+        try {
+          const probe = await probeBrMiniMaxRuntime(profile);
+          const updatedProfile = withBrMiniMaxRuntimeDiagnostics(profile, probe.diagnostics);
+          const index = ctx.state.models.findIndex((m) => m.id === id);
+          if (index >= 0) {
+            ctx.state.models[index] = updatedProfile;
+            await saveModelProfile(ctx.runtime.paths, updatedProfile);
+          }
+
+          return {
+            success: probe.ok,
+            ok: probe.ok,
+            latencyMs: probe.latencyMs,
+            error: probe.error,
+            diagnostics: probe.diagnostics,
+            profile: updatedProfile,
+          };
+        } catch (err: unknown) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : String(err);
+          console.error("[model:test] BR MiniMax 探测失败", { modelId: id, error: message });
+          return { success: false, ok: false, error: message };
+        }
       }
 
       const url = resolveModelEndpointUrl(profile);

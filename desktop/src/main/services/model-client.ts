@@ -4,6 +4,13 @@
  */
 
 import type { ModelProfile } from "@shared/contracts";
+import {
+  BR_MINIMAX_MODEL,
+  BR_MINIMAX_PROVIDER_FLAVOR,
+  BR_MINIMAX_REQUEST_BODY,
+  isBrMiniMaxProfile,
+  readBrMiniMaxRuntimeDiagnostics,
+} from "@shared/br-minimax";
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -70,6 +77,37 @@ export type ResolvedToolCall = {
   input: Record<string, unknown>;
 };
 
+type RequestTool = NonNullable<ModelCallOptions["tools"]>[number];
+type BuildRequestBodyVariantsInput = {
+  profile: ModelProfile;
+  messages: Array<Record<string, unknown>>;
+  tools?: RequestTool[];
+};
+
+function materializeBrMiniMaxMessage(message: Record<string, unknown>): Record<string, unknown> {
+  if (message.role !== "assistant") return message;
+
+  const content = typeof message.content === "string" ? message.content : null;
+  const reasoning = typeof message.reasoning === "string" ? message.reasoning.trim() : "";
+  if (!reasoning) return message;
+
+  return {
+    ...message,
+    content: content && content.trim().length > 0
+      ? `<think>${reasoning}</think>\n\n${content}`
+      : `<think>${reasoning}</think>`,
+  };
+}
+
+function sanitizeBrMiniMaxRequestBody(requestBody: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...requestBody };
+  delete next["presence_penalty"];
+  delete next["frequency_penalty"];
+  delete next["logit_bias"];
+  delete next["function_call"];
+  return next;
+}
+
 // ---------------------------------------------------------------------------
 // URL 解析
 // ---------------------------------------------------------------------------
@@ -120,7 +158,8 @@ function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
   const lowerModel = profile.model.toLowerCase();
 
   // MiniMax 无论 provider 如何设置，都使用 OpenAI 兼容协议
-  if (profile.providerFlavor === "minimax-anthropic"
+  if (profile.providerFlavor === BR_MINIMAX_PROVIDER_FLAVOR
+    || profile.providerFlavor === "minimax-anthropic"
     || lowerUrl.includes("minimax") || lowerUrl.includes("minimaxi")
     || lowerModel.startsWith("minimax")) {
     return "generic";
@@ -548,6 +587,58 @@ export function isRetryableError(err: unknown, response?: Response | null): bool
 // 对外 API
 // ---------------------------------------------------------------------------
 
+/** 构建 provider-aware 请求体变体，优先返回最佳实践请求，再返回兼容回退。 */
+export function buildRequestBodyVariants(input: BuildRequestBodyVariantsInput): Record<string, unknown>[] {
+  const { profile, messages, tools } = input;
+  const hasTools = !!(tools && tools.length > 0);
+  const normalizedMessages = isBrMiniMaxProfile(profile)
+    ? messages.map((message) => materializeBrMiniMaxMessage(message))
+    : messages;
+  const isManagedBrMiniMax = isBrMiniMaxProfile(profile);
+  const baseBody: Record<string, unknown> = {
+    model: profile.model,
+    messages: normalizedMessages,
+    stream: true,
+    ...(hasTools ? { tools, tool_choice: "auto" } : {}),
+    ...(!isManagedBrMiniMax ? (profile.requestBody ?? {}) : {}),
+  };
+
+  if (!isManagedBrMiniMax) {
+    return [baseBody];
+  }
+
+  const profileRequestBody = sanitizeBrMiniMaxRequestBody((profile.requestBody ?? {}) as Record<string, unknown>);
+  const mergedBody: Record<string, unknown> = {
+    ...baseBody,
+    model: BR_MINIMAX_MODEL,
+    ...BR_MINIMAX_REQUEST_BODY,
+    ...profileRequestBody,
+    chat_template_kwargs: {
+      ...(BR_MINIMAX_REQUEST_BODY.chat_template_kwargs ?? {}),
+      ...((profileRequestBody.chat_template_kwargs as Record<string, unknown> | undefined) ?? {}),
+    },
+  };
+
+  const diagnostics = readBrMiniMaxRuntimeDiagnostics(profile);
+  if (diagnostics.reasoningSplitSupported === true) {
+    return [{
+      ...mergedBody,
+      reasoning_split: true,
+    }];
+  }
+  if (diagnostics.reasoningSplitSupported === false) {
+    return [mergedBody];
+  }
+
+  return [
+    {
+      ...mergedBody,
+      reasoning_split: true,
+    },
+    mergedBody,
+  ];
+}
+
 /**
  * 调用模型并流式返回内容。
  *
@@ -568,19 +659,17 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
       role: m.role,
       content: m.content,
     };
+    if (isBrMiniMaxProfile(profile) && m.reasoning) base["reasoning"] = m.reasoning;
     if (m.tool_call_id) base["tool_call_id"] = m.tool_call_id;
     if (m.tool_calls && m.tool_calls.length > 0) base["tool_calls"] = m.tool_calls;
     return base;
   });
 
-  const hasTools = tools && tools.length > 0;
-  const requestBody: Record<string, unknown> = {
-    model: profile.model,
+  const requestBodyVariants = buildRequestBodyVariants({
+    profile,
     messages: wireMessages,
-    stream: true,
-    ...(hasTools ? { tools, tool_choice: "auto" } : {}),
-    ...(profile.requestBody ?? {}),
-  };
+    tools,
+  });
 
   // 使用 AbortController 处理超时，并与调用方传入的 signal 组合
   const timeoutController = new AbortController();
@@ -600,7 +689,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     effectiveSignal = timeoutController.signal;
   }
 
-  let response: Response;
+  let response: Response | undefined;
   let lastError: Error | null = null;
 
   // DEBUG：记录实际请求 URL 与打码后的 apiKey
@@ -609,58 +698,69 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     : "(empty)";
   console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model}`);
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(requestBody),
-        signal: effectiveSignal,
-      });
+  requestLoop:
+  for (let variantIndex = 0; variantIndex < requestBodyVariants.length; variantIndex++) {
+    const requestBody = requestBodyVariants[variantIndex]!;
 
-      if (!response.ok) {
-        if (isRetryableError(null, response) && attempt < MAX_RETRIES) {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(requestBody),
+          signal: effectiveSignal,
+        });
+
+        if (!response.ok) {
+          const shouldFallback = response.status === 400 && variantIndex < requestBodyVariants.length - 1;
+          if (shouldFallback) {
+            const detail = await response.text().catch(() => "(no body)");
+            lastError = new Error(`Model API error ${response.status}: ${detail}`);
+            console.warn("[model-client] Primary request body rejected, retrying with compatibility fallback.");
+            break;
+          }
+
+          if (isRetryableError(null, response) && attempt < MAX_RETRIES) {
+            const detail = await response.text().catch(() => "(no body)");
+            lastError = new Error(`Model API error ${response.status}: ${detail}`);
+            console.warn(
+              `[model-client] Retryable error ${response.status}, attempt ${attempt + 1}/${MAX_RETRIES}. Retrying in ${RETRY_DELAYS[attempt]}ms...`,
+            );
+            await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+            continue;
+          }
+
+          clearTimeout(timeoutHandle);
           const detail = await response.text().catch(() => "(no body)");
-          lastError = new Error(`Model API error ${response.status}: ${detail}`);
+          throw new Error(
+            `Model API error ${response.status} ${response.statusText}: ${detail}`,
+          );
+        }
+
+        break requestLoop;
+      } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+          clearTimeout(timeoutHandle);
+          throw new Error(`Model request timed out after ${timeoutMs}ms`);
+        }
+
+        if (isRetryableError(err) && attempt < MAX_RETRIES) {
+          lastError = err instanceof Error ? err : new Error(String(err));
           console.warn(
-            `[model-client] Retryable error ${response.status}, attempt ${attempt + 1}/${MAX_RETRIES}. Retrying in ${RETRY_DELAYS[attempt]}ms...`,
+            `[model-client] Network error, attempt ${attempt + 1}/${MAX_RETRIES}. Retrying in ${RETRY_DELAYS[attempt]}ms...`,
           );
           await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
           continue;
         }
-        // 不可重试的 HTTP 错误
+
         clearTimeout(timeoutHandle);
-        const detail = await response.text().catch(() => "(no body)");
-        throw new Error(
-          `Model API error ${response.status} ${response.statusText}: ${detail}`,
-        );
+        throw err;
       }
-
-      // 成功后跳出重试循环
-      break;
-    } catch (err) {
-      // 用户主动中断，不进行重试
-      if (err instanceof Error && err.name === "AbortError") {
-        clearTimeout(timeoutHandle);
-        throw new Error(`Model request timed out after ${timeoutMs}ms`);
-      }
-
-      if (isRetryableError(err) && attempt < MAX_RETRIES) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        console.warn(
-          `[model-client] Network error, attempt ${attempt + 1}/${MAX_RETRIES}. Retrying in ${RETRY_DELAYS[attempt]}ms...`,
-        );
-        await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
-        continue;
-      }
-
-      clearTimeout(timeoutHandle);
-      throw err;
     }
   }
 
   // 如果重试耗尽仍未成功，则抛出最后一次错误
-  if (!response!) {
+  if (!response) {
     clearTimeout(timeoutHandle);
     throw lastError ?? new Error("Model request failed after retries");
   }

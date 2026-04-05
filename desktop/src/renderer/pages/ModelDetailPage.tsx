@@ -2,6 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { ModelProfile, ProviderKind } from "@shared/contracts";
+import {
+  BR_MINIMAX_BASE_URL,
+  BR_MINIMAX_DEFAULT_NAME,
+  BR_MINIMAX_MODEL,
+  BR_MINIMAX_PROVIDER_FLAVOR,
+  BR_MINIMAX_REQUEST_BODY,
+  createBrMiniMaxProfile,
+  isBrMiniMaxProfile,
+  readBrMiniMaxRuntimeDiagnostics,
+} from "@shared/br-minimax";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
 import { formatTokenCount, formatCapabilitySource } from "../utils/context-ui-helpers";
 
@@ -13,9 +23,11 @@ type ProviderPreset = {
   baseUrl: string;
   baseUrlMode: "provider-root" | "manual";
   provider: ProviderKind;
+  providerFlavor?: ModelProfile["providerFlavor"];
 };
 
 const providerPresets: ProviderPreset[] = [
+  { id: "br-minimax", label: "BR MiniMax", baseUrl: BR_MINIMAX_BASE_URL, baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: BR_MINIMAX_PROVIDER_FLAVOR },
   { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
   { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimaxi.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
   { id: "moonshot", label: "Moonshot", baseUrl: "https://api.moonshot.cn", baseUrlMode: "provider-root", provider: "openai-compatible" },
@@ -26,6 +38,7 @@ const providerPresets: ProviderPreset[] = [
 
 /** 根据模型配置推断应该命中的供应商预设。 */
 function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "baseUrl" | "model">): string {
+  if (isBrMiniMaxProfile({ ...profile, providerFlavor: (profile as ModelProfile).providerFlavor })) return "br-minimax";
   const normalizedBaseUrl = profile.baseUrl.trim().toLowerCase();
   const normalizedModel = profile.model.trim().toLowerCase();
 
@@ -50,16 +63,9 @@ export default function ModelDetailPage() {
 
   const [profile, setProfile] = useState<ModelProfile>({
     id: "",
-    name: "",
-    provider: "openai-compatible",
-    baseUrl: "https://api.openai.com",
-    baseUrlMode: "provider-root",
-    apiKey: "",
-    model: "",
-    headers: {},
-    requestBody: {},
+    ...createBrMiniMaxProfile({ apiKey: "" }),
   });
-  const [selectedPresetId, setSelectedPresetId] = useState("openai");
+  const [selectedPresetId, setSelectedPresetId] = useState("br-minimax");
   const [headersText, setHeadersText] = useState("");
   const [requestBodyText, setRequestBodyText] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -69,11 +75,15 @@ export default function ModelDetailPage() {
   const [modelCatalogError, setModelCatalogError] = useState("");
   const [availableModelIds, setAvailableModelIds] = useState<string[]>([]);
 
+  const managedBrMiniMax = isBrMiniMaxProfile(profile) || selectedPresetId === "br-minimax";
+  const brMiniMaxDiagnostics = readBrMiniMaxRuntimeDiagnostics(profile);
   const baseUrlPlaceholder = profile.baseUrlMode === "provider-root"
-    ? "https://api.minimaxi.com"
+    ? BR_MINIMAX_BASE_URL
     : "https://gateway.example.com/v1";
 
-  const baseUrlHint = profile.baseUrlMode === "provider-root"
+  const baseUrlHint = managedBrMiniMax
+    ? "BR MiniMax 为企业私有部署托管类型，网关地址由系统固定。"
+    : profile.baseUrlMode === "provider-root"
     ? "当前预设只需填写服务根地址，系统会自动补全对应厂商接口路径。"
     : "Custom 模式需要填写完整兼容地址，例如 https://gateway.example.com/v1。";
 
@@ -85,10 +95,17 @@ export default function ModelDetailPage() {
       setProfile((prev) => ({
         ...prev,
         provider: preset.provider,
+        providerFlavor: preset.providerFlavor,
         baseUrl: preset.baseUrl,
         baseUrlMode: preset.baseUrlMode,
-        ...(isNew ? { name: `New ${preset.label} Config` } : {}),
+        ...(preset.id === "br-minimax"
+          ? createBrMiniMaxProfile({ apiKey: prev.apiKey.trim() })
+          : { ...(isNew ? { name: `New ${preset.label} Config` } : {}) }),
       }));
+      if (preset.id === "br-minimax") {
+        setHeadersText("");
+        setRequestBodyText(JSON.stringify(BR_MINIMAX_REQUEST_BODY, null, 2));
+      }
       setAvailableModelIds([]);
       setModelCatalogError("");
     }
@@ -107,7 +124,7 @@ export default function ModelDetailPage() {
         navigate("/settings");
       }
     } else {
-      applyPreset("openai");
+      applyPreset("br-minimax");
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -141,26 +158,33 @@ export default function ModelDetailPage() {
     let parsedHeaders = {};
     let parsedBody = {};
 
-    try {
-      if (headersText.trim()) parsedHeaders = JSON.parse(headersText);
-      if (requestBodyText.trim()) parsedBody = JSON.parse(requestBodyText);
-    } catch {
-      setError("JSON 格式不正确，请检阅 Headers 或 RequestBody 字段。");
-      return;
+    if (!managedBrMiniMax) {
+      try {
+        if (headersText.trim()) parsedHeaders = JSON.parse(headersText);
+        if (requestBodyText.trim()) parsedBody = JSON.parse(requestBodyText);
+      } catch {
+        setError("JSON 格式不正确，请检阅 Headers 或 RequestBody 字段。");
+        return;
+      }
     }
 
     setIsBusy(true);
     try {
-      const data: ModelProfile = {
-        ...profile,
-        name: profile.name.trim() || "未命名配置",
-        baseUrl: profile.baseUrl.trim(),
-        baseUrlMode: profile.baseUrlMode,
-        apiKey: profile.apiKey.trim(),
-        model: profile.model.trim(),
-        headers: parsedHeaders,
-        requestBody: parsedBody,
-      };
+      const data: ModelProfile = managedBrMiniMax
+        ? {
+            ...profile,
+            ...createBrMiniMaxProfile({ apiKey: profile.apiKey.trim() }),
+          }
+        : {
+            ...profile,
+            name: profile.name.trim() || "未命名配置",
+            baseUrl: profile.baseUrl.trim(),
+            baseUrlMode: profile.baseUrlMode,
+            apiKey: profile.apiKey.trim(),
+            model: profile.model.trim(),
+            headers: parsedHeaders,
+            requestBody: parsedBody,
+          };
 
       if (isNew) {
         const newProfile = await workspace.createModelProfile(data);
@@ -178,6 +202,7 @@ export default function ModelDetailPage() {
 
   /** 基于当前表单配置拉取模型目录，并将首个结果回填到模型输入框。 */
   async function loadModelCatalog() {
+    if (managedBrMiniMax) return;
     setModelCatalogError("");
     setAvailableModelIds([]);
     setIsFetchingModels(true);
@@ -290,7 +315,8 @@ export default function ModelDetailPage() {
                 <input
                   value={profile.name}
                   onChange={(e) => setProfile((prev) => ({ ...prev, name: e.target.value }))}
-                  placeholder="例如：我的 GPT-4o"
+                  placeholder={managedBrMiniMax ? BR_MINIMAX_DEFAULT_NAME : "例如：我的 GPT-4o"}
+                  readOnly={managedBrMiniMax}
                 />
               </label>
               <label className="field">
@@ -299,6 +325,7 @@ export default function ModelDetailPage() {
                   <select
                     value={selectedPresetId}
                     data-testid="model-preset-select"
+                    disabled={!isNew && managedBrMiniMax}
                     onChange={(e) => {
                       setSelectedPresetId(e.target.value);
                       applyPreset(e.target.value);
@@ -324,6 +351,7 @@ export default function ModelDetailPage() {
                   </div>
                 </div>
               </label>
+              {!managedBrMiniMax && (
               <label className="field">
                 <span className="label">模型 ID</span>
                 <input
@@ -362,6 +390,7 @@ export default function ModelDetailPage() {
                   </div>
                 )}
               </label>
+              )}
               <label className="field">
                 <span className="label">接口地址 (Base URL)</span>
                 <input
@@ -369,6 +398,7 @@ export default function ModelDetailPage() {
                   onChange={(e) => setProfile((prev) => ({ ...prev, baseUrl: e.target.value }))}
                   data-testid="model-base-url-input"
                   placeholder={baseUrlPlaceholder}
+                  readOnly={managedBrMiniMax}
                 />
                 <input
                   type="hidden"
@@ -425,10 +455,10 @@ export default function ModelDetailPage() {
                     type="button"
                     className="secondary-action-btn"
                     data-testid="model-fetch-list"
-                    disabled={isFetchingModels}
+                    disabled={isFetchingModels || managedBrMiniMax}
                     onClick={loadModelCatalog}
                   >
-                    {isFetchingModels ? "加载中..." : "获取模型列表"}
+                    {managedBrMiniMax ? "托管类型无需拉取" : isFetchingModels ? "加载中..." : "获取模型列表"}
                   </button>
                 </div>
                 {modelCatalogError && (
@@ -442,8 +472,19 @@ export default function ModelDetailPage() {
           <section className="form-section flex-fill">
             <div className="section-header">
               <span className="dot-icon blue" />
-              高级负载 (JSON)
+              {managedBrMiniMax ? "托管参数" : "高级负载 (JSON)"}
             </div>
+            {managedBrMiniMax ? (
+              <div className="managed-profile-card">
+                <div><strong>模型 ID：</strong>{BR_MINIMAX_MODEL}</div>
+                <div><strong>固定网关：</strong>{BR_MINIMAX_BASE_URL}</div>
+                <div><strong>推荐参数：</strong>`temperature=1.0` / `top_p=0.95` / `top_k=40`</div>
+                <div><strong>Thinking：</strong>默认开启，运行时会做兼容降级</div>
+                <div><strong>Thinking 路径：</strong>{brMiniMaxDiagnostics.thinkingPath}</div>
+                <div><strong>验证状态：</strong>{brMiniMaxDiagnostics.lastCheckedAt ? "已验证" : "待验证"}</div>
+                <div><strong>RequestBody：</strong><pre>{JSON.stringify(BR_MINIMAX_REQUEST_BODY, null, 2)}</pre></div>
+              </div>
+            ) : (
             <div className="editor-row">
               <div className="editor-col">
                 <div className="field">
@@ -468,6 +509,7 @@ export default function ModelDetailPage() {
                 </div>
               </div>
             </div>
+            )}
           </section>
 
           {/* 模型能力信息区（只读诊断） */}

@@ -9,6 +9,7 @@ export type ProviderFlavor =
   | "ollama"
   | "lm-studio"
   | "vllm"
+  | "br-minimax"
   | "generic-openai-compatible"
   | "anthropic"
   | "minimax-anthropic"
@@ -23,6 +24,7 @@ export const PROVIDER_FLAVOR_VALUES = [
   "ollama",
   "lm-studio",
   "vllm",
+  "br-minimax",
   "generic-openai-compatible",
   "anthropic",
   "minimax-anthropic",

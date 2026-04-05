@@ -1,14 +1,20 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "@/stores/workspace";
+import {
+  BR_MINIMAX_BASE_URL,
+  BR_MINIMAX_DEFAULT_NAME,
+  BR_MINIMAX_MODEL,
+  createBrMiniMaxProfile,
+} from "@shared/br-minimax";
 
 const DEFAULT_MODEL = {
-  name: "Qwen 3.5 Plus",
+  name: BR_MINIMAX_DEFAULT_NAME,
   provider: "openai-compatible" as const,
-  baseUrl: "https://coding.dashscope.aliyuncs.com",
+  baseUrl: BR_MINIMAX_BASE_URL,
   baseUrlMode: "provider-root" as const,
   apiKey: "",
-  model: "qwen3.5-plus",
+  model: BR_MINIMAX_MODEL,
 };
 
 /** 首次启动引导页，帮助用户快速配置默认模型。 */
@@ -18,10 +24,7 @@ export default function SetupPage() {
   const [saving, setSaving] = useState(false);
 
   // 模型配置表单状态。
-  const [modelName, setModelName] = useState(DEFAULT_MODEL.name);
-  const [modelBaseUrl, setModelBaseUrl] = useState(DEFAULT_MODEL.baseUrl);
   const [modelApiKey, setModelApiKey] = useState(DEFAULT_MODEL.apiKey);
-  const [modelId, setModelId] = useState(DEFAULT_MODEL.model);
   const [modelError, setModelError] = useState("");
 
   /** 保存默认模型配置，并通知工作区退出初始化状态。 */
@@ -35,14 +38,9 @@ export default function SetupPage() {
 
     try {
       // 通过 IPC 创建默认模型配置。
-      const result = await window.myClawAPI.createModelProfile({
-        name: modelName,
-        provider: DEFAULT_MODEL.provider,
-        baseUrl: modelBaseUrl,
-        baseUrlMode: DEFAULT_MODEL.baseUrlMode,
-        apiKey: modelApiKey,
-        model: modelId,
-      } as any);
+      const result = await window.myClawAPI.createModelProfile(createBrMiniMaxProfile({
+        apiKey: modelApiKey.trim(),
+      }));
 
       // 更新工作区状态，避免 AppShell 再次跳回初始化页。
       workspace.addModelAndClearSetup(result.profile);
@@ -59,23 +57,13 @@ export default function SetupPage() {
       <section className="setup-panel">
         <div className="setup-header">
           <span className="eyebrow">MyClaw Desktop</span>
-          <h1>配置 AI 模型</h1>
-          <p>首次使用请配置默认 AI 模型，已为您填入推荐值，只需输入 API Key 即可开始。</p>
+          <h1>连接 BR MiniMax</h1>
+          <p>首次使用默认接入企业私有部署的 BR MiniMax。系统已预置网关、模型和推荐参数，你只需填写 API Key。</p>
         </div>
 
         <div className="setup-step">
           <div className="step-content">
             <div className="model-form">
-              <label className="field">
-                <span>模型名称</span>
-                <input value={modelName} onChange={(e) => setModelName(e.target.value)} placeholder="例如 Qwen 3.5 Plus" />
-              </label>
-
-              <label className="field">
-                <span>API 地址</span>
-                <input value={modelBaseUrl} onChange={(e) => setModelBaseUrl(e.target.value)} placeholder="https://..." />
-              </label>
-
               <label className="field">
                 <span>API Key</span>
                 <input
@@ -86,10 +74,12 @@ export default function SetupPage() {
                 />
               </label>
 
-              <label className="field">
-                <span>模型 ID</span>
-                <input value={modelId} onChange={(e) => setModelId(e.target.value)} placeholder="例如 qwen3.5-plus" />
-              </label>
+              <div className="managed-hint-card">
+                <div><strong>模型类型：</strong>{DEFAULT_MODEL.name}</div>
+                <div><strong>网关地址：</strong>{DEFAULT_MODEL.baseUrl}</div>
+                <div><strong>模型 ID：</strong>{DEFAULT_MODEL.model}</div>
+                <div><strong>模式：</strong>托管 thinking + tool use 优化</div>
+              </div>
             </div>
 
             {modelError && <p className="error-msg">{modelError}</p>}
@@ -168,6 +158,18 @@ export default function SetupPage() {
         .model-form {
           display: grid;
           gap: 14px;
+        }
+
+        .managed-hint-card {
+          display: grid;
+          gap: 8px;
+          padding: 14px;
+          border-radius: 12px;
+          border: 1px solid rgba(148, 163, 184, 0.18);
+          background: rgba(15, 23, 42, 0.56);
+          color: rgba(226, 232, 240, 0.86);
+          font-size: 13px;
+          line-height: 1.6;
         }
 
         .model-form .field {

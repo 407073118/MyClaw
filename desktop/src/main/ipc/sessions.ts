@@ -447,6 +447,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           const assembled = assembleContext({
             session,
             capability: resolved.effective,
+            policy: modelProfile.budgetPolicy,
             workingDir,
             skills: enabledSkills,
             systemPromptBuilder: boundBuildSystemPrompt,

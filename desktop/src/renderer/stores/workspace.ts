@@ -18,6 +18,7 @@ import type {
   SkillDefinition,
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
+import type { BrMiniMaxRuntimeDiagnostics } from "../../../shared/br-minimax";
 
 // ---------------------------------------------------------------------------
 // Cloud Hub types (mirror of desktop cloud-hub-client)
@@ -218,7 +219,14 @@ type WorkspaceState = {
   patchStreamingMessage: (sessionId: string, messageId: string, deltaContent: string) => void;
   applySessionUpdate: (session: ChatSession) => void;
   requestExecutionIntent: (intent: any) => Promise<void>;
-  testModelProfileConnectivity: (profileId: string) => Promise<{ success: boolean; error?: string }>;
+  testModelProfileConnectivity: (profileId: string) => Promise<{
+    success: boolean;
+    ok?: boolean;
+    latencyMs?: number;
+    error?: string;
+    diagnostics?: BrMiniMaxRuntimeDiagnostics;
+    profile?: ModelProfile;
+  }>;
   fetchModelCatalog: (input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">) => Promise<ModelCatalogItem[]>;
   fetchAvailableModelIds: (input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">) => Promise<string[]>;
   createPublishDraft: (data: any) => Promise<any>;
@@ -992,7 +1000,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   },
 
   async testModelProfileConnectivity(profileId) {
-    return window.myClawAPI.testModelProfile(profileId);
+    const payload = await window.myClawAPI.testModelProfile(profileId);
+    if (payload.profile) {
+      set((state) => ({
+        models: state.models.map((model) => (model.id === payload.profile?.id ? payload.profile : model)),
+      }));
+    }
+    return payload;
   },
 
   async fetchModelCatalog(input) {
