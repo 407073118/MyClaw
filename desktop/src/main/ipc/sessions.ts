@@ -16,6 +16,7 @@ import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
+import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -324,6 +325,167 @@ export function fallbackSummary(messages: SessionChatMessage[]): string {
   ].join("\n");
 }
 
+/**
+ * 为当前用户请求生成最小可读的 planner 任务标题。
+ * Phase 3 先复用用户输入首行，后续再由正式 planner runtime 替换成结构化拆解结果。
+ */
+function buildPlanTaskTitle(content: string): string {
+  const firstNonEmptyLine = content
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+
+  if (!firstNonEmptyLine) {
+    return "Continue current request";
+  }
+
+  return firstNonEmptyLine.length > 80
+    ? `${firstNonEmptyLine.slice(0, 77)}...`
+    : firstNonEmptyLine;
+}
+
+/**
+ * 为当前 round 选择一个活跃 planner 任务。
+ * 默认只延续 pending / in_progress 任务；blocked 任务必须等待后续显式恢复策略，不参与下一轮的默认控制流。
+ * 如果会话还没有计划状态，或现有任务都不可直接延续，则追加一个新的最小任务。
+ */
+function ensurePlanTaskForRound(
+  session: ChatSession,
+  content: string,
+  taskId: string,
+  now: string,
+): string {
+  if (!session.planState || session.planState.tasks.length === 0) {
+    session.planState = createPlanState([{
+      id: taskId,
+      title: buildPlanTaskTitle(content),
+    }], now);
+    return taskId;
+  }
+
+  const activeTask = session.planState.tasks.find((task) => {
+    return task.status === "pending" || task.status === "in_progress";
+  });
+  if (activeTask) {
+    return activeTask.id;
+  }
+
+  session.planState = {
+    ...session.planState,
+    tasks: [
+      ...session.planState.tasks,
+      {
+        id: taskId,
+        title: buildPlanTaskTitle(content),
+        status: "pending",
+      },
+    ],
+    updatedAt: now,
+  };
+  return taskId;
+}
+
+/** 在进入模型/tool loop 前，把本轮任务标记为执行中，便于上下文装配与 UI 读取最新 planner 进度。 */
+function markPlanTaskInProgress(
+  session: ChatSession,
+  taskId: string,
+  round: number,
+  now: string,
+): void {
+  if (!session.planState) return;
+  if (isPlanTaskBlocked(session, taskId)) return;
+  session.planState = startTask(
+    session.planState,
+    taskId,
+    `Round ${round} executing`,
+    now,
+  );
+}
+
+/** 当本轮正常完成时，把 planner 任务标记为完成并更新时间戳。 */
+function markPlanTaskCompleted(
+  session: ChatSession,
+  taskId: string,
+  now: string,
+): void {
+  if (!session.planState) return;
+  if (isPlanTaskBlocked(session, taskId)) return;
+  session.planState = completeTask(session.planState, taskId, "Round completed", now);
+}
+
+/** 当本轮异常中断时，把 planner 任务显式标记为阻塞，避免持久化为不透明的悬空 in_progress。 */
+function markPlanTaskBlocked(
+  session: ChatSession,
+  taskId: string,
+  blocker: string,
+  now: string,
+): void {
+  if (!session.planState) return;
+  session.planState = blockTask(
+    session.planState,
+    taskId,
+    blocker,
+    now,
+    "Round interrupted",
+  );
+}
+
+type ToolPlanProgressInput = {
+  toolName: string;
+  succeeded: boolean;
+  failureReason?: string;
+  now: string;
+};
+
+function getPlanTask(session: ChatSession, taskId: string) {
+  return session.planState?.tasks.find((task) => task.id === taskId) ?? null;
+}
+
+function isPlanTaskBlocked(session: ChatSession, taskId: string): boolean {
+  return getPlanTask(session, taskId)?.status === "blocked";
+}
+
+/** 把工具循环中的单步结果折叠到当前任务，便于 UI/上下文读取“刚刚发生了什么”。 */
+function markPlanTaskToolProgress(
+  session: ChatSession,
+  taskId: string,
+  input: ToolPlanProgressInput,
+): void {
+  if (!session.planState) return;
+
+  const activeTask = session.planState.tasks.find((task) => task.id === taskId);
+  if (!activeTask) return;
+
+  if (!input.succeeded) {
+    session.planState = blockTask(
+      session.planState,
+      taskId,
+      input.failureReason ?? `Tool failed: ${input.toolName}`,
+      input.now,
+      `Tool failed: ${input.toolName}`,
+    );
+    return;
+  }
+
+  if (activeTask.status === "blocked") {
+    session.planState = blockTask(
+      session.planState,
+      taskId,
+      activeTask.blocker ?? `Tool failed: ${input.toolName}`,
+      input.now,
+      `Waiting after failed tool: ${input.toolName}`,
+    );
+    return;
+  }
+
+  session.planState = startTask(
+    session.planState,
+    taskId,
+    `Tool completed: ${input.toolName}`,
+    input.now,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // IPC 处理器
 // ---------------------------------------------------------------------------
@@ -447,15 +609,24 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       const boundBuildSystemPrompt = (s: ChatSession, wd: string, sk?: SkillDefinition[]) =>
         buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile());
 
+      const activePlanTaskId = ensurePlanTaskForRound(session, input.content, messageId, now);
+
       // ----- Agentic 循环：调用模型 → 执行工具 → 回填结果 → 重复 -----
       let round = 0;
       let currentMessageId = messageId;
       const roundSignatures: string[] = [];
       let loopWarningInjected = false;
+      let completedNormally = false;
 
       try {
         while (round < SAFETY_CEILING) {
           round++;
+          markPlanTaskInProgress(session, activePlanTaskId, round, new Date().toISOString());
+          broadcastToRenderers("session:stream", {
+            type: EventType.SessionUpdated,
+            sessionId,
+            session,
+          });
           // 使用显式编排链路：intent → capability → plan → context → execute
           const runtimeIntent = resolveSessionRuntimeIntent(session);
           // 仅把会话中显式设置过的字段回填给 buildExecutionPlan，
@@ -640,7 +811,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             }
 
             // ---- 第 2 步：执行单个工具调用（复用共享 helper） ----
-            const executeSingleTool = async (toolCall: ResolvedToolCall): Promise<ChatMessageContent> => {
+            const executeSingleTool = async (
+              toolCall: ResolvedToolCall,
+            ): Promise<{ content: ChatMessageContent; succeeded: boolean; failureReason?: string }> => {
               const toolCallId = toolCall.id;
               const toolId = functionNameToToolId(toolCall.name);
               const label = buildToolLabel(toolCall.name, toolCall.input);
@@ -656,6 +829,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
               let toolOutput: string;
               let imageBase64: string | undefined;
+              let toolSucceeded = true;
+              let failureReason: string | undefined;
               try {
                 if (toolCall.name.startsWith("mcp__")) {
                   const mcpTool = mcpTools.find((t) => {
@@ -672,9 +847,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   );
                 } else {
                   const execResult = await toolExecutor.execute(toolId, label, workingDir);
+                  toolSucceeded = execResult.success;
                   toolOutput = execResult.success
                     ? execResult.output
                     : `[错误] ${execResult.error ?? "工具执行失败"}\n${execResult.output}`.trim();
+                  if (!execResult.success) {
+                    failureReason = execResult.error ?? "工具执行失败";
+                  }
 
                   // 捕获截图，供多模态响应使用
                   if (execResult.imageBase64) {
@@ -687,15 +866,27 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   }
                 }
 
-                broadcastToRenderers("session:stream", {
-                  type: EventType.ToolCompleted,
-                  sessionId,
-                  toolCallId,
-                  toolId,
-                  output: toolOutput.slice(0, 500),
-                  success: true,
-                });
+                if (toolSucceeded) {
+                  broadcastToRenderers("session:stream", {
+                    type: EventType.ToolCompleted,
+                    sessionId,
+                    toolCallId,
+                    toolId,
+                    output: toolOutput.slice(0, 500),
+                    success: true,
+                  });
+                } else {
+                  broadcastToRenderers("session:stream", {
+                    type: EventType.ToolFailed,
+                    sessionId,
+                    toolCallId,
+                    toolId,
+                    error: toolOutput,
+                  });
+                }
               } catch (err) {
+                toolSucceeded = false;
+                failureReason = err instanceof Error ? err.message : String(err);
                 toolOutput = `[工具执行异常] ${err instanceof Error ? err.message : String(err)}`;
                 broadcastToRenderers("session:stream", {
                   type: EventType.ToolFailed,
@@ -714,13 +905,21 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
               // 对截图返回多模态内容（供支持视觉的模型使用）
               if (imageBase64) {
-                return [
-                  { type: "text", text: cappedOutput },
-                  { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}`, detail: "low" } },
-                ];
+                return {
+                  content: [
+                    { type: "text", text: cappedOutput },
+                    { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}`, detail: "low" } },
+                  ],
+                  succeeded: toolSucceeded,
+                  ...(failureReason ? { failureReason } : {}),
+                };
               }
 
-              return cappedOutput;
+              return {
+                content: cappedOutput,
+                succeeded: toolSucceeded,
+                ...(failureReason ? { failureReason } : {}),
+              };
             };
 
             // ---- 第 3 步：处理被拒绝的工具 ----
@@ -728,6 +927,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               const toolCallId = toolCall.id;
               const toolId = functionNameToToolId(toolCall.name);
               const deniedOutput = `[用户拒绝] 工具 ${toolCall.name} 被用户拒绝执行。`;
+              markPlanTaskToolProgress(session, activePlanTaskId, {
+                toolName: toolCall.name,
+                succeeded: false,
+                failureReason: deniedOutput,
+                now: new Date().toISOString(),
+              });
               session.messages.push({
                 id: randomUUID(),
                 role: "tool",
@@ -767,10 +972,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               );
               // 以固定顺序串行写入消息
               for (const { toolCall, result } of results) {
+                markPlanTaskToolProgress(session, activePlanTaskId, {
+                  toolName: toolCall.name,
+                  succeeded: result.succeeded,
+                  failureReason: result.failureReason,
+                  now: new Date().toISOString(),
+                });
                 session.messages.push({
                   id: randomUUID(),
                   role: "tool" as const,
-                  content: result,
+                  content: result.content,
                   tool_call_id: toolCall.id,
                   createdAt: new Date().toISOString(),
                 });
@@ -785,10 +996,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             // 写入类工具串行执行
             for (const { toolCall } of writeTasks) {
               const result = await executeSingleTool(toolCall);
+              markPlanTaskToolProgress(session, activePlanTaskId, {
+                toolName: toolCall.name,
+                succeeded: result.succeeded,
+                failureReason: result.failureReason,
+                now: new Date().toISOString(),
+              });
               session.messages.push({
                 id: randomUUID(),
                 role: "tool" as const,
-                content: result,
+                content: result.content,
                 tool_call_id: toolCall.id,
                 createdAt: new Date().toISOString(),
               });
@@ -812,6 +1029,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 content: `[检测到工具调用循环（连续 ${repeats} 轮相同调用），已自动停止。请尝试换一种方式完成任务。]`,
                 createdAt: new Date().toISOString(),
               });
+              markPlanTaskBlocked(
+                session,
+                activePlanTaskId,
+                `Detected tool loop after ${repeats} identical rounds`,
+                new Date().toISOString(),
+              );
               broadcastToRenderers("session:stream", {
                 type: EventType.SessionUpdated,
                 sessionId,
@@ -861,12 +1084,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               }
             }
 
+            if (!isPlanTaskBlocked(session, activePlanTaskId)) {
+              markPlanTaskCompleted(session, activePlanTaskId, new Date().toISOString());
+              completedNormally = true;
+            }
             break;
           }
         }
 
         // 命中安全上限（极少发生，默认 200 轮）
-        if (round >= SAFETY_CEILING) {
+        if (round >= SAFETY_CEILING && !completedNormally) {
           console.warn(`[session:agentic] Hit safety ceiling of ${SAFETY_CEILING} rounds`);
           session.messages.push({
             id: randomUUID(),
@@ -874,6 +1101,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             content: `[已执行 ${SAFETY_CEILING} 轮工具调用，达到安全上限，自动停止]`,
             createdAt: new Date().toISOString(),
           });
+          markPlanTaskBlocked(
+            session,
+            activePlanTaskId,
+            `Hit safety ceiling after ${SAFETY_CEILING} rounds`,
+            new Date().toISOString(),
+          );
         }
       } catch (err) {
         const errorText = err instanceof Error ? err.message : String(err);
@@ -892,6 +1125,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           content: errorContent,
           createdAt: new Date().toISOString(),
         });
+        markPlanTaskBlocked(session, activePlanTaskId, errorText, new Date().toISOString());
       }
 
       broadcastToRenderers("session:stream", {

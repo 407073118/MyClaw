@@ -102,6 +102,30 @@ function workflowsDir(paths: MyClawPaths): string {
   return join(paths.myClawDir, "workflows");
 }
 
+function hasOwnPlanState(value: object): boolean {
+  return Object.prototype.hasOwnProperty.call(value, "planState");
+}
+
+function hydrateSession(
+  meta: PersistedSessionMetadata,
+  messages: ChatSession["messages"],
+): ChatSession {
+  // 兼容迁移期旧会话：缺少 planState 时保持缺字段；显式 null/对象则原样恢复。
+  if (!hasOwnPlanState(meta)) {
+    return { ...meta, messages };
+  }
+  return { ...meta, planState: meta.planState, messages };
+}
+
+function dehydrateSession(session: ChatSession): PersistedSessionMetadata {
+  const { messages: _messages, ...meta }: { messages: ChatSession["messages"] } & PersistedSessionMetadata = session;
+
+  if (!hasOwnPlanState(session)) {
+    return meta;
+  }
+  return { ...meta, planState: session.planState };
+}
+
 // ---------------------------------------------------------------------------
 // 从磁盘加载全部状态（同步执行，仅在启动时调用一次）
 // ---------------------------------------------------------------------------
@@ -149,7 +173,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       const meta = tryReadJson<PersistedSessionMetadata>(metaFile);
       if (!meta || !meta.id) continue;
       const messages = tryReadJson<ChatSession["messages"]>(messagesFile) ?? [];
-      sessions.push({ ...meta, messages });
+      sessions.push(hydrateSession(meta, messages));
     }
   } catch {
     // sessionsDir 不可读时从空数据启动
@@ -246,7 +270,8 @@ export async function saveSession(
 
   // 拆分保存：metadata（不含 messages）与 messages 分别落盘
   // 两者都使用原子写入（临时文件 + rename）避免数据损坏
-  const { messages, ...meta }: { messages: ChatSession["messages"] } & PersistedSessionMetadata = session;
+  const { messages } = session;
+  const meta = dehydrateSession(session);
   await atomicWriteFile(join(sessionDir, "session.json"), JSON.stringify(meta, null, 2));
   await atomicWriteFile(join(sessionDir, "messages.json"), JSON.stringify(messages, null, 2));
 }

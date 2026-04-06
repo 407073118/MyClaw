@@ -1,3 +1,4 @@
+import type { PlanState } from "./plan";
 import type { A2UiPayload } from "./ui";
 import type {
   ResolvedExecutionPlan,
@@ -62,5 +63,7 @@ export type ChatSession = {
   runtimeIntent?: SessionRuntimeIntent | null;
   /** 旧会话可能没有 executionPlan；新会话落盘后应保留完整计划元数据。 */
   executionPlan?: ResolvedExecutionPlan | null;
+  /** Phase 3 允许旧会话缺少 planState，新增会话可按需持久化计划进度。 */
+  planState?: PlanState | null;
   messages: ChatMessage[];
 };

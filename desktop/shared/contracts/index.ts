@@ -5,6 +5,7 @@ export * from "./employee";
 export * from "./events";
 export * from "./mcp";
 export * from "./model";
+export * from "./plan";
 export * from "./personal-prompt";
 export * from "./session-runtime";
 export * from "./session";

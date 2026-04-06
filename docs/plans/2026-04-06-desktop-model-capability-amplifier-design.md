@@ -87,6 +87,35 @@ Phase 2 已经把 Phase 1 的 runtime shell 推进为可解释、可持久化、
 
 See `docs/plans/2026-04-06-phase2-capability-scorecard.md` for the canonical Phase 2 shipped-state appendix, exact file list, and verification commands.
 
+## Phase 3 Shipping Summary
+
+Phase 3 已经把 planning runtime 从“契约 + 纯核心”推进到了“可持久化、可在真实会话链路中推进、可通过最小 UI 观察”的闭环。当前 shipped 的范围只覆盖 planning substrate、session 绑定、tool-loop 进度更新、最小 UI/debug surface，以及用于锁定行为的 benchmark/verification batch。delegation runtime 仍未开始。规范性的 shipped-state 记录以 `docs/plans/2026-04-06-phase3-capability-scorecard.md` 为准，本节只保留历史摘要。
+
+### What Actually Shipped
+
+- `PlanState` / `PlanTask` 契约以及 `session.planState`
+- planner-runtime 核心状态机
+- `planState` 的真实磁盘 round-trip
+- planning 接入 `session:send-message` 会话编排
+- tool-loop 到 plan progress 的联动
+- 最小只读 planner UI / debug surface
+- planning benchmark 与阶段验证基线
+
+### Verification Snapshot
+
+- Authoritative verification for Phase 3 is the focused 11-file batch rerun plus `desktop` typecheck
+- Focused Phase 3 batch passed: 11 files / 34 tests
+- `desktop` typecheck passed
+
+### Remaining Gaps Before Phase 4
+
+- delegation runtime has not started
+- planner UX is still minimal/debug-oriented, not productized
+- planner progress semantics are still conservative and not yet user-tunable
+- low-risk follow-ups remain available, such as fuller end-to-end UI coverage or explicit resume semantics, but they are not part of the Phase 3 shipped surface
+
+See `docs/plans/2026-04-06-phase3-capability-scorecard.md` for the canonical shipped-state record, exact file inventory, verification command block, and detailed remaining gaps.
+
 ## Architecture Direction
 
 新的能力放大架构建议分为五层：

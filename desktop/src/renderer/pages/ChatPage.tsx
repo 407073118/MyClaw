@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { ArrowUp, Square } from "lucide-react";
 import { marked } from "marked";
+import { PlanStatePanel } from "../components/plan-state-panel";
 import { useDialogA11y } from "../hooks/useDialogA11y";
 import { useWorkspaceStore } from "../stores/workspace";
 import type {
@@ -850,6 +851,8 @@ export default function ChatPage() {
         {/* 时间线区域 */}
         <section className="timeline-panel" ref={timelinePanelRef as React.RefObject<HTMLElement>}>
           <div className="timeline">
+            <PlanStatePanel planState={session?.planState} />
+
             {groupedMessages.map((message, index) => {
               if (!message.isTechnicalGroup) {
                 // 普通消息卡片。
