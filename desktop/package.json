@@ -5,7 +5,7 @@
   "main": "dist/src/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.js",
-    "dev:main": "tsc -p tsconfig.main.json --watch",
+    "dev:main": "concurrently -k \"tsc -p tsconfig.main.json --watch\" \"tsc-alias -p tsconfig.main.json --watch\"",
     "dev:renderer": "vite",
     "lint": "eslint \"src/renderer/**/*.{ts,tsx}\" \"tests/**/*.{ts,tsx}\"",
     "build": "node scripts/set-env.js development && pnpm run build:main && pnpm run build:renderer",
