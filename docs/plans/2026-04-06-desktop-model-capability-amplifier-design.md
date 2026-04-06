@@ -32,6 +32,35 @@
 3. 本轮不把 `desktop` 与 `cloud` 同步统一设计；云侧能力可在后续阶段对齐。
 4. 本轮不把“展示 reasoning”当作成功标准；真正标准是多轮稳定性、任务完成率与能力上限提升。
 
+## Phase 1 Shipping Summary
+
+Phase 1 已经落地到运行时底座层，不再停留在设计草图。当前 shipped 的范围是 contracts、runtime shell、adapter 边界、transport 拆分与 session 串接；planner / delegator 仍然留在后续 phase。规范性的 shipped-state 记录以 `docs/plans/2026-04-06-phase1-capability-scorecard.md` 为准，本节只保留摘要。
+
+### What Actually Shipped
+
+- Session runtime contracts + `runtimeVersion` / `runtimeIntent` metadata
+- `reasoning-runtime` shell + `buildExecutionPlan`
+- provider adapters: `br-minimax`, `openai-compatible`
+- `model-transport`
+- `model-sse-parser`
+- `model-client` now flows through `executionPlan` + adapter + transport / parser boundaries
+- `sessions.ts` now generates execution plans before model calls
+- `ipc/models` and `br-minimax-runtime` reuse `buildRequestHeaders`
+
+### Verification Snapshot
+
+- Focused Phase 1 batch passed: 11 files / 33 tests
+- The batch expanded beyond the original 9-file list because transport / parser tests were added
+- `desktop` typecheck passed
+
+### Remaining Gaps Before Phase 2
+
+- `ExecutionPlan` is still a thin Phase 1 shell; the full `intent -> plan -> execute` runtime is not in place
+- planner runtime, delegation runtime, and structured task state are still future work
+- broader regression and golden transcript coverage still needs to be expanded before the Phase 2 cutover
+
+See `docs/plans/2026-04-06-phase1-capability-scorecard.md` for the canonical Phase 1 shipped-state appendix, exact file list, and verification commands.
+
 ## Architecture Direction
 
 新的能力放大架构建议分为五层：
