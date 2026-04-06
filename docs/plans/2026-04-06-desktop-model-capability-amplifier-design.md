@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-06  
 **Scope:** `desktop/` runtime, session orchestration, provider adapters, planning runtime, delegation runtime  
-**Status:** Draft validated through brainstorming
+**Status:** Design baseline with historical shipping summaries; phase scorecards are the canonical shipped-state source
 
 ## Background
 
@@ -60,6 +60,32 @@ Phase 1 已经落地到运行时底座层，不再停留在设计草图。当前
 - broader regression and golden transcript coverage still needs to be expanded before the Phase 2 cutover
 
 See `docs/plans/2026-04-06-phase1-capability-scorecard.md` for the canonical Phase 1 shipped-state appendix, exact file list, and verification commands.
+
+## Phase 2 Shipping Summary
+
+Phase 2 已经把 Phase 1 的 runtime shell 推进为可解释、可持久化、可验证的 execution-plan runtime。当前 shipped 的重点是让每次会话调用在执行前先完成能力决策、replay 策略选择、降级路径判断与上下文装配协同，并让这些结果能在 session 生命周期里保留与回放。planner / delegator 仍然没有进入本 phase。规范性的 shipped-state 记录以 `docs/plans/2026-04-06-phase2-capability-scorecard.md` 为准，本节只保留历史摘要。
+
+### What Actually Shipped
+
+- session runtime now carries the richer intent and execution metadata needed to explain how a turn will run
+- execution planning now decides replay behavior, adapter path, and degradation handling before model execution
+- context assembly and compaction now preserve replay-aware behavior instead of treating reasoning as generic carry-over
+- session send flow now follows one consistent `intent -> plan -> context -> execute` pipeline
+- persisted sessions now round-trip `executionPlan` and Phase 2 runtime metadata without losing fidelity
+- degradation and integration coverage now locks the Phase 2 runtime cutover in place
+
+### Verification Snapshot
+
+- Authoritative verification for Phase 2 is the focused 11-file batch rerun plus `desktop` typecheck
+- Focused Phase 2 batch passed: 11 files / 34 tests
+
+### Remaining Gaps Before Phase 3
+
+- planner runtime has not started
+- delegation runtime has not started
+- a small low-risk follow-up remains available if needed later: centralize replay-policy precedence into one helper instead of leaving it distributed across Phase 2 call sites
+
+See `docs/plans/2026-04-06-phase2-capability-scorecard.md` for the canonical Phase 2 shipped-state appendix, exact file list, and verification commands.
 
 ## Architecture Direction
 

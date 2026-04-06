@@ -1,8 +1,11 @@
 import type {
   ChatSession,
   ExecutionPlan,
+  ExecutionPlanSource,
   ModelCapability,
   ModelProfile,
+  ResolvedExecutionPlan,
+  ResolvedSessionRuntimeIntent,
   SessionReplayPolicy,
   SessionRuntimeAdapterId,
   SessionRuntimeAdapterSelectionSource,
@@ -10,8 +13,6 @@ import type {
 } from "@shared/contracts";
 import { SESSION_RUNTIME_VERSION } from "@shared/contracts";
 import { isBrMiniMaxProfile } from "@shared/br-minimax";
-
-export type ResolvedSessionRuntimeIntent = Required<SessionRuntimeIntent>;
 
 export type BuildExecutionPlanInput = {
   session?: Pick<ChatSession, "runtimeIntent"> | null;
@@ -39,20 +40,78 @@ export function resolveSessionRuntimeIntent(
   };
 }
 
+function isReasoningDisabled(intent: ResolvedSessionRuntimeIntent): boolean {
+  if (intent.reasoningEnabled !== undefined) {
+    return !intent.reasoningEnabled;
+  }
+  return intent.reasoningMode === "disabled";
+}
+
+type IntentField =
+  | "reasoningMode"
+  | "reasoningEffort"
+  | "adapterHint"
+  | "replayPolicy"
+  | "reasoningEnabled"
+  | "toolStrategy";
+
+function hasIntentField(
+  intent: SessionRuntimeIntent | null | undefined,
+  field: IntentField,
+): boolean {
+  const intentRecord = intent as Partial<Record<IntentField, unknown>> | null | undefined;
+  return !!intent
+    && Object.prototype.hasOwnProperty.call(intent, field)
+    && intentRecord?.[field] !== undefined;
+}
+
+function hasIntentOverrides(
+  input: BuildExecutionPlanInput,
+  resolvedIntent: ResolvedSessionRuntimeIntent,
+): boolean {
+  const defaultIntent = resolveSessionRuntimeIntent(null, null);
+  const sessionResolvedIntent = resolveSessionRuntimeIntent(input.session ?? null, null);
+  const sessionIntent = input.session?.runtimeIntent ?? null;
+  const requestIntent = input.intent ?? null;
+  const hasField = (field: IntentField) => hasIntentField(sessionIntent, field) || hasIntentField(requestIntent, field);
+  const changedByRequest = (field: IntentField) => hasIntentField(requestIntent, field)
+    && resolvedIntent[field] !== sessionResolvedIntent[field];
+  const changedBySession = (field: IntentField) => hasIntentField(sessionIntent, field)
+    && sessionResolvedIntent[field] !== defaultIntent[field];
+
+  return changedByRequest("reasoningMode")
+    || changedBySession("reasoningMode")
+    || changedByRequest("reasoningEffort")
+    || changedBySession("reasoningEffort")
+    || changedByRequest("adapterHint")
+    || changedBySession("adapterHint")
+    || hasField("replayPolicy")
+    || (hasIntentField(requestIntent, "reasoningEnabled")
+      && resolvedIntent.reasoningEnabled !== sessionResolvedIntent.reasoningEnabled)
+    || (hasIntentField(sessionIntent, "reasoningEnabled") && sessionResolvedIntent.reasoningEnabled === false)
+    || (hasIntentField(requestIntent, "toolStrategy")
+      && resolvedIntent.toolStrategy !== sessionResolvedIntent.toolStrategy)
+    || (hasIntentField(sessionIntent, "toolStrategy")
+      && sessionResolvedIntent.toolStrategy !== undefined
+      && sessionResolvedIntent.toolStrategy !== "auto");
+}
+
 /** 解析本轮执行应该走哪个 provider adapter。 */
-function resolveAdapterSelection(input: BuildExecutionPlanInput): {
+function resolveAdapterSelection(
+  profile: BuildExecutionPlanInput["profile"],
+  resolvedIntent: ResolvedSessionRuntimeIntent,
+): {
   adapterId: SessionRuntimeAdapterId;
   adapterSelectionSource: SessionRuntimeAdapterSelectionSource;
 } {
-  const adapterHint = input.intent?.adapterHint ?? input.session?.runtimeIntent?.adapterHint;
-  if (adapterHint && adapterHint !== "auto") {
+  if (resolvedIntent.adapterHint !== "auto") {
     return {
-      adapterId: adapterHint,
+      adapterId: resolvedIntent.adapterHint,
       adapterSelectionSource: "intent",
     };
   }
 
-  if (isBrMiniMaxProfile(input.profile)) {
+  if (isBrMiniMaxProfile(profile)) {
     return {
       adapterId: "br-minimax",
       adapterSelectionSource: "profile",
@@ -65,25 +124,89 @@ function resolveAdapterSelection(input: BuildExecutionPlanInput): {
   };
 }
 
-/** 根据 adapter 和能力信息生成 Phase 1 的 replay 默认值。 */
+function resolveReasoningEnabled(
+  resolvedIntent: ResolvedSessionRuntimeIntent,
+  capability: Pick<ModelCapability, "supportsReasoning"> | null | undefined,
+): boolean {
+  if (isReasoningDisabled(resolvedIntent)) return false;
+  return capability?.supportsReasoning !== false;
+}
+
+function resolveDegradationReason(
+  adapterId: SessionRuntimeAdapterId,
+  explicitReplayPolicy: SessionReplayPolicy | undefined,
+  resolvedIntent: ResolvedSessionRuntimeIntent,
+  capability: Pick<ModelCapability, "supportsReasoning"> | null | undefined,
+): ResolvedExecutionPlan["degradationReason"] {
+  if (explicitReplayPolicy === "assistant-turn-with-reasoning") {
+    if (adapterId !== "br-minimax") return "adapter-fallback";
+    if (isReasoningDisabled(resolvedIntent)) return "reasoning-disabled";
+    if (capability?.supportsReasoning === false) return "capability-missing";
+  }
+
+  if (capability?.supportsReasoning === false
+    && adapterId === "br-minimax"
+    && explicitReplayPolicy !== "assistant-turn"
+    && explicitReplayPolicy !== "content-only"
+    && !isReasoningDisabled(resolvedIntent)) {
+    return "capability-missing";
+  }
+
+  if (adapterId === "br-minimax" && isReasoningDisabled(resolvedIntent)) {
+    return "reasoning-disabled";
+  }
+
+  return null;
+}
+
+/** 根据 adapter、intent 与能力信息生成 replay 决策。 */
 function resolveReplayPolicy(
   adapterId: SessionRuntimeAdapterId,
   explicitReplayPolicy: SessionReplayPolicy | undefined,
+  resolvedIntent: ResolvedSessionRuntimeIntent,
   capability: Pick<ModelCapability, "supportsReasoning"> | null | undefined,
 ): SessionReplayPolicy {
+  if (explicitReplayPolicy === "assistant-turn-with-reasoning"
+    && (adapterId !== "br-minimax"
+      || isReasoningDisabled(resolvedIntent)
+      || capability?.supportsReasoning === false)) {
+    return "assistant-turn";
+  }
+
   if (explicitReplayPolicy) return explicitReplayPolicy;
   if (adapterId !== "br-minimax") return "content-only";
+  if (isReasoningDisabled(resolvedIntent)) return "assistant-turn";
   if (capability?.supportsReasoning === false) return "assistant-turn";
   return "assistant-turn-with-reasoning";
 }
 
-/** 生成 Phase 1 最小执行计划，先固化 adapter 选择与 replay 兜底链。 */
+function resolvePlanSource(
+  input: BuildExecutionPlanInput,
+  adapterSelectionSource: SessionRuntimeAdapterSelectionSource,
+  degradationReason: ResolvedExecutionPlan["degradationReason"],
+  resolvedIntent: ResolvedSessionRuntimeIntent,
+): ExecutionPlanSource {
+  if (degradationReason === "capability-missing") return "capability";
+  if (degradationReason === "reasoning-disabled" || hasIntentOverrides(input, resolvedIntent)) return "intent";
+  if (adapterSelectionSource === "profile") return "profile";
+  return "default";
+}
+
+/** 生成 Phase 2 执行计划，使 intent / capability / provider 的决策可追踪。 */
 export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPlan {
   const resolvedIntent = resolveSessionRuntimeIntent(input.session ?? null, input.intent ?? null);
-  const adapterSelection = resolveAdapterSelection(input);
+  const adapterSelection = resolveAdapterSelection(input.profile, resolvedIntent);
+  const explicitReplayPolicy = input.intent?.replayPolicy ?? input.session?.runtimeIntent?.replayPolicy;
+  const degradationReason = resolveDegradationReason(
+    adapterSelection.adapterId,
+    explicitReplayPolicy,
+    resolvedIntent,
+    input.capability,
+  );
   const replayPolicy = resolveReplayPolicy(
     adapterSelection.adapterId,
-    input.intent?.replayPolicy ?? input.session?.runtimeIntent?.replayPolicy,
+    explicitReplayPolicy,
+    resolvedIntent,
     input.capability,
   );
 
@@ -92,7 +215,18 @@ export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPla
     adapterId: adapterSelection.adapterId,
     adapterSelectionSource: adapterSelection.adapterSelectionSource,
     reasoningMode: resolvedIntent.reasoningMode,
+    reasoningEnabled: resolveReasoningEnabled(resolvedIntent, input.capability),
+    reasoningEffort: resolvedIntent.reasoningEffort,
+    adapterHint: resolvedIntent.adapterHint,
     replayPolicy,
+    toolStrategy: resolvedIntent.toolStrategy,
+    degradationReason,
+    planSource: resolvePlanSource(
+      input,
+      adapterSelection.adapterSelectionSource,
+      degradationReason,
+      resolvedIntent,
+    ),
     fallbackAdapterIds: adapterSelection.adapterId === "br-minimax" ? ["openai-compatible"] : [],
   };
 }

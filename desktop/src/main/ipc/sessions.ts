@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile } from "@shared/contracts";
+import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
@@ -15,7 +15,7 @@ import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
-import { buildExecutionPlan } from "../services/reasoning-runtime";
+import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -188,6 +188,10 @@ type SessionPayload = {
 type SessionsPayload = {
   sessions: ChatSession[];
   approvalRequests?: unknown[];
+};
+
+type SessionWithExecutionPlan = ChatSession & {
+  executionPlan?: ResolvedExecutionPlan;
 };
 
 // ---------------------------------------------------------------------------
@@ -452,19 +456,53 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       try {
         while (round < SAFETY_CEILING) {
           round++;
-          // 使用上下文工程管线：能力解析 → 预算计算 → 压缩 → 组装
+          // 使用显式编排链路：intent → capability → plan → context → execute
+          const runtimeIntent = resolveSessionRuntimeIntent(session);
+          // 仅把会话中显式设置过的字段回填给 buildExecutionPlan，
+          // 这样 runtimeIntent 成为当前编排的单一来源，同时不改变默认值/降级来源判定。
+          const executionPlanSession = session.runtimeIntent
+            ? {
+                runtimeIntent: {
+                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningMode")
+                    ? { reasoningMode: runtimeIntent.reasoningMode }
+                    : {}),
+                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningEnabled")
+                    ? { reasoningEnabled: runtimeIntent.reasoningEnabled }
+                    : {}),
+                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningEffort")
+                    ? { reasoningEffort: runtimeIntent.reasoningEffort }
+                    : {}),
+                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "adapterHint")
+                    ? { adapterHint: runtimeIntent.adapterHint }
+                    : {}),
+                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "replayPolicy")
+                    ? { replayPolicy: runtimeIntent.replayPolicy }
+                    : {}),
+                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "toolStrategy")
+                    ? { toolStrategy: runtimeIntent.toolStrategy }
+                    : {}),
+                },
+              }
+            : session.runtimeIntent === null
+              ? { runtimeIntent: null }
+              : undefined;
           const resolved = resolveModelCapability(modelProfile);
           const executionPlan = buildExecutionPlan({
-            session,
+            session: executionPlanSession,
             profile: modelProfile,
             capability: resolved.effective,
-          });
+          }) as ResolvedExecutionPlan;
+          const sessionWithExecutionPlan = session as SessionWithExecutionPlan;
           session.runtimeVersion = executionPlan.runtimeVersion;
+          sessionWithExecutionPlan.executionPlan = executionPlan;
           console.info("[session:runtime] 已生成执行计划", {
             sessionId,
             round,
+            runtimeIntent,
             adapterId: executionPlan.adapterId,
             replayPolicy: executionPlan.replayPolicy,
+            degradationReason: executionPlan.degradationReason,
+            planSource: executionPlan.planSource,
             fallbackAdapterIds: executionPlan.fallbackAdapterIds,
           });
           const assembled = assembleContext({
@@ -474,6 +512,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             workingDir,
             skills: enabledSkills,
             systemPromptBuilder: boundBuildSystemPrompt,
+            executionPlan,
           });
           if (assembled.wasCompacted) {
             console.info(

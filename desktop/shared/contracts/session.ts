@@ -1,5 +1,9 @@
 import type { A2UiPayload } from "./ui";
-import type { SessionRuntimeIntent, SessionRuntimeVersion } from "./session-runtime";
+import type {
+  ResolvedExecutionPlan,
+  SessionRuntimeIntent,
+  SessionRuntimeVersion,
+} from "./session-runtime";
 
 export type ChatMessageRole = "system" | "user" | "assistant" | "tool";
 
@@ -54,6 +58,9 @@ export type ChatSession = {
   attachedDirectory: string | null;
   createdAt: string;
   runtimeVersion?: SessionRuntimeVersion;
+  /** 持久化 session 时允许缺少 Phase 2 扩展字段，兼容旧版 runtime intent。 */
   runtimeIntent?: SessionRuntimeIntent | null;
+  /** 旧会话可能没有 executionPlan；新会话落盘后应保留完整计划元数据。 */
+  executionPlan?: ResolvedExecutionPlan | null;
   messages: ChatMessage[];
 };

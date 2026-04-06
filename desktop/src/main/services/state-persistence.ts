@@ -59,6 +59,8 @@ export type PersistedState = {
   personalPrompt: PersonalPromptProfile;
 };
 
+type PersistedSessionMetadata = Omit<ChatSession, "messages">;
+
 // ---------------------------------------------------------------------------
 // 辅助方法
 // ---------------------------------------------------------------------------
@@ -144,7 +146,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       const sessionDir = join(paths.sessionsDir, sessionId);
       const metaFile = join(sessionDir, "session.json");
       const messagesFile = join(sessionDir, "messages.json");
-      const meta = tryReadJson<Omit<ChatSession, "messages">>(metaFile);
+      const meta = tryReadJson<PersistedSessionMetadata>(metaFile);
       if (!meta || !meta.id) continue;
       const messages = tryReadJson<ChatSession["messages"]>(messagesFile) ?? [];
       sessions.push({ ...meta, messages });
@@ -244,7 +246,7 @@ export async function saveSession(
 
   // 拆分保存：metadata（不含 messages）与 messages 分别落盘
   // 两者都使用原子写入（临时文件 + rename）避免数据损坏
-  const { messages, ...meta } = session;
+  const { messages, ...meta }: { messages: ChatSession["messages"] } & PersistedSessionMetadata = session;
   await atomicWriteFile(join(sessionDir, "session.json"), JSON.stringify(meta, null, 2));
   await atomicWriteFile(join(sessionDir, "messages.json"), JSON.stringify(messages, null, 2));
 }

@@ -7,7 +7,14 @@
  * 3. 未来阶段：生成摘要、更新工作记忆
  */
 
-import type { ChatMessage, ModelCapability, ContextBudgetPolicy, TokenCountingMode } from "@shared/contracts";
+import type {
+  ChatMessage,
+  ContextBudgetPolicy,
+  ExecutionPlan,
+  ModelCapability,
+  SessionReplayPolicy,
+  TokenCountingMode,
+} from "@shared/contracts";
 import { textOfContent } from "@shared/contracts";
 import { DEFAULT_CONTEXT_BUDGET_POLICY } from "@shared/contracts";
 import { estimateTokenCount } from "./token-estimator";
@@ -22,6 +29,8 @@ export type CompactionInput = {
   budgetTokens: number;
   capability: ModelCapability;
   policy?: ContextBudgetPolicy;
+  replayPolicy?: SessionReplayPolicy;
+  executionPlan?: Pick<ExecutionPlan, "replayPolicy"> | null;
 };
 
 export type CompactionResult = {
@@ -40,6 +49,22 @@ export type CompactionResult = {
 // ---------------------------------------------------------------------------
 
 const MESSAGE_OVERHEAD = 4;
+
+function resolveReplayPolicy(input: Pick<CompactionInput, "executionPlan" | "replayPolicy">): SessionReplayPolicy | null {
+  return input.executionPlan?.replayPolicy ?? input.replayPolicy ?? null;
+}
+
+function sanitizeReplayMessage(
+  message: ChatMessage,
+  replayPolicy: SessionReplayPolicy | null,
+): ChatMessage {
+  if (message.role !== "assistant" || replayPolicy === null || replayPolicy === "assistant-turn-with-reasoning") {
+    return { ...message };
+  }
+
+  const { reasoning: _reasoning, ...rest } = message;
+  return rest;
+}
 
 /** 估算单条消息的 token 数 */
 function estimateMessageTokens(msg: ChatMessage, mode: TokenCountingMode = "character-fallback"): number {
@@ -66,9 +91,10 @@ export function compactMessages(input: CompactionInput): CompactionResult {
   const { budgetTokens, capability } = input;
   const policy = { ...DEFAULT_CONTEXT_BUDGET_POLICY, ...(input.policy ?? {}) };
   const mode = capability.tokenCountingMode ?? "character-fallback";
+  const replayPolicy = resolveReplayPolicy(input);
 
   // 复制消息列表
-  let messages = input.messages.map(m => ({ ...m }));
+  let messages = input.messages.map((message) => sanitizeReplayMessage(message, replayPolicy));
 
   // 预计算每条消息的 token 数 (O(n)，只算一次)
   const tokenCounts = messages.map(m => estimateMessageTokens(m, mode));

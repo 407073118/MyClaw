@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionRuntimeIntent } from "@shared/contracts";
 import type { RuntimeContext } from "../src/main/services/runtime-context";
 
 const ipcHandleRegistry = new Map<string, (...args: unknown[]) => unknown>();
@@ -65,7 +64,18 @@ vi.mock("../src/main/services/builtin-tool-executor", () => ({
   },
 }));
 
-/** 构造最小 RuntimeContext，专门用于验证 session 主链路是否接上 execution plan。 */
+type SessionWithExecutionPlan = {
+  runtimeVersion?: number;
+  executionPlan?: {
+    adapterId: string;
+    replayPolicy: string;
+    degradationReason: string | null;
+    planSource: string;
+  };
+  messages: Array<{ role: string; content: unknown }>;
+};
+
+/** 构造最小 RuntimeContext，专门验证 Task 4 的 send orchestration。 */
 function buildContext(): RuntimeContext {
   return {
     runtime: {
@@ -127,7 +137,7 @@ function buildContext(): RuntimeContext {
   };
 }
 
-describe("phase1 session runtime integration", () => {
+describe("Phase 2 session orchestration", () => {
   beforeEach(() => {
     ipcHandleRegistry.clear();
     callModelMock.mockReset();
@@ -138,32 +148,33 @@ describe("phase1 session runtime integration", () => {
     saveSessionMock.mockReset();
   });
 
-  it("creates sessions with runtimeVersion and passes execution plans to callModel", async () => {
+  it("runs session send as intent -> plan -> execute and preserves degradation metadata", async () => {
     const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
     const ctx = buildContext();
     const order: string[] = [];
-    const seededRuntimeIntent: SessionRuntimeIntent = {
-      reasoningEffort: "medium",
-      adapterHint: "auto",
-      replayPolicy: "assistant-turn-with-reasoning",
-      toolStrategy: "auto",
-    };
+
     const runtimeIntent = {
       reasoningMode: "auto",
-      reasoningEnabled: true,
-      reasoningEffort: "medium",
-      adapterHint: "auto",
-      replayPolicy: "assistant-turn-with-reasoning",
+      reasoningEnabled: false,
+      reasoningEffort: "high",
+      adapterHint: "br-minimax",
+      replayPolicy: "assistant-turn",
       toolStrategy: "auto",
     };
+
     const executionPlan = {
       runtimeVersion: 1,
       adapterId: "br-minimax",
       adapterSelectionSource: "profile",
       reasoningMode: "auto",
-      replayPolicy: "assistant-turn-with-reasoning",
+      reasoningEnabled: false,
+      reasoningEffort: "high",
+      adapterHint: "br-minimax",
+      replayPolicy: "assistant-turn",
+      toolStrategy: "auto",
+      degradationReason: "capability-missing",
+      planSource: "capability",
       fallbackAdapterIds: ["openai-compatible"],
-      adapterHint: "auto",
     };
 
     resolveSessionRuntimeIntentMock.mockImplementation(() => {
@@ -174,18 +185,19 @@ describe("phase1 session runtime integration", () => {
       order.push("capability");
       return {
         effective: {
-          supportsReasoning: true,
+          supportsReasoning: false,
           source: "registry",
         },
       };
     });
+    buildExecutionPlanMock.mockImplementation(() => {
+      order.push("plan");
+      return executionPlan;
+    });
     assembleContextMock.mockImplementation((input) => {
       order.push("context");
       expect(input).toMatchObject({
-        executionPlan: expect.objectContaining({
-          adapterId: "br-minimax",
-          replayPolicy: "assistant-turn-with-reasoning",
-        }),
+        executionPlan,
       });
       return {
         messages: [
@@ -198,21 +210,6 @@ describe("phase1 session runtime integration", () => {
         removedCount: 0,
       };
     });
-    buildExecutionPlanMock.mockImplementation((input) => {
-      order.push("plan");
-      expect(input).toMatchObject({
-        session: {
-          runtimeIntent: seededRuntimeIntent,
-        },
-        profile: expect.objectContaining({
-          id: "profile-1",
-        }),
-        capability: expect.objectContaining({
-          supportsReasoning: true,
-        }),
-      });
-      return executionPlan;
-    });
     callModelMock.mockImplementation(async (input) => {
       order.push("execute");
       expect(input).toMatchObject({
@@ -224,6 +221,7 @@ describe("phase1 session runtime integration", () => {
         finishReason: "stop",
       };
     });
+    saveSessionMock.mockResolvedValue(undefined);
 
     registerSessionHandlers(ctx);
 
@@ -233,39 +231,52 @@ describe("phase1 session runtime integration", () => {
     expect(createHandler).toBeTypeOf("function");
     expect(sendHandler).toBeTypeOf("function");
 
-    const created = await createHandler?.({}, { title: "Phase 1" }) as {
-      session: {
-        id: string;
-        runtimeVersion?: number;
-      };
+    const created = await createHandler?.({}, { title: "Phase 2" }) as {
+      session: { id: string; runtimeIntent?: typeof runtimeIntent };
     };
-    const storedSession = ctx.state.sessions.find((session) => session.id === created.session.id);
-
-    expect(storedSession).toBeDefined();
-    if (!storedSession) {
-      throw new Error("Expected created session to be stored in ctx.state.sessions");
-    }
-    storedSession.runtimeIntent = seededRuntimeIntent;
-
-    expect(created.session.runtimeVersion).toBe(1);
-
+    created.session.runtimeIntent = runtimeIntent;
     const response = await sendHandler?.({}, created.session.id, { content: "hello" }) as {
-      session: { runtimeVersion?: number; messages: Array<{ role: string; content: unknown }> };
+      session: SessionWithExecutionPlan;
     };
 
     expect(resolveSessionRuntimeIntentMock).toHaveBeenCalledTimes(1);
     expect(buildExecutionPlanMock).toHaveBeenCalledTimes(1);
+    expect(buildExecutionPlanMock).toHaveBeenCalledWith(expect.objectContaining({
+      session: {
+        runtimeIntent,
+      },
+      profile: expect.objectContaining({
+        id: "profile-1",
+      }),
+      capability: expect.objectContaining({
+        supportsReasoning: false,
+      }),
+    }));
+    expect(order).toEqual(["intent", "capability", "plan", "context", "execute"]);
     expect(assembleContextMock).toHaveBeenCalledWith(expect.objectContaining({
-      executionPlan,
+      executionPlan: expect.objectContaining({
+        replayPolicy: "assistant-turn",
+        degradationReason: "capability-missing",
+      }),
     }));
     expect(callModelMock).toHaveBeenCalledWith(expect.objectContaining({
-      executionPlan,
+      executionPlan: expect.objectContaining({
+        replayPolicy: "assistant-turn",
+      }),
     }));
-    expect(order).toEqual(expect.arrayContaining(["intent", "capability", "plan", "context", "execute"]));
-    expect(order.indexOf("plan")).toBeGreaterThanOrEqual(0);
-    expect(order.indexOf("plan")).toBeLessThan(order.indexOf("context"));
-    expect(order.indexOf("plan")).toBeLessThan(order.indexOf("execute"));
     expect(response.session.runtimeVersion).toBe(1);
+    expect(response.session.executionPlan).toMatchObject({
+      adapterId: "br-minimax",
+      replayPolicy: "assistant-turn",
+      degradationReason: "capability-missing",
+      planSource: "capability",
+    });
+    expect(saveSessionMock.mock.calls.at(-1)?.[1]).toMatchObject({
+      executionPlan: expect.objectContaining({
+        degradationReason: "capability-missing",
+        planSource: "capability",
+      }),
+    });
     expect(response.session.messages.at(-1)).toMatchObject({
       role: "assistant",
       content: "done",

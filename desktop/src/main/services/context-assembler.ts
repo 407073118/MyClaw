@@ -5,9 +5,10 @@
 
 import type {
   ChatSession,
-  ChatMessage,
+  ExecutionPlan,
   ModelCapability,
   ContextBudgetPolicy,
+  SessionReplayPolicy,
   SkillDefinition,
 } from "@shared/contracts";
 import { DEFAULT_CONTEXT_BUDGET_POLICY } from "@shared/contracts";
@@ -43,6 +44,8 @@ export type AssembleInput = {
   systemPromptBuilder?: (session: ChatSession, workingDir: string, skills?: SkillDefinition[]) => string;
   /** 可选的工作记忆内容 */
   workingMemory?: string;
+  replayPolicy?: SessionReplayPolicy;
+  executionPlan?: Pick<ExecutionPlan, "replayPolicy"> | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -50,6 +53,10 @@ export type AssembleInput = {
 // ---------------------------------------------------------------------------
 
 const MESSAGE_OVERHEAD = 4;
+
+function resolveReplayPolicy(input: Pick<AssembleInput, "executionPlan" | "replayPolicy">): SessionReplayPolicy | null {
+  return input.executionPlan?.replayPolicy ?? input.replayPolicy ?? null;
+}
 
 /** 构建最小系统提示（用于测试和独立使用场景） */
 function buildDefaultSystemPrompt(session: ChatSession, workingDir: string): string {
@@ -84,6 +91,7 @@ export function assembleContext(input: AssembleInput): AssembledContext {
   } = input;
   const policy = { ...DEFAULT_CONTEXT_BUDGET_POLICY, ...(input.policy ?? {}) };
   const mode = capability.tokenCountingMode ?? "character-fallback";
+  const replayPolicy = resolveReplayPolicy(input);
 
   // 构建预算快照
   const budget = buildBudgetSnapshot(capability, policy);
@@ -109,6 +117,8 @@ export function assembleContext(input: AssembleInput): AssembledContext {
     budgetTokens: messageBudget,
     capability,
     policy,
+    replayPolicy: replayPolicy ?? undefined,
+    executionPlan: input.executionPlan,
   });
 
   // 组装最终消息列表
@@ -126,7 +136,9 @@ export function assembleContext(input: AssembleInput): AssembledContext {
       role: msg.role,
       content: typeof msg.content === "string" ? msg.content : msg.content.filter((c): c is { type: "text"; text: string } => c.type === "text").map(c => c.text).join("\n"),
     };
-    if (msg.reasoning) entry.reasoning = msg.reasoning;
+    if ((replayPolicy === null || replayPolicy === "assistant-turn-with-reasoning") && msg.reasoning) {
+      entry.reasoning = msg.reasoning;
+    }
     if (msg.tool_call_id) entry.tool_call_id = msg.tool_call_id;
     if (msg.tool_calls && msg.tool_calls.length > 0) entry.tool_calls = msg.tool_calls;
     finalMessages.push(entry);
