@@ -5,10 +5,10 @@ import { existsSync, readdirSync, readFileSync, mkdirSync, cpSync, statSync } fr
 import type {
   ApprovalRequest,
   ChatSession,
-  LocalEmployeeSummary,
   ModelProfile,
   PersonalPromptProfile,
   SkillDefinition,
+  SiliconPerson,
   WorkflowDefinition,
   WorkflowSummary,
 } from "@shared/contracts";
@@ -327,7 +327,7 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
   // 基于磁盘数据构建可变的内存镜像
   const sessions: ChatSession[] = persisted.sessions;
   const models: ModelProfile[] = persisted.models;
-  const employees: LocalEmployeeSummary[] = persisted.employees;
+  const siliconPersons: SiliconPerson[] = persisted.siliconPersons;
   const workflows: WorkflowSummary[] = persisted.workflows;
   const workflowRuns = persisted.workflowRuns;
   const workflowDefinitions: Record<string, WorkflowDefinition> = persisted.workflowDefinitions;
@@ -347,7 +347,7 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
     state: {
       models,
       sessions,
-      employees,
+      siliconPersons,
       workflowRuns,
       activeWorkflowRuns: new Map(),
       activeSessionRuns: new Map(),

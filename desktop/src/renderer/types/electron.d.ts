@@ -5,7 +5,6 @@ import type {
   ApprovalRequest,
   BuiltinToolApprovalMode,
   ChatSession,
-  LocalEmployeeSummary,
   McpServer,
   McpServerConfig,
   ModelCatalogItem,
@@ -14,6 +13,7 @@ import type {
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
+  SiliconPerson,
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
 import type { BrMiniMaxRuntimeDiagnostics } from "../../../shared/br-minimax";
@@ -59,7 +59,7 @@ type BootstrapPayload = {
   tools: { builtin: ResolvedBuiltinTool[]; mcp: ResolvedMcpTool[] };
   mcp: { servers: McpServer[] };
   skills: { items: SkillDefinition[] };
-  employees: LocalEmployeeSummary[];
+  siliconPersons: SiliconPerson[];
   workflows: WorkflowDefinitionSummary[];
   workflowRuns: unknown[];
   cloudHubItems?: CloudHubItem[];
@@ -285,7 +285,7 @@ declare global {
         summary?: string;
         downloadUrl: string;
         manifest: CloudHubManifest;
-      }) => Promise<{ items: LocalEmployeeSummary[]; employee: LocalEmployeeSummary }>;
+      }) => Promise<{ items: SiliconPerson[]; siliconPerson: SiliconPerson }>;
       installWorkflowPackageFromCloud: (input: {
         itemId: string;
         releaseId: string;
@@ -296,18 +296,39 @@ declare global {
       }) => Promise<{ items: WorkflowDefinitionSummary[]; workflow: WorkflowDefinitionSummary }>;
 
       // --- Employees ---
-      fetchEmployees: () => Promise<{ items: LocalEmployeeSummary[] }>;
-      getEmployee: (employeeId: string) => Promise<{ employee: LocalEmployeeSummary }>;
-      createEmployee: (input: {
+      listSiliconPersons: () => Promise<{ items: SiliconPerson[] }>;
+      getSiliconPerson: (siliconPersonId: string) => Promise<{ siliconPerson: SiliconPerson }>;
+      createSiliconPerson: (input: {
         name: string;
-        summary?: string;
-        model?: string;
-        skills?: string[];
-      }) => Promise<{ items: LocalEmployeeSummary[]; employee: LocalEmployeeSummary }>;
-      updateEmployee: (
-        employeeId: string,
-        input: Partial<{ name: string; summary: string; model: string; skills: string[] }>,
-      ) => Promise<{ employee: LocalEmployeeSummary }>;
+        title?: string;
+        description: string;
+      }) => Promise<{ items: SiliconPerson[]; siliconPerson: SiliconPerson }>;
+      updateSiliconPerson: (
+        siliconPersonId: string,
+        input: Partial<SiliconPerson>,
+      ) => Promise<{ siliconPerson: SiliconPerson }>;
+
+      createSiliconPersonSession: (
+        siliconPersonId: string,
+        input?: { title?: string },
+      ) => Promise<{ siliconPerson: SiliconPerson; session: ChatSession }>;
+      switchSiliconPersonSession: (
+        siliconPersonId: string,
+        sessionId: string,
+      ) => Promise<{ siliconPerson: SiliconPerson; session: ChatSession }>;
+      sendSiliconPersonMessage: (
+        siliconPersonId: string,
+        content: string,
+      ) => Promise<{ siliconPerson: SiliconPerson; session: ChatSession }>;
+      /** 将指定硅基员工会话标记为已读，仅同步未读状态，不切换 currentSession。 */
+      markSiliconPersonSessionRead: (
+        siliconPersonId: string,
+        sessionId: string,
+      ) => Promise<{ siliconPerson: SiliconPerson; session: ChatSession }>;
+      startSiliconPersonWorkflowRun: (
+        siliconPersonId: string,
+        workflowId: string,
+      ) => Promise<{ siliconPerson: SiliconPerson; session: ChatSession; runId: string | null }>;
 
       // --- Workflows ---
       fetchWorkflows: () => Promise<{ items: WorkflowDefinitionSummary[] }>;

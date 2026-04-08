@@ -59,6 +59,8 @@ export type ChatSession = {
   title: string;
   modelProfileId: string;
   attachedDirectory: string | null;
+  /** 硅基员工私域 session 会绑定所属员工；主聊天 session 保持缺省。 */
+  siliconPersonId?: string | null;
   createdAt: string;
   runtimeVersion?: SessionRuntimeVersion;
   /** 持久化 session 时允许缺少 Phase 2 扩展字段，兼容旧版 runtime intent。 */

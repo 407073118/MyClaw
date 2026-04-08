@@ -29,7 +29,7 @@ export default function PublishDraftPage() {
 
   const sourceOptions = useMemo(() => {
     if (kind === "employee-package") {
-      return workspace.employees.map((item) => ({
+      return workspace.siliconPersons.map((item) => ({
         id: item.id,
         label: `${item.name} (${item.status})`,
       }));
@@ -38,7 +38,7 @@ export default function PublishDraftPage() {
       id: item.id,
       label: `${item.name} (${item.status})`,
     }));
-  }, [kind, workspace.employees, workspace.workflows]);
+  }, [kind, workspace.siliconPersons, workspace.workflows]);
 
   // 来源选项变化后，同步修正当前选中的来源 ID。
   useEffect(() => {
@@ -61,8 +61,8 @@ export default function PublishDraftPage() {
 
   // 页面首次进入时，按需补齐员工与工作流数据源。
   useEffect(() => {
-    if (!workspace.employees.length) {
-      void workspace.loadEmployees();
+    if (!workspace.siliconPersons.length) {
+      void workspace.loadSiliconPersons();
     }
     if (!workspace.workflows.length) {
       void workspace.loadWorkflows();

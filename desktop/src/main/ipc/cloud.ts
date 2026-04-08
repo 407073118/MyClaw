@@ -10,17 +10,17 @@ import type {
   AuthLoginRequest,
   AuthLoginResponse,
   AuthRefreshResponse,
-  LocalEmployeeSummary,
   McpServerConfig,
   SkillDefinition,
   SkillDetail,
+  SiliconPerson,
   WorkflowDefinition,
   WorkflowSummary,
 } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
 import { appEnv, APP_ENV_NAME } from "../../../config";
-import { saveEmployee, saveWorkflow } from "../services/state-persistence";
+import { saveSiliconPerson, saveWorkflow } from "../services/state-persistence";
 
 // ---------------------------------------------------------------------------
 // Hub types (subset of what CloudHubProxy returns)
@@ -272,22 +272,29 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
     "cloud:import-employee-package",
     async (_event, input: Record<string, unknown>) => {
       const manifest = input.manifest as Record<string, unknown> | undefined;
-      const employee: LocalEmployeeSummary = {
-        id: `employee-${crypto.randomUUID()}`,
+      const siliconPerson: SiliconPerson = {
+        id: `sp-${crypto.randomUUID()}`,
         name: ((input.name as string) ?? "").trim(),
+        title: ((input.name as string) ?? "").trim(),
         description: (manifest?.description as string) || ((input.summary as string) ?? "").trim() || ((input.name as string) ?? "").trim(),
-        status: "draft",
+        status: "idle",
         source: "hub",
+        approvalMode: "inherit",
+        currentSessionId: null,
+        sessions: [],
+        unreadCount: 0,
+        hasUnread: false,
+        needsApproval: false,
         workflowIds: [...((manifest?.defaultWorkflowIds as string[]) ?? [])],
         updatedAt: new Date().toISOString(),
       };
 
-      ctx.state.employees.push(employee);
-      saveEmployee(ctx.runtime.paths, employee).catch((err) => {
-        console.error("[cloud:import-employee-package] persist failed", err);
+      ctx.state.siliconPersons.push(siliconPerson);
+      saveSiliconPerson(ctx.runtime.paths, siliconPerson).catch((err) => {
+        console.error("[cloud:import-employee-package] 硅基员工持久化失败", err);
       });
 
-      return { employee, items: [...ctx.state.employees] };
+      return { siliconPerson, items: [...ctx.state.siliconPersons] };
     },
   );
 

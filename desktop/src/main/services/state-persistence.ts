@@ -8,7 +8,7 @@
  *   <myClawDir>/models/<id>.json
  *   <myClawDir>/sessions/<id>/session.json
  *   <myClawDir>/sessions/<id>/messages.json
- *   <myClawDir>/employees/<id>.json
+ *   <myClawDir>/silicon-persons/<id>.json
  *   <myClawDir>/workflows/<id>.json
  *   <myClawDir>/settings.json
  */
@@ -28,9 +28,9 @@ import { randomUUID } from "node:crypto";
 import type {
   ApprovalPolicy,
   ChatSession,
-  LocalEmployeeSummary,
   ModelProfile,
   PersonalPromptProfile,
+  SiliconPerson,
   WorkflowDefinition,
   WorkflowRunSummary,
   WorkflowSummary,
@@ -52,7 +52,7 @@ export type AppSettings = {
 export type PersistedState = {
   models: ModelProfile[];
   sessions: ChatSession[];
-  employees: LocalEmployeeSummary[];
+  siliconPersons: SiliconPerson[];
   workflows: WorkflowSummary[];
   workflowRuns: WorkflowRunSummary[];
   workflowDefinitions: Record<string, WorkflowDefinition>;
@@ -96,8 +96,8 @@ async function atomicWriteFile(filePath: string, data: string): Promise<void> {
   await rename(tmpPath, filePath);
 }
 
-function employeesDir(paths: MyClawPaths): string {
-  return join(paths.myClawDir, "employees");
+function siliconPersonsDir(paths: MyClawPaths): string {
+  return join(paths.myClawDir, "silicon-persons");
 }
 
 function workflowsDir(paths: MyClawPaths): string {
@@ -207,16 +207,16 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
     // sessionsDir 不可读时从空数据启动
   }
 
-  // ---- employees ---------------------------------------------------------
-  const employees: LocalEmployeeSummary[] = [];
-  const empDir = employeesDir(paths);
-  ensureDir(empDir);
+  // ---- silicon persons ---------------------------------------------------
+  const siliconPersons: SiliconPerson[] = [];
+  const personDir = siliconPersonsDir(paths);
+  ensureDir(personDir);
   try {
-    for (const file of readdirSync(empDir)) {
+    for (const file of readdirSync(personDir)) {
       if (!file.endsWith(".json")) continue;
-      const data = tryReadJson<LocalEmployeeSummary>(join(empDir, file));
+      const data = tryReadJson<SiliconPerson>(join(personDir, file));
       if (data && data.id) {
-        employees.push(data);
+        siliconPersons.push(data);
       }
     }
   } catch {
@@ -272,7 +272,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
   return {
     models,
     sessions,
-    employees,
+    siliconPersons,
     workflows: workflowsArr,
     workflowRuns,
     workflowDefinitions,
@@ -330,13 +330,13 @@ export async function deleteSessionFiles(
   }
 }
 
-export async function saveEmployee(
+export async function saveSiliconPerson(
   paths: MyClawPaths,
-  employee: LocalEmployeeSummary,
+  siliconPerson: SiliconPerson,
 ): Promise<void> {
-  const dir = employeesDir(paths);
+  const dir = siliconPersonsDir(paths);
   ensureDir(dir);
-  await atomicWriteFile(join(dir, `${employee.id}.json`), JSON.stringify(employee, null, 2));
+  await atomicWriteFile(join(dir, `${siliconPerson.id}.json`), JSON.stringify(siliconPerson, null, 2));
 }
 
 export async function saveWorkflow(
