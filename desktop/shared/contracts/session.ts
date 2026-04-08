@@ -1,4 +1,5 @@
-import type { PlanState } from "./plan";
+import type { PlanModeState, PlanState } from "./plan";
+import type { Task } from "./task";
 import type { A2UiPayload } from "./ui";
 import type {
   ResolvedExecutionPlan,
@@ -63,7 +64,11 @@ export type ChatSession = {
   runtimeIntent?: SessionRuntimeIntent | null;
   /** 旧会话可能没有 executionPlan；新会话落盘后应保留完整计划元数据。 */
   executionPlan?: ResolvedExecutionPlan | null;
+  /** Phase 3.5 在 session 级别持久化 plan mode 状态机，兼容旧会话缺字段。 */
+  planModeState?: PlanModeState | null;
   /** Phase 3 允许旧会话缺少 planState，新增会话可按需持久化计划进度。 */
   planState?: PlanState | null;
+  /** Task V2: session-scoped 任务列表，独立于 Plan Mode，普通对话中自动追踪多步骤工作。 */
+  tasks?: Task[];
   messages: ChatMessage[];
 };

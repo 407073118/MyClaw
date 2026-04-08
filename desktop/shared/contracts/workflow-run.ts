@@ -20,4 +20,24 @@ export type WorkflowRunSummary = {
   startedAt: string;
   updatedAt: string;
   finishedAt?: string;
+  totalSteps?: number;
+  error?: string;
+};
+
+export type WorkflowCheckpointSummary = {
+  checkpointId: string;
+  step: number;
+  status: "running" | "interrupted" | "succeeded" | "failed";
+  triggeredNodes: string[];
+  durationMs: number;
+  createdAt: string;
+  interruptPayload?: WorkflowInterruptPayload;
+};
+
+export type WorkflowInterruptPayload = {
+  type: "input" | "approval" | "review";
+  nodeId: string;
+  formKey: string;
+  prompt: string;
+  currentState: Record<string, unknown>;
 };

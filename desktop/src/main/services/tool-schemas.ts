@@ -153,13 +153,37 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "exec_command",
-        description: `Execute a shell command. Working directory: ${cwd}. Dangerous commands are blocked.`,
+        description: `Execute a shell command. Working directory: ${cwd}. Dangerous commands are blocked. Long-running commands automatically retry with larger timeoutMs when they time out, up to a default 10 minute ceiling.`,
         parameters: {
           type: "object",
           properties: {
             command: {
               type: "string",
               description: "The shell command to execute",
+            },
+            cwd: {
+              type: "string",
+              description: "Optional working directory override for this command. Supports absolute paths and paths relative to the current session working directory.",
+            },
+            timeoutMs: {
+              type: "number",
+              description: "Optional initial timeout in milliseconds. If the command times out, exec.command will retry with a larger timeout.",
+            },
+            maxAttempts: {
+              type: "number",
+              description: "Optional maximum number of timeout attempts. Defaults to the built-in retry policy.",
+            },
+            maxTimeoutMs: {
+              type: "number",
+              description: "Optional upper bound for the timeout expansion, in milliseconds.",
+            },
+            timeoutMultiplier: {
+              type: "number",
+              description: "Optional timeout growth multiplier used after each timeout retry.",
+            },
+            retryOnTimeout: {
+              type: "boolean",
+              description: "Optional. Set to false to disable timeout retries for this command.",
             },
           },
           required: ["command"],
@@ -268,25 +292,66 @@ export function buildToolSchemas(
         },
       },
     },
+    // ── task.* ── Task V2 任务追踪 ────────────────────────────
     {
       type: "function",
       function: {
-        name: "task_manage",
-        description: "Manage a task list for multi-step work. Supports add/done/clear/list actions.",
+        name: "task_create",
+        description: "Create a new task to track multi-step work. Use when the user's request requires 3+ steps, or for complex non-trivial tasks. Each task should have a clear subject (imperative: 'Run tests') and activeForm (present continuous: 'Running tests').",
         parameters: {
           type: "object",
           properties: {
-            action: {
-              type: "string",
-              enum: ["add", "done", "clear", "list"],
-              description: "The action to perform",
-            },
-            text: {
-              type: "string",
-              description: "Task description (for 'add') or task number (for 'done')",
-            },
+            subject: { type: "string", description: "Imperative description of what needs to be done (e.g., 'Fix authentication bug')" },
+            description: { type: "string", description: "Detailed description of the task requirements" },
+            activeForm: { type: "string", description: "Present continuous form shown during execution (e.g., 'Fixing authentication bug')" },
+            status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "Initial status. Defaults to 'pending'." },
           },
-          required: ["action"],
+          required: ["subject", "description"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "task_list",
+        description: "List all tasks in the current session with their status and details.",
+        parameters: {
+          type: "object",
+          properties: {},
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "task_get",
+        description: "Get a task by its ID with full details including blocking relationships.",
+        parameters: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "The task ID to retrieve" },
+          },
+          required: ["id"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "task_update",
+        description: "Update a task's fields or status. Mark as 'in_progress' before starting work, 'completed' after finishing. Only ONE task should be in_progress at a time — others are automatically demoted to pending.",
+        parameters: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "The task ID to update" },
+            subject: { type: "string", description: "Updated task subject" },
+            description: { type: "string", description: "Updated description" },
+            activeForm: { type: "string", description: "Updated present continuous form" },
+            status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "Updated status" },
+            blocks: { type: "array", items: { type: "string" }, description: "Task IDs this task blocks" },
+            blockedBy: { type: "array", items: { type: "string" }, description: "Task IDs that block this task" },
+          },
+          required: ["id"],
         },
       },
     },
@@ -534,12 +599,23 @@ export function buildToolSchemas(
 
   // 生成 skill invoke 工具
   if (skills && skills.length > 0) {
+    const usedSkillNames = new Set<string>();
     for (const skill of skills) {
       if (!skill.enabled || skill.disableModelInvocation) continue;
+      // 清洗 ID，保留字母数字和连字符/下划线，压缩连续下划线
+      let sanitizedId = skill.id.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+      // 去重：如果存在冲突，追加数字后缀
+      const baseId = sanitizedId;
+      let suffix = 2;
+      while (usedSkillNames.has(sanitizedId)) {
+        sanitizedId = `${baseId}_${suffix}`;
+        suffix++;
+      }
+      usedSkillNames.add(sanitizedId);
       staticTools.push({
         type: "function",
         function: {
-          name: `skill_invoke__${skill.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+          name: `skill_invoke__${sanitizedId}`,
           description: `Read the "${skill.name}" skill instructions. ${skill.description || ""}`.trim(),
           parameters: {
             type: "object",
@@ -649,6 +725,24 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
     }
 
     case "exec.command":
+      if (
+        "cwd" in args ||
+        "timeoutMs" in args ||
+        "maxAttempts" in args ||
+        "maxTimeoutMs" in args ||
+        "timeoutMultiplier" in args ||
+        "retryOnTimeout" in args
+      ) {
+        return JSON.stringify({
+          command: args.command ?? "",
+          ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+          ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
+          ...(args.maxAttempts !== undefined ? { maxAttempts: args.maxAttempts } : {}),
+          ...(args.maxTimeoutMs !== undefined ? { maxTimeoutMs: args.maxTimeoutMs } : {}),
+          ...(args.timeoutMultiplier !== undefined ? { timeoutMultiplier: args.timeoutMultiplier } : {}),
+          ...(args.retryOnTimeout !== undefined ? { retryOnTimeout: args.retryOnTimeout } : {}),
+        });
+      }
       return String(args.command ?? "");
 
     case "git.status":
@@ -669,11 +763,11 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
     case "web.search":
       return String(args.query ?? "");
 
-    case "task.manage": {
-      const action = String(args.action ?? "list");
-      const text = args.text ? ` ${args.text}` : "";
-      return `${action}${text}`;
-    }
+    case "task.create":
+    case "task.list":
+    case "task.get":
+    case "task.update":
+      return JSON.stringify(args);
 
     case "skill.view":
       // 把完整参数作为 JSON 传递，便于执行器解析 skill_id、page 和 data

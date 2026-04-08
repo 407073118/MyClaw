@@ -1,4 +1,4 @@
-import type { ModelProfile } from "@shared/contracts";
+import type { ModelProfile, SessionReasoningEffort } from "@shared/contracts";
 
 export type ProviderAdapterId = "br-minimax" | "openai-compatible";
 
@@ -28,6 +28,7 @@ export type ProviderAdapterMessage = {
 
 export type ProviderAdapterContext = {
   profile: ModelProfile;
+  reasoningEffort?: SessionReasoningEffort;
 };
 
 export type ProviderAdapterRequestInput = {

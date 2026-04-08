@@ -75,7 +75,7 @@ export default function ModelDetailPage() {
   const [modelCatalogError, setModelCatalogError] = useState("");
   const [availableModelIds, setAvailableModelIds] = useState<string[]>([]);
 
-  const managedBrMiniMax = isBrMiniMaxProfile(profile) || selectedPresetId === "br-minimax";
+  const managedBrMiniMax = selectedPresetId === "br-minimax";
   const brMiniMaxDiagnostics = readBrMiniMaxRuntimeDiagnostics(profile);
   const baseUrlPlaceholder = profile.baseUrlMode === "provider-root"
     ? BR_MINIMAX_BASE_URL
@@ -100,11 +100,14 @@ export default function ModelDetailPage() {
         baseUrlMode: preset.baseUrlMode,
         ...(preset.id === "br-minimax"
           ? createBrMiniMaxProfile({ apiKey: prev.apiKey.trim() })
-          : { ...(isNew ? { name: `New ${preset.label} Config` } : {}) }),
+          : { model: "", ...(isNew ? { name: `New ${preset.label} Config` } : {}) }),
       }));
       if (preset.id === "br-minimax") {
         setHeadersText("");
         setRequestBodyText(JSON.stringify(BR_MINIMAX_REQUEST_BODY, null, 2));
+      } else {
+        setHeadersText("");
+        setRequestBodyText("");
       }
       setAvailableModelIds([]);
       setModelCatalogError("");
@@ -476,13 +479,45 @@ export default function ModelDetailPage() {
             </div>
             {managedBrMiniMax ? (
               <div className="managed-profile-card">
-                <div><strong>模型 ID：</strong>{BR_MINIMAX_MODEL}</div>
-                <div><strong>固定网关：</strong>{BR_MINIMAX_BASE_URL}</div>
-                <div><strong>推荐参数：</strong>`temperature=1.0` / `top_p=0.95` / `top_k=40`</div>
-                <div><strong>Thinking：</strong>默认开启，运行时会做兼容降级</div>
-                <div><strong>Thinking 路径：</strong>{brMiniMaxDiagnostics.thinkingPath}</div>
-                <div><strong>验证状态：</strong>{brMiniMaxDiagnostics.lastCheckedAt ? "已验证" : "待验证"}</div>
-                <div><strong>RequestBody：</strong><pre>{JSON.stringify(BR_MINIMAX_REQUEST_BODY, null, 2)}</pre></div>
+                <div className="managed-kv-grid">
+                  <div className="managed-kv">
+                    <span className="managed-kv-label">模型 ID</span>
+                    <span className="managed-kv-value mono">{BR_MINIMAX_MODEL}</span>
+                  </div>
+                  <div className="managed-kv">
+                    <span className="managed-kv-label">固定网关</span>
+                    <span className="managed-kv-value mono">{BR_MINIMAX_BASE_URL}</span>
+                  </div>
+                  <div className="managed-kv">
+                    <span className="managed-kv-label">Thinking</span>
+                    <span className="managed-kv-value">默认开启，运行时兼容降级</span>
+                  </div>
+                  <div className="managed-kv">
+                    <span className="managed-kv-label">Thinking 路径</span>
+                    <span className={`managed-kv-value managed-status ${brMiniMaxDiagnostics.thinkingPath === "unverified" ? "status-pending" : "status-ok"}`}>
+                      {brMiniMaxDiagnostics.thinkingPath}
+                    </span>
+                  </div>
+                  <div className="managed-kv">
+                    <span className="managed-kv-label">验证状态</span>
+                    <span className={`managed-kv-value managed-status ${brMiniMaxDiagnostics.lastCheckedAt ? "status-ok" : "status-pending"}`}>
+                      {brMiniMaxDiagnostics.lastCheckedAt ? "已验证" : "待验证"}
+                    </span>
+                  </div>
+                </div>
+                <div className="managed-params-block">
+                  <span className="managed-params-title">推荐参数</span>
+                  <div className="managed-param-tags">
+                    <span className="managed-param-tag">temperature=1.0</span>
+                    <span className="managed-param-tag">top_p=0.95</span>
+                    <span className="managed-param-tag">top_k=40</span>
+                    <span className="managed-param-tag">enable_thinking=true</span>
+                  </div>
+                </div>
+                <div className="managed-params-block">
+                  <span className="managed-params-title">RequestBody</span>
+                  <pre className="managed-json">{JSON.stringify(BR_MINIMAX_REQUEST_BODY, null, 2)}</pre>
+                </div>
               </div>
             ) : (
             <div className="editor-row">
@@ -899,6 +934,95 @@ export default function ModelDetailPage() {
           background: #22c55e15;
           border: 1px solid #22c55e33;
           color: #4ade80;
+        }
+
+        .managed-profile-card {
+          background: #161618;
+          border: 1px solid #27272a;
+          border-radius: 8px;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+
+        .managed-kv-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 12px;
+        }
+
+        .managed-kv {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .managed-kv-label {
+          font-size: 11px;
+          color: #71717a;
+        }
+
+        .managed-kv-value {
+          font-size: 13px;
+          color: #e4e4e7;
+        }
+
+        .managed-kv-value.mono {
+          font-family: monospace;
+          color: #a1a1aa;
+        }
+
+        .managed-status {
+          font-weight: 500;
+        }
+
+        .managed-status.status-ok {
+          color: #4ade80;
+        }
+
+        .managed-status.status-pending {
+          color: #facc15;
+        }
+
+        .managed-params-block {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .managed-params-title {
+          font-size: 11px;
+          color: #71717a;
+        }
+
+        .managed-param-tags {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+
+        .managed-param-tag {
+          font-size: 11px;
+          font-family: monospace;
+          padding: 2px 10px;
+          border-radius: 999px;
+          background: #3b82f615;
+          border: 1px solid #3b82f633;
+          color: #60a5fa;
+        }
+
+        .managed-json {
+          margin: 0;
+          padding: 12px;
+          border-radius: 6px;
+          background: #0d0d0f;
+          border: 1px solid #27272a;
+          font-size: 12px;
+          font-family: monospace;
+          color: #a1a1aa;
+          line-height: 1.6;
+          overflow-x: auto;
         }
 
         .detail-content::-webkit-scrollbar { width: 6px; }

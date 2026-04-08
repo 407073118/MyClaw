@@ -1,79 +1,123 @@
-import React from "react";
-import type { PlanState } from "@shared/contracts";
+import React, { useEffect, useRef, useState } from "react";
+import type { Task } from "@shared/contracts";
 
 type PlanStatePanelProps = {
-  planState?: PlanState | null;
+  tasks?: Task[];
 };
 
-const KNOWN_PLAN_TASK_STATUS_LABELS: Record<string, string> = {
-  pending: "待处理",
-  in_progress: "进行中",
-  completed: "已完成",
-  blocked: "阻塞",
+const TASK_V2_STATUS_ICONS: Record<string, string> = {
+  pending: "○",
+  in_progress: "◐",
+  completed: "●",
 };
 
-const PLAN_STATE_PANEL_STYLES = `
-  .plan-state-panel { display: grid; gap: 16px; padding: 18px 20px; border-radius: var(--radius-lg); border: 1px solid var(--glass-border); background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015)); }
-  .plan-state-panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-  .plan-state-panel-copy { display: grid; gap: 4px; }
-  .plan-state-panel-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); }
-  .plan-state-panel-title { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); }
-  .plan-state-panel-updated-at { font-size: 12px; color: var(--text-muted); word-break: break-all; text-align: right; }
-  .plan-state-task-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-  .plan-state-task { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: var(--radius-md); background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); }
-  .plan-state-task-status { min-width: 92px; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,0.06); color: var(--text-primary); font-size: 12px; font-weight: 600; line-height: 1.2; text-align: center; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; }
-  .plan-state-task-status[data-status="pending"] { color: var(--text-muted); }
-  .plan-state-task-status[data-status="in_progress"] { color: var(--accent-cyan); }
-  .plan-state-task-status[data-status="completed"] { color: var(--status-green); }
-  .plan-state-task-status[data-status="blocked"] { color: var(--status-red); }
-  .plan-state-task-copy { display: grid; gap: 4px; min-width: 0; }
-  .plan-state-task-copy strong { color: var(--text-primary); font-size: 14px; }
-  .plan-state-task-copy p { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.5; }
-  .plan-state-task-blocker { color: var(--status-red); }
+const TASK_V2_STYLES = `
+  .task-v2-bar { flex-shrink: 0; padding: 0 24px 4px; }
+  .task-v2-bar-inner { max-width: 800px; margin: 0 auto; border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--bg-card); overflow: hidden; }
+
+  .task-v2-summary { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; list-style: none; user-select: none; }
+  .task-v2-summary::-webkit-details-marker { display: none; }
+  .task-v2-summary::marker { display: none; content: ""; }
+
+  .task-v2-chevron { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-muted); transition: transform 0.2s ease; }
+  .task-v2-details[open] .task-v2-chevron { transform: rotate(180deg); }
+
+  .task-v2-progress-label { font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+  .task-v2-progress-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; min-width: 60px; }
+  .task-v2-progress-fill { height: 100%; border-radius: 2px; background: var(--accent-cyan); transition: width 0.3s ease; }
+
+  .task-v2-body { padding: 0 14px 12px; max-height: 240px; overflow-y: auto; }
+  .task-v2-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .task-v2-task { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--radius-md); font-size: 13px; }
+  .task-v2-task-icon { flex-shrink: 0; width: 18px; text-align: center; font-size: 12px; line-height: 20px; }
+  .task-v2-task-icon[data-status="pending"] { color: var(--text-muted); }
+  .task-v2-task-icon[data-status="in_progress"] { color: var(--accent-cyan); }
+  .task-v2-task-icon[data-status="completed"] { color: var(--status-green); }
+  .task-v2-task-title { color: var(--text-primary); line-height: 20px; }
+  .task-v2-task-title[data-status="completed"] { color: var(--text-muted); text-decoration: line-through; }
+  .task-v2-task-status { flex-shrink: 0; margin-left: auto; font-size: 11px; color: var(--text-muted); }
 `;
 
-/** 仅在渲染层翻译已知状态，未知未来状态保持原始 token 便于兼容调试。 */
-function formatPlanTaskStatus(status: string): string {
-  return KNOWN_PLAN_TASK_STATUS_LABELS[status] ?? status;
-}
+/** Task V2 进度面板 — 紧贴输入框上方的紧凑可折叠栏（仅用于普通对话的任务追踪）。 */
+export function PlanStatePanel({ tasks }: PlanStatePanelProps) {
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const prevCountRef = useRef(tasks?.length ?? 0);
+  const [autoCollapsed, setAutoCollapsed] = useState(false);
 
-/** 以只读调试面板形式展示最小计划状态，避免引入额外的规划交互假设。 */
-export function PlanStatePanel({ planState }: PlanStatePanelProps) {
-  if (!planState || planState.tasks.length === 0) return null;
+  const items = tasks ?? [];
+  const total = items.length;
+  const completed = items.filter((t) => t.status === "completed").length;
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const activeTask = items.find((t) => t.status === "in_progress");
+
+  // 自动展开：任务数量增加时
+  useEffect(() => {
+    if (items.length > prevCountRef.current && detailsRef.current) {
+      detailsRef.current.open = true;
+      setAutoCollapsed(false);
+    }
+    prevCountRef.current = items.length;
+  }, [items.length]);
+
+  // 自动折叠：全部完成后 5s
+  useEffect(() => {
+    if (total > 0 && completed === total && !autoCollapsed) {
+      const timer = setTimeout(() => {
+        if (detailsRef.current) {
+          detailsRef.current.open = false;
+        }
+        setAutoCollapsed(true);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [total, completed, autoCollapsed]);
+
+  if (total === 0) return null;
 
   return (
     <>
-      <aside className="plan-state-panel" data-testid="plan-state-panel" aria-label="计划状态">
-        <div className="plan-state-panel-header">
-          <div className="plan-state-panel-copy">
-            <span className="plan-state-panel-eyebrow">调试视图</span>
-            <h2 className="plan-state-panel-title">计划状态</h2>
-          </div>
-          <time className="plan-state-panel-updated-at" dateTime={planState.updatedAt}>
-            {planState.updatedAt}
-          </time>
-        </div>
+      <div className="task-v2-bar">
+        <details ref={detailsRef} className="task-v2-bar-inner task-v2-details" data-testid="task-v2-panel" open>
+          <summary className="task-v2-summary">
+            <svg className="task-v2-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            </svg>
 
-        <ol className="plan-state-task-list">
-          {planState.tasks.map((task) => (
-            <li key={task.id} className="plan-state-task" data-testid={`plan-task-${task.id}`}>
-              <span
-                className="plan-state-task-status"
-                data-status={task.status}
-                data-testid={`plan-task-status-${task.id}`}
-              >
-                {formatPlanTaskStatus(task.status)}
+            <span className="task-v2-progress-label">
+              {completed}/{total} 已完成
+            </span>
+
+            <div className="task-v2-progress-bar">
+              <div className="task-v2-progress-fill" style={{ width: `${pct}%` }} />
+            </div>
+
+            {activeTask && (
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+                {activeTask.activeForm ?? activeTask.subject}
               </span>
-              <div className="plan-state-task-copy">
-                <strong>{task.title}</strong>
-                {task.detail && <p>{task.detail}</p>}
-                {task.blocker && <p className="plan-state-task-blocker">阻塞: {task.blocker}</p>}
-              </div>
-            </li>
-          ))}
-        </ol>
-      </aside>
-      <style>{PLAN_STATE_PANEL_STYLES}</style>
+            )}
+          </summary>
+
+          <div className="task-v2-body">
+            <ol className="task-v2-list">
+              {items.map((task) => (
+                <li key={task.id} className="task-v2-task" data-testid={`task-v2-${task.id}`}>
+                  <span className="task-v2-task-icon" data-status={task.status}>
+                    {TASK_V2_STATUS_ICONS[task.status] ?? "○"}
+                  </span>
+                  <span className="task-v2-task-title" data-status={task.status}>
+                    {task.subject}
+                  </span>
+                  {task.status === "in_progress" && (
+                    <span className="task-v2-task-status">进行中</span>
+                  )}
+                </li>
+              ))}
+            </ol>
+          </div>
+        </details>
+      </div>
+      <style>{TASK_V2_STYLES}</style>
     </>
   );
 }

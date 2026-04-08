@@ -246,6 +246,33 @@ describe("skill_invoke dispatch", () => {
     expect(result.output).toContain("help me");
   });
 
+  it("should include execution guidance for skills with scripts", async () => {
+    const skillDir = join(testDir, "script-skill");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "# Script Skill\nRun local scripts.", "utf8");
+
+    executor.setSkills([{
+      id: "script-skill",
+      name: "Script Skill",
+      description: "Has local scripts",
+      path: skillDir,
+      enabled: true,
+      disableModelInvocation: false,
+      hasScriptsDirectory: true,
+      hasReferencesDirectory: false,
+      hasAssetsDirectory: false,
+      hasTestsDirectory: false,
+      hasAgentsDirectory: false,
+    }]);
+
+    const result = await executor.execute("skill_invoke__script-skill", "run it", testDir);
+    expect(result.success).toBe(true);
+    expect(result.output).toContain(skillDir);
+    expect(result.output).toContain("\"cwd\"");
+    expect(result.output).toContain("py -3");
+    expect(result.output).toContain("scripts/");
+  });
+
   it("should fail for disabled skill", async () => {
     executor.setSkills([{
       id: "disabled-skill",

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeContext } from "../src/main/services/runtime-context";
 
+const ORCHESTRATION_TEST_TIMEOUT_MS = 20000;
+
 const ipcHandleRegistry = new Map<string, (...args: unknown[]) => unknown>();
 const sentStreamEvents: Array<{ channel: string; payload: unknown }> = [];
 
@@ -11,6 +13,8 @@ const resolveModelCapabilityMock = vi.fn();
 const resolveSessionRuntimeIntentMock = vi.fn();
 const buildExecutionPlanMock = vi.fn();
 const saveSessionMock = vi.fn();
+const saveWorkflowRunMock = vi.fn();
+const deleteWorkflowRunFileMock = vi.fn();
 
 vi.mock("electron", () => ({
   ipcMain: {
@@ -50,6 +54,8 @@ vi.mock("../src/main/services/reasoning-runtime", () => ({
 
 vi.mock("../src/main/services/state-persistence", () => ({
   saveSession: saveSessionMock,
+  saveWorkflowRun: saveWorkflowRunMock,
+  deleteWorkflowRunFile: deleteWorkflowRunFileMock,
   deleteSessionFiles: vi.fn(),
 }));
 
@@ -100,6 +106,8 @@ function buildContext(): RuntimeContext {
       }],
       sessions: [],
       employees: [],
+      workflowRuns: [],
+      activeWorkflowRuns: new Map(),
       skills: [],
       workflowDefinitions: {},
       getDefaultModelProfileId: () => "profile-1",
@@ -172,6 +180,8 @@ describe("Phase 3 session planning orchestration", () => {
     resolveSessionRuntimeIntentMock.mockReset();
     buildExecutionPlanMock.mockReset();
     saveSessionMock.mockReset();
+    saveWorkflowRunMock.mockReset();
+    deleteWorkflowRunFileMock.mockReset();
     vi.resetModules();
   });
 
@@ -248,6 +258,1027 @@ describe("Phase 3 session planning orchestration", () => {
         updatedAt: "2026-04-06T00:00:00.000Z",
       },
     });
+  }, ORCHESTRATION_TEST_TIMEOUT_MS);
+
+  it("registers plan mode approval handlers and parks the session in awaiting approval before execution", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "analysis",
+    });
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "planner system" },
+        { role: "user", content: "Plan the rollout" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockResolvedValue({
+      content: JSON.stringify({
+        goal: "Plan the rollout",
+        summary: "Draft a visible plan before execution",
+        steps: [
+          { id: "step-collect-context", title: "Collect context", kind: "analysis" },
+          { id: "step-apply-change", title: "Apply change", kind: "tool" },
+        ],
+        acceptanceCriteria: [
+          "User approves the plan before execution",
+        ],
+      }),
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    expect(ipcHandleRegistry.has("session:approve-plan")).toBe(true);
+    expect(ipcHandleRegistry.has("session:revise-plan")).toBe(true);
+    expect(ipcHandleRegistry.has("session:cancel-plan-mode")).toBe(true);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: { id: string; runtimeIntent?: Record<string, unknown> };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+
+    const response = await sendHandler?.({}, created.session.id, {
+      content: "Plan the rollout",
+    }) as {
+      session: {
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+        } | null;
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string }>;
+        } | null;
+      };
+    };
+
+    expect(response.session.planModeState).toMatchObject({
+      mode: "awaiting_approval",
+      approvalStatus: "pending",
+    });
+    expect(response.session.planState?.tasks).toEqual([
+      expect.objectContaining({
+        id: "step-collect-context",
+        title: "Collect context",
+        status: "pending",
+      }),
+      expect.objectContaining({
+        id: "step-apply-change",
+        title: "Apply change",
+        status: "pending",
+      }),
+    ]);
+    expect(callModelMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds explicit planner guidance so plan mode analysis returns a structured JSON plan", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "analysis",
+    });
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "planner system" },
+        { role: "user", content: "Plan the rollout" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockResolvedValue({
+      content: JSON.stringify({
+        goal: "Plan the rollout",
+        steps: [
+          { id: "step-collect-context", title: "Collect context", kind: "analysis", lane: "planner" },
+          { id: "step-apply-change", title: "Apply change", kind: "tool", lane: "implementer" },
+        ],
+      }),
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: { id: string; runtimeIntent?: Record<string, unknown> };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+
+    await sendHandler?.({}, created.session.id, {
+      content: "Plan the rollout",
+    });
+
+    expect(callModelMock).toHaveBeenCalledTimes(1);
+    expect(callModelMock.mock.calls[0]?.[0]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Return strict JSON"),
+      }),
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("\"lane\""),
+      }),
+    ]));
+  });
+
+  it("skips approved confirmation steps and runs the next executable step", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "execution",
+    });
+    assembleContextMock.mockImplementation((input) => {
+      expect(input.session.planState).toMatchObject({
+        tasks: [
+          {
+            id: "step-confirm",
+            status: "completed",
+            kind: "user_confirmation",
+          },
+          {
+            id: "step-apply",
+            status: "in_progress",
+            kind: "tool",
+          },
+        ],
+      });
+      return {
+        messages: [
+          { role: "system", content: "planner system" },
+          { role: "user", content: "Execute approved plan" },
+        ],
+        budgetUsed: 10,
+        wasCompacted: false,
+        compactionReason: null,
+        removedCount: 0,
+      };
+    });
+    callModelMock.mockResolvedValue({
+      content: "done",
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: {
+        id: string;
+        runtimeIntent?: typeof runtimeIntent & {
+          workflowMode?: "plan";
+          planModeEnabled?: boolean;
+        };
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; kind?: string }>;
+          updatedAt: string;
+        } | null;
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+          planVersion: number;
+        } | null;
+      };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+    created.session.planModeState = {
+      mode: "executing",
+      approvalStatus: "approved",
+      planVersion: 1,
+    };
+    created.session.planState = {
+      tasks: [
+        {
+          id: "step-confirm",
+          title: "Confirm the rollout",
+          status: "pending",
+          kind: "user_confirmation",
+        },
+        {
+          id: "step-apply",
+          title: "Apply the rollout",
+          status: "pending",
+          kind: "tool",
+        },
+      ],
+      updatedAt: "2026-04-05T23:59:00.000Z",
+    };
+
+    const response = await sendHandler?.({}, created.session.id, {
+      content: "Execute approved plan",
+    }) as {
+      session: {
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; kind?: string }>;
+        } | null;
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+        } | null;
+      };
+    };
+
+    expect(callModelMock).toHaveBeenCalledTimes(1);
+    expect(response.session.planState).toMatchObject({
+      tasks: [
+        {
+          id: "step-confirm",
+          status: "completed",
+          kind: "user_confirmation",
+        },
+        {
+          id: "step-apply",
+          status: "completed",
+          kind: "tool",
+        },
+      ],
+    });
+  });
+
+  it("injects the current executing step into runtime context before the model round starts", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "execution",
+    });
+    assembleContextMock.mockImplementation((input) => {
+      expect(input.session.planModeState).toMatchObject({
+        currentTaskId: "step-apply",
+        currentTaskTitle: "Apply the rollout",
+        currentTaskKind: "tool",
+      });
+      return {
+        messages: [
+          { role: "system", content: "planner system" },
+          { role: "user", content: "Execute approved plan" },
+        ],
+        budgetUsed: 10,
+        wasCompacted: false,
+        compactionReason: null,
+        removedCount: 0,
+      };
+    });
+    callModelMock.mockResolvedValue({
+      content: "Applied the rollout",
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: {
+        id: string;
+        runtimeIntent?: typeof runtimeIntent & {
+          workflowMode?: "plan";
+          planModeEnabled?: boolean;
+        };
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; kind?: string; lane?: string }>;
+          updatedAt: string;
+        } | null;
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+          planVersion: number;
+        } | null;
+      };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+    created.session.planModeState = {
+      mode: "executing",
+      approvalStatus: "approved",
+      planVersion: 1,
+    };
+    created.session.planState = {
+      tasks: [
+        {
+          id: "step-apply",
+          title: "Apply the rollout",
+          status: "pending",
+          kind: "tool",
+          lane: "implementer",
+        },
+      ],
+      updatedAt: "2026-04-05T23:59:00.000Z",
+    };
+
+    await sendHandler?.({}, created.session.id, {
+      content: "Execute approved plan",
+    });
+
+    expect(callModelMock).toHaveBeenCalledTimes(1);
+    expect(callModelMock.mock.calls[0]?.[0]?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Current plan step"),
+      }),
+      expect.objectContaining({
+        role: "system",
+        content: expect.stringContaining("Apply the rollout"),
+      }),
+    ]));
+  });
+
+  it("materializes parallel workstreams and a workflow-style run summary for complex plans", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "analysis",
+    });
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "planner system" },
+        { role: "user", content: "Plan the rollout" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockResolvedValue({
+      content: JSON.stringify({
+        goal: "Plan the rollout",
+        summary: "Use visible tracks for a complex task",
+        steps: [
+          { id: "step-analyze", title: "Analyze the request", kind: "analysis", lane: "planner" },
+          { id: "step-implement", title: "Implement the change", kind: "tool", lane: "implementer" },
+          { id: "step-verify", title: "Verify the change", kind: "verification", lane: "verifier" },
+        ],
+      }),
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: { id: string; runtimeIntent?: Record<string, unknown> };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+
+    const response = await sendHandler?.({}, created.session.id, {
+      content: "Plan the rollout",
+    }) as {
+      session: {
+        planModeState?: {
+          workflowRun?: {
+            status: string;
+            currentNodeIds: string[];
+          } | null;
+          workstreams?: Array<{ id: string; label: string; status: string; stepIds: string[] }>;
+        } | null;
+      };
+    };
+
+    expect(response.session.planModeState?.workstreams).toEqual([
+      expect.objectContaining({
+        id: "planner",
+        stepIds: ["step-analyze"],
+      }),
+      expect.objectContaining({
+        id: "implementer",
+        stepIds: ["step-implement"],
+      }),
+      expect.objectContaining({
+        id: "verifier",
+        stepIds: ["step-verify"],
+      }),
+    ]);
+    expect(response.session.planModeState?.workflowRun).toMatchObject({
+      status: "queued",
+      currentNodeIds: ["step-analyze", "step-implement", "step-verify"],
+    });
+  });
+
+  it("persists the synthesized workflow-style run when plan mode produces a complex draft", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "analysis",
+    });
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "planner system" },
+        { role: "user", content: "Plan the rollout" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockResolvedValue({
+      content: JSON.stringify({
+        goal: "Plan the rollout",
+        summary: "Use visible tracks for a complex task",
+        steps: [
+          { id: "step-analyze", title: "Analyze the request", kind: "analysis", lane: "planner" },
+          { id: "step-implement", title: "Implement the change", kind: "tool", lane: "implementer" },
+          { id: "step-verify", title: "Verify the change", kind: "verification", lane: "verifier" },
+        ],
+      }),
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+    saveWorkflowRunMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: { id: string; runtimeIntent?: Record<string, unknown> };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+
+    await sendHandler?.({}, created.session.id, {
+      content: "Plan the rollout",
+    });
+
+    expect(saveWorkflowRunMock).toHaveBeenCalledTimes(1);
+    expect(saveWorkflowRunMock.mock.calls[0]?.[1]).toMatchObject({
+      workflowId: created.session.id,
+      status: "queued",
+      currentNodeIds: ["step-analyze", "step-implement", "step-verify"],
+    });
+  });
+
+  it("marks the session workflow-style run as canceled when plan mode is canceled", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+    saveSessionMock.mockResolvedValue(undefined);
+    saveWorkflowRunMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const cancelHandler = ipcHandleRegistry.get("session:cancel-plan-mode");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: {
+        id: string;
+        runtimeIntent?: Record<string, unknown>;
+        planModeState?: Record<string, unknown> | null;
+      };
+    };
+
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+    created.session.planModeState = {
+      mode: "executing",
+      workflowMode: "plan",
+      approvalStatus: "approved",
+      planVersion: 2,
+      workflowRun: {
+        id: `plan-run-${created.session.id}`,
+        workflowId: created.session.id,
+        workflowVersion: 2,
+        status: "running",
+        currentNodeIds: ["step-implement"],
+        startedAt: "2026-04-06T00:00:00.000Z",
+        updatedAt: "2026-04-06T00:05:00.000Z",
+      },
+    };
+
+    const response = await cancelHandler?.({}, created.session.id) as {
+      session: {
+        planModeState?: unknown;
+        planState?: unknown;
+      };
+    };
+
+    expect(response.session.planModeState).toBeNull();
+    expect(response.session.planState).toBeNull();
+    expect(saveWorkflowRunMock).toHaveBeenCalledTimes(1);
+    expect(saveWorkflowRunMock.mock.calls[0]?.[1]).toMatchObject({
+      id: `plan-run-${created.session.id}`,
+      workflowId: created.session.id,
+      status: "canceled",
+      finishedAt: expect.any(String),
+    });
+  });
+
+  it("does not mutate the workflow run registry when persisting the synthetic run fails", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "analysis",
+    });
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "planner system" },
+        { role: "user", content: "Plan the rollout" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockResolvedValue({
+      content: JSON.stringify({
+        goal: "Plan the rollout",
+        steps: [
+          { id: "step-analyze", title: "Analyze the request", kind: "analysis", lane: "planner" },
+          { id: "step-implement", title: "Implement the change", kind: "tool", lane: "implementer" },
+        ],
+      }),
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+    saveWorkflowRunMock.mockRejectedValueOnce(new Error("disk full"));
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: { id: string; runtimeIntent?: Record<string, unknown> };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+
+    await expect(sendHandler?.({}, created.session.id, {
+      content: "Plan the rollout",
+    })).rejects.toThrow(/disk full/i);
+    expect(ctx.state.workflowRuns).toEqual([]);
+  });
+
+  it("rolls back the synthetic workflow run when saving the session fails after run persistence", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "planning",
+    });
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "system" },
+        { role: "user", content: "Plan the rollout" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockResolvedValue({
+      content: JSON.stringify({
+        goal: "Plan the rollout",
+        steps: [
+          { id: "step-analyze", title: "Analyze the request", kind: "analysis", lane: "planner" },
+          { id: "step-implement", title: "Implement the change", kind: "tool", lane: "implementer" },
+        ],
+      }),
+      toolCalls: [],
+      finishReason: "stop",
+    });
+    saveWorkflowRunMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: { id: string; runtimeIntent?: Record<string, unknown> };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+    saveSessionMock.mockRejectedValueOnce(new Error("session write failed"));
+
+    await expect(sendHandler?.({}, created.session.id, {
+      content: "Plan the rollout",
+    })).rejects.toThrow(/session write failed/i);
+    expect(ctx.state.workflowRuns).toEqual([]);
+    expect(deleteWorkflowRunFileMock).toHaveBeenCalledWith(
+      ctx.runtime.paths,
+      `plan-run-${created.session.id}`,
+    );
+  });
+
+  it("automatically advances to the next executable step within the same approved execution run", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "execution",
+    });
+    let assembleCall = 0;
+    assembleContextMock.mockImplementation((input) => {
+      assembleCall += 1;
+      if (assembleCall === 1) {
+        expect(input.session.planState).toMatchObject({
+          tasks: [
+            {
+              id: "step-apply",
+              status: "in_progress",
+              kind: "tool",
+            },
+            {
+              id: "step-verify",
+              status: "pending",
+              kind: "verification",
+            },
+          ],
+        });
+      } else {
+        expect(input.session.planState).toMatchObject({
+          tasks: [
+            {
+              id: "step-apply",
+              status: "completed",
+              kind: "tool",
+            },
+            {
+              id: "step-verify",
+              status: "in_progress",
+              kind: "verification",
+            },
+          ],
+        });
+      }
+      return {
+        messages: [
+          { role: "system", content: "planner system" },
+          {
+            role: "user",
+            content: assembleCall === 1 ? "Execute approved plan" : "Continue verification step",
+          },
+        ],
+        budgetUsed: 10,
+        wasCompacted: false,
+        compactionReason: null,
+        removedCount: 0,
+      };
+    });
+    callModelMock
+      .mockResolvedValueOnce({
+        content: "Applied the rollout",
+        toolCalls: [],
+        finishReason: "stop",
+      })
+      .mockResolvedValueOnce({
+        content: "Verified the rollout",
+        toolCalls: [],
+        finishReason: "stop",
+      });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: {
+        id: string;
+        runtimeIntent?: typeof runtimeIntent & {
+          workflowMode?: "plan";
+          planModeEnabled?: boolean;
+        };
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; kind?: string }>;
+          updatedAt: string;
+        } | null;
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+          planVersion: number;
+        } | null;
+      };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+    created.session.planModeState = {
+      mode: "executing",
+      approvalStatus: "approved",
+      planVersion: 1,
+    };
+    created.session.planState = {
+      tasks: [
+        {
+          id: "step-apply",
+          title: "Apply the rollout",
+          status: "pending",
+          kind: "tool",
+        },
+        {
+          id: "step-verify",
+          title: "Verify the rollout",
+          status: "pending",
+          kind: "verification",
+        },
+      ],
+      updatedAt: "2026-04-05T23:59:00.000Z",
+    };
+
+    const response = await sendHandler?.({}, created.session.id, {
+      content: "Execute approved plan",
+    }) as {
+      session: {
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; kind?: string }>;
+        } | null;
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+        } | null;
+      };
+    };
+
+    expect(callModelMock).toHaveBeenCalledTimes(2);
+    expect(response.session.planModeState).toMatchObject({
+      mode: "completed",
+      approvalStatus: "approved",
+    });
+    expect(response.session.planState).toMatchObject({
+      tasks: [
+        {
+          id: "step-apply",
+          status: "completed",
+          kind: "tool",
+        },
+        {
+          id: "step-verify",
+          status: "completed",
+          kind: "verification",
+        },
+      ],
+    });
+  });
+
+  it("completes plan mode without appending a fallback task when approval only resolves the last confirmation step", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      ...executionPlan,
+      workflowMode: "plan",
+      phase: "execution",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Plan Mode Session" }) as {
+      session: {
+        id: string;
+        runtimeIntent?: typeof runtimeIntent & {
+          workflowMode?: "plan";
+          planModeEnabled?: boolean;
+        };
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; kind?: string }>;
+          updatedAt: string;
+        } | null;
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+          planVersion: number;
+        } | null;
+      };
+    };
+    created.session.runtimeIntent = {
+      ...runtimeIntent,
+      workflowMode: "plan",
+      planModeEnabled: true,
+    };
+    created.session.planModeState = {
+      mode: "executing",
+      approvalStatus: "approved",
+      planVersion: 1,
+    };
+    created.session.planState = {
+      tasks: [
+        {
+          id: "step-final-confirm",
+          title: "Confirm completion",
+          status: "pending",
+          kind: "user_confirmation",
+        },
+      ],
+      updatedAt: "2026-04-05T23:59:00.000Z",
+    };
+
+    const response = await sendHandler?.({}, created.session.id, {
+      content: "Finalize approved plan",
+    }) as {
+      session: {
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; kind?: string }>;
+        } | null;
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+        } | null;
+      };
+    };
+
+    expect(callModelMock).toHaveBeenCalledTimes(0);
+    expect(response.session.planModeState).toMatchObject({
+      mode: "completed",
+      approvalStatus: "approved",
+    });
+    expect(response.session.planState?.tasks).toEqual([
+      expect.objectContaining({
+        id: "step-final-confirm",
+        status: "completed",
+        kind: "user_confirmation",
+      }),
+    ]);
   });
 
   it("emits SessionUpdated with in-progress plan state before the round continues", async () => {

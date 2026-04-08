@@ -139,6 +139,10 @@ type WorkspaceState = {
   sendMessage: (content: string, options?: {
     onMessageStream?: (snapshot: unknown) => void;
   }) => Promise<void>;
+  updateSessionRuntimeIntent: (intent: Record<string, unknown>) => Promise<void>;
+  approvePlan: () => Promise<void>;
+  revisePlan: (feedback: string) => Promise<void>;
+  cancelPlanMode: () => Promise<void>;
 
   createModelProfile: (input: Omit<ModelProfile, "id">) => Promise<ModelProfile>;
   updateModelProfile: (profileId: string, input: Omit<ModelProfile, "id">) => Promise<ModelProfile>;
@@ -207,9 +211,11 @@ type WorkspaceState = {
   loadWorkflowById: (workflowId: string) => Promise<unknown>;
   createWorkflow: (input: { name: string; description?: string }) => Promise<unknown>;
   updateWorkflow: (workflowId: string, input: unknown) => Promise<unknown>;
+  deleteWorkflow: (workflowId: string) => Promise<{ success: boolean }>;
   loadWorkflowRuns: () => Promise<unknown[]>;
-  startWorkflowRun: (workflowId: string) => Promise<unknown>;
-  resumeWorkflowRun: (runId: string) => Promise<unknown>;
+  startWorkflowRun: (workflowId: string, initialState?: Record<string, unknown>) => Promise<{ runId: string | null }>;
+  resumeWorkflowRun: (runId: string, resumeValue?: unknown) => Promise<{ success: boolean }>;
+  cancelWorkflowRun: (runId: string) => Promise<{ success: boolean }>;
 
   // Skills
   loadSkillDetail: (skillId: string) => Promise<unknown>;
@@ -218,6 +224,7 @@ type WorkspaceState = {
   pushAssistantMessage: (sessionId: string, content: string) => void;
   patchStreamingMessage: (sessionId: string, messageId: string, deltaContent: string) => void;
   applySessionUpdate: (session: ChatSession) => void;
+  patchSessionTasks: (sessionId: string, tasks: import("@shared/contracts").Task[]) => void;
   requestExecutionIntent: (intent: any) => Promise<void>;
   testModelProfileConnectivity: (profileId: string) => Promise<{
     success: boolean;
@@ -511,6 +518,66 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       });
     }
   },
+
+  async updateSessionRuntimeIntent(intent) {
+    const { currentSession } = get();
+    if (!currentSession) return;
+    const { session } = await window.myClawAPI.updateSessionRuntimeIntent(currentSession.id, intent);
+    set((s) => {
+      const sessions = [...s.sessions];
+      const index = sessions.findIndex((item) => item.id === session.id);
+      if (index >= 0) {
+        sessions[index] = session;
+      }
+      return { sessions };
+    });
+  },
+
+  /** 将当前计划标记为已批准，并同步最新会话状态。 */
+  async approvePlan() {
+    const { currentSession } = get();
+    if (!currentSession) return;
+    const { session } = await window.myClawAPI.approvePlan(currentSession.id);
+    set((s) => {
+      const sessions = [...s.sessions];
+      const index = sessions.findIndex((item) => item.id === session.id);
+      if (index >= 0) {
+        sessions[index] = session;
+      }
+      return { sessions };
+    });
+  },
+
+  /** 请求继续完善计划，让界面留在计划阶段而不是直接执行。 */
+  async revisePlan(feedback) {
+    const { currentSession } = get();
+    if (!currentSession) return;
+    const { session } = await window.myClawAPI.revisePlan(currentSession.id, feedback ?? "");
+    set((s) => {
+      const sessions = [...s.sessions];
+      const index = sessions.findIndex((item) => item.id === session.id);
+      if (index >= 0) {
+        sessions[index] = session;
+      }
+      return { sessions };
+    });
+  },
+
+  /** 取消计划模式，让会话回到普通对话入口。 */
+  async cancelPlanMode() {
+    const { currentSession } = get();
+    if (!currentSession) return;
+    const { session } = await window.myClawAPI.cancelPlanMode(currentSession.id);
+    set((s) => {
+      const sessions = [...s.sessions];
+      const index = sessions.findIndex((item) => item.id === session.id);
+      if (index >= 0) {
+        sessions[index] = session;
+      }
+      return { sessions };
+    });
+  },
+
 
   // -------------------------------------------------------------------------
   // Model profiles
@@ -887,28 +954,54 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return payload.items;
   },
 
-  async startWorkflowRun(workflowId) {
-    const payload = await window.myClawAPI.startWorkflowRun({ workflowId });
-    set((s) => ({
-      workflowRuns: {
-        ...s.workflowRuns,
-        ...Object.fromEntries(payload.items.map((r) => [(r as { id: string }).id, r])),
-        [(payload.run as { id: string }).id]: payload.run,
-      },
-    }));
-    return payload.run;
+  async startWorkflowRun(workflowId, initialState) {
+    const payload = await window.myClawAPI.startWorkflowRun({ workflowId, initialState });
+    if (payload.runId) {
+      set((s) => ({
+        workflowRuns: {
+          ...s.workflowRuns,
+          [payload.runId!]: { id: payload.runId, workflowId, status: "running", startedAt: new Date().toISOString() },
+        },
+      }));
+    }
+    return payload;
   },
 
-  async resumeWorkflowRun(runId) {
-    const payload = await window.myClawAPI.resumeWorkflowRun(runId);
-    set((s) => ({
-      workflowRuns: {
-        ...s.workflowRuns,
-        ...Object.fromEntries(payload.items.map((r) => [(r as { id: string }).id, r])),
-        [(payload.run as { id: string }).id]: payload.run,
-      },
-    }));
-    return payload.run;
+  async resumeWorkflowRun(runId, resumeValue) {
+    const payload = await window.myClawAPI.resumeWorkflowRun(runId, resumeValue);
+    return payload;
+  },
+
+  async deleteWorkflow(workflowId) {
+    const payload = await window.myClawAPI.deleteWorkflow(workflowId);
+    if (payload.success) {
+      set((s) => {
+        const workflows = s.workflows.filter((w) => w.id !== workflowId);
+        const { [workflowId]: _removed, ...workflowDefinitions } = s.workflowDefinitions;
+        const { [workflowId]: _removedSummary, ...workflowSummaries } = s.workflowSummaries;
+        return { workflows, workflowDefinitions, workflowSummaries };
+      });
+    }
+    return payload;
+  },
+
+  async cancelWorkflowRun(runId) {
+    const payload = await window.myClawAPI.cancelWorkflowRun(runId);
+    if (payload.success) {
+      set((s) => {
+        const existing = s.workflowRuns[runId] as Record<string, unknown> | undefined;
+        if (existing) {
+          return {
+            workflowRuns: {
+              ...s.workflowRuns,
+              [runId]: { ...existing, status: "canceled", updatedAt: new Date().toISOString() },
+            },
+          };
+        }
+        return {};
+      });
+    }
+    return payload;
   },
 
   // -------------------------------------------------------------------------
@@ -988,6 +1081,17 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         sessions[index] = updatedSession;
       } else {
         sessions.unshift(updatedSession);
+      }
+      return { sessions };
+    });
+  },
+
+  patchSessionTasks(sessionId, tasks) {
+    set((s) => {
+      const sessions = [...s.sessions];
+      const index = sessions.findIndex((item) => item.id === sessionId);
+      if (index >= 0) {
+        sessions[index] = { ...sessions[index]!, tasks };
       }
       return { sessions };
     });

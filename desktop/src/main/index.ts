@@ -329,6 +329,7 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
   const models: ModelProfile[] = persisted.models;
   const employees: LocalEmployeeSummary[] = persisted.employees;
   const workflows: WorkflowSummary[] = persisted.workflows;
+  const workflowRuns = persisted.workflowRuns;
   const workflowDefinitions: Record<string, WorkflowDefinition> = persisted.workflowDefinitions;
   const skills: SkillDefinition[] = [];
   let approvalRequests: ApprovalRequest[] = [];
@@ -347,6 +348,8 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
       models,
       sessions,
       employees,
+      workflowRuns,
+      activeWorkflowRuns: new Map(),
       skills,
       workflowDefinitions,
       getDefaultModelProfileId: () => {

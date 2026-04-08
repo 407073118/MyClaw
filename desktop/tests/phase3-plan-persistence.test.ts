@@ -174,4 +174,100 @@ describe("Phase 3 plan persistence", () => {
     expect(persisted.sessions[0].planState).toBeUndefined();
     expect(persisted.sessions[0].messages).toEqual([]);
   });
+
+  it("round-trips persisted planModeState metadata and structured plan drafts through disk reloads", async () => {
+    const paths = createPaths(testRootDir);
+    const session = {
+      id: "session-with-plan-mode",
+      title: "Session With Plan Mode",
+      modelProfileId: "profile-1",
+      attachedDirectory: "/tmp/project",
+      createdAt: "2026-04-06T00:00:00.000Z",
+      planState: {
+        tasks: [
+          {
+            id: "task-analyze",
+            title: "Analyze request",
+            status: "completed",
+          },
+          {
+            id: "task-await-approval",
+            title: "Wait for approval",
+            status: "pending",
+          },
+        ],
+        updatedAt: "2026-04-06T00:00:02.000Z",
+      },
+      planModeState: {
+        mode: "awaiting_approval",
+        approvalStatus: "pending",
+        planVersion: 3,
+        lastPlanMessageId: "assistant-plan-message",
+        approvedAt: null,
+        structuredPlan: {
+          goal: "Ship plan mode MVP",
+          summary: "Generate a visible plan before execution",
+          assumptions: ["The existing planner task runtime remains reusable"],
+          openQuestions: ["Should execution auto-start after approval?"],
+          acceptanceCriteria: ["The user must approve before execution begins"],
+          steps: [
+            {
+              id: "step-analyze",
+              title: "Analyze request",
+              status: "completed",
+              kind: "analysis",
+            },
+            {
+              id: "step-approve",
+              title: "Await approval",
+              status: "pending",
+              kind: "user_confirmation",
+            },
+          ],
+        },
+      },
+      messages: [
+        {
+          id: "message-1",
+          role: "assistant",
+          content: "Plan draft ready",
+          createdAt: "2026-04-06T00:00:01.000Z",
+        },
+      ],
+    } as ChatSession;
+
+    await saveSession(paths, session);
+
+    const rawMeta = JSON.parse(
+      readFileSync(join(paths.sessionsDir, session.id, "session.json"), "utf-8"),
+    ) as Omit<ChatSession, "messages"> & Record<string, unknown>;
+
+    expect(rawMeta.planModeState).toMatchObject({
+      mode: "awaiting_approval",
+      approvalStatus: "pending",
+      planVersion: 3,
+      lastPlanMessageId: "assistant-plan-message",
+    });
+
+    const persisted = loadPersistedState(paths);
+    expect(persisted.sessions).toHaveLength(1);
+    expect((persisted.sessions[0] as ChatSession & Record<string, unknown>).planModeState).toMatchObject({
+      mode: "awaiting_approval",
+      approvalStatus: "pending",
+      planVersion: 3,
+      structuredPlan: {
+        goal: "Ship plan mode MVP",
+        steps: [
+          {
+            id: "step-analyze",
+            kind: "analysis",
+          },
+          {
+            id: "step-approve",
+            kind: "user_confirmation",
+          },
+        ],
+      },
+    });
+  });
 });

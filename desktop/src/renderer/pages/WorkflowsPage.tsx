@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Plus, X } from "lucide-react";
 import { useDialogA11y } from "../hooks/useDialogA11y";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useWorkflowRunsStore } from "../stores/workflow-runs";
 import type { WorkflowSummary } from "@shared/contracts";
 
 // ── 筛选类型 ──────────────────────────────────────────────────────────────────
@@ -139,11 +140,45 @@ function safeComparableNodeCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : -1;
 }
 
+// ── 运行状态与时间辅助方法 ────────────────────────────────────────────────────
+
+/** 返回运行状态对应的中文标签与颜色。 */
+function getStatusBadge(status: string): { label: string; color: string } {
+  const config: Record<string, { label: string; color: string }> = {
+    "running": { label: "运行中", color: "#3b82f6" },
+    "succeeded": { label: "成功", color: "#22c55e" },
+    "failed": { label: "失败", color: "#ef4444" },
+    "waiting-input": { label: "等待输入", color: "#f59e0b" },
+    "canceled": { label: "已取消", color: "#6b7280" },
+    "queued": { label: "排队中", color: "#8b5cf6" },
+  };
+  return config[status] ?? { label: status, color: "#6b7280" };
+}
+
+/** 将 ISO 时间字符串转换为相对时间描述（中文）。 */
+function timeAgo(isoString: string): string {
+  const seconds = Math.floor((Date.now() - new Date(isoString).getTime()) / 1000);
+  if (seconds < 60) return `${seconds}秒前`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟前`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}小时前`;
+  return `${Math.floor(seconds / 86400)}天前`;
+}
+
+/** 计算运行时长的可读描述。 */
+function formatDuration(startedAt: string, finishedAt?: string): string {
+  if (!finishedAt) return "进行中";
+  const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
+}
+
 // ── WorkflowsPage 页面 ────────────────────────────────────────────────────────
 
 /** 渲染工作流资源库，并负责创建、筛选与运行入口。 */
 export default function WorkflowsPage() {
   const workspace = useWorkspaceStore();
+  const { runHistory, loadRunHistory } = useWorkflowRunsStore();
   const navigate = useNavigate();
 
   const [isCreating, setIsCreating] = useState(false);
@@ -190,6 +225,11 @@ export default function WorkflowsPage() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** 加载最近运行记录。 */
+  useEffect(() => {
+    loadRunHistory();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** 归一化工作流摘要来源，优先使用 summary map。 */
   function normalizeSummaries(): WorkflowSummary[] {
     const values = Object.values(workspace.workflowSummaries ?? {}) as WorkflowSummary[];
@@ -201,6 +241,21 @@ export default function WorkflowsPage() {
       (item: WorkflowSummary) => item && typeof item.id === "string" && item.id.trim().length > 0,
     );
   }
+
+  /** 根据 workflowId 查找工作流名称。 */
+  const workflowNameById = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of normalizeSummaries()) {
+      if (s.id && s.name) map[s.id] = s.name;
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace.workflowSummaries, workspace.workflows]);
+
+  /** 取最近 20 条运行记录用于展示。 */
+  const recentRuns = useMemo(() => {
+    return runHistory.slice(0, 20);
+  }, [runHistory]);
 
   const filteredWorkflows = useMemo(() => {
     const list = normalizeSummaries();
@@ -230,11 +285,13 @@ export default function WorkflowsPage() {
   /** 启动指定工作流运行，并在失败时提示原因。 */
   async function handleExecute(workflowId: string) {
     try {
-      const run = await workspace.startWorkflowRun(workflowId) as { id: string };
-      console.info(`[workflows] Started workflow run ${run.id}`);
+      const result = await workspace.startWorkflowRun(workflowId);
+      console.info(`[workflows] Started workflow run ${result.runId}`);
       alert(
-        `Successfully started workflow run: ${run.id}\nYou can monitor it from runtime terminal or logs.`,
+        `Successfully started workflow run: ${result.runId}\nYou can monitor it from runtime terminal or logs.`,
       );
+      // 刷新运行历史，让新运行立即可见
+      loadRunHistory();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Execution failed.";
       alert(`Failed to execute workflow: ${message}`);
@@ -355,6 +412,50 @@ export default function WorkflowsPage() {
           </div>
         )}
       </section>
+
+      {/* 最近运行 */}
+      {recentRuns.length > 0 && (
+        <section className="recent-runs-section">
+          <h3 className="recent-runs-title">最近运行</h3>
+          <div className="recent-runs-list">
+            {recentRuns.map((run) => {
+              const badge = getStatusBadge(run.status);
+              const wfName = workflowNameById[run.workflowId] ?? run.workflowId;
+              return (
+                <div
+                  key={run.id}
+                  className="run-row"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => navigate(`/workflows/${encodeURIComponent(run.workflowId)}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      navigate(`/workflows/${encodeURIComponent(run.workflowId)}`);
+                    }
+                  }}
+                >
+                  <span className="run-name" title={wfName}>{wfName}</span>
+                  <span
+                    className="run-status-badge"
+                    style={{
+                      background: `${badge.color}18`,
+                      color: badge.color,
+                      border: `1px solid ${badge.color}33`,
+                    }}
+                  >
+                    {badge.label}
+                  </span>
+                  <span className="run-time">{timeAgo(run.startedAt)}</span>
+                  <span className="run-duration">
+                    {formatDuration(run.startedAt, run.finishedAt)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Create Modal */}
       {showCreateModal && (
@@ -782,6 +883,72 @@ export default function WorkflowsPage() {
         }
 
         .primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .recent-runs-section {
+          margin-top: 36px;
+        }
+
+        .recent-runs-title {
+          margin: 0 0 16px;
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--text-primary, #fff);
+        }
+
+        .recent-runs-list {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .run-row {
+          display: grid;
+          grid-template-columns: 1fr auto auto auto;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 14px;
+          border-radius: 8px;
+          background: var(--bg-card, #18181b);
+          border: 1px solid var(--glass-border, #27272a);
+          cursor: pointer;
+          transition: background 0.15s, border-color 0.15s;
+        }
+
+        .run-row:hover {
+          background: color-mix(in srgb, var(--bg-card, #18181b) 80%, white);
+          border-color: var(--glass-border-hover, #3f3f46);
+        }
+
+        .run-name {
+          font-size: 13px;
+          font-weight: 500;
+          color: var(--text-primary, #fff);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .run-status-badge {
+          font-size: 11px;
+          font-weight: 600;
+          padding: 2px 8px;
+          border-radius: 4px;
+          white-space: nowrap;
+        }
+
+        .run-time {
+          font-size: 12px;
+          color: var(--text-muted, #71717a);
+          white-space: nowrap;
+        }
+
+        .run-duration {
+          font-size: 12px;
+          color: var(--text-secondary, #a1a1aa);
+          white-space: nowrap;
+          min-width: 60px;
+          text-align: right;
+        }
 
         @media (max-width: 900px) {
           .page-header { flex-direction: column; align-items: flex-start; }

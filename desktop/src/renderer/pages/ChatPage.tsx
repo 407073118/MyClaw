@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from "react"
 import { ArrowUp, Square } from "lucide-react";
 import { marked } from "marked";
 import { PlanStatePanel } from "../components/plan-state-panel";
+import { PlanSidePanel } from "../components/PlanSidePanel";
 import { useDialogA11y } from "../hooks/useDialogA11y";
 import { useWorkspaceStore } from "../stores/workspace";
 import type {
@@ -274,6 +275,12 @@ export default function ChatPage() {
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
 
   const session = workspace.currentSession;
+  const sessionRuntimeIntent = session?.runtimeIntent as Record<string, unknown> | undefined;
+  const planModeState = (session as (ChatSession & {
+    planModeState?: { mode?: string; approvalStatus?: string; planVersion?: number } | null;
+  }) | null)?.planModeState ?? null;
+  const planModeEnabled = sessionRuntimeIntent?.workflowMode === "plan"
+    || sessionRuntimeIntent?.planModeEnabled === true;
 
   const { captureTrigger: captureConfirmTrigger } = useDialogA11y({
     isOpen: confirmDialog !== null,
@@ -462,6 +469,12 @@ export default function ChatPage() {
         ws.applySessionUpdate(updatedSession);
         setCurrentRound(0);
         setActiveTools(new Map());
+      } else if (type === "tasks.updated" && sessionId) {
+        // Task V2 实时更新：将最新 tasks 合并到当前 session
+        const tasks = (event as { tasks?: unknown[] }).tasks;
+        if (Array.isArray(tasks)) {
+          ws.patchSessionTasks(sessionId, tasks as import("@shared/contracts").Task[]);
+        }
       } else if (type === "tool.started" && toolCallId) {
         setActiveTools((prev) => {
           const next = new Map(prev);
@@ -561,9 +574,11 @@ export default function ChatPage() {
 
   /** 关闭删除确认框，并让弹层 hook 处理焦点回收。 */
   function closeConfirmDialog() {
-    if (!confirmDialog) return;
-    console.info("[chat-page] 关闭删除确认弹层", { message: confirmDialog.message });
-    setConfirmDialog(null);
+    setConfirmDialog((current) => {
+      if (!current) return null;
+      console.info("[chat-page] 关闭删除确认弹层", { message: current.message });
+      return null;
+    });
   }
 
   /** 打开删除确认框，并在确认后执行会话删除。 */
@@ -685,6 +700,48 @@ export default function ChatPage() {
       reportChatError(error);
     } finally {
       setResolvingApprovalIds((prev) => { const next = new Set(prev); next.delete(approvalId); return next; });
+    }
+  }
+
+  /** 批准当前计划并进入执行阶段。 */
+  async function handlePlanApprove() {
+    try {
+      const localDraft = composerDraft;
+      const hasLocalDraft = composerDraft.length > 0;
+      const executionPrompt = composerDraft.trim() || "请开始执行当前计划。";
+      await workspace.approvePlan();
+      const sent = await sendMessageToRuntime(executionPrompt);
+      if (sent && hasLocalDraft) {
+        setComposerDraft("");
+      }
+      if (!sent && hasLocalDraft) {
+        setComposerDraft(localDraft);
+      }
+    } catch (error) {
+      reportChatError(error);
+    }
+  }
+
+  /** 把当前补充说明回传给计划模式，并立刻把同一条反馈重新送入规划链路。 */
+  async function handlePlanRevise() {
+    try {
+      const hasLocalDraft = composerDraft.length > 0;
+      const feedback = composerDraft.trim() || "请根据最新补充继续完善当前计划。";
+      const sent = await sendMessageToRuntime(feedback);
+      if (sent && hasLocalDraft) {
+        setComposerDraft("");
+      }
+    } catch (error) {
+      reportChatError(error);
+    }
+  }
+
+  /** 放弃当前计划模式并恢复普通对话流程。 */
+  async function handlePlanCancel() {
+    try {
+      await workspace.cancelPlanMode();
+    } catch (error) {
+      reportChatError(error);
     }
   }
 
@@ -851,7 +908,6 @@ export default function ChatPage() {
         {/* 时间线区域 */}
         <section className="timeline-panel" ref={timelinePanelRef as React.RefObject<HTMLElement>}>
           <div className="timeline">
-            <PlanStatePanel planState={session?.planState} />
 
             {groupedMessages.map((message, index) => {
               if (!message.isTechnicalGroup) {
@@ -1071,6 +1127,9 @@ export default function ChatPage() {
           </div>
         </section>
 
+        {/* 计划面板 - Codex 风格，紧贴输入框上方 */}
+        <PlanStatePanel tasks={session?.tasks ?? []} />
+
         {/* 输入区 */}
         <footer className="composer-panel">
           <div className="composer-container">
@@ -1108,11 +1167,37 @@ export default function ChatPage() {
               onKeyDown={handleComposerKeyDown}
             />
             <div className="composer-toolbar">
-              {!composerDraft ? (
-                <span className="composer-hints">可用命令: /skill, /cmd, /read, /mcp</span>
-              ) : (
-                <span className="composer-hints"></span>
-              )}
+              <div className="composer-toolbar-left">
+                {!composerDraft ? (
+                  <span className="composer-hints">可用命令: /skill, /cmd, /read, /mcp</span>
+                ) : (
+                  <span className="composer-hints"></span>
+                )}
+                <div className="effort-selector" data-testid="effort-selector">
+                  {(["low", "medium", "high"] as const).map((level) => (
+                    <button
+                      key={level}
+                      className={`effort-btn${(session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort === level || (!((session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort) && level === "medium") ? " active" : ""}`}
+                      onClick={() => void workspace.updateSessionRuntimeIntent({ reasoningEffort: level })}
+                      title={level === "low" ? "快速回答" : level === "medium" ? "默认思考" : "深度推理"}
+                    >
+                      {level === "low" ? "快速" : level === "medium" ? "思考" : "深度"}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  data-testid="plan-mode-toggle"
+                  className={`effort-btn${planModeEnabled ? " active" : ""}`}
+                  onClick={() => void workspace.updateSessionRuntimeIntent({
+                    workflowMode: planModeEnabled ? "default" : "plan",
+                    planModeEnabled: !planModeEnabled,
+                  })}
+                  title={planModeEnabled ? "关闭 Plan Mode" : "开启 Plan Mode"}
+                >
+                  Plan
+                </button>
+              </div>
               {!sending ? (
                 <button
                   data-testid="composer-submit"
@@ -1137,6 +1222,17 @@ export default function ChatPage() {
           </div>
         </footer>
       </section>
+
+      {/* Plan Mode 侧边面板 */}
+      {!!(session as { planModeState?: { mode?: string } | null } | null)?.planModeState?.mode && (
+        <PlanSidePanel
+          planState={session?.planState ?? null}
+          planModeState={(session as { planModeState?: { mode?: string; approvalStatus?: string; planVersion?: number; currentTaskTitle?: string; currentTaskKind?: string; workflowRun?: { status?: string } | null; workstreams?: Array<{ id: string; label: string; status: string; stepIds: string[] }> } | null } | null)?.planModeState ?? null}
+          onApprove={handlePlanApprove}
+          onRevise={handlePlanRevise}
+          onCancel={handlePlanCancel}
+        />
+      )}
 
       {/* 确认弹窗 */}
       {confirmDialog && (
@@ -1280,7 +1376,13 @@ export default function ChatPage() {
         .composer-input { width: 100%; padding: 16px 16px 12px; background: transparent; border: none; color: var(--text-primary); font-size: 14px; line-height: 1.6; resize: none; outline: none; min-height: 60px; font-family: inherit; }
         .composer-input::placeholder { color: var(--text-muted); }
         .composer-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 16px 16px; }
+        .composer-toolbar-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
         .composer-hints { font-size: 12px; color: var(--text-muted); }
+        .effort-selector { display: flex; gap: 2px; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 2px; border: 1px solid var(--glass-border); }
+        .effort-btn { font-size: 11px; font-weight: 500; padding: 3px 10px; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+        .effort-btn:hover { color: var(--text-secondary); background: rgba(255,255,255,0.04); }
+        .effort-btn.active { color: var(--accent-cyan); background: rgba(16,163,127,0.15); }
+        .effort-btn.active:hover { background: rgba(16,163,127,0.2); }
         .submit-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: var(--accent-cyan); color: #fff; border: none; box-shadow: 0 4px 12px rgba(16,163,127,0.3); transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
         .submit-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(16,163,127,0.4); background: #0ec490; }
         .submit-btn:active:not(:disabled) { transform: translateY(0); }

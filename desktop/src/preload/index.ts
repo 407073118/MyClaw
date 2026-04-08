@@ -83,6 +83,18 @@ const myClawAPI = {
   requestExecutionIntent: (sessionId: string, intent: unknown) =>
     ipcRenderer.invoke("session:get-execution-intents", sessionId),
 
+  updateSessionRuntimeIntent: (sessionId: string, intent: Record<string, unknown>) =>
+    ipcRenderer.invoke("session:update-runtime-intent", sessionId, intent),
+
+  approvePlan: (sessionId: string) =>
+    ipcRenderer.invoke("session:approve-plan", sessionId),
+
+  revisePlan: (sessionId: string, feedback: string) =>
+    ipcRenderer.invoke("session:revise-plan", sessionId, { feedback }),
+
+  cancelPlanMode: (sessionId: string) =>
+    ipcRenderer.invoke("session:cancel-plan-mode", sessionId),
+
   /** 订阅会话流式事件，例如消息增量、工具调用等 */
   onSessionStream: (callback: (event: Record<string, unknown>) => void): UnsubscribeFn =>
     onChannel("session:stream", callback),
@@ -247,11 +259,27 @@ const myClawAPI = {
       .then((items: unknown[]) => ({ items }))
       .catch(() => ({ items: [] })),
 
-  startWorkflowRun: (input: { workflowId: string }) =>
-    ipcRenderer.invoke("workflow:start-run", input).catch(() => ({ run: null, items: [] })),
+  startWorkflowRun: (input: { workflowId: string; initialState?: Record<string, unknown> }) =>
+    ipcRenderer.invoke("workflow:start-run", input).catch(() => ({ runId: null })),
 
-  resumeWorkflowRun: (runId: string) =>
-    ipcRenderer.invoke("workflow:resume-run", runId).catch(() => ({ run: null, items: [] })),
+  resumeWorkflowRun: (runId: string, resumeValue?: unknown) =>
+    ipcRenderer.invoke("workflow:interrupt-resume", { runId, resumeValue }).catch(() => ({ success: false })),
+
+  deleteWorkflow: (workflowId: string) =>
+    ipcRenderer.invoke("workflow:delete", workflowId).catch(() => ({ success: false })),
+
+  cancelWorkflowRun: (runId: string) =>
+    ipcRenderer.invoke("workflow:cancel-run", runId).catch(() => ({ success: false })),
+
+  getWorkflowRunDetail: (runId: string) =>
+    ipcRenderer.invoke("workflow:get-run-detail", runId).catch(() => null),
+
+  /** 订阅工作流引擎流式事件 */
+  onWorkflowStream: (callback: (event: unknown) => void): UnsubscribeFn => {
+    const handler = (_: unknown, event: unknown) => callback(event);
+    ipcRenderer.on("workflow:stream", handler as any);
+    return () => ipcRenderer.removeListener("workflow:stream", handler as any);
+  },
 
   // ---- 云端 / Hub ----------------------------------------------------------
   fetchCloudHubItems: (type?: string) =>

@@ -156,6 +156,23 @@ declare global {
         sessionId: string,
         intent: unknown,
       ) => Promise<unknown>;
+      updateSessionRuntimeIntent: (
+        sessionId: string,
+        intent: Record<string, unknown>,
+      ) => Promise<{ session: import("@shared/contracts").ChatSession }>;
+      /** 批准当前计划，并把会话推进到执行阶段。 */
+      approvePlan: (
+        sessionId: string,
+      ) => Promise<{ session: import("@shared/contracts").ChatSession }>;
+      /** 请求继续完善当前计划，保持会话停留在计划阶段。 */
+      revisePlan: (
+        sessionId: string,
+        feedback: string,
+      ) => Promise<{ session: import("@shared/contracts").ChatSession }>;
+      /** 取消计划模式，让会话回到普通对话入口。 */
+      cancelPlanMode: (
+        sessionId: string,
+      ) => Promise<{ session: import("@shared/contracts").ChatSession }>;
       /** Subscribe to real-time session streaming events (deltas, completion, etc.) */
       onSessionStream: (callback: (event: Record<string, unknown>) => void) => () => void;
 
@@ -294,8 +311,13 @@ declare global {
         input: unknown,
       ) => Promise<{ workflow: unknown; items: WorkflowDefinitionSummary[] }>;
       fetchWorkflowRuns: () => Promise<{ items: unknown[] }>;
-      startWorkflowRun: (input: { workflowId: string }) => Promise<{ run: unknown; items: unknown[] }>;
-      resumeWorkflowRun: (runId: string) => Promise<{ run: unknown; items: unknown[] }>;
+      startWorkflowRun: (input: { workflowId: string; initialState?: Record<string, unknown> }) => Promise<{ runId: string | null }>;
+      resumeWorkflowRun: (runId: string, resumeValue?: unknown) => Promise<{ success: boolean }>;
+      deleteWorkflow: (workflowId: string) => Promise<{ success: boolean }>;
+      cancelWorkflowRun: (runId: string) => Promise<{ success: boolean }>;
+      getWorkflowRunDetail: (runId: string) => Promise<unknown>;
+      /** 订阅工作流引擎流式事件 */
+      onWorkflowStream: (callback: (event: unknown) => void) => () => void;
 
       // --- Skills ---
       fetchSkillDetail: (skillId: string) => Promise<{ skill: unknown }>;

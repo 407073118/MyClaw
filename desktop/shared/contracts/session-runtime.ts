@@ -25,6 +25,7 @@ export const SESSION_REPLAY_POLICY_VALUES = [
 export type SessionReasoningMode = "auto" | "disabled";
 export type SessionReasoningEffort = "low" | "medium" | "high";
 export type SessionRuntimeToolStrategy = "auto" | "off" | (string & {});
+export type SessionWorkflowMode = "default" | "plan";
 export type ExecutionPlanSource = "default" | "intent" | "profile" | "capability" | (string & {});
 export type ExecutionPlanDegradationReason =
   | "capability-missing"
@@ -37,6 +38,11 @@ export const SESSION_RUNTIME_TOOL_STRATEGY_VALUES = [
   "auto",
   "off",
 ] as const satisfies readonly SessionRuntimeToolStrategy[];
+
+export const SESSION_WORKFLOW_MODE_VALUES = [
+  "default",
+  "plan",
+] as const satisfies readonly SessionWorkflowMode[];
 
 export const EXECUTION_PLAN_SOURCE_VALUES = [
   "default",
@@ -56,6 +62,8 @@ type SessionRuntimeIntentShell = {
 type SessionRuntimeIntentPhase2 = {
   reasoningEnabled?: boolean;
   toolStrategy?: SessionRuntimeToolStrategy;
+  workflowMode?: SessionWorkflowMode;
+  planModeEnabled?: boolean;
 };
 
 export type Phase2SessionRuntimeIntent =
@@ -83,6 +91,8 @@ export type ResolvedExecutionPlan = ExecutionPlanShell & {
   reasoningEffort?: SessionReasoningEffort;
   adapterHint?: SessionRuntimeAdapterHint;
   toolStrategy?: SessionRuntimeToolStrategy;
+  workflowMode?: SessionWorkflowMode;
+  phase?: "analysis" | "awaiting_approval" | "execution" | "completed" | "blocked";
   degradationReason: ExecutionPlanDegradationReason | null;
   planSource: ExecutionPlanSource;
 };

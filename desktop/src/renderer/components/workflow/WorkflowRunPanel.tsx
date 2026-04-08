@@ -43,11 +43,6 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     [workspace.workflowRuns, workflowId],
   );
 
-  const latestCheckpoint = useMemo(() => {
-    const checkpoints = activeRunDetail?.checkpoints ?? [];
-    return checkpoints.length ? checkpoints[checkpoints.length - 1] : null;
-  }, [activeRunDetail]);
-
   const currentNodeLabels = useMemo(() => {
     const currentNodeIds = activeRunDetail?.run.currentNodeIds ?? [];
     return currentNodeIds.map((nodeId) => nodeLabels.get(nodeId) ?? nodeId);
@@ -69,9 +64,8 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
 
   const canResume = useMemo(() => {
     if (!activeRunDetail) return false;
-    const latestStatus = latestCheckpoint?.status;
-    return activeRunDetail.run.status === "waiting-input" || latestStatus === "waiting-human-input";
-  }, [activeRunDetail, latestCheckpoint]);
+    return activeRunDetail.run.status === "waiting-input" || activeRunDetail.run.status === "retry-scheduled";
+  }, [activeRunDetail]);
 
   // 运行记录变化后，同步当前选中的 runId。
   const prevRunsRef = useRef<typeof runs | null>(null);
@@ -129,9 +123,11 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     setIsStarting(true);
     setPanelError("");
     try {
-      const run = await workspace.startWorkflowRun(workflowId) as WorkflowRunSummary;
-      setSelectedRunId(run.id);
-      await loadRunDetail(run.id);
+      const result = await workspace.startWorkflowRun(workflowId);
+      if (result.runId) {
+        setSelectedRunId(result.runId);
+        await loadRunDetail(result.runId);
+      }
     } catch {
       setPanelError("启动失败");
     } finally {
@@ -214,6 +210,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
                 </div>
                 {canResume && (
                   <button
+                    data-testid="workflow-run-resume"
                     className="btn-resume"
                     disabled={isResuming}
                     onClick={handleResumeRun}

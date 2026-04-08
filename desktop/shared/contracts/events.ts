@@ -9,6 +9,7 @@ export enum EventType {
   ToolCompleted = "tool.completed",
   ToolFailed = "tool.failed",
   RuntimeStatus = "runtime.status",
+  TasksUpdated = "tasks.updated",
 }
 
 export enum ToolRiskCategory {

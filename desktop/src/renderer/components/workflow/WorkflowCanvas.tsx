@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowDefinition, WorkflowNode, WorkflowNodeKind } from "@shared/contracts";
-import { Play, MessageCircle, Wrench, User, GitBranch, Network, Merge, Square } from "lucide-react";
+import { Play, MessageCircle, Wrench, User, GitBranch, Network, Merge, Square, Check, AlertCircle, Loader, Pause } from "lucide-react";
+import type { DebugNodeStatus } from "../../pages/WorkflowStudioPage";
 
 import {
   buildFallbackNodeLayouts,
@@ -71,6 +72,10 @@ interface WorkflowCanvasProps {
   onDeleteNode: (nodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
   onUpdateEditor: (editor: WorkflowEditorMetadata) => void;
+  /** 是否处于调试模式 */
+  debugMode?: boolean;
+  /** 调试模式下各节点的运行状态 */
+  debugNodeStatuses?: Map<string, DebugNodeStatus>;
 }
 
 const NODE_KIND_LIST: WorkflowNodeKind[] = ["start", "llm", "tool", "human-input", "condition", "subgraph", "join", "end"];
@@ -210,6 +215,8 @@ export default function WorkflowCanvas({
   onDeleteNode,
   onDeleteEdge,
   onUpdateEditor,
+  debugMode = false,
+  debugNodeStatuses,
 }: WorkflowCanvasProps) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [dragState, setDragState] = useState<DragState | null>(null);
@@ -729,17 +736,21 @@ export default function WorkflowCanvas({
               {renderedNodes.map((rn) => {
                 const Icon = nodeIconMap[rn.node.kind];
                 const isTerminal = rn.node.kind === "start" || rn.node.kind === "end";
+                const debugStatus = debugMode ? debugNodeStatuses?.get(rn.node.id) : undefined;
+                const debugPhase = debugStatus?.phase;
                 return (
                   <article
                     key={rn.node.id}
                     data-testid={`workflow-canvas-node-${rn.node.id}`}
                     data-node-id={rn.node.id}
                     data-kind={rn.node.kind}
+                    data-debug-phase={debugPhase || undefined}
                     className={[
                       "workflow-node-card",
                       rn.node.id === selectedNodeId ? "active" : "",
                       dragState?.nodeId === rn.node.id ? "dragging" : "",
                       isTerminal ? "is-terminal" : "",
+                      debugPhase ? `debug-${debugPhase}` : "",
                     ].filter(Boolean).join(" ")}
                     style={{
                       width: `${rn.width}px`,
@@ -766,11 +777,38 @@ export default function WorkflowCanvas({
                         {Icon && <Icon size={12} />}
                         {nodeKindMap[rn.node.kind] || rn.node.kind}
                       </span>
-                      {rn.node.id === definition.entryNodeId && (
-                        <span className="entry-star" title="入口节点">
-                          <Play size={10} />
-                        </span>
-                      )}
+                      <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        {rn.node.id === definition.entryNodeId && (
+                          <span className="entry-star" title="入口节点">
+                            <Play size={10} />
+                          </span>
+                        )}
+                        {debugPhase === "running" && (
+                          <span className="debug-badge debug-badge--running" title="运行中">
+                            <Loader size={10} />
+                          </span>
+                        )}
+                        {debugPhase === "streaming" && (
+                          <span className="debug-badge debug-badge--streaming" title="流式输出中">
+                            <Loader size={10} />
+                          </span>
+                        )}
+                        {debugPhase === "completed" && (
+                          <span className="debug-badge debug-badge--completed" title={`已完成${debugStatus?.durationMs ? ` (${debugStatus.durationMs}ms)` : ""}`}>
+                            <Check size={10} />
+                          </span>
+                        )}
+                        {debugPhase === "error" && (
+                          <span className="debug-badge debug-badge--error" title={debugStatus?.error || "错误"}>
+                            <AlertCircle size={10} />
+                          </span>
+                        )}
+                        {debugPhase === "interrupted" && (
+                          <span className="debug-badge debug-badge--interrupted" title="已中断">
+                            <Pause size={10} />
+                          </span>
+                        )}
+                      </span>
                     </div>
 
                     <div className="node-content">
@@ -780,7 +818,11 @@ export default function WorkflowCanvas({
                           className="node-summary"
                           data-testid={`workflow-canvas-node-summary-${rn.node.id}`}
                         >
-                          {nodeSummary(rn.node)}
+                          {debugPhase === "streaming" && debugStatus?.content
+                            ? clipSummary(debugStatus.content, 80)
+                            : debugPhase === "error" && debugStatus?.error
+                              ? clipSummary(debugStatus.error, 80)
+                              : nodeSummary(rn.node)}
                         </p>
                       )}
                     </div>
@@ -1137,6 +1179,76 @@ export default function WorkflowCanvas({
         .stage-actions {
           display: flex;
           gap: 8px;
+        }
+
+        /* ── 调试模式节点状态样式 ─────────────────────────────────────── */
+
+        .workflow-node-card.debug-running {
+          border-color: #3b82f6;
+          box-shadow: 0 0 0 1px #3b82f6, 0 0 12px rgba(59, 130, 246, 0.3);
+          animation: debug-node-pulse 2s ease-in-out infinite;
+        }
+
+        .workflow-node-card.debug-streaming {
+          border-color: #8b5cf6;
+          box-shadow: 0 0 0 1px #8b5cf6, 0 0 12px rgba(139, 92, 246, 0.3);
+          animation: debug-node-pulse 1.5s ease-in-out infinite;
+        }
+
+        .workflow-node-card.debug-completed {
+          border-color: #10b981;
+          box-shadow: 0 0 0 1px #10b981, 0 0 8px rgba(16, 185, 129, 0.2);
+        }
+
+        .workflow-node-card.debug-error {
+          border-color: #ef4444;
+          box-shadow: 0 0 0 1px #ef4444, 0 0 8px rgba(239, 68, 68, 0.3);
+        }
+
+        .workflow-node-card.debug-interrupted {
+          border-color: #f59e0b;
+          box-shadow: 0 0 0 1px #f59e0b, 0 0 8px rgba(245, 158, 11, 0.2);
+        }
+
+        @keyframes debug-node-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.75; }
+        }
+
+        .debug-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 16px;
+          height: 16px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+
+        .debug-badge--running {
+          color: #3b82f6;
+          animation: debug-spin 1.2s linear infinite;
+        }
+
+        .debug-badge--streaming {
+          color: #8b5cf6;
+          animation: debug-spin 1s linear infinite;
+        }
+
+        .debug-badge--completed {
+          color: #10b981;
+        }
+
+        .debug-badge--error {
+          color: #ef4444;
+        }
+
+        .debug-badge--interrupted {
+          color: #f59e0b;
+        }
+
+        @keyframes debug-spin {
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </section>

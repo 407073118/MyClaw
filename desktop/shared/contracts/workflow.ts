@@ -190,6 +190,10 @@ type WorkflowNodeBase = {
   kind: WorkflowNodeKind;
   label: string;
   policy?: WorkflowNodePolicy;
+  /** Declare which channels this node reads from */
+  inputBindings?: Record<string, string>;
+  /** Declare which channels this node writes to */
+  outputBindings?: Record<string, string>;
 };
 
 export type WorkflowStartNode = WorkflowNodeBase & {
@@ -266,5 +270,24 @@ export type WorkflowDefinition = WorkflowSummary & {
       checkpointPolicy?: "node-complete" | "always";
     };
     nodePolicy?: WorkflowNodePolicy;
+    /** Allow cycles (back-edges) in the graph */
+    allowCycles?: boolean;
   };
+};
+
+// ── Engine Extensions (backward-compatible, all optional) ──
+
+export type WorkflowRunConfig = {
+  /** Max supersteps before forced stop (default 50) */
+  recursionLimit: number;
+  /** Working directory for tool execution */
+  workingDirectory: string;
+  /** Model profile ID for LLM nodes */
+  modelProfileId: string;
+  /** Checkpoint strategy */
+  checkpointPolicy: "every-step" | "on-interrupt" | "none";
+  /** Max nodes executing in parallel per superstep */
+  maxParallelNodes?: number;
+  /** Custom variables passed to node executors */
+  variables?: Record<string, unknown>;
 };

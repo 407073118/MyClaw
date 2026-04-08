@@ -6,6 +6,7 @@ import WebPanel from "../components/WebPanel";
 
 import { useAuthStore } from "../stores/auth";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useWorkflowRunsStore } from "../stores/workflow-runs";
 import { sidebarBranding } from "../utils/app-shell-branding";
 
 // ---------------------------------------------------------------------------
@@ -238,6 +239,15 @@ export default function AppShell() {
       void navigate("/setup", { replace: true });
     }
   }, [ready, isAuthenticated, requiresInitialSetup, location.pathname, navigate]);
+
+  // 全局订阅工作流引擎流式事件，确保无论当前页面是哪个都能捕获到事件。
+  useEffect(() => {
+    const handleStreamEvent = useWorkflowRunsStore.getState().handleStreamEvent;
+    const unsub = window.myClawAPI.onWorkflowStream?.((event: unknown) => {
+      handleStreamEvent(event as import("@shared/contracts").WorkflowStreamEvent);
+    });
+    return () => unsub?.();
+  }, []);
 
   /** 执行登出并返回登录页。 */
   async function handleLogout() {

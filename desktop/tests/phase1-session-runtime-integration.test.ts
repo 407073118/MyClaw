@@ -95,6 +95,8 @@ function buildContext(): RuntimeContext {
       employees: [],
       skills: [],
       workflowDefinitions: {},
+      workflowRuns: [],
+      activeWorkflowRuns: new Map(),
       getDefaultModelProfileId: () => "profile-1",
       setDefaultModelProfileId: () => {},
       getWorkflows: () => [],
@@ -253,7 +255,9 @@ describe("phase1 session runtime integration", () => {
       session: { runtimeVersion?: number; messages: Array<{ role: string; content: unknown }> };
     };
 
-    expect(resolveSessionRuntimeIntentMock).toHaveBeenCalledTimes(1);
+    // resolveSessionRuntimeIntent is called 3 times per send:
+    // 1) sessionReasoningEffort extraction, 2) isPlanModeEnabled check, 3) agentic loop
+    expect(resolveSessionRuntimeIntentMock).toHaveBeenCalledTimes(3);
     expect(buildExecutionPlanMock).toHaveBeenCalledTimes(1);
     expect(assembleContextMock).toHaveBeenCalledWith(expect.objectContaining({
       executionPlan,

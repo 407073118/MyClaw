@@ -1,15 +1,23 @@
+import type { SessionReasoningEffort } from "@shared/contracts";
 import {
   BR_MINIMAX_MODEL,
   BR_MINIMAX_REQUEST_BODY,
   readBrMiniMaxRuntimeDiagnostics,
 } from "@shared/br-minimax";
 
-import type { ProviderAdapter, ProviderAdapterMessage } from "./base";
+import type { ProviderAdapter, ProviderAdapterContext, ProviderAdapterMessage } from "./base";
 import {
   cloneReplayMessages,
   createRequestVariant,
   normalizeAdapterResponse,
 } from "./base";
+
+/** 将 reasoningEffort 等级映射为 thinking_budget token 数。 */
+const THINKING_BUDGET_MAP: Record<SessionReasoningEffort, number> = {
+  low: 2048,
+  medium: 8192,
+  high: 32768,
+};
 
 /** 将带 reasoning 的 MiniMax assistant 消息物化为可重放的 think 内容。 */
 function materializeMiniMaxReplayMessage(message: ProviderAdapterMessage): ProviderAdapterMessage {
@@ -38,15 +46,18 @@ function sanitizeMiniMaxRequestBody(requestBody: Record<string, unknown>): Recor
   return next;
 }
 
-/** 构建 BR MiniMax 的主请求体，不在这里决定是否需要回退。 */
+/** 构建 BR MiniMax 的主请求体，根据 reasoningEffort 设置 thinking_budget。 */
 function buildMiniMaxBody(
-  profile: Parameters<ProviderAdapter["prepareRequest"]>[0]["profile"],
+  context: ProviderAdapterContext,
   input: Parameters<ProviderAdapter["prepareRequest"]>[1],
 ): Record<string, unknown> {
+  const { profile, reasoningEffort } = context;
   const hasTools = !!(input.tools && input.tools.length > 0);
   const profileRequestBody = sanitizeMiniMaxRequestBody((profile.requestBody ?? {}) as Record<string, unknown>);
+  const effort = reasoningEffort ?? "medium";
+  const thinkingBudget = THINKING_BUDGET_MAP[effort] ?? THINKING_BUDGET_MAP.medium;
 
-  return {
+  const body = {
     model: BR_MINIMAX_MODEL,
     messages: input.messages,
     stream: true,
@@ -56,8 +67,11 @@ function buildMiniMaxBody(
     chat_template_kwargs: {
       ...(BR_MINIMAX_REQUEST_BODY.chat_template_kwargs ?? {}),
       ...((profileRequestBody.chat_template_kwargs as Record<string, unknown> | undefined) ?? {}),
+      thinking_budget: thinkingBudget,
     },
   };
+  console.info(`[minimax-adapter] effort=${effort} thinking_budget=${thinkingBudget} tools=${hasTools ? input.tools!.length : 0}`);
+  return body;
 }
 
 /** BR MiniMax 适配器负责 replay 物化与 diagnostics 感知的 fallback 形状。 */
@@ -69,7 +83,7 @@ export const minimaxAdapter: ProviderAdapter = {
   },
 
   prepareRequest(context, input) {
-    const mergedBody = buildMiniMaxBody(context.profile, input);
+    const mergedBody = buildMiniMaxBody(context, input);
     const diagnostics = readBrMiniMaxRuntimeDiagnostics(context.profile);
 
     if (diagnostics.reasoningSplitSupported === true) {

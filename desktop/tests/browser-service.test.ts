@@ -119,8 +119,46 @@ describe("buildToolLabel — non-browser tools", () => {
     expect(buildToolLabel("exec_command", { command: "ls -la" })).toBe("ls -la");
   });
 
-  it("serializes task_manage action and text", () => {
-    expect(buildToolLabel("task_manage", { action: "add", text: "my task" })).toBe("add my task");
-    expect(buildToolLabel("task_manage", { action: "list" })).toBe("list");
+  it("serializes exec_command as JSON when timeout options are provided", () => {
+    const label = buildToolLabel("exec_command", {
+      command: "python long_job.py",
+      timeoutMs: 120000,
+      maxAttempts: 4,
+      maxTimeoutMs: 600000,
+      timeoutMultiplier: 2,
+    });
+    expect(JSON.parse(label)).toEqual({
+      command: "python long_job.py",
+      timeoutMs: 120000,
+      maxAttempts: 4,
+      maxTimeoutMs: 600000,
+      timeoutMultiplier: 2,
+    });
+  });
+
+  it("serializes exec_command as JSON when cwd is provided", () => {
+    const label = buildToolLabel("exec_command", {
+      command: "py -3 scripts/doctor.py",
+      cwd: "C:/skills/br-interview-workspace",
+    });
+    expect(JSON.parse(label)).toEqual({
+      command: "py -3 scripts/doctor.py",
+      cwd: "C:/skills/br-interview-workspace",
+    });
+  });
+
+  it("serializes task_create as JSON", () => {
+    const label = buildToolLabel("task_create", {
+      subject: "Run tests",
+      description: "Run the desktop regression suite",
+      activeForm: "Running tests",
+      status: "in_progress",
+    });
+    expect(JSON.parse(label)).toEqual({
+      subject: "Run tests",
+      description: "Run the desktop regression suite",
+      activeForm: "Running tests",
+      status: "in_progress",
+    });
   });
 });

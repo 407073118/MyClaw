@@ -3,20 +3,23 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan } from "@shared/contracts";
+import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
 import { callModel } from "../services/model-client";
 import type { ChatMessage as ModelChatMessage, ChatMessageContent, ResolvedToolCall } from "../services/model-client";
-import { saveSession, deleteSessionFiles } from "../services/state-persistence";
+import { saveSession, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles } from "../services/state-persistence";
 import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../services/tool-schemas";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
+import { extractEnrichedContext, buildEnrichedContextBlock } from "../services/context-enricher";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
 import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
+import { createTask, listTasks, getTask, updateTask } from "../services/task-store";
+import type { TaskCreateInput, TaskUpdateInput } from "../services/task-store";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -64,7 +67,7 @@ const PARALLEL_LIMIT = 5;
 /** 仅执行读取操作、可安全并行运行的工具集合。 */
 const READ_ONLY_TOOLS = new Set([
   "fs.read", "fs.list", "fs.search", "fs.find",
-  "git.status", "git.diff", "git.log", "task.manage",
+  "git.status", "git.diff", "git.log", "task.list", "task.get",
 ]);
 
 /**
@@ -134,7 +137,10 @@ const TOOL_RISK_MAP: Record<string, ToolRiskCategory> = {
   "git.commit": ToolRiskCategory.Write,
   "http.fetch": ToolRiskCategory.Network,
   "web.search": ToolRiskCategory.Network,
-  "task.manage": ToolRiskCategory.Read,
+  "task.create": ToolRiskCategory.Read,
+  "task.list": ToolRiskCategory.Read,
+  "task.get": ToolRiskCategory.Read,
+  "task.update": ToolRiskCategory.Read,
   // browser.* 工具
   "browser.open": ToolRiskCategory.Network,
   "browser.snapshot": ToolRiskCategory.Read,
@@ -235,65 +241,131 @@ function buildSystemPrompt(
   skills?: SkillDefinition[],
   gitBranch?: string | null,
   personalPromptProfile?: PersonalPromptProfile | null,
+  reasoningEffort?: "low" | "medium" | "high" | null,
+  enrichedContextBlock?: string | null,
 ): string {
   const now = new Date();
   const parts: string[] = [];
+  const effort = reasoningEffort ?? "medium";
 
-  parts.push(`You are MyClaw, an expert AI coding assistant with access to tools for reading, writing, and searching files, executing commands, and searching the web.`);
+  // ── Identity & 核心行为准则 ──────────────────────────────
+  parts.push(`You are MyClaw, an expert AI assistant that helps users accomplish real work tasks.`);
+  parts.push(`Your goal is to **understand what the user actually needs**, choose the right approach, and execute it well.`);
+  parts.push(`Always read the user's message carefully — a vague request deserves a clarifying question, not a guess.`);
 
+  // ── Environment ──────────────────────────────────────────
   parts.push(`\n# Environment`);
   parts.push(`- Working directory: ${workingDir}`);
   parts.push(`- Platform: ${process.platform} (${process.arch})`);
-  parts.push(`- Current date: ${now.toISOString().split("T")[0]}`);
-  parts.push(`- Current time: ${now.toTimeString().split(" ")[0]}`);
-
+  parts.push(`- Date: ${now.toISOString().split("T")[0]} ${now.toTimeString().split(" ")[0]}`);
   if (gitBranch) {
     parts.push(`- Git branch: ${gitBranch}`);
   }
 
-  parts.push(`\n# Tool Usage`);
-  parts.push(`You have access to tools for filesystem operations, shell commands, git, web search, and more.`);
-  parts.push(`- Use \`fs_read\` to read files before editing them.`);
-  parts.push(`- Use \`fs_edit\` for partial edits (string replacement) — ALWAYS prefer this over \`fs_write\` when modifying existing files.`);
-  parts.push(`- Use \`fs_write\` only for creating new files or complete rewrites.`);
-  parts.push(`- Use \`exec_command\` for running shell commands. Dangerous commands are blocked.`);
-  parts.push(`- Use \`fs_search\` to grep for text patterns across files.`);
-  parts.push(`- Use \`fs_find\` to find files by glob patterns.`);
-  parts.push(`- Use \`git_status\`, \`git_diff\`, \`git_log\` for repository state.`);
-  parts.push(`- Use \`web_search\` for current information you don't have.`);
-  parts.push(`- Use \`browser_open\` to open a URL in a real browser (Chrome/Edge). The browser launches automatically on first use.`);
-  parts.push(`- Use \`browser_snapshot\` to get the page's accessibility tree — this is how you "see" the page. The output includes ref=N references you can use with click/type.`);
-  parts.push(`- Use \`browser_click\`, \`browser_type\`, \`browser_select\` to interact with page elements. Pass ref references (e.g. "ref=42") from the snapshot, or CSS selectors, or text matches (e.g. "text=Login").`);
-  parts.push(`- Use \`browser_screenshot\` for visual verification when the accessibility tree isn't enough.`);
-  parts.push(`- Use \`browser_evaluate\` to run JavaScript in the page context for data extraction or state checks.`);
-  parts.push(`- **Browser workflow**: open URL → snapshot to understand → click/type to interact → snapshot again to verify result.`);
+  // ── Session Context（动态注入，来自 context-enricher）──────
+  if (enrichedContextBlock) {
+    parts.push(`\n${enrichedContextBlock}`);
+  }
 
-  if (skills && skills.length > 0) {
-    const skillsWithView = skills.filter((s) => s.hasViewFile);
-    parts.push(`\n# Available Skills`);
-    parts.push(`Use skill_invoke__<skill_id> to read a skill's instructions (SKILL.md). The skill content tells you what scripts to call and what data to produce.`);
-    if (skillsWithView.length > 0) {
-      parts.push(`\n## 可视化面板 (skill_view)`);
-      parts.push(`Some skills have HTML panels. After completing work and generating result data, call the \`skill_view\` tool to open the panel:`);
-      parts.push(`- \`skill_view({ skill_id: "...", page: "analysis.html", data: { ... } })\` — the data you pass is sent directly to the HTML page.`);
-      parts.push(`**流程**: 1) skill_invoke 读取指令 → 2) 按指令完成工作、生成数据 → 3) skill_view 传入数据打开面板`);
-      parts.push(`**重要**: skill_invoke 只读取指令，不会打开面板。必须在工作完成后单独调用 skill_view，并把生成的结构化数据传入 data 参数。`);
-    }
-    for (const skill of skills) {
-      const viewNote = skill.hasViewFile
-        ? ` [有HTML面板: ${skill.viewFiles?.join(", ")} — 完成后用 skill_view 传入数据打开]`
-        : "";
-      parts.push(`- **${skill.name}**: ${skill.description || "(无描述)"}${viewNote} → call \`skill_invoke__${skill.id.replace(/[^a-zA-Z0-9_-]/g, "_")}\``);
+  // ── Response Strategy（意图分类引导）──────────────────────
+  if (effort !== "low") {
+    parts.push(`\n# Response Strategy`);
+    parts.push(`Before responding, identify the user's intent and adapt your approach:`);
+    parts.push(`- **Ask/Explain** — user wants understanding → explain clearly with relevant code snippets, match the user's expertise level`);
+    parts.push(`- **Fix/Debug** — user reports a problem → reproduce or locate the issue first, identify root cause, then fix`);
+    parts.push(`- **Build/Create** — user wants new functionality → clarify scope if unclear, then plan and implement step by step`);
+    parts.push(`- **Review/Improve** — user wants feedback → read the code thoroughly, prioritize critical issues, suggest concrete changes`);
+    parts.push(`- **Quick/Direct** — user wants a simple answer → be concise, skip task tracking, give the answer directly`);
+    parts.push(`\nMatch your depth to the user's signal: a one-line question gets a focused answer, not a tutorial. A complex request gets structured planning.`);
+  }
+
+  // ── Task Management（强化引导）──────────────────────────
+  parts.push(`\n# Task Management`);
+  if (effort === "low") {
+    parts.push(`You have task tracking tools (task_create, task_update, etc.) — use them only when explicitly asked.`);
+  } else {
+    parts.push(`You have 4 task tools for tracking multi-step work. **Use them proactively** — they help both you and the user track progress.`);
+    parts.push(`- \`task_create({ subject, description, activeForm })\` — Create a task. Always provide activeForm (present continuous, e.g. "Fixing the login bug").`);
+    parts.push(`- \`task_update({ id, status })\` — Mark task "in_progress" before starting, "completed" immediately after finishing.`);
+    parts.push(`- \`task_list()\` / \`task_get({ id })\` — Check current task state.`);
+    parts.push(`- **Status flow**: pending → in_progress → completed. Only ONE task can be in_progress at a time.`);
+    if (effort === "high") {
+      parts.push(`\n**Deep reasoning task protocol (MANDATORY):**`);
+      parts.push(`1. For ANY request with 2+ steps: call \`task_create\` for each step BEFORE starting work.`);
+      parts.push(`2. Mark each task \`in_progress\` BEFORE starting it, \`completed\` IMMEDIATELY after finishing.`);
+      parts.push(`3. Think about dependencies — which tasks block others? Set \`blocks\`/\`blockedBy\` to reflect this.`);
+      parts.push(`4. If a task fails or gets blocked, update its description with the reason and create a follow-up task.`);
+      parts.push(`5. Plan edge cases and failure modes before executing. Verify results after completing.`);
+    } else {
+      parts.push(`**When to use**: For requests with 2+ distinct steps (e.g. "read this file and fix the bug" = 2 tasks). Skip for single-action requests.`);
     }
   }
 
+  // ── Tool Usage（按分类组织，减少 token 浪费）──────────────
+  parts.push(`\n# Tools`);
+  parts.push(`## Files`);
+  parts.push(`- \`fs_read\` — Read file contents. **Always read before editing.**`);
+  parts.push(`- \`fs_edit\` — Replace a specific string in a file (preferred for partial edits).`);
+  parts.push(`- \`fs_write\` — Create new files or full rewrites only.`);
+  parts.push(`- \`fs_list\` / \`fs_find\` / \`fs_search\` — List dirs, find files by glob, grep text.`);
+  parts.push(`## Shell & Git`);
+  parts.push(`- \`exec_command\` — Run shell commands (dangerous commands are blocked).`);
+  parts.push(`- \`git_status\` / \`git_diff\` / \`git_log\` / \`git_commit\` — Git operations.`);
+  parts.push(`## Web & Browser`);
+  parts.push(`- \`web_search\` — Search the web for current information.`);
+  parts.push(`- \`http_fetch\` — Fetch a URL via HTTP GET.`);
+  parts.push(`- Browser workflow: \`browser_open\` → \`browser_snapshot\` (accessibility tree, use ref=N) → \`browser_click\`/\`browser_type\` → \`browser_snapshot\` to verify.`);
+  parts.push(`- Also: \`browser_screenshot\`, \`browser_evaluate\`, \`browser_select\`, \`browser_hover\`, \`browser_scroll\`, \`browser_press_key\`, \`browser_back\`, \`browser_forward\`, \`browser_wait\`.`);
+
+  // ── Skills ────────────────────────────────────────────────
+  if (skills && skills.length > 0) {
+    const skillsWithView = skills.filter((s) => s.hasViewFile);
+    parts.push(`\n# Available Skills`);
+    parts.push(`**IMPORTANT — Skill-first principle:** Before doing any work manually, check if one of the skills below matches the user's request. If a skill's description matches the user's intent, you MUST call \`skill_invoke__<skill_id>\` first to read the skill's instructions, then follow those instructions to complete the work. Do NOT try to do the work yourself without reading the skill first.`);
+    parts.push(`\nHow to use skills:`);
+    parts.push(`1. **Match**: Compare the user's request against each skill's description below.`);
+    parts.push(`2. **Invoke**: Call \`skill_invoke__<skill_id>\` to read the skill's instructions (SKILL.md).`);
+    parts.push(`3. **Execute**: Follow the skill's instructions to complete the work — the skill tells you what tools to call, what scripts to run, and what data to produce.`);
+    if (skillsWithView.length > 0) {
+      parts.push(`4. **Visualize**: If the skill has an HTML panel, call \`skill_view({ skill_id, page, data })\` with the generated data to open the visual panel.`);
+    }
+    parts.push(`\n**Available skills:**`);
+    const usedPromptSkillIds = new Set<string>();
+    for (const skill of skills) {
+      let sid = skill.id.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+      const baseSid = sid;
+      let sfx = 2;
+      while (usedPromptSkillIds.has(sid)) { sid = `${baseSid}_${sfx}`; sfx++; }
+      usedPromptSkillIds.add(sid);
+      const viewNote = skill.hasViewFile
+        ? ` [有HTML面板: ${skill.viewFiles?.join(", ")} — 完成后用 skill_view 传入数据打开]`
+        : "";
+      parts.push(`- **${skill.name}**: ${skill.description || "(无描述)"}${viewNote} → call \`skill_invoke__${sid}\``);
+    }
+  }
+
+  // ── Guidelines（按 effort 分级）──────────────────────────
   parts.push(`\n# Guidelines`);
   parts.push(`- Respond in the same language the user uses.`);
-  parts.push(`- When editing code, always read the file first to understand the context.`);
-  parts.push(`- For multi-step tasks, plan first, then execute step by step.`);
-  parts.push(`- If a tool call fails, analyze the error and try a different approach.`);
-  parts.push(`- Be concise but thorough in explanations.`);
+  parts.push(`- Read existing code before modifying it. Understand context first.`);
+  parts.push(`- If a tool call fails, analyze the error — don't retry blindly.`);
+  if (effort === "high") {
+    parts.push(`- **Deep reasoning mode is ON.** You must think deeply and thoroughly before acting.`);
+    parts.push(`- Before responding, spend significant time analyzing the request: what is the user really asking? What are the constraints? What could go wrong?`);
+    parts.push(`- Break complex problems into sub-problems. Consider multiple approaches and choose the best one with explicit reasoning.`);
+    parts.push(`- Consider edge cases, error handling, and potential regressions before writing any code.`);
+    parts.push(`- After completing work, verify results by reading back modified files or running tests.`);
+    parts.push(`- If an available skill matches the user's request, invoke the skill FIRST — do not attempt manual workarounds.`);
+    parts.push(`- Explain your reasoning process and trade-offs clearly.`);
+  } else if (effort === "low") {
+    parts.push(`- Be extremely concise. Direct answers, no filler.`);
+    parts.push(`- Prefer the simplest solution that works.`);
+  } else {
+    parts.push(`- For multi-step tasks, plan first, then execute step by step.`);
+    parts.push(`- Be concise but thorough.`);
+  }
 
+  // ── User Profile ─────────────────────────────────────────
   const personalPromptContext = buildPersonalPromptContext(personalPromptProfile);
   if (personalPromptContext) {
     parts.push(`\n${personalPromptContext}`);
@@ -344,6 +416,483 @@ function buildPlanTaskTitle(content: string): string {
     : firstNonEmptyLine;
 }
 
+// ---------------------------------------------------------------------------
+// Task V2 工具执行器
+// ---------------------------------------------------------------------------
+
+type TaskToolResult = {
+  success: boolean;
+  output: string;
+  error?: string;
+  /** 是否修改了 session.tasks，需要持久化和广播 */
+  mutated: boolean;
+};
+
+function executeTaskTool(
+  session: ChatSession,
+  toolId: string,
+  args: Record<string, unknown>,
+): TaskToolResult {
+  const tasks = session.tasks ?? [];
+
+  try {
+    switch (toolId) {
+      case "task.create": {
+        const input: TaskCreateInput = {
+          subject: String(args.subject ?? ""),
+          description: String(args.description ?? ""),
+          activeForm: args.activeForm != null ? String(args.activeForm) : undefined,
+          owner: args.owner != null ? String(args.owner) : undefined,
+          status: (args.status as TaskCreateInput["status"]) ?? undefined,
+          blocks: Array.isArray(args.blocks) ? args.blocks.map(String) : undefined,
+          blockedBy: Array.isArray(args.blockedBy) ? args.blockedBy.map(String) : undefined,
+          metadata: args.metadata as Record<string, unknown> | undefined,
+        };
+        if (!input.subject) {
+          return { success: false, output: "", error: "subject is required", mutated: false };
+        }
+        if (!input.description) {
+          return { success: false, output: "", error: "description is required", mutated: false };
+        }
+        const result = createTask(tasks, input);
+        session.tasks = result.tasks;
+        return { success: true, output: JSON.stringify(result.created), mutated: true };
+      }
+
+      case "task.list": {
+        const all = listTasks(tasks);
+        return { success: true, output: JSON.stringify(all), mutated: false };
+      }
+
+      case "task.get": {
+        const id = String(args.id ?? "");
+        if (!id) {
+          return { success: false, output: "", error: "id is required", mutated: false };
+        }
+        const found = getTask(tasks, id);
+        if (!found) {
+          return { success: false, output: "", error: `Task not found: ${id}`, mutated: false };
+        }
+        return { success: true, output: JSON.stringify(found), mutated: false };
+      }
+
+      case "task.update": {
+        const id = String(args.id ?? "");
+        if (!id) {
+          return { success: false, output: "", error: "id is required", mutated: false };
+        }
+        const input: TaskUpdateInput = {};
+        if (args.subject !== undefined) input.subject = String(args.subject);
+        if (args.description !== undefined) input.description = String(args.description);
+        if (args.activeForm !== undefined) input.activeForm = String(args.activeForm);
+        if (args.owner !== undefined) input.owner = String(args.owner);
+        if (args.status !== undefined) input.status = args.status as TaskUpdateInput["status"];
+        if (args.blocks !== undefined) input.blocks = Array.isArray(args.blocks) ? args.blocks.map(String) : [];
+        if (args.blockedBy !== undefined) input.blockedBy = Array.isArray(args.blockedBy) ? args.blockedBy.map(String) : [];
+        if (args.metadata !== undefined) input.metadata = args.metadata as Record<string, unknown>;
+        const result = updateTask(tasks, id, input);
+        session.tasks = result.tasks;
+        return { success: true, output: JSON.stringify(result.updated), mutated: true };
+      }
+
+      default:
+        return { success: false, output: "", error: `Unknown task tool: ${toolId}`, mutated: false };
+    }
+  } catch (err) {
+    return {
+      success: false,
+      output: "",
+      error: err instanceof Error ? err.message : String(err),
+      mutated: false,
+    };
+  }
+}
+
+/** 判断当前计划任务是否属于可直接进入模型/tool loop 的执行步骤。 */
+function isExecutablePlanTask(task: { kind?: string; status: string }): boolean {
+  return task.kind !== "user_confirmation"
+    && (task.status === "pending" || task.status === "in_progress");
+}
+
+/** 批准后自动消化确认类步骤，避免把 user_confirmation 当普通执行任务继续推进。 */
+function completeApprovedConfirmationTasks(session: ChatSession, now: string): void {
+  if (!session.planState) return;
+  if (session.planModeState?.mode !== "executing" || session.planModeState.approvalStatus !== "approved") {
+    return;
+  }
+
+  for (const task of session.planState.tasks) {
+    if (task.status === "completed") continue;
+    if (task.kind !== "user_confirmation") break;
+    if (task.status !== "pending" && task.status !== "in_progress") break;
+    if (task.status === "pending") {
+      session.planState = startTask(session.planState, task.id, "Waiting for approval resolved", now);
+    }
+    session.planState = completeTask(session.planState, task.id, "User approved", now);
+  }
+  syncPlanModeState(session, now);
+}
+
+/** 判断当前计划模式下是否还存在待执行的非确认步骤。 */
+function hasRemainingExecutablePlanTasks(session: ChatSession): boolean {
+  return session.planState?.tasks.some((task) => isExecutablePlanTask(task)) ?? false;
+}
+
+/** 判断当前会话是否开启了可见 plan mode。 */
+function isPlanModeEnabled(session: ChatSession): boolean {
+  const runtimeIntent = resolveSessionRuntimeIntent(session);
+  return runtimeIntent.workflowMode === "plan" || runtimeIntent.planModeEnabled === true;
+}
+
+/** 将模型返回的内容解析为结构化计划；解析失败时回退为最小单步计划。 */
+function parseStructuredPlan(
+  content: string,
+  fallbackTitle: string,
+): StructuredPlan {
+  try {
+    const parsed = JSON.parse(content) as Partial<StructuredPlan> & { steps?: Array<Partial<StructuredPlan["steps"][number]>> };
+    const steps = Array.isArray(parsed.steps)
+      ? parsed.steps
+        .filter((step): step is NonNullable<typeof step> => !!step && typeof step.title === "string")
+        .map((step, index) => ({
+          id: typeof step.id === "string" && step.id.trim().length > 0
+            ? step.id
+            : `plan-step-${index + 1}`,
+          title: step.title ?? `Plan step ${index + 1}`,
+          status: "pending" as const,
+          ...(typeof step.kind === "string" ? { kind: step.kind } : {}),
+          ...(typeof step.detail === "string" ? { detail: step.detail } : {}),
+          ...(typeof step.lane === "string" ? { lane: step.lane } : {}),
+        }))
+      : [];
+
+    if (steps.length > 0 && typeof parsed.goal === "string" && parsed.goal.trim().length > 0) {
+      return {
+        goal: parsed.goal,
+        ...(typeof parsed.summary === "string" ? { summary: parsed.summary } : {}),
+        ...(Array.isArray(parsed.assumptions) ? { assumptions: parsed.assumptions.filter((item): item is string => typeof item === "string") } : {}),
+        ...(Array.isArray(parsed.openQuestions) ? { openQuestions: parsed.openQuestions.filter((item): item is string => typeof item === "string") } : {}),
+        ...(Array.isArray(parsed.acceptanceCriteria) ? { acceptanceCriteria: parsed.acceptanceCriteria.filter((item): item is string => typeof item === "string") } : {}),
+        steps,
+      };
+    }
+  } catch {
+    // 计划草案允许模型返回自然语言，这里回退为最小结构化计划。
+  }
+
+  return {
+    goal: fallbackTitle,
+    summary: content.trim() || fallbackTitle,
+    steps: [{
+      id: "plan-step-1",
+      title: fallbackTitle,
+      status: "pending",
+      kind: "analysis",
+    }],
+  };
+}
+
+/** 将结构化计划物化为会话级 planState 与 planModeState。 */
+/** 根据步骤的 lane 或 kind 推导可见工作流分工，便于在复杂计划里展示多轨并行。 */
+function derivePlanWorkstreams(tasks: StructuredPlan["steps"]): PlanWorkstream[] {
+  const grouped = new Map<string, PlanWorkstream>();
+
+  for (const task of tasks) {
+    const workstreamId = task.lane?.trim() || task.kind || "general";
+    const existing = grouped.get(workstreamId);
+    if (existing) {
+      existing.stepIds.push(task.id);
+      continue;
+    }
+    grouped.set(workstreamId, {
+      id: workstreamId,
+      label: workstreamId,
+      status: "pending",
+      stepIds: [task.id],
+    });
+  }
+
+  return [...grouped.values()];
+}
+
+/** 根据任务状态刷新分工状态，确保 UI 与执行链路读取到同一份真实进度。 */
+function syncPlanWorkstreams(
+  planState: ChatSession["planState"],
+  workstreams: PlanWorkstream[] | undefined,
+): PlanWorkstream[] | undefined {
+  if (!planState || !workstreams?.length) return workstreams;
+
+  return workstreams.map((workstream) => {
+    const tasks = workstream.stepIds
+      .map((stepId) => planState.tasks.find((task) => task.id === stepId))
+      .filter((task): task is NonNullable<typeof task> => !!task);
+
+    if (tasks.some((task) => task.status === "blocked")) {
+      return { ...workstream, status: "blocked" };
+    }
+    if (tasks.length > 0 && tasks.every((task) => task.status === "completed")) {
+      return { ...workstream, status: "completed" };
+    }
+    if (tasks.some((task) => task.status === "in_progress")) {
+      return { ...workstream, status: "in_progress" };
+    }
+    return { ...workstream, status: "pending" };
+  });
+}
+
+/** 推导当前聚焦步骤，帮助深度模式显式告诉模型“这一轮只处理哪一步”。 */
+function deriveCurrentPlanTask(session: ChatSession) {
+  if (!session.planState) return null;
+
+  return session.planState.tasks.find((task) => task.status === "in_progress")
+    ?? session.planState.tasks.find((task) => isExecutablePlanTask(task))
+    ?? session.planState.tasks.find((task) => task.status === "pending")
+    ?? null;
+}
+
+/** 将计划模式映射成 workflow run 摘要，复用既有 workflow-run 契约展示复杂计划执行状态。 */
+function buildPlanWorkflowRun(
+  session: ChatSession,
+  now: string,
+  workstreams: PlanWorkstream[] | undefined,
+): WorkflowRunSummary | null {
+  const workflowModeState = session.planModeState;
+  if (!workflowModeState || workflowModeState.workflowMode !== "plan") {
+    return null;
+  }
+
+  const activeNodeIds = workstreams?.length
+    ? workstreams
+      .filter((workstream) => workstream.status === "pending" || workstream.status === "in_progress")
+      .flatMap((workstream) => workstream.stepIds.slice(0, 1))
+    : session.planState?.tasks
+      .filter((task) => task.status === "pending" || task.status === "in_progress")
+      .map((task) => task.id)
+      ?? [];
+
+  const status = workflowModeState.mode === "awaiting_approval"
+    ? "queued"
+    : workflowModeState.mode === "executing"
+      ? "running"
+      : workflowModeState.mode === "completed"
+        ? "succeeded"
+        : workflowModeState.mode === "blocked"
+          ? "failed"
+          : "queued";
+
+  return {
+    id: workflowModeState.workflowRun?.id ?? `plan-run-${session.id}`,
+    workflowId: session.id,
+    workflowVersion: workflowModeState.planVersion || 1,
+    status,
+    currentNodeIds: activeNodeIds,
+    startedAt: workflowModeState.workflowRun?.startedAt ?? workflowModeState.approvedAt ?? session.createdAt,
+    updatedAt: now,
+    ...(status === "succeeded" || status === "failed" ? { finishedAt: now } : {}),
+  };
+}
+
+/** 统一同步当前步骤、工作流分工和 workflow run，避免主流程与 UI 各自推导出不同状态。 */
+function syncPlanModeState(session: ChatSession, now: string): void {
+  if (!session.planModeState) return;
+
+  const workstreams = syncPlanWorkstreams(session.planState, session.planModeState.workstreams);
+  const currentTask = deriveCurrentPlanTask(session);
+  const workflowMode = session.planModeState.workflowMode
+    ?? (isPlanModeEnabled(session) ? "plan" : undefined);
+
+  session.planModeState = {
+    ...session.planModeState,
+    ...(workflowMode ? { workflowMode } : {}),
+    ...(currentTask
+      ? {
+          currentTaskId: currentTask.id,
+          currentTaskTitle: currentTask.title,
+          ...(currentTask.kind ? { currentTaskKind: currentTask.kind } : {}),
+        }
+      : {
+          currentTaskId: undefined,
+          currentTaskTitle: undefined,
+          currentTaskKind: undefined,
+        }),
+    ...(workstreams ? { workstreams } : {}),
+    workflowRun: buildPlanWorkflowRun(session, now, workstreams),
+  };
+}
+
+/** 将会话里的 workflow-style run 同步到主进程 registry，供 bootstrap 与 workflow IPC 复用。 */
+async function persistPlanWorkflowRun(
+  ctx: RuntimeContext,
+  session: ChatSession,
+): Promise<{
+  workflowRunId: string;
+  previousRun: WorkflowRunSummary | null;
+  previousIndex: number;
+} | null> {
+  const workflowRun = session.planModeState?.workflowRun;
+  if (!workflowRun) return null;
+
+  await saveWorkflowRun(ctx.runtime.paths, workflowRun);
+
+  const existingIndex = ctx.state.workflowRuns.findIndex((item) => item.id === workflowRun.id);
+  const previousRun = existingIndex >= 0 ? ctx.state.workflowRuns[existingIndex]! : null;
+  if (existingIndex >= 0) {
+    ctx.state.workflowRuns[existingIndex] = workflowRun;
+  } else {
+    ctx.state.workflowRuns.push(workflowRun);
+  }
+
+  return {
+    workflowRunId: workflowRun.id,
+    previousRun,
+    previousIndex: existingIndex,
+  };
+}
+
+/** 回滚 plan-mode workflow run 的持久化副作用，避免 session 保存失败后留下分叉状态。 */
+async function rollbackPersistedPlanWorkflowRun(
+  ctx: RuntimeContext,
+  snapshot: {
+    workflowRunId: string;
+    previousRun: WorkflowRunSummary | null;
+    previousIndex: number;
+  } | null,
+): Promise<void> {
+  if (!snapshot) return;
+
+  try {
+    if (snapshot.previousRun) {
+      await saveWorkflowRun(ctx.runtime.paths, snapshot.previousRun);
+    } else {
+      await deleteWorkflowRunFile(ctx.runtime.paths, snapshot.workflowRunId);
+    }
+  } finally {
+    if (snapshot.previousIndex >= 0 && snapshot.previousRun) {
+      ctx.state.workflowRuns[snapshot.previousIndex] = snapshot.previousRun;
+      return;
+    }
+    ctx.state.workflowRuns = ctx.state.workflowRuns.filter((item) => item.id !== snapshot.workflowRunId);
+  }
+}
+
+/** 先同步 workflow run，再保存 session；若 session 保存失败则回滚 run 持久化。 */
+async function saveSessionWithPlanWorkflowSync(
+  ctx: RuntimeContext,
+  session: ChatSession,
+): Promise<void> {
+  const snapshot = await persistPlanWorkflowRun(ctx, session);
+  try {
+    await saveSession(ctx.runtime.paths, session);
+  } catch (error) {
+    try {
+      await rollbackPersistedPlanWorkflowRun(ctx, snapshot);
+      console.warn("[plan-mode] 会话保存失败，已回滚 workflow run 持久化。");
+    } catch (rollbackError) {
+      console.warn("[plan-mode] 会话保存失败，且 workflow run 回滚失败。", rollbackError);
+    }
+    throw error;
+  }
+}
+
+/** 为规划轮次补充显式 planner 指令，让深度模式先分析需求再返回结构化计划。 */
+function buildPlanAnalysisGuidance(content: string): string {
+  return [
+    "Plan mode is enabled. Do not execute tools yet.",
+    "First analyze the user's request, constraints, risks, and likely verification path.",
+    "Return strict JSON only.",
+    "Schema:",
+    "{\"goal\":\"string\",\"summary\":\"string\",\"assumptions\":[\"string\"],\"openQuestions\":[\"string\"],\"acceptanceCriteria\":[\"string\"],\"steps\":[{\"id\":\"string\",\"title\":\"string\",\"kind\":\"analysis|tool|verification|user_confirmation\",\"detail\":\"string\",\"lane\":\"string\"}]}",
+    "Use lane to group parallel workstreams when the task is complex.",
+    `User request: ${content}`,
+  ].join("\n");
+}
+
+/** 为执行轮次补充当前步骤指令，确保模型显式围绕当前 step 推进，而不是泛化地继续闲聊。 */
+function buildPlanExecutionGuidance(session: ChatSession): string | null {
+  const currentTask = deriveCurrentPlanTask(session);
+  if (!currentTask) return null;
+
+  const workstreamSummary = session.planModeState?.workstreams?.length
+    ? session.planModeState.workstreams
+      .map((workstream) => `${workstream.label}:${workstream.status}`)
+      .join(", ")
+    : "single-track";
+
+  return [
+    "Current plan step",
+    `- id: ${currentTask.id}`,
+    `- title: ${currentTask.title}`,
+    `- kind: ${currentTask.kind ?? "analysis"}`,
+    `- lane: ${currentTask.lane ?? "general"}`,
+    `- parallel workstreams: ${workstreamSummary}`,
+    "Only perform work needed for this step. If the step is complete, summarize the outcome and prepare for the next step.",
+  ].join("\n");
+}
+
+function applyStructuredPlanDraft(
+  session: ChatSession,
+  structuredPlan: StructuredPlan,
+  messageId: string,
+  now: string,
+): void {
+  session.planState = createPlanState(
+    structuredPlan.steps.map((step) => ({
+      id: step.id,
+      title: step.title,
+      status: "pending",
+      ...(step.kind ? { kind: step.kind } : {}),
+      ...(step.detail ? { detail: step.detail } : {}),
+      ...(step.lane ? { lane: step.lane } : {}),
+    })),
+    now,
+  );
+  const workstreams = derivePlanWorkstreams(structuredPlan.steps);
+
+  const currentVersion = session.planModeState?.planVersion ?? 0;
+  session.planModeState = {
+    mode: "awaiting_approval",
+    workflowMode: "plan",
+    approvalStatus: "pending",
+    planVersion: currentVersion + 1,
+    lastPlanMessageId: messageId,
+    ...(structuredPlan.summary ? { summary: structuredPlan.summary } : {}),
+    goal: structuredPlan.goal,
+    structuredPlan,
+    ...(workstreams.length > 1 ? { workstreams } : {}),
+  };
+  syncPlanModeState(session, now);
+}
+
+/** 生成显式计划草案后，写入 assistant 消息并广播当前会话状态。 */
+async function finalizePlanDraftRound(
+  ctx: RuntimeContext,
+  session: ChatSession,
+  sessionId: string,
+  messageId: string,
+  content: string,
+  now: string,
+): Promise<SessionPayload> {
+  session.messages.push({
+    id: messageId,
+    role: "assistant",
+    content,
+    createdAt: now,
+  });
+
+  await saveSessionWithPlanWorkflowSync(ctx, session);
+  broadcastToRenderers("session:stream", {
+    type: EventType.MessageCompleted,
+    sessionId,
+    messageId,
+  });
+  broadcastToRenderers("session:stream", {
+    type: EventType.SessionUpdated,
+    sessionId,
+    session,
+  });
+  return { session };
+}
+
 /**
  * 为当前 round 选择一个活跃 planner 任务。
  * 默认只延续 pending / in_progress 任务；blocked 任务必须等待后续显式恢复策略，不参与下一轮的默认控制流。
@@ -355,6 +904,15 @@ function ensurePlanTaskForRound(
   taskId: string,
   now: string,
 ): string {
+  completeApprovedConfirmationTasks(session, now);
+
+  if (session.planModeState?.mode === "executing" && session.planState?.tasks.length) {
+    const executableTask = session.planState.tasks.find((task) => isExecutablePlanTask(task));
+    if (executableTask) {
+      return executableTask.id;
+    }
+  }
+
   if (!session.planState || session.planState.tasks.length === 0) {
     session.planState = createPlanState([{
       id: taskId,
@@ -385,6 +943,27 @@ function ensurePlanTaskForRound(
   return taskId;
 }
 
+/** 在计划模式执行中，先自动消化确认步骤，再挑选下一个真正可执行的步骤。 */
+function selectPlanModeTaskForRound(
+  session: ChatSession,
+  content: string,
+  taskId: string,
+  now: string,
+): string | null {
+  completeApprovedConfirmationTasks(session, now);
+
+  if (!session.planState || session.planState.tasks.length === 0) {
+    session.planState = createPlanState([{
+      id: taskId,
+      title: buildPlanTaskTitle(content),
+    }], now);
+    return taskId;
+  }
+
+  const executableTask = session.planState.tasks.find((task) => isExecutablePlanTask(task));
+  return executableTask?.id ?? null;
+}
+
 /** 在进入模型/tool loop 前，把本轮任务标记为执行中，便于上下文装配与 UI 读取最新 planner 进度。 */
 function markPlanTaskInProgress(
   session: ChatSession,
@@ -400,6 +979,7 @@ function markPlanTaskInProgress(
     `Round ${round} executing`,
     now,
   );
+  syncPlanModeState(session, now);
 }
 
 /** 当本轮正常完成时，把 planner 任务标记为完成并更新时间戳。 */
@@ -411,6 +991,7 @@ function markPlanTaskCompleted(
   if (!session.planState) return;
   if (isPlanTaskBlocked(session, taskId)) return;
   session.planState = completeTask(session.planState, taskId, "Round completed", now);
+  syncPlanModeState(session, now);
 }
 
 /** 当本轮异常中断时，把 planner 任务显式标记为阻塞，避免持久化为不透明的悬空 in_progress。 */
@@ -428,6 +1009,7 @@ function markPlanTaskBlocked(
     now,
     "Round interrupted",
   );
+  syncPlanModeState(session, now);
 }
 
 type ToolPlanProgressInput = {
@@ -464,6 +1046,7 @@ function markPlanTaskToolProgress(
       input.now,
       `Tool failed: ${input.toolName}`,
     );
+    syncPlanModeState(session, input.now);
     return;
   }
 
@@ -475,6 +1058,7 @@ function markPlanTaskToolProgress(
       input.now,
       `Waiting after failed tool: ${input.toolName}`,
     );
+    syncPlanModeState(session, input.now);
     return;
   }
 
@@ -484,6 +1068,7 @@ function markPlanTaskToolProgress(
     `Tool completed: ${input.toolName}`,
     input.now,
   );
+  syncPlanModeState(session, input.now);
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +1182,15 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       const mcpTools = ctx.services.mcpManager?.getAllTools() ?? [];
       const tools = buildToolSchemas(workingDir, enabledSkills, mcpTools);
 
+      console.info("[session:send-message] tools summary", {
+        totalSkills: ctx.state.skills.length,
+        enabledSkills: enabledSkills.length,
+        enabledSkillNames: enabledSkills.map(s => s.name),
+        mcpTools: mcpTools.length,
+        totalTools: tools.length,
+        toolNames: tools.map(t => t.function.name),
+      });
+
       // 用当前技能与路径权限刷新工具执行器
       toolExecutor.setSkills(ctx.state.skills);
       toolExecutor.setAllowExternalPaths(allowsExternalPaths(ctx.state.getApprovals().mode));
@@ -606,10 +1200,135 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
       // 创建一个绑定版 system prompt 构造器，复用已缓存的 Git 分支
       // 避免在每次 agentic 循环中都执行一次 execSync
-      const boundBuildSystemPrompt = (s: ChatSession, wd: string, sk?: SkillDefinition[]) =>
-        buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile());
+      // 从 session 的 runtimeIntent 中读取 reasoningEffort，传入 system prompt 构造器
+      // enrichedContext 在每轮动态提取，因为 session messages 和 tasks 会随循环变化
+      const sessionReasoningEffort = resolveSessionRuntimeIntent(session).reasoningEffort as "low" | "medium" | "high" | undefined;
+      const boundBuildSystemPrompt = (s: ChatSession, wd: string, sk?: SkillDefinition[]) => {
+        const enriched = extractEnrichedContext(s);
+        const enrichedBlock = buildEnrichedContextBlock(enriched);
+        return buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile(), sessionReasoningEffort, enrichedBlock || null);
+      };
 
-      const activePlanTaskId = ensurePlanTaskForRound(session, input.content, messageId, now);
+      if (isPlanModeEnabled(session) && session.planModeState?.mode !== "executing") {
+        const runtimeIntent = resolveSessionRuntimeIntent(session);
+        const executionPlanSession = session.runtimeIntent
+          ? {
+              runtimeIntent: {
+                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningMode")
+                  ? { reasoningMode: runtimeIntent.reasoningMode }
+                  : {}),
+                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningEnabled")
+                  ? { reasoningEnabled: runtimeIntent.reasoningEnabled }
+                  : {}),
+                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningEffort")
+                  ? { reasoningEffort: runtimeIntent.reasoningEffort }
+                  : {}),
+                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "adapterHint")
+                  ? { adapterHint: runtimeIntent.adapterHint }
+                  : {}),
+                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "replayPolicy")
+                  ? { replayPolicy: runtimeIntent.replayPolicy }
+                  : {}),
+                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "toolStrategy")
+                  ? { toolStrategy: runtimeIntent.toolStrategy }
+                  : {}),
+                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "workflowMode")
+                  ? { workflowMode: runtimeIntent.workflowMode }
+                  : {}),
+                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "planModeEnabled")
+                  ? { planModeEnabled: runtimeIntent.planModeEnabled }
+                  : {}),
+              },
+            }
+          : session.runtimeIntent === null
+            ? { runtimeIntent: null }
+            : undefined;
+        const resolved = resolveModelCapability(modelProfile);
+        const executionPlan = {
+          ...(buildExecutionPlan({
+            session: executionPlanSession,
+            profile: modelProfile,
+            capability: resolved.effective,
+          }) as ResolvedExecutionPlan),
+          workflowMode: "plan" as const,
+          phase: "analysis" as const,
+        };
+        const sessionWithExecutionPlan = session as SessionWithExecutionPlan;
+        session.runtimeVersion = executionPlan.runtimeVersion;
+        sessionWithExecutionPlan.executionPlan = executionPlan;
+        session.planModeState = {
+          ...(session.planModeState ?? {
+            mode: "planning",
+            approvalStatus: "pending",
+            planVersion: 0,
+          } as PlanModeState),
+          mode: "planning",
+          workflowMode: "plan",
+          approvalStatus: "pending",
+        };
+        const assembled = assembleContext({
+          session,
+          capability: resolved.effective,
+          policy: modelProfile.budgetPolicy,
+          workingDir,
+          skills: enabledSkills,
+          systemPromptBuilder: boundBuildSystemPrompt,
+          executionPlan,
+        });
+        const plannerMessages = [
+          ...assembled.messages,
+          {
+            role: "system",
+            content: buildPlanAnalysisGuidance(input.content),
+          },
+        ] as ModelChatMessage[];
+        const result = await callModel({
+          profile: modelProfile,
+          messages: plannerMessages,
+          tools: [],
+          executionPlan,
+          onDelta: (delta) => {
+            broadcastToRenderers("session:stream", {
+              type: EventType.MessageDelta,
+              sessionId,
+              messageId,
+              delta,
+            });
+          },
+        });
+        const structuredPlan = parseStructuredPlan(result.content, buildPlanTaskTitle(input.content));
+        applyStructuredPlanDraft(session, structuredPlan, messageId, new Date().toISOString());
+        return finalizePlanDraftRound(
+          ctx,
+          session,
+          sessionId,
+          messageId,
+          result.content,
+          new Date().toISOString(),
+        );
+      }
+
+      let activePlanTaskId = session.planModeState?.mode === "executing"
+        ? selectPlanModeTaskForRound(session, input.content, messageId, now)
+        : ensurePlanTaskForRound(session, input.content, messageId, now);
+
+      if (!activePlanTaskId) {
+        session.planModeState = session.planModeState
+          ? {
+              ...session.planModeState,
+              mode: "completed",
+              approvalStatus: "approved",
+            }
+          : session.planModeState;
+        syncPlanModeState(session, new Date().toISOString());
+        await saveSessionWithPlanWorkflowSync(ctx, session);
+        broadcastToRenderers("session:stream", {
+          type: EventType.SessionUpdated,
+          sessionId,
+          session,
+        });
+        return { session };
+      }
 
       // ----- Agentic 循环：调用模型 → 执行工具 → 回填结果 → 重复 -----
       let round = 0;
@@ -652,6 +1371,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "toolStrategy")
                     ? { toolStrategy: runtimeIntent.toolStrategy }
                     : {}),
+                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "workflowMode")
+                    ? { workflowMode: runtimeIntent.workflowMode }
+                    : {}),
+                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "planModeEnabled")
+                    ? { planModeEnabled: runtimeIntent.planModeEnabled }
+                    : {}),
                 },
               }
             : session.runtimeIntent === null
@@ -692,10 +1417,20 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             );
           }
           const modelMessages = assembled.messages as ModelChatMessage[];
+          const executionGuidance = buildPlanExecutionGuidance(session);
+          const guidedModelMessages = executionGuidance
+            ? [
+                ...modelMessages,
+                {
+                  role: "system",
+                  content: executionGuidance,
+                },
+              ] as ModelChatMessage[]
+            : modelMessages;
 
           const result = await callModel({
             profile: modelProfile,
-            messages: modelMessages,
+            messages: guidedModelMessages,
             tools,
             executionPlan,
             onDelta: (delta) => {
@@ -832,7 +1567,21 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               let toolSucceeded = true;
               let failureReason: string | undefined;
               try {
-                if (toolCall.name.startsWith("mcp__")) {
+                if (toolId.startsWith("task.")) {
+                  // Task V2 工具直接操作 session 状态，不走 toolExecutor
+                  const taskResult = executeTaskTool(session, toolId, toolCall.input);
+                  toolOutput = taskResult.output;
+                  toolSucceeded = taskResult.success;
+                  if (!taskResult.success) failureReason = taskResult.error;
+                  if (taskResult.mutated) {
+                    await saveSession(ctx.runtime.paths, session);
+                    broadcastToRenderers("session:stream", {
+                      type: EventType.TasksUpdated,
+                      sessionId,
+                      tasks: session.tasks ?? [],
+                    });
+                  }
+                } else if (toolCall.name.startsWith("mcp__")) {
                   const mcpTool = mcpTools.find((t) => {
                     const safeName = t.id.replace(/[^a-zA-Z0-9_-]/g, "_");
                     return safeName === toolCall.name;
@@ -1086,6 +1835,38 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
             if (!isPlanTaskBlocked(session, activePlanTaskId)) {
               markPlanTaskCompleted(session, activePlanTaskId, new Date().toISOString());
+              if (session.planModeState?.mode === "executing") {
+                session.planModeState = {
+                  ...session.planModeState,
+                  mode: hasRemainingExecutablePlanTasks(session) ? "executing" : "completed",
+                  approvalStatus: "approved",
+                };
+                if (session.planModeState.mode === "executing") {
+                  const nextTaskId = selectPlanModeTaskForRound(
+                    session,
+                    input.content,
+                    randomUUID(),
+                    new Date().toISOString(),
+                  );
+                  if (nextTaskId) {
+                    activePlanTaskId = nextTaskId;
+                    session.messages.push({
+                      id: randomUUID(),
+                      role: "system",
+                      content: "[计划模式] 当前步骤已完成，请继续执行下一步。",
+                      createdAt: new Date().toISOString(),
+                    });
+                    currentMessageId = randomUUID();
+                    broadcastToRenderers("session:stream", {
+                      type: EventType.RunStarted,
+                      sessionId,
+                      messageId: currentMessageId,
+                      round,
+                    });
+                    continue;
+                  }
+                }
+              }
               completedNormally = true;
             }
             break;
@@ -1107,6 +1888,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             `Hit safety ceiling after ${SAFETY_CEILING} rounds`,
             new Date().toISOString(),
           );
+          if (session.planModeState?.mode === "executing") {
+            session.planModeState = {
+              ...session.planModeState,
+              mode: "blocked",
+              blockedReason: `Hit safety ceiling after ${SAFETY_CEILING} rounds`,
+            };
+          }
         }
       } catch (err) {
         const errorText = err instanceof Error ? err.message : String(err);
@@ -1126,6 +1914,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           createdAt: new Date().toISOString(),
         });
         markPlanTaskBlocked(session, activePlanTaskId, errorText, new Date().toISOString());
+        if (session.planModeState?.mode === "executing") {
+          session.planModeState = {
+            ...session.planModeState,
+            mode: "blocked",
+            blockedReason: errorText,
+          };
+        }
       }
 
       broadcastToRenderers("session:stream", {
@@ -1134,6 +1929,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         messageId: currentMessageId,
       });
 
+      await saveSessionWithPlanWorkflowSync(ctx, session);
       broadcastToRenderers("session:stream", {
         type: EventType.SessionUpdated,
         sessionId,
@@ -1141,8 +1937,6 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       });
 
       // 将更新后的消息持久化到磁盘
-      await saveSession(ctx.runtime.paths, session);
-
       return { session };
     },
   );
@@ -1201,6 +1995,117 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
   // 更新审批策略
   ipcMain.handle(
+    "session:approve-plan",
+    async (_event, sessionId: string): Promise<{ session: ChatSession }> => {
+      const index = ctx.state.sessions.findIndex((s) => s.id === sessionId);
+      if (index < 0) {
+        throw new Error(`Session not found: ${sessionId}`);
+      }
+      const session = ctx.state.sessions[index]!;
+      const now = new Date().toISOString();
+      session.planModeState = {
+        ...(session.planModeState ?? {
+          mode: "executing",
+          approvalStatus: "approved",
+          planVersion: 1,
+        }),
+        mode: "executing",
+        workflowMode: "plan",
+        approvalStatus: "approved",
+        approvedAt: now,
+      };
+      syncPlanModeState(session, now);
+      await saveSessionWithPlanWorkflowSync(ctx, session);
+      return { session };
+    },
+  );
+
+  ipcMain.handle(
+    "session:revise-plan",
+    async (_event, sessionId: string): Promise<{ session: ChatSession }> => {
+      const index = ctx.state.sessions.findIndex((s) => s.id === sessionId);
+      if (index < 0) {
+        throw new Error(`Session not found: ${sessionId}`);
+      }
+      const session = ctx.state.sessions[index]!;
+      if (session.planModeState) {
+        session.planModeState = {
+          ...session.planModeState,
+          mode: "planning",
+          approvalStatus: "rejected",
+          approvedAt: undefined,
+        };
+        syncPlanModeState(session, new Date().toISOString());
+      }
+      await saveSessionWithPlanWorkflowSync(ctx, session);
+      return { session };
+    },
+  );
+
+  ipcMain.handle(
+    "session:cancel-plan-mode",
+    async (_event, sessionId: string): Promise<{ session: ChatSession }> => {
+      const index = ctx.state.sessions.findIndex((s) => s.id === sessionId);
+      if (index < 0) {
+        throw new Error(`Session not found: ${sessionId}`);
+      }
+      const session = ctx.state.sessions[index]!;
+      const workflowRun = session.planModeState?.workflowRun
+        ? {
+            ...session.planModeState.workflowRun,
+            status: "canceled" as const,
+            updatedAt: new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+          }
+        : null;
+      const previousWorkflowRunIndex = workflowRun
+        ? ctx.state.workflowRuns.findIndex((item) => item.id === workflowRun.id)
+        : -1;
+      const previousWorkflowRun = previousWorkflowRunIndex >= 0
+        ? ctx.state.workflowRuns[previousWorkflowRunIndex]!
+        : null;
+      if (workflowRun) {
+        const workflowRunIndex = ctx.state.workflowRuns.findIndex((item) => item.id === workflowRun.id);
+        if (workflowRunIndex >= 0) {
+          ctx.state.workflowRuns[workflowRunIndex] = workflowRun;
+        } else {
+          ctx.state.workflowRuns.push(workflowRun);
+        }
+        await saveWorkflowRun(ctx.runtime.paths, workflowRun);
+      }
+      session.planModeState = null;
+      session.planState = null;
+      session.runtimeIntent = {
+        ...(session.runtimeIntent ?? {}),
+        workflowMode: "default",
+        planModeEnabled: false,
+      };
+      try {
+        await saveSession(ctx.runtime.paths, session);
+      } catch (error) {
+        if (workflowRun) {
+          try {
+            if (previousWorkflowRun) {
+              await saveWorkflowRun(ctx.runtime.paths, previousWorkflowRun);
+            } else {
+              await deleteWorkflowRunFile(ctx.runtime.paths, workflowRun.id);
+            }
+          } finally {
+            if (previousWorkflowRunIndex >= 0 && previousWorkflowRun) {
+              ctx.state.workflowRuns[previousWorkflowRunIndex] = previousWorkflowRun;
+            } else {
+              ctx.state.workflowRuns = ctx.state.workflowRuns.filter((item) => item.id !== workflowRun.id);
+            }
+          }
+        }
+        console.warn("[plan-mode] 取消计划模式时保存会话失败，已回滚 workflow run 持久化。");
+        throw error;
+      }
+      return { session };
+    },
+  );
+
+  ipcMain.handle(
     "session:update-approval-policy",
     async (_event, policy: { mode?: ApprovalMode; autoApproveReadOnly?: boolean; autoApproveSkills?: boolean }): Promise<{ success: boolean }> => {
       const current = ctx.state.getApprovals();
@@ -1214,6 +2119,32 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         current.autoApproveSkills = policy.autoApproveSkills;
       }
       return { success: true };
+    },
+  );
+
+  // 更新会话的 runtimeIntent（用于切换 reasoningEffort 等参数）
+  ipcMain.handle(
+    "session:update-runtime-intent",
+    async (_event, sessionId: string, intent: Partial<SessionRuntimeIntent>): Promise<{ session: ChatSession }> => {
+      const index = ctx.state.sessions.findIndex((s) => s.id === sessionId);
+      if (index < 0) {
+        throw new Error(`Session not found: ${sessionId}`);
+      }
+      const session = ctx.state.sessions[index]!;
+      const merged = {
+        ...(session.runtimeIntent ?? {}),
+        ...intent,
+      } as SessionRuntimeIntent & {
+        workflowMode?: string;
+        planModeEnabled?: boolean;
+      };
+      const disablePlanMode = merged.workflowMode === "default" && merged.planModeEnabled === false;
+      const updated = disablePlanMode
+        ? { ...session, runtimeIntent: merged, planModeState: null, planState: null }
+        : { ...session, runtimeIntent: merged };
+      ctx.state.sessions[index] = updated;
+      await saveSession(ctx.runtime.paths, updated);
+      return { session: updated };
     },
   );
 }

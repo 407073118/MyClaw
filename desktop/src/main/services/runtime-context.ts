@@ -10,6 +10,7 @@ import type {
   ResolvedMcpTool,
   SkillDefinition,
   WorkflowDefinition,
+  WorkflowRunSummary,
   WorkflowSummary,
 } from "@shared/contracts";
 
@@ -30,6 +31,9 @@ export type RuntimeContext = {
     employees: LocalEmployeeSummary[];
     skills: SkillDefinition[];
     workflowDefinitions: Record<string, WorkflowDefinition>;
+    workflowRuns: WorkflowRunSummary[];
+    /** 正在执行的 PregelRunner 实例，key 为 runId */
+    activeWorkflowRuns: Map<string, any>;
     getDefaultModelProfileId: () => string | null;
     setDefaultModelProfileId: (id: string | null) => void;
     getWorkflows: () => WorkflowSummary[];

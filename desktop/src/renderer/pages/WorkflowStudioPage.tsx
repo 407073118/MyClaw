@@ -1,14 +1,57 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AlertTriangle, ChevronDown, ChevronLeft, PanelRight, Play, Save } from "lucide-react";
+import { AlertTriangle, Bug, ChevronDown, ChevronLeft, PanelRight, Play, Save, Square, ToggleLeft, ToggleRight } from "lucide-react";
 import { useWorkspaceStore } from "../stores/workspace";
-import type { WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowNodeKind } from "@shared/contracts";
+import { useWorkflowRunsStore, type NodeLiveStatus } from "../stores/workflow-runs";
+import type { WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowNodeKind, WorkflowInterruptPayload } from "@shared/contracts";
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas";
 import WorkflowGraphInspector from "../components/workflow/WorkflowGraphInspector";
 import WorkflowRunPanel from "../components/workflow/WorkflowRunPanel";
+import { WorkflowDebugPanel } from "../components/workflow/WorkflowDebugPanel";
 import { createWorkflowNodeDraft } from "../components/workflow/workflow-node-factory";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
+
+type StudioMode = "edit" | "debug";
+
+/** 每个节点在调试期间的运行状态。 */
+export interface DebugNodeStatus {
+  phase: "idle" | "running" | "streaming" | "completed" | "error" | "interrupted";
+  content?: string;
+  durationMs?: number;
+  error?: string;
+}
+
+/** 将 store 的 NodeLiveStatus 映射为 Canvas 使用的 DebugNodeStatus。 */
+function toDebugNodeStatus(live: NodeLiveStatus): DebugNodeStatus {
+  switch (live.phase) {
+    case "idle":
+      return { phase: "idle" };
+    case "running":
+      return { phase: "running" };
+    case "streaming":
+      return { phase: "streaming", content: live.content };
+    case "completed":
+      return { phase: "completed", durationMs: live.durationMs };
+    case "error":
+      return { phase: "error", error: live.error };
+    case "interrupted":
+      return { phase: "interrupted" };
+    default:
+      return { phase: "idle" };
+  }
+}
+
+/** 将 store 的 nodeStatuses Map 批量映射为 Canvas 使用的 DebugNodeStatus Map。 */
+function toDebugNodeStatusMap(
+  source: Map<string, NodeLiveStatus>,
+): Map<string, DebugNodeStatus> {
+  const result = new Map<string, DebugNodeStatus>();
+  source.forEach((status, nodeId) => {
+    result.set(nodeId, toDebugNodeStatus(status));
+  });
+  return result;
+}
 
 interface WorkflowCanvasNodeLayout {
   nodeId: string;
@@ -116,6 +159,29 @@ export default function WorkflowStudioPage() {
   const [draftStatus, setDraftStatus] = useState<"draft" | "active" | "archived">("draft");
   const [draftSource, setDraftSource] = useState<"personal" | "enterprise" | "hub">("personal");
 
+  // ── Debug mode state ──────────────────────────────────────────────────────
+  const [studioMode, setStudioMode] = useState<StudioMode>("edit");
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [isDebugResuming, setIsDebugResuming] = useState(false);
+
+  // ── Store-driven debug state ─────────────────────────────────────────────
+  const liveRuns = useWorkflowRunsStore((s) => s.liveRuns);
+  const startRun = useWorkflowRunsStore((s) => s.startRun);
+  const cancelRun = useWorkflowRunsStore((s) => s.cancelRun);
+  const resumeRun = useWorkflowRunsStore((s) => s.resumeRun);
+  const clearLiveRun = useWorkflowRunsStore((s) => s.clearLiveRun);
+
+  const activeLiveRun = activeRunId ? liveRuns.get(activeRunId) : undefined;
+  const debugNodeStatuses = useMemo(
+    () => (activeLiveRun ? toDebugNodeStatusMap(activeLiveRun.nodeStatuses) : new Map<string, DebugNodeStatus>()),
+    [activeLiveRun],
+  );
+  const debugStep = activeLiveRun?.currentStep ?? 0;
+  const debugRunStatus = activeLiveRun?.status ?? "";
+  const debugInterruptPayload = activeLiveRun?.interruptPayload;
+  const debugState = activeLiveRun?.state ?? {};
+  const debugEvents = activeLiveRun?.events ?? [];
+
   const canvasFeedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const workflowId = paramId;
@@ -222,6 +288,60 @@ export default function WorkflowStudioPage() {
       setIsSaving(false);
     }
   }
+
+  // ── Debug mode handlers ────────────────────────────────────────────────────
+
+  /** 启动工作流调试运行（通过 store）。 */
+  async function handleStartDebugRun() {
+    if (!workflowId || !workflowDefinition || workflowDefinition.nodes.length === 0) return;
+    try {
+      const runId = await startRun(workflowId);
+      if (runId) {
+        setActiveRunId(runId);
+        setStudioMode("debug");
+        setIsDebugResuming(false);
+      }
+    } catch (err) {
+      setCanvasFeedback((err as Error)?.message || "启动工作流运行失败。");
+    }
+  }
+
+  /** 取消当前调试运行（通过 store）。 */
+  async function handleCancelDebugRun() {
+    if (!activeRunId) return;
+    try {
+      await cancelRun(activeRunId);
+    } catch (err) {
+      setCanvasFeedback((err as Error)?.message || "取消运行失败。");
+    }
+  }
+
+  /** 退出调试模式，切换回编辑模式。 */
+  function handleExitDebugMode() {
+    if (activeRunId) {
+      clearLiveRun(activeRunId);
+    }
+    setStudioMode("edit");
+    setActiveRunId(null);
+    setIsDebugResuming(false);
+  }
+
+  /** 通过调试面板提交中断输入以恢复运行（通过 store）。 */
+  async function handleDebugResumeWithInput(value: unknown) {
+    if (!activeRunId) return;
+    setIsDebugResuming(true);
+    try {
+      await resumeRun(activeRunId, value);
+    } catch (err) {
+      setCanvasFeedback((err as Error)?.message || "恢复运行失败。");
+    } finally {
+      setIsDebugResuming(false);
+    }
+  }
+
+  /** 工作流是否拥有可执行的节点。 */
+  const hasNodes = (workflowDefinition?.nodes?.length ?? 0) > 0;
+  const isDebugRunActive = studioMode === "debug" && !!activeRunId && debugRunStatus === "running";
 
   function handleNodeSelection(nodeId: string) {
     setCanvasFeedbackState("");
@@ -467,6 +587,42 @@ export default function WorkflowStudioPage() {
             </div>
           </div>
           <div className="divider" />
+          {/* 调试模式控制按钮 */}
+          {studioMode === "debug" ? (
+            <>
+              {isDebugRunActive && (
+                <button
+                  className="topbar-icon-btn debug-stop-btn"
+                  title="停止运行"
+                  onClick={handleCancelDebugRun}
+                >
+                  <Square size={13} />
+                  <span>停止</span>
+                </button>
+              )}
+              <button
+                className="topbar-icon-btn debug-exit-btn"
+                title="退出调试模式"
+                onClick={handleExitDebugMode}
+              >
+                <ToggleRight size={15} />
+                <span>退出调试</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {hasNodes && (
+                <button
+                  className="topbar-icon-btn debug-run-btn"
+                  title="调试运行"
+                  onClick={handleStartDebugRun}
+                >
+                  <Bug size={15} />
+                  <span>调试</span>
+                </button>
+              )}
+            </>
+          )}
           <button
             className={`topbar-icon-btn${showRunPanel ? " active" : ""}`}
             title="运行/记录"
@@ -506,6 +662,23 @@ export default function WorkflowStudioPage() {
             </div>
           )}
 
+          {/* 调试模式状态栏 */}
+          {studioMode === "debug" && (
+            <div className="debug-status-bar">
+              <span className="debug-status-item">
+                <span className="debug-status-dot" data-status={debugRunStatus || "idle"} />
+                状态: {debugRunStatus || "idle"}
+              </span>
+              <span className="debug-status-item">步骤: {debugStep}</span>
+              <span className="debug-status-item">
+                运行中: {[...debugNodeStatuses].filter(([, s]) => s.phase === "running" || s.phase === "streaming").map(([id]) => id).join(", ") || "无"}
+              </span>
+              <span className="debug-status-item">
+                已完成: {[...debugNodeStatuses].filter(([, s]) => s.phase === "completed").length}/{workflowDefinition?.nodes.length ?? 0}
+              </span>
+            </div>
+          )}
+
           {workflowDefinition && Array.isArray(workflowDefinition.nodes) ? (
             <WorkflowCanvas
               definition={workflowDefinition}
@@ -519,6 +692,8 @@ export default function WorkflowStudioPage() {
               onDeleteNode={handleCanvasDeleteNode}
               onDeleteEdge={handleCanvasDeleteEdge}
               onUpdateEditor={handleCanvasEditorUpdate}
+              debugMode={studioMode === "debug"}
+              debugNodeStatuses={studioMode === "debug" ? debugNodeStatuses : undefined}
             />
           ) : definitionError ? (
             <div className="loading-state error-copy">{definitionError}</div>
@@ -552,25 +727,38 @@ export default function WorkflowStudioPage() {
         {/* Right inspector panel */}
         {showInspector && (
           <aside className="studio-right-panel">
-            <div className="inspector-content">
-              {workflowDefinition ? (
-                <WorkflowGraphInspector
-                  workflowId={workflowId}
-                  definition={workflowDefinition}
-                  selectedNodeId={selectedNodeId}
-                  selectedEdgeId={selectedEdgeId}
-                  compact
-                />
-              ) : definitionError ? (
-                <p className="error-copy" style={{ padding: "20px" }}>
-                  {definitionError}
-                </p>
-              ) : (
-                <p className="subtitle" style={{ padding: "20px" }}>
-                  加载中...
-                </p>
-              )}
-            </div>
+            {studioMode === "debug" && activeRunId ? (
+              <WorkflowDebugPanel
+                runId={activeRunId}
+                status={debugRunStatus}
+                currentStep={debugStep}
+                state={debugState}
+                events={debugEvents}
+                interruptPayload={debugInterruptPayload}
+                onResumeWithInput={handleDebugResumeWithInput}
+                isResuming={isDebugResuming}
+              />
+            ) : (
+              <div className="inspector-content">
+                {workflowDefinition ? (
+                  <WorkflowGraphInspector
+                    workflowId={workflowId}
+                    definition={workflowDefinition}
+                    selectedNodeId={selectedNodeId}
+                    selectedEdgeId={selectedEdgeId}
+                    compact
+                  />
+                ) : definitionError ? (
+                  <p className="error-copy" style={{ padding: "20px" }}>
+                    {definitionError}
+                  </p>
+                ) : (
+                  <p className="subtitle" style={{ padding: "20px" }}>
+                    加载中...
+                  </p>
+                )}
+              </div>
+            )}
           </aside>
         )}
       </main>
@@ -948,6 +1136,74 @@ export default function WorkflowStudioPage() {
           border-radius: 6px;
           font-size: 12px;
           z-index: 300;
+        }
+
+        /* ── 调试模式样式 ───────────────────────────────────────────────── */
+
+        .debug-run-btn {
+          border-color: rgba(59, 130, 246, 0.3);
+          color: #60a5fa;
+        }
+        .debug-run-btn:hover {
+          background: rgba(59, 130, 246, 0.12);
+          color: #93c5fd;
+        }
+
+        .debug-stop-btn {
+          border-color: rgba(239, 68, 68, 0.3);
+          color: #f87171;
+        }
+        .debug-stop-btn:hover {
+          background: rgba(239, 68, 68, 0.15);
+          color: #fca5a5;
+        }
+
+        .debug-exit-btn {
+          border-color: rgba(161, 161, 170, 0.3);
+          color: #a1a1aa;
+        }
+        .debug-exit-btn:hover {
+          background: rgba(161, 161, 170, 0.1);
+          color: #d4d4d8;
+        }
+
+        .debug-status-bar {
+          display: flex;
+          align-items: center;
+          gap: 20px;
+          padding: 6px 16px;
+          background: #121214;
+          border-bottom: 1px solid #27272a;
+          font-size: 12px;
+          color: #a1a1aa;
+          flex-shrink: 0;
+          z-index: 30;
+        }
+
+        .debug-status-item {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .debug-status-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+          background: #52525b;
+        }
+        .debug-status-dot[data-status="running"] {
+          background: #3b82f6;
+          box-shadow: 0 0 6px rgba(59, 130, 246, 0.6);
+          animation: debug-pulse 1.5s ease-in-out infinite;
+        }
+        .debug-status-dot[data-status="completed"] { background: #10b981; }
+        .debug-status-dot[data-status="error"] { background: #ef4444; }
+        .debug-status-dot[data-status="cancelled"] { background: #f59e0b; }
+
+        @keyframes debug-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.4; }
         }
 
         @media (max-width: 1200px) {

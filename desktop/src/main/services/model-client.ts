@@ -56,7 +56,7 @@ export type ModelCallOptions = {
   }>;
   onDelta?: (delta: { content?: string; reasoning?: string }) => void;
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void;
-  executionPlan?: Pick<ExecutionPlan, "adapterId" | "replayPolicy"> | null;
+  executionPlan?: Pick<ExecutionPlan, "adapterId" | "replayPolicy"> & { reasoningEffort?: string } | null;
   signal?: AbortSignal;
   timeoutMs?: number;
 };
@@ -368,12 +368,16 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     messages: wireMessages as ProviderAdapterMessage[],
     tools: tools as ProviderAdapterTool[] | undefined,
   };
+  const adapterContext = {
+    profile,
+    reasoningEffort: (executionPlan as { reasoningEffort?: "low" | "medium" | "high" } | null)?.reasoningEffort,
+  };
   const replayMessages = adapter.materializeReplayMessages(
-    { profile },
+    adapterContext,
     adapterInput,
   );
   const requestVariants = adapter.prepareRequest(
-    { profile },
+    adapterContext,
     { ...adapterInput, messages: replayMessages },
   );
 
@@ -381,7 +385,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   const maskedKey = profile.apiKey
     ? `${profile.apiKey.slice(0, 6)}...${profile.apiKey.slice(-4)} (len=${profile.apiKey.length})`
     : "(empty)";
-  console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model}`);
+  console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model} | adapter=${adapter.id} | reasoningEffort=${adapterContext.reasoningEffort ?? "(none)"} | tools=${tools?.length ?? 0}`);
   const { response } = await executeRequestVariants({
     url,
     headers,

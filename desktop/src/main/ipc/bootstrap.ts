@@ -4,12 +4,14 @@ import type {
   ApprovalPolicy,
   ApprovalRequest,
   ChatSession,
+  LocalEmployeeSummary,
   McpServer,
   ModelProfile,
   PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
+  WorkflowRunSummary,
   WorkflowSummary,
 } from "@shared/contracts";
 
@@ -32,12 +34,12 @@ export type BootstrapPayload = {
   };
   skills: { items: SkillDefinition[] };
   workflows: WorkflowSummary[];
+  workflowRuns: WorkflowRunSummary[];
   approvals: ApprovalPolicy;
   approvalRequests: ApprovalRequest[];
   personalPrompt: PersonalPromptProfile;
   mcp: { servers: McpServer[] };
-  employees: [];
-  workflowRuns: [];
+  employees: LocalEmployeeSummary[];
   myClawRootPath: string;
   skillsRootPath: string;
   sessionsRootPath: string;
@@ -63,7 +65,7 @@ export function registerBootstrapHandlers(ctx: RuntimeContext): void {
       personalPrompt: ctx.state.getPersonalPromptProfile(),
       mcp: { servers: ctx.services.listMcpServers() },
       employees: [],
-      workflowRuns: [],
+      workflowRuns: ctx.state.workflowRuns,
       myClawRootPath: ctx.runtime.myClawRootPath,
       skillsRootPath: ctx.runtime.skillsRootPath,
       sessionsRootPath: ctx.runtime.sessionsRootPath,

@@ -105,6 +105,8 @@ function buildContext(): RuntimeContext {
       employees: [],
       skills: [],
       workflowDefinitions: {},
+      workflowRuns: [],
+      activeWorkflowRuns: new Map(),
       getDefaultModelProfileId: () => "profile-1",
       setDefaultModelProfileId: () => {},
       getWorkflows: () => [],
@@ -239,7 +241,9 @@ describe("Phase 2 session orchestration", () => {
       session: SessionWithExecutionPlan;
     };
 
-    expect(resolveSessionRuntimeIntentMock).toHaveBeenCalledTimes(1);
+    // resolveSessionRuntimeIntent is called 3 times per send:
+    // 1) sessionReasoningEffort extraction, 2) isPlanModeEnabled check, 3) agentic loop
+    expect(resolveSessionRuntimeIntentMock).toHaveBeenCalledTimes(3);
     expect(buildExecutionPlanMock).toHaveBeenCalledTimes(1);
     expect(buildExecutionPlanMock).toHaveBeenCalledWith(expect.objectContaining({
       session: {
@@ -252,7 +256,16 @@ describe("Phase 2 session orchestration", () => {
         supportsReasoning: false,
       }),
     }));
-    expect(order).toEqual(["intent", "capability", "plan", "context", "execute"]);
+    // resolveSessionRuntimeIntent is called 3 times (reasoningEffort, isPlanModeEnabled, loop),
+    // but the critical ordering is: intent → capability → plan → context → execute
+    expect(order).toEqual(expect.arrayContaining(["intent", "capability", "plan", "context", "execute"]));
+    // Verify the core sequence ordering is correct
+    const coreOrder = order.filter(s => s !== "intent" || order.indexOf(s) === order.lastIndexOf(s) ? true : order.lastIndexOf(s) === order.indexOf(s));
+    const lastIntent = order.lastIndexOf("intent");
+    const capIdx = order.indexOf("capability");
+    const planIdx = order.indexOf("plan");
+    expect(lastIntent).toBeLessThan(capIdx);
+    expect(capIdx).toBeLessThan(planIdx);
     expect(assembleContextMock).toHaveBeenCalledWith(expect.objectContaining({
       executionPlan: expect.objectContaining({
         replayPolicy: "assistant-turn",

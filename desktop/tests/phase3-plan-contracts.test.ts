@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import type { ChatSession, PlanState, PlanTask, PlanTaskStatus } from "@shared/contracts";
-import { PLAN_TASK_STATUS_VALUES } from "@shared/contracts";
+import type {
+  ChatSession,
+  PlanModeApprovalStatus,
+  PlanModeState,
+  PlanModeWorkflowMode,
+  PlanState,
+  PlanStepKind,
+  PlanTask,
+  PlanTaskStatus,
+} from "@shared/contracts";
+import {
+  PLAN_MODE_APPROVAL_STATUS_VALUES,
+  PLAN_MODE_STATE_VALUES,
+  PLAN_MODE_WORKFLOW_MODE_VALUES,
+  PLAN_STEP_KIND_VALUES,
+  PLAN_TASK_STATUS_VALUES,
+} from "@shared/contracts";
 
 describe("Phase 3 plan contracts", () => {
   it("exports stable plan task status values", () => {
@@ -14,6 +29,38 @@ describe("Phase 3 plan contracts", () => {
 
     expect(PLAN_TASK_STATUS_VALUES).toHaveLength(knownStatuses.length);
     expect(PLAN_TASK_STATUS_VALUES).toEqual(expect.arrayContaining(knownStatuses));
+  });
+
+  it("exports stable plan mode values for workflow mode, phase, approval state, and step kind", () => {
+    const knownWorkflowModes = [
+      "default",
+      "plan",
+    ] satisfies readonly PlanModeWorkflowMode[];
+    const knownPlanModes = [
+      "off",
+      "planning",
+      "awaiting_approval",
+      "executing",
+      "completed",
+      "blocked",
+    ] satisfies readonly PlanModeState[];
+    const knownApprovalStatuses = [
+      "idle",
+      "pending",
+      "approved",
+      "rejected",
+    ] satisfies readonly PlanModeApprovalStatus[];
+    const knownStepKinds = [
+      "analysis",
+      "tool",
+      "verification",
+      "user_confirmation",
+    ] satisfies readonly PlanStepKind[];
+
+    expect(PLAN_MODE_WORKFLOW_MODE_VALUES).toEqual(expect.arrayContaining(knownWorkflowModes));
+    expect(PLAN_MODE_STATE_VALUES).toEqual(expect.arrayContaining(knownPlanModes));
+    expect(PLAN_MODE_APPROVAL_STATUS_VALUES).toEqual(expect.arrayContaining(knownApprovalStatuses));
+    expect(PLAN_STEP_KIND_VALUES).toEqual(expect.arrayContaining(knownStepKinds));
   });
 
   it("supports serializable plan task and plan state fields, including forward-compatible statuses", () => {
@@ -110,6 +157,77 @@ describe("Phase 3 plan contracts", () => {
         {
           id: "task-1",
           status: "completed",
+        },
+      ],
+    });
+  });
+
+  it("supports serializable plan mode state metadata alongside structured plan drafts", () => {
+    const sessionWithPlanMode = JSON.parse(JSON.stringify({
+      id: "session-with-plan-mode",
+      title: "Session With Plan Mode",
+      modelProfileId: "profile-1",
+      attachedDirectory: null,
+      createdAt: "2026-04-06T00:00:00.000Z",
+      planState: {
+        tasks: [
+          {
+            id: "task-plan-goal",
+            title: "Define plan goal",
+            status: "pending",
+          },
+        ],
+        updatedAt: "2026-04-06T00:00:01.000Z",
+      },
+      planModeState: {
+        mode: "awaiting_approval",
+        approvalStatus: "pending",
+        planVersion: 2,
+        lastPlanMessageId: "assistant-plan-message",
+        approvedAt: null,
+        structuredPlan: {
+          goal: "Ship visible plan mode",
+          summary: "Draft a visible execution plan before running tools",
+          assumptions: ["Existing planState task runtime remains reusable"],
+          openQuestions: ["Should plan mode auto-enable on complex prompts?"],
+          acceptanceCriteria: ["User must approve before execution"],
+          steps: [
+            {
+              id: "step-analyze",
+              title: "Analyze the request",
+              status: "pending",
+              kind: "analysis",
+            },
+            {
+              id: "step-approve",
+              title: "Wait for approval",
+              status: "pending",
+              kind: "user_confirmation",
+            },
+          ],
+        },
+      },
+      messages: [],
+    })) as ChatSession;
+
+    const sessionRecord = sessionWithPlanMode as ChatSession & Record<string, unknown>;
+
+    expect(sessionRecord.planModeState).toMatchObject({
+      mode: "awaiting_approval",
+      approvalStatus: "pending",
+      planVersion: 2,
+      lastPlanMessageId: "assistant-plan-message",
+    });
+    expect((sessionRecord.planModeState as { structuredPlan?: unknown } | undefined)?.structuredPlan).toMatchObject({
+      goal: "Ship visible plan mode",
+      steps: [
+        {
+          id: "step-analyze",
+          kind: "analysis",
+        },
+        {
+          id: "step-approve",
+          kind: "user_confirmation",
         },
       ],
     });

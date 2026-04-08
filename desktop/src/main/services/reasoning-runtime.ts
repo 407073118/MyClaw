@@ -26,6 +26,7 @@ const DEFAULT_SESSION_RUNTIME_INTENT: ResolvedSessionRuntimeIntent = {
   reasoningEffort: "medium",
   adapterHint: "auto",
   replayPolicy: "content-only",
+  workflowMode: "default",
 };
 
 /** 合并会话级与调用级 runtime intent，生成 Phase 1 的默认执行意图。 */
@@ -53,7 +54,9 @@ type IntentField =
   | "adapterHint"
   | "replayPolicy"
   | "reasoningEnabled"
-  | "toolStrategy";
+  | "toolStrategy"
+  | "workflowMode"
+  | "planModeEnabled";
 
 function hasIntentField(
   intent: SessionRuntimeIntent | null | undefined,
@@ -93,7 +96,13 @@ function hasIntentOverrides(
       && resolvedIntent.toolStrategy !== sessionResolvedIntent.toolStrategy)
     || (hasIntentField(sessionIntent, "toolStrategy")
       && sessionResolvedIntent.toolStrategy !== undefined
-      && sessionResolvedIntent.toolStrategy !== "auto");
+      && sessionResolvedIntent.toolStrategy !== "auto")
+    || changedByRequest("workflowMode")
+    || changedBySession("workflowMode")
+    || (hasIntentField(requestIntent, "planModeEnabled")
+      && resolvedIntent.planModeEnabled !== sessionResolvedIntent.planModeEnabled)
+    || (hasIntentField(sessionIntent, "planModeEnabled")
+      && sessionResolvedIntent.planModeEnabled === true);
 }
 
 /** 解析本轮执行应该走哪个 provider adapter。 */
@@ -220,6 +229,7 @@ export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPla
     adapterHint: resolvedIntent.adapterHint,
     replayPolicy,
     toolStrategy: resolvedIntent.toolStrategy,
+    workflowMode: resolvedIntent.workflowMode,
     degradationReason,
     planSource: resolvePlanSource(
       input,

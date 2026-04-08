@@ -112,6 +112,8 @@ function buildContext(): RuntimeContext {
       employees: [],
       skills: [],
       workflowDefinitions: {},
+      workflowRuns: [],
+      activeWorkflowRuns: new Map(),
       getDefaultModelProfileId: () => "profile-1",
       setDefaultModelProfileId: () => {},
       getWorkflows: () => [],

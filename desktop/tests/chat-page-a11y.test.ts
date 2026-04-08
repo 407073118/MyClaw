@@ -25,8 +25,7 @@ const mocks = vi.hoisted(() => {
   };
 
   const useWorkspaceStoreMock = Object.assign(
-    (selector?: unknown) =>
-      (typeof selector === "function" ? selector(workspace) : workspace),
+    (selector?: unknown) => (typeof selector === "function" ? selector(workspace) : workspace),
     {
       getState: () => workspace,
     },
@@ -83,5 +82,29 @@ describe("ChatPage", () => {
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "删除这条对话记录？" })).toBeNull());
     expect(document.activeElement).toBe(deleteButton);
+  });
+
+  it("calls deleteSession after confirming deletion", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => sessionStreamUnsubscribe),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    fireEvent.click(screen.getByTestId("session-delete-chat-session-1"));
+
+    const dialog = await screen.findByRole("dialog", { name: "删除这条对话记录？" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => expect(mocks.workspace.deleteSession).toHaveBeenCalledWith("chat-session-1"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "删除这条对话记录？" })).toBeNull());
   });
 });

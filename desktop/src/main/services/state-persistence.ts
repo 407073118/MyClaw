@@ -32,6 +32,7 @@ import type {
   ModelProfile,
   PersonalPromptProfile,
   WorkflowDefinition,
+  WorkflowRunSummary,
   WorkflowSummary,
 } from "@shared/contracts";
 import { createDefaultApprovalPolicy, createDefaultPersonalPromptProfile } from "@shared/contracts";
@@ -53,6 +54,7 @@ export type PersistedState = {
   sessions: ChatSession[];
   employees: LocalEmployeeSummary[];
   workflows: WorkflowSummary[];
+  workflowRuns: WorkflowRunSummary[];
   workflowDefinitions: Record<string, WorkflowDefinition>;
   defaultModelProfileId: string | null;
   approvalPolicy: ApprovalPolicy;
@@ -102,28 +104,54 @@ function workflowsDir(paths: MyClawPaths): string {
   return join(paths.myClawDir, "workflows");
 }
 
+function workflowRunsDir(paths: MyClawPaths): string {
+  return join(paths.myClawDir, "workflow-runs");
+}
+
 function hasOwnPlanState(value: object): boolean {
   return Object.prototype.hasOwnProperty.call(value, "planState");
+}
+
+function hasOwnPlanModeState(value: object): boolean {
+  return Object.prototype.hasOwnProperty.call(value, "planModeState");
+}
+
+function hasOwnTasks(value: object): boolean {
+  return Object.prototype.hasOwnProperty.call(value, "tasks");
 }
 
 function hydrateSession(
   meta: PersistedSessionMetadata,
   messages: ChatSession["messages"],
 ): ChatSession {
-  // 兼容迁移期旧会话：缺少 planState 时保持缺字段；显式 null/对象则原样恢复。
-  if (!hasOwnPlanState(meta)) {
-    return { ...meta, messages };
+  const hydratedSession = { ...meta, messages } as ChatSession;
+  // 兼容迁移期旧会话：缺少 planState / planModeState 时保持缺字段；显式 null/对象则原样恢复。
+  const hydrated = { ...meta, messages } as ChatSession;
+  if (hasOwnPlanModeState(meta)) {
+    hydratedSession.planModeState = meta.planModeState;
   }
-  return { ...meta, planState: meta.planState, messages };
+  if (hasOwnPlanState(meta)) {
+    hydratedSession.planState = meta.planState;
+  }
+  if (hasOwnTasks(meta)) {
+    hydratedSession.tasks = (meta as { tasks?: unknown }).tasks as typeof hydratedSession.tasks;
+  }
+  return hydratedSession;
 }
 
 function dehydrateSession(session: ChatSession): PersistedSessionMetadata {
   const { messages: _messages, ...meta }: { messages: ChatSession["messages"] } & PersistedSessionMetadata = session;
 
-  if (!hasOwnPlanState(session)) {
-    return meta;
+  if (hasOwnPlanModeState(session)) {
+    meta.planModeState = session.planModeState;
   }
-  return { ...meta, planState: session.planState };
+  if (hasOwnPlanState(session)) {
+    meta.planState = session.planState;
+  }
+  if (hasOwnTasks(session)) {
+    meta.tasks = session.tasks;
+  }
+  return meta;
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +225,7 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
 
   // ---- workflows ---------------------------------------------------------
   const workflowsArr: WorkflowSummary[] = [];
+  const workflowRuns: WorkflowRunSummary[] = [];
   const workflowDefinitions: Record<string, WorkflowDefinition> = {};
   const wfDir = workflowsDir(paths);
   ensureDir(wfDir);
@@ -226,11 +255,26 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
     // 不可读时从空数据启动
   }
 
+  const workflowRunDir = workflowRunsDir(paths);
+  ensureDir(workflowRunDir);
+  try {
+    for (const file of readdirSync(workflowRunDir)) {
+      if (!file.endsWith(".json")) continue;
+      const data = tryReadJson<WorkflowRunSummary>(join(workflowRunDir, file));
+      if (data && data.id) {
+        workflowRuns.push(data);
+      }
+    }
+  } catch {
+    // workflowRunsDir 涓嶅彲璇绘椂浠庣┖鏁版嵁鍚姩
+  }
+
   return {
     models,
     sessions,
     employees,
     workflows: workflowsArr,
+    workflowRuns,
     workflowDefinitions,
     defaultModelProfileId,
     approvalPolicy,
@@ -302,6 +346,35 @@ export async function saveWorkflow(
   const dir = workflowsDir(paths);
   ensureDir(dir);
   await atomicWriteFile(join(dir, `${workflow.id}.json`), JSON.stringify(workflow, null, 2));
+}
+
+export async function deleteWorkflowFile(
+  paths: MyClawPaths,
+  workflowId: string,
+): Promise<void> {
+  const filePath = join(workflowsDir(paths), `${workflowId}.json`);
+  if (existsSync(filePath)) {
+    await rm(filePath, { force: true });
+  }
+}
+
+export async function saveWorkflowRun(
+  paths: MyClawPaths,
+  workflowRun: WorkflowRunSummary,
+): Promise<void> {
+  const dir = workflowRunsDir(paths);
+  ensureDir(dir);
+  await atomicWriteFile(join(dir, `${workflowRun.id}.json`), JSON.stringify(workflowRun, null, 2));
+}
+
+export async function deleteWorkflowRunFile(
+  paths: MyClawPaths,
+  workflowRunId: string,
+): Promise<void> {
+  const filePath = join(workflowRunsDir(paths), `${workflowRunId}.json`);
+  if (existsSync(filePath)) {
+    await rm(filePath, { force: true });
+  }
 }
 
 export async function saveSettings(
