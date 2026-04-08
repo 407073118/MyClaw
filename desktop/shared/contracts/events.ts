@@ -66,6 +66,25 @@ export type ChatRunRuntimeStatusPayload = {
   reason?: string;
 };
 
+export type SiliconPersonStatus =
+  | "idle"
+  | "running"
+  | "needs_approval"
+  | "done"
+  | "error"
+  | "canceling"
+  | "canceled";
+
+export const SILICON_PERSON_STATUS_VALUES = [
+  "idle",
+  "running",
+  "needs_approval",
+  "done",
+  "error",
+  "canceling",
+  "canceled",
+] as const satisfies readonly SiliconPersonStatus[];
+
 export type RuntimeEvent<TPayload = Record<string, unknown>> = {
   id: string;
   type: EventType;

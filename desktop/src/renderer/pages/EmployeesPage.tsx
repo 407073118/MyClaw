@@ -11,9 +11,9 @@ export default function EmployeesPage() {
   const [description, setDescription] = useState("");
 
   useEffect(() => {
-    if (workspace.employees.length > 0) return;
-    workspace.loadEmployees().catch((error: unknown) => {
-      setLoadError(error instanceof Error ? error.message : "Load employees failed.");
+    if (workspace.siliconPersons.length > 0) return;
+    workspace.loadSiliconPersons().catch((error: unknown) => {
+      setLoadError(error instanceof Error ? error.message : "加载硅基员工列表失败。");
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -23,93 +23,97 @@ export default function EmployeesPage() {
     const trimmedDescription = description.trim();
 
     if (!trimmedName || !trimmedDescription) {
-      setCreateError("Name and description are required.");
+      setCreateError("名称和职责描述不能为空。");
       return;
     }
 
     setCreateError("");
     setIsCreating(true);
     try {
-      await workspace.createEmployee({ name: trimmedName, description: trimmedDescription });
+      await workspace.createSiliconPerson({
+        name: trimmedName,
+        title: trimmedName,
+        description: trimmedDescription,
+      });
       setName("");
       setDescription("");
     } catch (error) {
-      setCreateError(error instanceof Error ? error.message : "Create employee failed.");
+      setCreateError(error instanceof Error ? error.message : "创建硅基员工失败。");
     } finally {
       setIsCreating(false);
     }
   }
 
   return (
-    <main data-testid="employees-view" className="page-container">
+    <main data-testid="silicon-person-entry-view" className="page-container">
       <header className="page-header">
         <div className="header-text">
-          <span className="eyebrow">Employees</span>
-          <h2 className="page-title">Employees</h2>
+          <span className="eyebrow">Silicon Person</span>
+          <h2 className="page-title">硅基员工</h2>
           <p className="page-subtitle">
-            Platform library for silicon employees. This surface will host local instances, installs, and activation flows.
+            这里是硅基员工入口页，用来创建身份并进入每位员工的私域工作空间。
           </p>
         </div>
       </header>
 
       <section className="library-content">
         <article className="create-card">
-          <h3>Create Employee</h3>
-          <form data-testid="employee-create-form" className="create-form" onSubmit={handleCreate}>
+          <h3>创建硅基员工</h3>
+          <form data-testid="silicon-person-create-form" className="create-form" onSubmit={handleCreate}>
             <label className="field">
-              <span>Name</span>
+              <span>名称</span>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                data-testid="employee-create-name"
+                data-testid="silicon-person-create-name"
                 type="text"
-                placeholder="Research Assistant"
+                placeholder="Ada"
               />
             </label>
             <label className="field">
-              <span>Description</span>
+              <span>职责描述</span>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                data-testid="employee-create-description"
+                data-testid="silicon-person-create-description"
                 rows={3}
-                placeholder="Tracks recurring checks and summaries."
+                placeholder="负责承接主聊天分发，并在私域空间内持续推进任务。"
               />
             </label>
             {createError && <p className="error-copy">{createError}</p>}
             <button className="primary" type="submit" disabled={isCreating}>
-              Create Employee
+              创建硅基员工
             </button>
           </form>
         </article>
 
         <article className="list-card">
-          <h3>Local Employees</h3>
+          <h3>本地硅基员工</h3>
           {loadError ? (
             <p className="error-copy">{loadError}</p>
-          ) : workspace.employees.length === 0 ? (
-            <p className="empty-copy">No employees yet. Create one to start role-based automation.</p>
+          ) : workspace.siliconPersons.length === 0 ? (
+            <p className="empty-copy">还没有硅基员工。先创建一个身份，再开始协作。</p>
           ) : (
             <ul className="library-list">
-              {workspace.employees.map((employee) => (
+              {workspace.siliconPersons.map((siliconPerson) => (
                 <li
-                  key={employee.id}
-                  data-testid={`employee-card-${employee.id}`}
+                  key={siliconPerson.id}
+                  data-testid={`silicon-person-card-${siliconPerson.id}`}
                   className="library-item"
                 >
                   <div className="item-header">
-                    <strong>{employee.name}</strong>
-                    <span className="meta-pill">{employee.status}</span>
+                    <strong>{siliconPerson.title || siliconPerson.name}</strong>
+                    <span className="meta-pill">{siliconPerson.status}</span>
                   </div>
-                  <p className="item-summary">{employee.description}</p>
+                  <p className="item-summary">{siliconPerson.description}</p>
                   <div className="item-footer">
-                    <span className="meta-pill">{employee.source}</span>
+                    <span className="meta-pill">{siliconPerson.source}</span>
                     <Link
-                      to={`/employees/${employee.id}`}
-                      data-testid={`employee-open-${employee.id}`}
+                      to={`/employees/${siliconPerson.id}`}
+                      data-testid={`silicon-person-open-${siliconPerson.id}`}
                       className="open-link"
                     >
-                      Open Studio
+                      打开工作空间
                     </Link>
                   </div>
                 </li>

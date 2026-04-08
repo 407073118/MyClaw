@@ -7,7 +7,6 @@ import type {
   ApprovalRequest,
   BuiltinToolApprovalMode,
   ChatSession,
-  LocalEmployeeSummary,
   McpServer,
   McpServerConfig,
   ModelCatalogItem,
@@ -16,6 +15,7 @@ import type {
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
+  SiliconPerson,
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
 import type { BrMiniMaxRuntimeDiagnostics } from "../../../shared/br-minimax";
@@ -111,7 +111,7 @@ type WorkspaceState = {
   mcpServers: McpServer[];
   skills: SkillDefinition[];
   skillDetails: Record<string, unknown>;
-  employees: LocalEmployeeSummary[];
+  siliconPersons: SiliconPerson[];
   workflows: WorkflowDefinitionSummary[];
   workflowSummaries: Record<string, WorkflowDefinitionSummary>;
   workflowDefinitions: Record<string, unknown>;
@@ -208,10 +208,18 @@ type WorkspaceState = {
   }) => Promise<unknown>;
 
   // Employees
-  loadEmployees: () => Promise<LocalEmployeeSummary[]>;
-  loadEmployeeById: (employeeId: string) => Promise<LocalEmployeeSummary>;
-  createEmployee: (input: { name: string; description: string; [key: string]: unknown }) => Promise<LocalEmployeeSummary>;
-  updateEmployee: (employeeId: string, input: Partial<LocalEmployeeSummary & { workflowIds: string[] }>) => Promise<LocalEmployeeSummary>;
+  loadSiliconPersons: () => Promise<SiliconPerson[]>;
+  loadSiliconPersonById: (siliconPersonId: string) => Promise<SiliconPerson>;
+  createSiliconPerson: (input: { name: string; title?: string; description: string; [key: string]: unknown }) => Promise<SiliconPerson>;
+  updateSiliconPerson: (siliconPersonId: string, input: Partial<SiliconPerson>) => Promise<SiliconPerson>;
+  createSiliconPersonSession: (siliconPersonId: string, input?: { title?: string }) => Promise<ChatSession>;
+  switchSiliconPersonSession: (siliconPersonId: string, sessionId: string) => Promise<ChatSession>;
+  sendSiliconPersonMessage: (siliconPersonId: string, content: string) => Promise<ChatSession>;
+  startSiliconPersonWorkflowRun: (siliconPersonId: string, workflowId: string) => Promise<{
+    siliconPerson: SiliconPerson;
+    session: ChatSession;
+    runId: string | null;
+  }>;
 
   // Workflows
   loadWorkflows: () => Promise<WorkflowDefinitionSummary[]>;
@@ -288,6 +296,30 @@ function buildWorkflowSummaryMap(
   return Object.fromEntries(workflows.map((w) => [w.id, w]));
 }
 
+/** 统一把硅基员工会话 payload 合并回 store，避免会话正文与员工摘要分叉。 */
+function mergeSiliconPersonSessionPayload(
+  state: Pick<WorkspaceState, "siliconPersons" | "sessions" | "workflowRuns">,
+  payload: { siliconPerson: SiliconPerson; session: ChatSession },
+): Pick<WorkspaceState, "siliconPersons" | "sessions" | "workflowRuns"> {
+  const siliconPersons = [...state.siliconPersons];
+  const siliconPersonIndex = siliconPersons.findIndex((item) => item.id === payload.siliconPerson.id);
+  if (siliconPersonIndex >= 0) {
+    siliconPersons[siliconPersonIndex] = payload.siliconPerson;
+  } else {
+    siliconPersons.unshift(payload.siliconPerson);
+  }
+
+  const sessions = [...state.sessions];
+  const sessionIndex = sessions.findIndex((item) => item.id === payload.session.id);
+  if (sessionIndex >= 0) {
+    sessions[sessionIndex] = payload.session;
+  } else {
+    sessions.unshift(payload.session);
+  }
+
+  return { siliconPersons, sessions, workflowRuns: state.workflowRuns };
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -348,7 +380,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   mcpServers: [],
   skills: [],
   skillDetails: {},
-  employees: [],
+  siliconPersons: [],
   workflows: [],
   workflowSummaries: {},
   workflowDefinitions: {},
@@ -411,7 +443,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         mcpServers: payload.mcp?.servers ?? [],
         skills: payload.skills?.items ?? [],
         skillDetails: {},
-        employees: payload.employees ?? [],
+        siliconPersons: payload.siliconPersons ?? [],
         workflows: payload.workflows ?? [],
         workflowSummaries: buildWorkflowSummaryMap(payload.workflows ?? []),
         workflowRuns: Object.fromEntries((payload.workflowRuns ?? []).map((r: unknown) => [(r as { id: string }).id, r])),
@@ -841,7 +873,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       downloadUrl: token.downloadUrl,
       manifest: input.manifest,
     });
-    set({ employees: payload.items ?? get().employees });
+    set({ siliconPersons: payload.items ?? get().siliconPersons });
     return payload;
   },
 
@@ -869,46 +901,118 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   // Employees
   // -------------------------------------------------------------------------
 
-  async loadEmployees() {
-    const payload = await window.myClawAPI.fetchEmployees();
-    set({ employees: payload.items });
+  async loadSiliconPersons() {
+    const payload = await window.myClawAPI.listSiliconPersons();
+    set({ siliconPersons: payload.items });
     return payload.items;
   },
 
-  async loadEmployeeById(employeeId) {
-    const payload = await window.myClawAPI.getEmployee(employeeId);
+  async loadSiliconPersonById(siliconPersonId) {
+    const payload = await window.myClawAPI.getSiliconPerson(siliconPersonId);
     set((s) => {
-      const employees = [...s.employees];
-      const index = employees.findIndex((e) => e.id === employeeId);
+      const siliconPersons = [...s.siliconPersons];
+      const index = siliconPersons.findIndex((item) => item.id === siliconPersonId);
       if (index >= 0) {
-        employees[index] = payload.employee;
+        siliconPersons[index] = payload.siliconPerson;
       } else {
-        employees.unshift(payload.employee);
+        siliconPersons.unshift(payload.siliconPerson);
       }
-      return { employees };
+      return { siliconPersons };
     });
-    return payload.employee;
+    return payload.siliconPerson;
   },
 
-  async createEmployee(input) {
-    const payload = await window.myClawAPI.createEmployee(input as Parameters<typeof window.myClawAPI.createEmployee>[0]);
-    set({ employees: payload.items });
-    return payload.employee;
+  async createSiliconPerson(input) {
+    const payload = await window.myClawAPI.createSiliconPerson(input as Parameters<typeof window.myClawAPI.createSiliconPerson>[0]);
+    set({ siliconPersons: payload.items });
+    return payload.siliconPerson;
   },
 
-  async updateEmployee(employeeId, input) {
-    const payload = await window.myClawAPI.updateEmployee(employeeId, input as Parameters<typeof window.myClawAPI.updateEmployee>[1]);
+  async updateSiliconPerson(siliconPersonId, input) {
+    const payload = await window.myClawAPI.updateSiliconPerson(siliconPersonId, input as Parameters<typeof window.myClawAPI.updateSiliconPerson>[1]);
     set((s) => {
-      const employees = [...s.employees];
-      const index = employees.findIndex((e) => e.id === employeeId);
+      const siliconPersons = [...s.siliconPersons];
+      const index = siliconPersons.findIndex((item) => item.id === siliconPersonId);
       if (index >= 0) {
-        employees[index] = payload.employee;
+        siliconPersons[index] = payload.siliconPerson;
       } else {
-        employees.unshift(payload.employee);
+        siliconPersons.unshift(payload.siliconPerson);
       }
-      return { employees };
+      return { siliconPersons };
     });
-    return payload.employee;
+    return payload.siliconPerson;
+  },
+
+  /** 手动新建硅基员工会话，并把主线程返回的 currentSession 同步回本地。 */
+  async createSiliconPersonSession(siliconPersonId, input) {
+    console.info("[workspace] 手动新建硅基员工会话", {
+      siliconPersonId,
+      title: input?.title?.trim() || null,
+    });
+    const payload = await window.myClawAPI.createSiliconPersonSession(siliconPersonId, input);
+    set((s) => mergeSiliconPersonSessionPayload(s, payload));
+    return payload.session;
+  },
+
+  /** 显式切换硅基员工 currentSession，保持 renderer 与主线程路由一致。 */
+  async switchSiliconPersonSession(siliconPersonId, sessionId) {
+    console.info("[workspace] 切换硅基员工当前会话", {
+      siliconPersonId,
+      sessionId,
+    });
+    const payload = await window.myClawAPI.switchSiliconPersonSession(siliconPersonId, sessionId);
+    set((s) => mergeSiliconPersonSessionPayload(s, payload));
+    return payload.session;
+  },
+
+  /** 把消息路由到硅基员工 currentSession，并同步最新会话正文。 */
+  async sendSiliconPersonMessage(siliconPersonId, content) {
+    console.info("[workspace] 发送硅基员工消息", {
+      siliconPersonId,
+      contentLength: content.trim().length,
+    });
+    const payload = await window.myClawAPI.sendSiliconPersonMessage(siliconPersonId, content);
+    set((s) => mergeSiliconPersonSessionPayload(s, payload));
+    return payload.session;
+  },
+
+  /** 将指定硅基员工会话标记为已读，只同步当前会话未读状态，不改变 currentSession。 */
+  async markSiliconPersonSessionRead(siliconPersonId: string, sessionId: string) {
+    console.info("[workspace] 标记硅基员工会话已读", {
+      siliconPersonId,
+      sessionId,
+    });
+    const payload = await window.myClawAPI.markSiliconPersonSessionRead(siliconPersonId, sessionId);
+    set((s) => mergeSiliconPersonSessionPayload(s, payload));
+    return payload.session;
+  },
+
+  /** 为硅基员工当前会话启动已绑定 workflow run，并把会话与 run 摘要一起并回本地。 */
+  async startSiliconPersonWorkflowRun(siliconPersonId, workflowId) {
+    console.info("[workspace] 为硅基员工启动工作流运行", {
+      siliconPersonId,
+      workflowId,
+    });
+    const payload = await window.myClawAPI.startSiliconPersonWorkflowRun(siliconPersonId, workflowId);
+    set((s) => {
+      const nextState = mergeSiliconPersonSessionPayload(s, payload);
+      if (!payload.runId) {
+        return nextState;
+      }
+      return {
+        ...nextState,
+        workflowRuns: {
+          ...nextState.workflowRuns,
+          [payload.runId]: {
+            id: payload.runId,
+            workflowId,
+            status: "running",
+            startedAt: new Date().toISOString(),
+          },
+        },
+      };
+    });
+    return payload;
   },
 
   // -------------------------------------------------------------------------

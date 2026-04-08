@@ -3,13 +3,13 @@ import type {
   ApprovalRequest,
   ChatRunPhase,
   ChatSession,
-  LocalEmployeeSummary,
   McpServer,
   ModelProfile,
   PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
+  SiliconPerson,
   WorkflowDefinition,
   WorkflowRunSummary,
   WorkflowSummary,
@@ -39,7 +39,7 @@ export type RuntimeContext = {
   state: {
     models: ModelProfile[];
     sessions: ChatSession[];
-    employees: LocalEmployeeSummary[];
+    siliconPersons: SiliconPerson[];
     skills: SkillDefinition[];
     workflowDefinitions: Record<string, WorkflowDefinition>;
     workflowRuns: WorkflowRunSummary[];

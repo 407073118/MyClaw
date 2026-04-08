@@ -9,6 +9,7 @@ export * from "./plan";
 export * from "./personal-prompt";
 export * from "./session-runtime";
 export * from "./session";
+export * from "./silicon-person";
 export * from "./skill";
 export * from "./task";
 export * from "./ui";

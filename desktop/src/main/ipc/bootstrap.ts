@@ -4,13 +4,13 @@ import type {
   ApprovalPolicy,
   ApprovalRequest,
   ChatSession,
-  LocalEmployeeSummary,
   McpServer,
   ModelProfile,
   PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
   SkillDefinition,
+  SiliconPerson,
   WorkflowRunSummary,
   WorkflowSummary,
 } from "@shared/contracts";
@@ -39,7 +39,7 @@ export type BootstrapPayload = {
   approvalRequests: ApprovalRequest[];
   personalPrompt: PersonalPromptProfile;
   mcp: { servers: McpServer[] };
-  employees: LocalEmployeeSummary[];
+  siliconPersons: SiliconPerson[];
   myClawRootPath: string;
   skillsRootPath: string;
   sessionsRootPath: string;
@@ -64,7 +64,7 @@ export function registerBootstrapHandlers(ctx: RuntimeContext): void {
       approvalRequests: ctx.state.getApprovalRequests(),
       personalPrompt: ctx.state.getPersonalPromptProfile(),
       mcp: { servers: ctx.services.listMcpServers() },
-      employees: [],
+      siliconPersons: ctx.state.siliconPersons,
       workflowRuns: ctx.state.workflowRuns,
       myClawRootPath: ctx.runtime.myClawRootPath,
       skillsRootPath: ctx.runtime.skillsRootPath,

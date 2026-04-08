@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload } from "@shared/contracts";
+import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 
 import type { ActiveSessionRun, RuntimeContext } from "../services/runtime-context";
@@ -17,6 +17,7 @@ import { assembleContext } from "../services/context-assembler";
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
 import { extractEnrichedContext, buildEnrichedContextBlock } from "../services/context-enricher";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
+import { syncSiliconPersonExecutionResult } from "../services/silicon-person-session";
 import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
 import { createTask, listTasks, getTask, updateTask } from "../services/task-store";
 import type { TaskCreateInput, TaskUpdateInput } from "../services/task-store";
@@ -197,6 +198,87 @@ type SessionsPayload = {
   approvalRequests?: unknown[];
 };
 
+let registeredSessionSendMessageBridge:
+  | ((sessionId: string, input: SendMessageInput) => Promise<SessionPayload>)
+  | null = null;
+
+/** 复用已注册的 session:send-message 主链路，供其他 IPC 入口共享完整执行流程。 */
+export async function invokeRegisteredSessionSendMessage(
+  sessionId: string,
+  input: SendMessageInput,
+): Promise<SessionPayload> {
+  if (!registeredSessionSendMessageBridge) {
+    throw new Error("session:send-message bridge is not registered");
+  }
+  return registeredSessionSendMessageBridge(sessionId, input);
+}
+
+/** 按共享 session 运行态同步硅基员工摘要，非硅基员工会话时直接跳过。 */
+async function syncSiliconPersonSummaryForSession(
+  ctx: RuntimeContext,
+  session: ChatSession,
+): Promise<void> {
+  if (!session.siliconPersonId) {
+    return;
+  }
+  await syncSiliconPersonExecutionResult(ctx, {
+    siliconPersonId: session.siliconPersonId,
+    session,
+  });
+}
+
+/** 解析某个会话实际生效的审批策略，允许硅基员工覆盖 workspace 默认审批口径。 */
+function resolveApprovalPolicyForSession(
+  ctx: RuntimeContext,
+  session: ChatSession,
+): ApprovalPolicy {
+  const workspacePolicy = ctx.state.getApprovals();
+  const clonedWorkspacePolicy: ApprovalPolicy = {
+    ...workspacePolicy,
+    alwaysAllowedTools: [...workspacePolicy.alwaysAllowedTools],
+  };
+  if (!session.siliconPersonId) {
+    return clonedWorkspacePolicy;
+  }
+
+  const siliconPerson = ctx.state.siliconPersons.find((item) => item.id === session.siliconPersonId);
+  if (!siliconPerson) {
+    console.warn("[approval] 会话已绑定硅基员工，但未找到对应实体，回退 workspace 审批策略", {
+      sessionId: session.id,
+      siliconPersonId: session.siliconPersonId,
+    });
+    return clonedWorkspacePolicy;
+  }
+
+  if (siliconPerson.approvalMode === "auto_approve") {
+    console.info("[approval] 命中硅基员工 auto_approve 审批模式", {
+      sessionId: session.id,
+      siliconPersonId: siliconPerson.id,
+    });
+    return {
+      mode: "unrestricted",
+      autoApproveReadOnly: true,
+      autoApproveSkills: true,
+      alwaysAllowedTools: [],
+    };
+  }
+
+  if (siliconPerson.approvalMode === "always_ask") {
+    console.info("[approval] 命中硅基员工 always_ask 审批模式", {
+      sessionId: session.id,
+      siliconPersonId: siliconPerson.id,
+    });
+    return {
+      mode: "prompt",
+      autoApproveReadOnly: false,
+      autoApproveSkills: false,
+      alwaysAllowedTools: [],
+    };
+  }
+
+  return clonedWorkspacePolicy;
+}
+
 type SessionWithExecutionPlan = ChatSession & {
   executionPlan?: ResolvedExecutionPlan;
 };
@@ -230,6 +312,21 @@ function broadcastChatRunStatus(payload: ChatRunRuntimeStatusPayload): void {
   broadcastToRenderers("session:stream", {
     type: EventType.RuntimeStatus,
     ...payload,
+  });
+}
+
+/**
+ * 广播 session tasklist 更新，让聊天页与硅基员工工作台复用同一条实时流。
+ */
+export function broadcastSessionTasksUpdated(sessionId: string, tasks: Task[]): void {
+  console.info("[session:stream] 广播任务列表更新", {
+    sessionId,
+    taskCount: tasks.length,
+  });
+  broadcastToRenderers("session:stream", {
+    type: EventType.TasksUpdated,
+    sessionId,
+    tasks,
   });
 }
 
@@ -1258,9 +1355,11 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
   // 发送消息：进入 agentic 工具循环
   // -------------------------------------------------------------------------
 
-  ipcMain.handle(
-    "session:send-message",
-    async (_event, sessionId: string, input: SendMessageInput): Promise<SessionPayload> => {
+  const handleSessionSendMessage = async (
+    _event: unknown,
+    sessionId: string,
+    input: SendMessageInput,
+  ): Promise<SessionPayload> => {
       const session = ctx.state.sessions.find((s) => s.id === sessionId);
       if (!session) {
         throw new Error(`Session not found: ${sessionId}`);
@@ -1308,6 +1407,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         content: input.content,
         createdAt: now,
       });
+      await syncSiliconPersonSummaryForSession(ctx, session);
 
       // 通知渲染层本轮运行已开始
       broadcastToRenderers("session:stream", {
@@ -1352,6 +1452,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           messageId,
           reason: "model_profile_missing",
         });
+        await syncSiliconPersonSummaryForSession(ctx, session);
         getActiveSessionRuns(ctx).delete(sessionId);
         return { session };
       }
@@ -1698,7 +1799,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               const risk = getToolRisk(toolId, toolCall.name);
               const source = getApprovalSource(toolId);
 
-              const policy = ctx.state.getApprovals();
+              const policy = resolveApprovalPolicyForSession(ctx, session);
               const isOutsideWorkspace = toolId.startsWith("fs.") && toolExecutor.isOutsideWorkspace(workingDir, label.split("\n")[0].trim());
               const needsApproval = shouldRequestApproval({ policy, source, toolId, risk, isOutsideWorkspace });
 
@@ -1728,6 +1829,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 });
                 const existingRequests = ctx.state.getApprovalRequests();
                 ctx.state.setApprovalRequests([...existingRequests, approvalRequest]);
+                await syncSiliconPersonSummaryForSession(ctx, session);
 
                 broadcastToRenderers("session:stream", {
                   type: EventType.ApprovalRequested,
@@ -1755,6 +1857,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 ctx.state.setApprovalRequests(
                   ctx.state.getApprovalRequests().filter((r) => r.id !== approvalId),
                 );
+                await syncSiliconPersonSummaryForSession(ctx, session);
 
                 if (decision === "canceled") {
                   const abortError = new Error("User requested cancellation");
@@ -2190,6 +2293,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         messageId: currentMessageId,
         reason: terminalReason,
       });
+      await syncSiliconPersonSummaryForSession(ctx, session);
       getActiveSessionRuns(ctx).delete(sessionId);
 
       broadcastToRenderers("session:stream", {
@@ -2207,8 +2311,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
       // 将更新后的消息持久化到磁盘
       return { session };
-    },
-  );
+  };
+
+  registeredSessionSendMessageBridge = (sessionId, input) =>
+    handleSessionSendMessage(undefined, sessionId, input);
+
+  ipcMain.handle("session:send-message", handleSessionSendMessage);
 
   // 获取某个会话当前待处理的 execution intents
   ipcMain.handle(
@@ -2248,6 +2356,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         }
       }, 0);
       await saveSession(ctx.runtime.paths, session);
+      await syncSiliconPersonSummaryForSession(ctx, session);
       broadcastToRenderers("session:stream", {
         type: EventType.SessionUpdated,
         sessionId,

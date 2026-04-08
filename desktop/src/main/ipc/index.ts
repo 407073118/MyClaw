@@ -2,11 +2,11 @@ import type { RuntimeContext } from "../services/runtime-context";
 import { registerApprovalHandlers } from "./approvals";
 import { registerBootstrapHandlers } from "./bootstrap";
 import { registerCloudHandlers } from "./cloud";
-import { registerEmployeeHandlers } from "./employees";
 import { registerMcpHandlers } from "./mcp";
 import { registerModelHandlers } from "./models";
 import { registerPersonalPromptHandlers } from "./personal-prompt";
 import { registerSessionHandlers } from "./sessions";
+import { registerSiliconPersonHandlers } from "./silicon-persons";
 import { registerToolHandlers } from "./tools";
 import { registerSkillFileHandlers } from "./skill-files";
 import { registerWebPanelHandlers } from "./web-panel";
@@ -26,7 +26,7 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerApprovalHandlers(ctx);
   registerWorkflowHandlers(ctx);
   registerCloudHandlers(ctx);
-  registerEmployeeHandlers(ctx);
+  registerSiliconPersonHandlers(ctx);
   registerWebPanelHandlers(ctx);
   registerSkillFileHandlers(ctx);
 }

@@ -2,10 +2,10 @@ import { BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import type { ModelProfile, WorkflowDefinition, WorkflowRunSummary, WorkflowSummary } from "@shared/contracts";
+import type { ChatSession, ModelProfile, Task, WorkflowDefinition, WorkflowRunSummary, WorkflowSummary } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
-import { saveWorkflow, saveWorkflowRun, deleteWorkflowFile } from "../services/state-persistence";
+import { saveSession, saveWorkflow, saveWorkflowRun, deleteWorkflowFile } from "../services/state-persistence";
 import { callModel } from "../services/model-client";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import {
@@ -22,8 +22,28 @@ import {
 import type { ModelCaller, ModelProfileResolver, WorkflowCheckpointer, CheckpointData } from "../services/workflow-engine";
 import type { ToolExecutorFn, McpToolCallerFn } from "../services/workflow-engine";
 import { SqliteCheckpointer } from "../services/workflow-engine/sqlite-checkpointer";
+import { broadcastSessionTasksUpdated } from "./sessions";
+import {
+  applyWorkflowEventToSessionTasks,
+  seedWorkflowDrivenTasksForSession,
+} from "../services/silicon-person-workflow";
 
 type UpdateWorkflowInput = Partial<WorkflowDefinition>;
+type StartWorkflowRunInput = { workflowId: string; initialState?: Record<string, unknown> };
+
+let registeredWorkflowStartRunBridge:
+  | ((input: StartWorkflowRunInput) => Promise<{ runId: string }>)
+  | null = null;
+
+/** 复用已注册的 workflow:start-run 主链路，供其他 IPC 入口共享同一套运行时。 */
+export async function invokeRegisteredWorkflowStartRun(
+  input: StartWorkflowRunInput,
+): Promise<{ runId: string }> {
+  if (!registeredWorkflowStartRunBridge) {
+    throw new Error("workflow:start-run bridge is not registered");
+  }
+  return registeredWorkflowStartRunBridge(input);
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -72,6 +92,98 @@ function upsertWorkflowRun(ctx: RuntimeContext, run: WorkflowRunSummary): Workfl
     ctx.state.workflowRuns.push(run);
   }
   return run;
+}
+
+/** 判断两份 tasklist 是否真的发生了变化，避免 workflow 事件导致无意义的重复持久化。 */
+function didTasksChange(previous: Task[] | undefined, next: Task[]): boolean {
+  const changed = JSON.stringify(previous ?? []) !== JSON.stringify(next);
+  console.info("[workflow] 对比 session 任务列表是否变化", {
+    previousCount: previous?.length ?? 0,
+    nextCount: next.length,
+    changed,
+  });
+  return changed;
+}
+
+/** 从 workflow 启动参数里解析硅基员工 session 绑定，只在归属和绑定都正确时启用 task 驱动。 */
+function resolveSiliconPersonWorkflowSession(
+  ctx: RuntimeContext,
+  input: { workflowId: string; initialState?: Record<string, unknown> },
+): ChatSession | null {
+  const siliconPersonId = typeof input.initialState?.siliconPersonId === "string"
+    ? input.initialState.siliconPersonId
+    : null;
+  const sessionId = typeof input.initialState?.sessionId === "string"
+    ? input.initialState.sessionId
+    : null;
+
+  if (!siliconPersonId || !sessionId) {
+    console.info("[workflow] 当前 run 未绑定硅基员工 session，跳过 task 驱动", {
+      workflowId: input.workflowId,
+      siliconPersonId,
+      sessionId,
+    });
+    return null;
+  }
+
+  const siliconPerson = ctx.state.siliconPersons.find((item) => item.id === siliconPersonId) ?? null;
+  if (!siliconPerson || !siliconPerson.workflowIds.includes(input.workflowId)) {
+    console.warn("[workflow] 硅基员工不存在或未绑定该 workflow，跳过 task 驱动", {
+      workflowId: input.workflowId,
+      siliconPersonId,
+      sessionId,
+    });
+    return null;
+  }
+
+  const session = ctx.state.sessions.find((item) => item.id === sessionId) ?? null;
+  if (!session || session.siliconPersonId !== siliconPersonId) {
+    console.warn("[workflow] session 归属与硅基员工不一致，跳过 task 驱动", {
+      workflowId: input.workflowId,
+      siliconPersonId,
+      sessionId,
+      sessionOwner: session?.siliconPersonId ?? null,
+    });
+    return null;
+  }
+
+  console.info("[workflow] 已解析硅基员工 workflow-task 绑定", {
+    workflowId: input.workflowId,
+    siliconPersonId,
+    sessionId,
+  });
+  return session;
+}
+
+/** 把 workflow 投影后的 tasklist 回写到 session，并立即广播给 renderer。 */
+function syncSiliconPersonWorkflowTasks(
+  ctx: RuntimeContext,
+  session: ChatSession,
+  tasks: Task[],
+  reason: string,
+): void {
+  if (!didTasksChange(session.tasks, tasks)) {
+    console.info("[workflow] tasklist 未变化，跳过 session 持久化", {
+      sessionId: session.id,
+      reason,
+    });
+    return;
+  }
+
+  session.tasks = tasks;
+  console.info("[workflow] 已按 workflow 事件回写 session tasklist", {
+    sessionId: session.id,
+    reason,
+    taskCount: tasks.length,
+  });
+  saveSession(ctx.runtime.paths, session).catch((err) => {
+    console.error("[workflow] 持久化 session tasklist 失败", {
+      sessionId: session.id,
+      reason,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+  broadcastSessionTasksUpdated(session.id, tasks);
 }
 
 /**
@@ -381,12 +493,10 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
     return [...ctx.state.workflowRuns];
   });
 
-  ipcMain.handle(
-    "workflow:start-run",
-    async (
-      _event,
-      input: { workflowId: string; initialState?: Record<string, unknown> },
-    ): Promise<{ runId: string }> => {
+  const handleWorkflowStartRun = async (
+    _event: unknown,
+    input: StartWorkflowRunInput,
+  ): Promise<{ runId: string }> => {
       const workflow = ctx.state.getWorkflows().find((w) => w.id === input.workflowId);
       if (!workflow) {
         throw new Error(`Workflow not found: ${input.workflowId}`);
@@ -396,6 +506,7 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       if (!definition) {
         throw new Error(`Workflow definition not found: ${input.workflowId}`);
       }
+      const siliconPersonSession = resolveSiliconPersonWorkflowSession(ctx, input);
 
       // 创建执行器注册表（Phase 2A：桥接真实 callModel / BuiltinToolExecutor / MCP）
       const executorRegistry = createRealExecutorRegistry(ctx);
@@ -411,6 +522,15 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       // 桥接事件流到渲染层
       runner.emitter.on((event) => {
         broadcastToRenderers("workflow:stream", event);
+        if (!siliconPersonSession) {
+          return;
+        }
+        const nextTasks = applyWorkflowEventToSessionTasks({
+          session: siliconPersonSession,
+          workflow: definition,
+          event,
+        });
+        syncSiliconPersonWorkflowTasks(ctx, siliconPersonSession, nextTasks, `workflow-event:${event.type}`);
       });
 
       // 注册 runner 到活跃运行表
@@ -432,6 +552,14 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       saveWorkflowRun(ctx.runtime.paths, runSummary).catch((err) => {
         console.error("[workflow:start-run] failed to persist run", runId, err);
       });
+      if (siliconPersonSession) {
+        const seededTasks = seedWorkflowDrivenTasksForSession({
+          session: siliconPersonSession,
+          workflow: definition,
+          workflowRunId: runId,
+        });
+        syncSiliconPersonWorkflowTasks(ctx, siliconPersonSession, seededTasks, "run-seeded");
+      }
 
       // 异步执行 — 不 await，立即返回 runId
       runner.run(input.initialState).then((result) => {
@@ -445,6 +573,21 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         saveWorkflowRun(ctx.runtime.paths, completedRun).catch((err) => {
           console.error("[workflow:start-run] failed to persist completed run", runId, err);
         });
+        if (siliconPersonSession) {
+          const settledTasks = applyWorkflowEventToSessionTasks({
+            session: siliconPersonSession,
+            workflow: definition,
+            event: {
+              type: "run-complete",
+              runId,
+              status: result.status,
+              finalState: {},
+              totalSteps: result.totalSteps,
+              durationMs: result.durationMs,
+            },
+          });
+          syncSiliconPersonWorkflowTasks(ctx, siliconPersonSession, settledTasks, `workflow-run:${result.status}`);
+        }
 
         // 清理活跃运行
         ctx.state.activeWorkflowRuns.delete(runId);
@@ -463,13 +606,30 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         };
         upsertWorkflowRun(ctx, failedRun);
         saveWorkflowRun(ctx.runtime.paths, failedRun).catch(() => {});
+        if (siliconPersonSession) {
+          const failedTasks = applyWorkflowEventToSessionTasks({
+            session: siliconPersonSession,
+            workflow: definition,
+            event: {
+              type: "run-complete",
+              runId,
+              status: "failed",
+              finalState: {},
+              totalSteps: 0,
+              durationMs: 0,
+            },
+          });
+          syncSiliconPersonWorkflowTasks(ctx, siliconPersonSession, failedTasks, "workflow-run:failed");
+        }
         ctx.state.activeWorkflowRuns.delete(runId);
         console.error("[workflow:start-run] 工作流执行异常", { runId, error: errorMsg });
       });
 
       return { runId };
-    },
-  );
+    };
+
+  registeredWorkflowStartRunBridge = async (input) => handleWorkflowStartRun(null, input);
+  ipcMain.handle("workflow:start-run", handleWorkflowStartRun);
 
   ipcMain.handle(
     "workflow:interrupt-resume",

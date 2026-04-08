@@ -317,21 +317,37 @@ const myClawAPI = {
     ipcRenderer.invoke("cloud:import-workflow-package", input),
 
   // ---- 员工 ----------------------------------------------------------------
-  fetchEmployees: () =>
-    ipcRenderer.invoke("employee:list")
+  listSiliconPersons: () =>
+    ipcRenderer.invoke("silicon-person:list")
       .then((items: unknown[]) => ({ items }))
       .catch(() => ({ items: [] })),
 
-  getEmployee: (employeeId: string) =>
-    ipcRenderer.invoke("employee:get", employeeId)
-      .then((employee: unknown) => ({ employee }))
-      .catch(() => ({ employee: null })),
+  getSiliconPerson: (siliconPersonId: string) =>
+    ipcRenderer.invoke("silicon-person:get", siliconPersonId)
+      .then((siliconPerson: unknown) => ({ siliconPerson }))
+      .catch(() => ({ siliconPerson: null })),
 
-  createEmployee: (input: Record<string, unknown>) =>
-    ipcRenderer.invoke("employee:create", input).catch(() => ({ items: [], employee: null })),
+  createSiliconPerson: (input: Record<string, unknown>) =>
+    ipcRenderer.invoke("silicon-person:create", input).catch(() => ({ items: [], siliconPerson: null })),
 
-  updateEmployee: (employeeId: string, input: Record<string, unknown>) =>
-    ipcRenderer.invoke("employee:update", employeeId, input).catch(() => ({ employee: null })),
+  updateSiliconPerson: (siliconPersonId: string, input: Record<string, unknown>) =>
+    ipcRenderer.invoke("silicon-person:update", siliconPersonId, input).catch(() => ({ siliconPerson: null })),
+
+  createSiliconPersonSession: (siliconPersonId: string, input?: { title?: string }) =>
+    ipcRenderer.invoke("silicon-person:create-session", siliconPersonId, input ?? {}).catch(() => ({ siliconPerson: null, session: null })),
+
+  switchSiliconPersonSession: (siliconPersonId: string, sessionId: string) =>
+    ipcRenderer.invoke("silicon-person:switch-session", siliconPersonId, sessionId).catch(() => ({ siliconPerson: null, session: null })),
+
+  sendSiliconPersonMessage: (siliconPersonId: string, content: string) =>
+    ipcRenderer.invoke("silicon-person:send-message", siliconPersonId, { content }).catch(() => ({ siliconPerson: null, session: null })),
+
+  /** 标记硅基员工会话为已读，只回写当前会话的未读状态，不改变 currentSession。 */
+  markSiliconPersonSessionRead: (siliconPersonId: string, sessionId: string) =>
+    ipcRenderer.invoke("silicon-person:mark-session-read", siliconPersonId, sessionId).catch(() => ({ siliconPerson: null, session: null })),
+
+  startSiliconPersonWorkflowRun: (siliconPersonId: string, workflowId: string) =>
+    ipcRenderer.invoke("silicon-person:start-workflow-run", siliconPersonId, workflowId).catch(() => ({ siliconPerson: null, session: null, runId: null })),
 
   // ---- 技能 ----------------------------------------------------------------
   fetchSkillDetail: (skillId: string) =>
