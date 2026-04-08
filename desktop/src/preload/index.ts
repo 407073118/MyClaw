@@ -80,6 +80,11 @@ const myClawAPI = {
     _options?: { onSnapshot?: (snapshot: unknown) => void },
   ) => ipcRenderer.invoke("session:send-message", sessionId, { content }),
 
+  cancelSessionRun: (
+    sessionId: string,
+    input?: { runId?: string; messageId?: string; reason?: string },
+  ) => ipcRenderer.invoke("session:cancel-run", sessionId, input ?? {}),
+
   requestExecutionIntent: (sessionId: string, intent: unknown) =>
     ipcRenderer.invoke("session:get-execution-intents", sessionId),
 

@@ -1,6 +1,7 @@
 import type { PlanModeState, PlanState } from "./plan";
 import type { Task } from "./task";
 import type { A2UiPayload } from "./ui";
+import type { ChatRunPhase, ChatRunStatus } from "./events";
 import type {
   ResolvedExecutionPlan,
   SessionRuntimeIntent,
@@ -70,5 +71,13 @@ export type ChatSession = {
   planState?: PlanState | null;
   /** Task V2: session-scoped 任务列表，独立于 Plan Mode，普通对话中自动追踪多步骤工作。 */
   tasks?: Task[];
+  /** Chat run lifecycle metadata for interrupt-aware UI and persistence. */
+  chatRunState?: {
+    runId: string;
+    status: ChatRunStatus;
+    phase: ChatRunPhase;
+    activeMessageId?: string;
+    lastReason?: string | null;
+  } | null;
   messages: ChatMessage[];
 };

@@ -164,9 +164,19 @@ export class McpServerManager {
   async updateServer(id: string, updates: Partial<Omit<McpServerConfig, "id">>): Promise<McpServer | null> {
     const config = this.configs.find((c) => c.id === id);
     if (!config) return null;
+    const previousConfig = JSON.parse(JSON.stringify(config)) as McpServerConfig;
 
     Object.assign(config, updates);
     this.persist();
+
+    if (!config.enabled) {
+      await this.disconnectServer(id);
+      return this.toMcpServer(config);
+    }
+
+    if (this.shouldRefreshAfterUpdate(previousConfig, config)) {
+      return this.refreshServer(id);
+    }
 
     return this.toMcpServer(config);
   }
@@ -236,15 +246,7 @@ export class McpServerManager {
   async refreshServer(id: string): Promise<McpServer> {
     const config = this.configs.find((c) => c.id === id);
     if (!config) throw new Error(`MCP server not found: ${id}`);
-
-    const client = this.clients.get(id);
-    if (client?.connected) {
-      await client.reconnect();
-    } else {
-      await this.connectServer(id);
-    }
-
-    return this.toMcpServer(config);
+    return this.connectServer(id);
   }
 
   /** 连接所有启用中的服务（应用启动时调用）。 */
@@ -417,6 +419,56 @@ export class McpServerManager {
 
   private persist(): void {
     saveConfigs(this.configFilePath, this.configs);
+  }
+
+  /** 判断配置更新后是否需要重建 MCP 连接。 */
+  private shouldRefreshAfterUpdate(previousConfig: McpServerConfig, nextConfig: McpServerConfig): boolean {
+    if (!previousConfig.enabled && nextConfig.enabled) {
+      return true;
+    }
+
+    if (!previousConfig.enabled || !nextConfig.enabled) {
+      return false;
+    }
+
+    if (previousConfig.transport !== nextConfig.transport) {
+      return true;
+    }
+
+    if (nextConfig.transport === "http") {
+      const previousHttp = previousConfig as McpHttpServerConfig;
+      const nextHttp = nextConfig as McpHttpServerConfig;
+      return previousHttp.url !== nextHttp.url
+        || !this.isSameStringRecord(previousHttp.headers, nextHttp.headers);
+    }
+
+    const previousStdio = previousConfig as McpStdioServerConfig;
+    const nextStdio = nextConfig as McpStdioServerConfig;
+    return previousStdio.command !== nextStdio.command
+      || previousStdio.cwd !== nextStdio.cwd
+      || !this.isSameStringArray(previousStdio.args, nextStdio.args)
+      || !this.isSameStringRecord(previousStdio.env, nextStdio.env);
+  }
+
+  /** 比较字符串数组内容是否一致。 */
+  private isSameStringArray(left?: string[], right?: string[]): boolean {
+    const leftValue = left ?? [];
+    const rightValue = right ?? [];
+    if (leftValue.length !== rightValue.length) {
+      return false;
+    }
+    return leftValue.every((value, index) => value === rightValue[index]);
+  }
+
+  /** 比较字符串字典内容是否一致。 */
+  private isSameStringRecord(left?: Record<string, string>, right?: Record<string, string>): boolean {
+    const leftEntries = Object.entries(left ?? {});
+    const rightEntries = Object.entries(right ?? {});
+    if (leftEntries.length !== rightEntries.length) {
+      return false;
+    }
+
+    return leftEntries.every(([key, value]) => rightEntries.some(([otherKey, otherValue]) => otherKey === key && otherValue === value));
   }
 
   private toMcpServer(config: McpServerConfig): McpServer {

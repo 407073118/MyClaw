@@ -84,6 +84,12 @@ export type CloudSkillDetail = CloudSkillSummary & {
   }>;
 };
 
+type CancelSessionRunInput = {
+  runId?: string;
+  messageId?: string;
+  reason?: string;
+};
+
 // ---------------------------------------------------------------------------
 // Workspace state shape
 // ---------------------------------------------------------------------------
@@ -139,6 +145,7 @@ type WorkspaceState = {
   sendMessage: (content: string, options?: {
     onMessageStream?: (snapshot: unknown) => void;
   }) => Promise<void>;
+  cancelSessionRun: (input?: CancelSessionRunInput) => Promise<void>;
   updateSessionRuntimeIntent: (intent: Record<string, unknown>) => Promise<void>;
   approvePlan: () => Promise<void>;
   revisePlan: (feedback: string) => Promise<void>;
@@ -517,6 +524,27 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         };
       });
     }
+  },
+
+  async cancelSessionRun(input) {
+    const { currentSession } = get();
+    if (!currentSession) return;
+    const payload = await window.myClawAPI.cancelSessionRun(currentSession.id, input);
+    if (!payload?.session) return;
+    set((s) => {
+      const sessions = [...s.sessions];
+      const index = sessions.findIndex((item) => item.id === payload.session.id);
+      if (index >= 0) {
+        sessions[index] = payload.session;
+      } else {
+        sessions.unshift(payload.session);
+      }
+      return {
+        sessions,
+        approvals: payload.approvals ?? s.approvals,
+        approvalRequests: payload.approvalRequests ?? s.approvalRequests,
+      };
+    });
   },
 
   async updateSessionRuntimeIntent(intent) {

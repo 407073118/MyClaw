@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary } from "@shared/contracts";
+import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 
-import type { RuntimeContext } from "../services/runtime-context";
+import type { ActiveSessionRun, RuntimeContext } from "../services/runtime-context";
 import { callModel } from "../services/model-client";
 import type { ChatMessage as ModelChatMessage, ChatMessageContent, ResolvedToolCall } from "../services/model-client";
 import { saveSession, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles } from "../services/state-persistence";
@@ -118,7 +118,7 @@ export async function shutdownToolExecutor(): Promise<void> {
 
 /** 待处理审批映射：approval request ID → { resolve, timeout }。 */
 const pendingApprovals = new Map<string, {
-  resolve: (decision: "approve" | "deny") => void;
+  resolve: (decision: "approve" | "deny" | "canceled") => void;
   timeout: ReturnType<typeof setTimeout>;
 }>();
 
@@ -223,7 +223,150 @@ function broadcastToRenderers(channel: string, payload: unknown): void {
   }
 }
 
+/**
+ * 广播聊天运行态，供渲染层驱动 stop/canceling/canceled 等显式状态。
+ */
+function broadcastChatRunStatus(payload: ChatRunRuntimeStatusPayload): void {
+  broadcastToRenderers("session:stream", {
+    type: EventType.RuntimeStatus,
+    ...payload,
+  });
+}
+
+/**
+ * 同步当前聊天运行态到 session，并可选广播 runtime.status。
+ */
+function syncChatRunState(
+  session: ChatSession,
+  sessionId: string,
+  run: ActiveSessionRun | null,
+  input: {
+    runId: string;
+    status: ChatRunStatus;
+    phase: ChatRunPhase;
+    messageId?: string;
+    reason?: string | null;
+    broadcast?: boolean;
+  },
+): void {
+  if (run) {
+    run.phase = input.phase;
+    if (input.status === "running" || input.status === "canceling") {
+      run.status = input.status;
+    }
+    if (input.messageId) {
+      run.currentMessageId = input.messageId;
+    }
+  }
+  session.chatRunState = {
+    runId: input.runId,
+    status: input.status,
+    phase: input.phase,
+    ...(input.messageId ? { activeMessageId: input.messageId } : {}),
+    lastReason: input.reason ?? null,
+  };
+  if (input.broadcast ?? true) {
+    broadcastChatRunStatus({
+      sessionId,
+      runId: input.runId,
+      status: input.status,
+      phase: input.phase,
+      ...(input.messageId ? { messageId: input.messageId } : {}),
+      ...(input.reason ? { reason: input.reason } : {}),
+    });
+  }
+}
+
+/**
+ * 释放指定 run 仍在等待的审批，避免 stop 后卡住 Promise。
+ */
+function releasePendingApprovalsForRun(
+  ctx: RuntimeContext,
+  run: ActiveSessionRun,
+  decision: "canceled" = "canceled",
+): void {
+  if (run.pendingApprovalIds.length === 0) {
+    return;
+  }
+  const pendingIds = [...new Set(run.pendingApprovalIds)];
+  for (const approvalId of pendingIds) {
+    const pending = pendingApprovals.get(approvalId);
+    if (!pending) continue;
+    clearTimeout(pending.timeout);
+    pending.resolve(decision);
+    pendingApprovals.delete(approvalId);
+  }
+  ctx.state.setApprovalRequests(
+    ctx.state.getApprovalRequests().filter((request) => !pendingIds.includes(request.id)),
+  );
+  run.pendingApprovalIds = [];
+}
+
+/**
+ * 累积流式 partial 文本，便于用户中断时保留已经生成的半截回答。
+ */
+function appendStreamDraft(
+  drafts: Map<string, { content: string; reasoning?: string }>,
+  messageId: string,
+  delta: { content?: string; reasoning?: string },
+): void {
+  const existing = drafts.get(messageId) ?? { content: "" };
+  drafts.set(messageId, {
+    content: existing.content + (delta.content ?? ""),
+    ...(existing.reasoning || delta.reasoning
+      ? { reasoning: `${existing.reasoning ?? ""}${delta.reasoning ?? ""}` }
+      : {}),
+  });
+}
+
+/**
+ * 将已经流出的 partial assistant 内容落入 session，避免 abort 后丢失。
+ */
+function persistPartialAssistantDraft(
+  session: ChatSession,
+  messageId: string,
+  drafts: Map<string, { content: string; reasoning?: string }>,
+  now: string,
+): void {
+  const draft = drafts.get(messageId);
+  if (!draft || !draft.content.trim()) {
+    return;
+  }
+  const existingMessage = session.messages.find((message) => message.id === messageId);
+  if (existingMessage?.role === "assistant") {
+    if (typeof existingMessage.content === "string" && !existingMessage.content) {
+      existingMessage.content = draft.content;
+    }
+    if (draft.reasoning && !existingMessage.reasoning) {
+      existingMessage.reasoning = draft.reasoning;
+    }
+    return;
+  }
+  session.messages.push({
+    id: messageId,
+    role: "assistant",
+    content: draft.content,
+    ...(draft.reasoning ? { reasoning: draft.reasoning } : {}),
+    createdAt: now,
+  });
+}
+
+/**
+ * 统一识别用户主动 stop 触发的中断错误。
+ */
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 /** 确保旧会话在进入新链路前拥有 runtime version，便于后续做版本化迁移。 */
+/** 鍚戝悗鍏煎鏃х殑娴嬭瘯涓婁笅鏂囷紝纭繚浼氳瘽杩愯娉ㄥ唽琛ㄥ缁堝彲鐢ㄣ€?*/
+function getActiveSessionRuns(ctx: RuntimeContext): Map<string, ActiveSessionRun> {
+  if (!ctx.state.activeSessionRuns) {
+    ctx.state.activeSessionRuns = new Map<string, ActiveSessionRun>();
+  }
+  return ctx.state.activeSessionRuns;
+}
+
 function ensureSessionRuntimeVersion(session: ChatSession): void {
   if (!session.runtimeVersion) {
     session.runtimeVersion = SESSION_RUNTIME_VERSION;
@@ -1124,8 +1267,39 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       }
       ensureSessionRuntimeVersion(session);
 
+      const runId = randomUUID();
       const messageId = randomUUID();
       const now = new Date().toISOString();
+      const initialPhase: ChatRunPhase = (
+        isPlanModeEnabled(session)
+        && session.planModeState?.mode !== "executing"
+      )
+        ? "planning"
+        : "model";
+      const abortController = new AbortController();
+      const activeRun: ActiveSessionRun = {
+        runId,
+        abortController,
+        status: "running",
+        phase: initialPhase,
+        currentMessageId: messageId,
+        pendingApprovalIds: [],
+        cancelRequested: false,
+      };
+      const streamedDrafts = new Map<string, { content: string; reasoning?: string }>();
+      let currentMessageId = messageId;
+      let terminalStatus: ChatRunStatus = "failed";
+      let terminalReason: string | null = null;
+      let activePlanTaskId: string | null = null;
+
+      getActiveSessionRuns(ctx).set(sessionId, activeRun);
+      syncChatRunState(session, sessionId, activeRun, {
+        runId,
+        status: "running",
+        phase: initialPhase,
+        messageId: currentMessageId,
+        reason: null,
+      });
 
       // 追加用户消息
       session.messages.push({
@@ -1139,7 +1313,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       broadcastToRenderers("session:stream", {
         type: EventType.RunStarted,
         sessionId,
-        messageId,
+        messageId: currentMessageId,
       });
 
       // 解析当前会话应使用的模型配置
@@ -1171,6 +1345,14 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           sessionId,
           session,
         });
+        syncChatRunState(session, sessionId, null, {
+          runId,
+          status: "failed",
+          phase: initialPhase,
+          messageId,
+          reason: "model_profile_missing",
+        });
+        getActiveSessionRuns(ctx).delete(sessionId);
         return { session };
       }
 
@@ -1288,17 +1470,20 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           tools: [],
           executionPlan,
           onDelta: (delta) => {
+            appendStreamDraft(streamedDrafts, currentMessageId, delta);
             broadcastToRenderers("session:stream", {
               type: EventType.MessageDelta,
               sessionId,
-              messageId,
+              messageId: currentMessageId,
               delta,
             });
           },
+          signal: abortController.signal,
         });
         const structuredPlan = parseStructuredPlan(result.content, buildPlanTaskTitle(input.content));
         applyStructuredPlanDraft(session, structuredPlan, messageId, new Date().toISOString());
-        return finalizePlanDraftRound(
+        terminalStatus = "completed";
+        const payload = await finalizePlanDraftRound(
           ctx,
           session,
           sessionId,
@@ -1306,9 +1491,18 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           result.content,
           new Date().toISOString(),
         );
+        syncChatRunState(session, sessionId, null, {
+          runId,
+          status: "completed",
+          phase: "planning",
+          messageId,
+          reason: null,
+        });
+        getActiveSessionRuns(ctx).delete(sessionId);
+        return payload;
       }
 
-      let activePlanTaskId = session.planModeState?.mode === "executing"
+      activePlanTaskId = session.planModeState?.mode === "executing"
         ? selectPlanModeTaskForRound(session, input.content, messageId, now)
         : ensurePlanTaskForRound(session, input.content, messageId, now);
 
@@ -1327,12 +1521,19 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           sessionId,
           session,
         });
+        syncChatRunState(session, sessionId, null, {
+          runId,
+          status: "completed",
+          phase: initialPhase,
+          messageId: currentMessageId,
+          reason: null,
+        });
+        getActiveSessionRuns(ctx).delete(sessionId);
         return { session };
       }
 
       // ----- Agentic 循环：调用模型 → 执行工具 → 回填结果 → 重复 -----
       let round = 0;
-      let currentMessageId = messageId;
       const roundSignatures: string[] = [];
       let loopWarningInjected = false;
       let completedNormally = false;
@@ -1428,12 +1629,21 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               ] as ModelChatMessage[]
             : modelMessages;
 
+          syncChatRunState(session, sessionId, activeRun, {
+            runId,
+            status: activeRun.cancelRequested ? "canceling" : "running",
+            phase: "model",
+            messageId: currentMessageId,
+            reason: activeRun.cancelRequested ? "user_requested" : null,
+          });
+
           const result = await callModel({
             profile: modelProfile,
             messages: guidedModelMessages,
             tools,
             executionPlan,
             onDelta: (delta) => {
+              appendStreamDraft(streamedDrafts, currentMessageId, delta);
               broadcastToRenderers("session:stream", {
                 type: EventType.MessageDelta,
                 sessionId,
@@ -1441,6 +1651,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 delta,
               });
             },
+            signal: abortController.signal,
           });
 
           // 检查模型是否发起了工具调用
@@ -1508,6 +1719,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   } : {}),
                 };
 
+                syncChatRunState(session, sessionId, activeRun, {
+                  runId,
+                  status: activeRun.cancelRequested ? "canceling" : "running",
+                  phase: "approval",
+                  messageId: currentMessageId,
+                  reason: activeRun.cancelRequested ? "user_requested" : null,
+                });
                 const existingRequests = ctx.state.getApprovalRequests();
                 ctx.state.setApprovalRequests([...existingRequests, approvalRequest]);
 
@@ -1517,7 +1735,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   approvalRequest,
                 });
 
-                const decision = await new Promise<"approve" | "deny">((resolve) => {
+                activeRun.pendingApprovalIds.push(approvalId);
+                const decision = await new Promise<"approve" | "deny" | "canceled">((resolve) => {
                   // 自动清理：如果渲染层 5 分钟内未响应，则自动拒绝
                   const timeout = setTimeout(() => {
                     if (pendingApprovals.has(approvalId)) {
@@ -1532,10 +1751,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 const pending = pendingApprovals.get(approvalId);
                 if (pending) clearTimeout(pending.timeout);
                 pendingApprovals.delete(approvalId);
+                activeRun.pendingApprovalIds = activeRun.pendingApprovalIds.filter((id) => id !== approvalId);
                 ctx.state.setApprovalRequests(
                   ctx.state.getApprovalRequests().filter((r) => r.id !== approvalId),
                 );
 
+                if (decision === "canceled") {
+                  const abortError = new Error("User requested cancellation");
+                  abortError.name = "AbortError";
+                  throw abortError;
+                }
                 if (decision === "deny") {
                   approvedTools.push({ toolCall, denied: true });
                   continue;
@@ -1546,6 +1771,18 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             }
 
             // ---- 第 2 步：执行单个工具调用（复用共享 helper） ----
+            if (activeRun.cancelRequested) {
+              const abortError = new Error("User requested cancellation");
+              abortError.name = "AbortError";
+              throw abortError;
+            }
+            syncChatRunState(session, sessionId, activeRun, {
+              runId,
+              status: activeRun.cancelRequested ? "canceling" : "running",
+              phase: "tools",
+              messageId: currentMessageId,
+              reason: activeRun.cancelRequested ? "user_requested" : null,
+            });
             const executeSingleTool = async (
               toolCall: ResolvedToolCall,
             ): Promise<{ content: ChatMessageContent; succeeded: boolean; failureReason?: string }> => {
@@ -1595,7 +1832,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                     toolCall.input,
                   );
                 } else {
-                  const execResult = await toolExecutor.execute(toolId, label, workingDir);
+                  const execResult = await toolExecutor.execute(toolId, label, workingDir, {
+                    signal: abortController.signal,
+                  });
                   toolSucceeded = execResult.success;
                   toolOutput = execResult.success
                     ? execResult.output
@@ -1867,6 +2106,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   }
                 }
               }
+              terminalStatus = "completed";
+              terminalReason = null;
               completedNormally = true;
             }
             break;
@@ -1897,7 +2138,21 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           }
         }
       } catch (err) {
-        const errorText = err instanceof Error ? err.message : String(err);
+        const now = new Date().toISOString();
+        if (isAbortError(err)) {
+          terminalStatus = "canceled";
+          terminalReason = activeRun.cancelRequested ? "user_requested" : "aborted";
+          persistPartialAssistantDraft(session, currentMessageId, streamedDrafts, now);
+          if (session.planModeState) {
+            session.planModeState = {
+              ...session.planModeState,
+              mode: "canceled",
+              blockedReason: undefined,
+            };
+            syncPlanModeState(session, now);
+          }
+        } else {
+          const errorText = err instanceof Error ? err.message : String(err);
         const errorContent = `[模型调用失败] ${errorText}`;
 
         broadcastToRenderers("session:stream", {
@@ -1911,9 +2166,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           id: currentMessageId,
           role: "assistant",
           content: errorContent,
-          createdAt: new Date().toISOString(),
+          createdAt: now,
         });
-        markPlanTaskBlocked(session, activePlanTaskId, errorText, new Date().toISOString());
+        markPlanTaskBlocked(session, activePlanTaskId, errorText, now);
         if (session.planModeState?.mode === "executing") {
           session.planModeState = {
             ...session.planModeState,
@@ -1921,7 +2176,21 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             blockedReason: errorText,
           };
         }
+        terminalStatus = "failed";
+        terminalReason = errorText;
       }
+
+      }
+
+      releasePendingApprovalsForRun(ctx, activeRun);
+      syncChatRunState(session, sessionId, null, {
+        runId,
+        status: terminalStatus,
+        phase: activeRun.phase,
+        messageId: currentMessageId,
+        reason: terminalReason,
+      });
+      getActiveSessionRuns(ctx).delete(sessionId);
 
       broadcastToRenderers("session:stream", {
         type: EventType.MessageCompleted,
@@ -1942,6 +2211,52 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
   );
 
   // 获取某个会话当前待处理的 execution intents
+  ipcMain.handle(
+    "session:cancel-run",
+    async (
+      _event,
+      sessionId: string,
+      input?: { runId?: string; messageId?: string; reason?: string },
+    ): Promise<{ success: boolean; state: "idle" | "stale" | "canceling" }> => {
+      const session = ctx.state.sessions.find((s) => s.id === sessionId);
+      if (!session) {
+        throw new Error(`Session not found: ${sessionId}`);
+      }
+
+      const activeRun = getActiveSessionRuns(ctx).get(sessionId);
+      if (!activeRun) {
+        return { success: false, state: "idle" };
+      }
+      if (input?.runId && input.runId !== activeRun.runId) {
+        return { success: false, state: "stale" };
+      }
+
+      activeRun.cancelRequested = true;
+      activeRun.status = "canceling";
+      const reason = input?.reason ?? "user_requested";
+      syncChatRunState(session, sessionId, activeRun, {
+        runId: activeRun.runId,
+        status: "canceling",
+        phase: activeRun.phase,
+        messageId: input?.messageId ?? activeRun.currentMessageId,
+        reason,
+      });
+      releasePendingApprovalsForRun(ctx, activeRun);
+      setTimeout(() => {
+        if (!activeRun.abortController.signal.aborted) {
+          activeRun.abortController.abort();
+        }
+      }, 0);
+      await saveSession(ctx.runtime.paths, session);
+      broadcastToRenderers("session:stream", {
+        type: EventType.SessionUpdated,
+        sessionId,
+        session,
+      });
+      return { success: true, state: "canceling" };
+    },
+  );
+
   ipcMain.handle(
     "session:get-execution-intents",
     async (_event, sessionId: string): Promise<ExecutionIntent[]> => {

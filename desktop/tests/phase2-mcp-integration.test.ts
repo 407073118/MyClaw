@@ -10,7 +10,7 @@
  * Note: MCP-03/04/05/06/08 require real child processes — tested in integration.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -216,5 +216,93 @@ describe("Phase 2: MCP server health tracking", () => {
     expect(servers[0].health).toBe("unknown");
     expect(servers[0].state?.connected).toBe(false);
     expect(servers[0].state?.toolCount).toBe(0);
+  });
+});
+
+describe("Phase 2: MCP server runtime reconfiguration", () => {
+  it("should refresh enabled servers after saving runtime config changes", async () => {
+    const configPath = join(testDir, "mcp-servers.json");
+    writeFileSync(configPath, JSON.stringify([{
+      id: "http-1",
+      name: "tms",
+      source: "manual",
+      enabled: true,
+      transport: "http",
+      url: "https://example.com/mcp",
+      headers: {
+        "X-MCP-Token": "old-user",
+      },
+    }]), "utf8");
+
+    const manager = new McpServerManager(testDir);
+    const refreshSpy = vi
+      .spyOn(manager, "refreshServer")
+      .mockImplementation(async () => manager.listServers()[0]!);
+
+    await manager.updateServer("http-1", {
+      headers: {
+        "X-MCP-Token": "new-user",
+      },
+    });
+
+    expect(refreshSpy).toHaveBeenCalledWith("http-1");
+
+    const configs = JSON.parse(readFileSync(configPath, "utf8"));
+    expect(configs[0].headers["X-MCP-Token"]).toBe("new-user");
+  });
+
+  it("should rebuild connected servers when refresh is requested", async () => {
+    const configPath = join(testDir, "mcp-servers.json");
+    writeFileSync(configPath, JSON.stringify([{
+      id: "http-1",
+      name: "tms",
+      source: "manual",
+      enabled: true,
+      transport: "http",
+      url: "https://example.com/mcp",
+      headers: {
+        "X-MCP-Token": "user-a",
+      },
+    }]), "utf8");
+
+    const manager = new McpServerManager(testDir);
+    const oldClient = {
+      connected: true,
+      tools: [],
+      error: null,
+      connect: vi.fn(),
+      disconnect: vi.fn(async () => {}),
+      reconnect: vi.fn(async () => []),
+      callTool: vi.fn(),
+      on: vi.fn(),
+      removeAllListeners: vi.fn(),
+    };
+
+    (manager as any).clients.set("http-1", oldClient);
+
+    const connectSpy = vi
+      .spyOn(manager, "connectServer")
+      .mockImplementation(async () => {
+        await manager.disconnectServer("http-1");
+        const freshClient = {
+          connected: true,
+          tools: [],
+          error: null,
+          connect: vi.fn(),
+          disconnect: vi.fn(async () => {}),
+          reconnect: vi.fn(async () => []),
+          callTool: vi.fn(),
+          on: vi.fn(),
+          removeAllListeners: vi.fn(),
+        };
+        (manager as any).clients.set("http-1", freshClient);
+        return manager.listServers()[0]!;
+      });
+
+    await manager.refreshServer("http-1");
+
+    expect(connectSpy).toHaveBeenCalledWith("http-1");
+    expect(oldClient.reconnect).not.toHaveBeenCalled();
+    expect((manager as any).clients.get("http-1")).not.toBe(oldClient);
   });
 });

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeContext } from "../src/main/services/runtime-context";
+import { PLAN_MODE_STATE_VALUES } from "@shared/contracts";
 
 const ORCHESTRATION_TEST_TIMEOUT_MS = 20000;
 
@@ -188,6 +189,12 @@ describe("Phase 3 session planning orchestration", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it("includes canceled in the plan mode state vocabulary for explicit user stops", () => {
+    expect(PLAN_MODE_STATE_VALUES).toEqual(expect.arrayContaining([
+      "canceled",
+    ]));
   });
 
   it("creates and updates plan state during session execution when the session has no plan yet", async () => {

@@ -55,6 +55,15 @@ type TaskItem = {
   done: boolean;
 };
 
+type ToolExecutionOptions = {
+  signal?: AbortSignal;
+};
+
+type AbortSignalScope = {
+  signal: AbortSignal;
+  dispose: () => void;
+};
+
 const DEFAULT_EXEC_TIMEOUT_MS = 30_000;
 const DEFAULT_EXEC_TIMEOUT_MULTIPLIER = 2;
 const DEFAULT_EXEC_MAX_ATTEMPTS = 6;
@@ -258,6 +267,48 @@ function buildExecEnvironment(): NodeJS.ProcessEnv {
 }
 
 /** Windows 下先切换到 UTF-8 code page，再执行用户命令。 */
+/** 组合调用方 signal 与内部超时信号，避免互相覆盖。 */
+function createAbortSignalScope(timeoutMs: number, callerSignal?: AbortSignal): AbortSignalScope {
+  const controller = new AbortController();
+  const disposers: Array<() => void> = [];
+
+  /** 统一触发中断，供 caller abort 和 timeout 共用。 */
+  const abort = (): void => {
+    if (!controller.signal.aborted) {
+      controller.abort();
+    }
+  };
+
+  if (callerSignal) {
+    const onCallerAbort = (): void => {
+      abort();
+    };
+
+    if (callerSignal.aborted) {
+      abort();
+    } else {
+      callerSignal.addEventListener("abort", onCallerAbort, { once: true });
+      disposers.push(() => callerSignal.removeEventListener("abort", onCallerAbort));
+    }
+  }
+
+  const timer = setTimeout(() => {
+    abort();
+  }, timeoutMs);
+  disposers.push(() => clearTimeout(timer));
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      while (disposers.length > 0) {
+        const dispose = disposers.pop();
+        dispose?.();
+      }
+    },
+  };
+}
+
+/** Windows 下先切换到 UTF-8 code page，再执行用户命令。 */
 function buildExecCommand(command: string): string {
   if (process.platform !== "win32") {
     return command;
@@ -418,11 +469,12 @@ export class BuiltinToolExecutor {
     toolId: string,
     label: string,
     workingDir: string | null,
+    options?: ToolExecutionOptions,
   ): Promise<ToolExecutionResult> {
     const cwd = workingDir ? resolve(workingDir) : process.cwd();
 
     try {
-      return await this.dispatch(toolId, label, cwd);
+      return await this.dispatch(toolId, label, cwd, options);
     } catch (err) {
       return {
         success: false,
@@ -443,7 +495,12 @@ export class BuiltinToolExecutor {
   }
 
   /** 分发具体工具实现。 */
-  private async dispatch(toolId: string, label: string, cwd: string): Promise<ToolExecutionResult> {
+  private async dispatch(
+    toolId: string,
+    label: string,
+    cwd: string,
+    options?: ToolExecutionOptions,
+  ): Promise<ToolExecutionResult> {
     if (toolId === "fs.read") {
       const filePath = this.resolvePathSafe(cwd, label.trim());
       const content = readFileSync(filePath, "utf8");
@@ -549,11 +606,11 @@ export class BuiltinToolExecutor {
     }
 
     if (toolId === "http.fetch") {
-      return this.executeHttpFetch(label.trim());
+      return this.executeHttpFetch(label.trim(), options?.signal);
     }
 
     if (toolId === "web.search") {
-      return this.executeWebSearch(label.trim());
+      return this.executeWebSearch(label.trim(), options?.signal);
     }
 
     if (toolId.startsWith("skill_invoke__")) {
@@ -845,12 +902,11 @@ export class BuiltinToolExecutor {
   }
 
   /** 发起简单 HTTP GET 请求。 */
-  private async executeHttpFetch(url: string): Promise<ToolExecutionResult> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
+  private async executeHttpFetch(url: string, callerSignal?: AbortSignal): Promise<ToolExecutionResult> {
+    const scope = createAbortSignalScope(12_000, callerSignal);
 
     try {
-      const response = await fetch(url, { method: "GET", signal: controller.signal });
+      const response = await fetch(url, { method: "GET", signal: scope.signal });
       const body = (await response.text()).slice(0, 8000);
       const headers = [...response.headers.entries()]
         .slice(0, 20)
@@ -870,21 +926,20 @@ export class BuiltinToolExecutor {
         error: err instanceof Error ? err.message : "未知错误",
       };
     } finally {
-      clearTimeout(timer);
+      scope.dispose();
     }
   }
 
   /** 使用 DuckDuckGo HTML 页面做简单搜索。 */
-  private async executeWebSearch(query: string): Promise<ToolExecutionResult> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
+  private async executeWebSearch(query: string, callerSignal?: AbortSignal): Promise<ToolExecutionResult> {
+    const scope = createAbortSignalScope(15_000, callerSignal);
 
     try {
       const url = "https://html.duckduckgo.com/html/?q=" + encodeURIComponent(query);
       const response = await fetch(url, {
         method: "GET",
         headers: { "User-Agent": "MyClaw/1.0" },
-        signal: controller.signal,
+        signal: scope.signal,
       });
       const html = await response.text();
 
@@ -911,7 +966,7 @@ export class BuiltinToolExecutor {
         error: err instanceof Error ? err.message : "未知错误",
       };
     } finally {
-      clearTimeout(timer);
+      scope.dispose();
     }
   }
 

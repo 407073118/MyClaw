@@ -83,6 +83,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": true,
+      "include": "build/installer.nsh",
       "installerIcon": "build/icon.ico"
     }
   }

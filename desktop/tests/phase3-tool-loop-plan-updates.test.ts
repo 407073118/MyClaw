@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ApprovalRequest } from "@shared/contracts";
+import { EventType, type ApprovalRequest } from "@shared/contracts";
 import type { RuntimeContext } from "../src/main/services/runtime-context";
 
 const ipcHandleRegistry = new Map<string, (...args: unknown[]) => unknown>();
@@ -114,6 +114,7 @@ function buildContext(): RuntimeContext {
       workflowDefinitions: {},
       workflowRuns: [],
       activeWorkflowRuns: new Map(),
+      activeSessionRuns: new Map(),
       getDefaultModelProfileId: () => "profile-1",
       setDefaultModelProfileId: () => {},
       getWorkflows: () => [],
@@ -661,6 +662,142 @@ describe("Phase 3 tool loop plan updates", () => {
       ],
       updatedAt: expect.any(String),
     });
+  });
+
+  it("cancels an approval wait without turning it into deny or blocked semantics", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    ctx.state.getApprovals().autoApproveReadOnly = false;
+
+    resolveSessionRuntimeIntentMock.mockReturnValue(runtimeIntent);
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue(executionPlan);
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "system" },
+        { role: "user", content: "Cancel approval wait" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockResolvedValueOnce({
+      content: "",
+      toolCalls: [
+        {
+          id: "tool-call-cancel",
+          name: "fs.write",
+          argumentsJson: "{\"path\":\"README.md\",\"content\":\"hi\"}",
+          input: { path: "README.md", content: "hi" },
+        },
+      ],
+      finishReason: "tool_calls",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const cancelHandler = ipcHandleRegistry.get("session:cancel-run");
+    const created = await createHandler?.({}, { title: "Phase 3 Cancel" }) as {
+      session: {
+        id: string;
+        runtimeIntent?: typeof runtimeIntent;
+        planModeState?: {
+          mode: string;
+          approvalStatus: string;
+          planVersion: number;
+        } | null;
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; blocker?: string }>;
+          updatedAt: string;
+        } | null;
+      };
+    };
+    created.session.runtimeIntent = runtimeIntent;
+    created.session.planModeState = {
+      mode: "executing",
+      approvalStatus: "approved",
+      planVersion: 1,
+    };
+    created.session.planState = {
+      tasks: [
+        {
+          id: "task-cancel",
+          title: "Cancel approval wait",
+          status: "pending",
+        },
+      ],
+      updatedAt: "2026-04-05T23:59:00.000Z",
+    };
+
+    const responsePromise = sendHandler?.({}, created.session.id, {
+      content: "Cancel approval wait",
+    }) as Promise<{
+      session: {
+        planModeState?: {
+          mode: string;
+          blockedReason?: string;
+        } | null;
+        planState?: {
+          tasks: Array<{ id: string; title: string; status: string; blocker?: string }>;
+          updatedAt: string;
+        } | null;
+      };
+    }>;
+
+    await vi.waitFor(() => {
+      expect(ctx.state.getApprovalRequests()).toHaveLength(1);
+      expect(ctx.state.activeSessionRuns.get(created.session.id)?.pendingApprovalIds).toHaveLength(1);
+    });
+
+    const run = ctx.state.activeSessionRuns.get(created.session.id);
+    const cancelResult = await cancelHandler?.({}, created.session.id, { runId: run?.runId }) as {
+      success: boolean;
+      state: string;
+    };
+
+    expect(cancelResult).toEqual({
+      success: true,
+      state: "canceling",
+    });
+
+    const response = await responsePromise;
+
+    expect(toolExecuteMock).not.toHaveBeenCalled();
+    expect(callModelMock).toHaveBeenCalledTimes(1);
+    expect(response.session.planModeState).toMatchObject({
+      mode: "canceled",
+    });
+    expect(response.session.planState?.tasks[0]).toMatchObject({
+      id: "task-cancel",
+      title: "Cancel approval wait",
+    });
+    expect(response.session.planState?.tasks[0]?.status).not.toBe("blocked");
+    expect(response.session.planState?.tasks[0]?.blocker).toBeUndefined();
+    expect(ctx.state.getApprovalRequests()).toHaveLength(0);
+    expect(ctx.state.activeSessionRuns.has(created.session.id)).toBe(false);
+
+    const runtimeStatuses = sentStreamEvents
+      .map((event) => event.payload)
+      .filter((payload): payload is { type: string; status?: string } => {
+        return typeof payload === "object" && payload !== null && "type" in payload;
+      })
+      .filter((payload) => payload.type === EventType.RuntimeStatus)
+      .map((payload) => payload.status);
+
+    expect(runtimeStatuses).toEqual(expect.arrayContaining([
+      "canceling",
+      "canceled",
+    ]));
   });
 
   it("marks the task blocked when loop detection stops repeated tool rounds", async () => {

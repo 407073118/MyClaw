@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { execSyncMock } = vi.hoisted(() => ({
   execSyncMock: vi.fn(),
@@ -51,6 +51,37 @@ function setProcessPlatform(platform: NodeJS.Platform): () => void {
       Object.defineProperty(process, "platform", originalDescriptor);
     }
   };
+}
+
+/** 模拟一个只会在收到 abort 信号时结束的 fetch。 */
+function installAbortAwareFetchMock() {
+  const fetchMock = vi.fn((_, init) => {
+    return new Promise((_, reject) => {
+      const signal = (init as { signal?: AbortSignal } | undefined)?.signal;
+      if (!signal) {
+        return;
+      }
+
+      const abortError = new Error("The operation was aborted");
+      abortError.name = "AbortError";
+
+      if (signal.aborted) {
+        reject(abortError);
+        return;
+      }
+
+      signal.addEventListener(
+        "abort",
+        () => {
+          reject(abortError);
+        },
+        { once: true },
+      );
+    });
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 describe("exec.command timeout policy", () => {
@@ -230,5 +261,71 @@ describe("exec.command timeout policy", () => {
     } finally {
       restorePlatform();
     }
+  });
+});
+
+describe("network tool cancellation policy", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["http.fetch", "https://example.test/slow"],
+    ["web.search", "desktop cancel support"],
+  ])("aborts %s quickly when the caller signal is canceled", async (toolId, label) => {
+    vi.useFakeTimers();
+    const fetchMock = installAbortAwareFetchMock();
+    const executor = new BuiltinToolExecutor();
+    const controller = new AbortController();
+    let settled = false;
+    let result: Awaited<ReturnType<BuiltinToolExecutor["execute"]>> | undefined;
+
+    const executePromise = (executor as any).execute(toolId, label, "C:/temp", {
+      signal: controller.signal,
+    });
+    executePromise.then((value: Awaited<ReturnType<BuiltinToolExecutor["execute"]>>) => {
+      settled = true;
+      result = value;
+    });
+
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(true);
+    expect(result?.success).toBe(false);
+    expect(result?.error).toContain("aborted");
+  });
+
+  it.each([
+    ["http.fetch", "https://example.test/timeout", 12_000],
+    ["web.search", "desktop timeout policy", 15_000],
+  ])("keeps the internal timeout for %s intact", async (toolId, label, timeoutMs) => {
+    vi.useFakeTimers();
+    const fetchMock = installAbortAwareFetchMock();
+    const executor = new BuiltinToolExecutor();
+    let settled = false;
+    let result: Awaited<ReturnType<BuiltinToolExecutor["execute"]>> | undefined;
+
+    const executePromise = (executor as any).execute(toolId, label, "C:/temp");
+    executePromise.then((value: Awaited<ReturnType<BuiltinToolExecutor["execute"]>>) => {
+      settled = true;
+      result = value;
+    });
+
+    await vi.advanceTimersByTimeAsync(timeoutMs - 1);
+    await Promise.resolve();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await Promise.resolve();
+
+    expect(settled).toBe(true);
+    expect(result?.success).toBe(false);
+    expect(result?.error).toContain("aborted");
   });
 });

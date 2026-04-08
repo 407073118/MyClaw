@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeContext } from "../src/main/services/runtime-context";
+import {
+  CHAT_RUN_PHASE_VALUES,
+  CHAT_RUN_STATUS_VALUES,
+  EventType,
+  type ChatRunRuntimeStatusPayload,
+} from "@shared/contracts";
 
 const ipcHandleRegistry = new Map<string, (...args: unknown[]) => unknown>();
+const sentStreamEvents: Array<{ channel: string; payload: unknown }> = [];
 
 const callModelMock = vi.fn();
 const assembleContextMock = vi.fn();
@@ -18,7 +25,15 @@ vi.mock("electron", () => ({
     }),
   },
   webContents: {
-    getAllWebContents: () => [],
+    getAllWebContents: () => [{
+      isDestroyed: () => false,
+      send: (channel: string, payload: unknown) => {
+        sentStreamEvents.push({
+          channel,
+          payload: JSON.parse(JSON.stringify(payload)),
+        });
+      },
+    }],
   },
 }));
 
@@ -107,6 +122,7 @@ function buildContext(): RuntimeContext {
       workflowDefinitions: {},
       workflowRuns: [],
       activeWorkflowRuns: new Map(),
+      activeSessionRuns: new Map(),
       getDefaultModelProfileId: () => "profile-1",
       setDefaultModelProfileId: () => {},
       getWorkflows: () => [],
@@ -142,12 +158,191 @@ function buildContext(): RuntimeContext {
 describe("Phase 2 session orchestration", () => {
   beforeEach(() => {
     ipcHandleRegistry.clear();
+    sentStreamEvents.length = 0;
     callModelMock.mockReset();
     assembleContextMock.mockReset();
     resolveModelCapabilityMock.mockReset();
     resolveSessionRuntimeIntentMock.mockReset();
     buildExecutionPlanMock.mockReset();
     saveSessionMock.mockReset();
+  });
+
+  it("exports explicit chat run runtime status vocabulary for interrupt orchestration", () => {
+    const payload: ChatRunRuntimeStatusPayload = {
+      sessionId: "session-1",
+      runId: "run-1",
+      status: "canceling",
+      phase: "approval",
+      messageId: "msg-1",
+      reason: "user_requested",
+    };
+
+    expect(CHAT_RUN_STATUS_VALUES).toEqual(expect.arrayContaining([
+      "running",
+      "canceling",
+      "canceled",
+      "completed",
+    ]));
+    expect(CHAT_RUN_PHASE_VALUES).toEqual(expect.arrayContaining([
+      "planning",
+      "model",
+      "approval",
+      "tools",
+      "persisting",
+    ]));
+    expect(payload).toMatchObject({
+      sessionId: "session-1",
+      runId: "run-1",
+      status: "canceling",
+      phase: "approval",
+    });
+  });
+
+  it("cancels an active run, preserves partial assistant content, and avoids synthetic abort errors", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    const runtimeIntent = {
+      reasoningMode: "auto",
+      reasoningEnabled: false,
+      reasoningEffort: "high",
+      adapterHint: "br-minimax",
+      replayPolicy: "assistant-turn",
+      toolStrategy: "auto",
+    };
+
+    const executionPlan = {
+      runtimeVersion: 1,
+      adapterId: "br-minimax",
+      adapterSelectionSource: "profile",
+      reasoningMode: "auto",
+      reasoningEnabled: false,
+      reasoningEffort: "high",
+      adapterHint: "br-minimax",
+      replayPolicy: "assistant-turn",
+      toolStrategy: "auto",
+      degradationReason: null,
+      planSource: "capability",
+      fallbackAdapterIds: ["openai-compatible"],
+    };
+
+    resolveSessionRuntimeIntentMock.mockReturnValue(runtimeIntent);
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue(executionPlan);
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "system" },
+        { role: "user", content: "Stop after partial output" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockImplementation(({ onDelta, signal }) => {
+      onDelta?.({ content: "partial answer" });
+      return new Promise((_resolve, reject) => {
+        signal?.addEventListener("abort", () => {
+          const abortError = new Error("AbortError");
+          abortError.name = "AbortError";
+          reject(abortError);
+        }, { once: true });
+      });
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const cancelHandler = ipcHandleRegistry.get("session:cancel-run");
+
+    expect(cancelHandler).toBeTypeOf("function");
+
+    const created = await createHandler?.({}, { title: "Cancelable" }) as {
+      session: { id: string; runtimeIntent?: typeof runtimeIntent };
+    };
+    created.session.runtimeIntent = runtimeIntent;
+
+    const responsePromise = sendHandler?.({}, created.session.id, {
+      content: "Stop after partial output",
+    }) as Promise<{ session: SessionWithExecutionPlan }>;
+
+    await vi.waitFor(() => {
+      expect(ctx.state.activeSessionRuns.get(created.session.id)?.runId).toBeTruthy();
+    });
+    const run = ctx.state.activeSessionRuns.get(created.session.id);
+    expect(run?.currentMessageId).toBeTypeOf("string");
+
+    const cancelResult = await cancelHandler?.({}, created.session.id, { runId: run?.runId }) as {
+      success: boolean;
+      state: string;
+    };
+    expect(cancelResult).toEqual({
+      success: true,
+      state: "canceling",
+    });
+
+    const response = await responsePromise;
+
+    expect(callModelMock).toHaveBeenCalledWith(expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
+    expect(response.session.chatRunState).toMatchObject({
+      runId: run?.runId,
+      status: "canceled",
+    });
+    expect(response.session.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "assistant",
+        content: "partial answer",
+      }),
+    ]));
+    expect(response.session.messages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "assistant",
+        content: expect.stringContaining("[模型调用失败]"),
+      }),
+    ]));
+    expect(response.session.messages).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "assistant",
+        content: expect.stringContaining("AbortError"),
+      }),
+    ]));
+
+    const runtimeStatuses = sentStreamEvents
+      .filter((event) => event.channel === "session:stream")
+      .map((event) => event.payload)
+      .filter((payload): payload is { type: string; status?: string; runId?: string } => {
+        return typeof payload === "object" && payload !== null && "type" in payload;
+      })
+      .filter((payload) => payload.type === EventType.RuntimeStatus)
+      .map((payload) => payload.status);
+
+    expect(runtimeStatuses).toEqual(expect.arrayContaining([
+      "running",
+      "canceling",
+      "canceled",
+    ]));
+    expect(ctx.state.activeSessionRuns.has(created.session.id)).toBe(false);
+    expect(saveSessionMock.mock.calls.at(-1)?.[1]).toMatchObject({
+      chatRunState: expect.objectContaining({
+        status: "canceled",
+        runId: run?.runId,
+      }),
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          role: "assistant",
+          content: "partial answer",
+        }),
+      ]),
+    });
   });
 
   it("runs session send as intent -> plan -> execute and preserves degradation metadata", async () => {

@@ -11,6 +11,9 @@ import type {
   A2UiFormField,
   ApprovalDecision,
   ChatMessage,
+  ChatRunPhase,
+  ChatRunRuntimeStatusPayload,
+  ChatRunStatus,
   ChatSession,
   ExecutionIntent,
 } from "@shared/contracts";
@@ -250,13 +253,59 @@ function shouldRenderInlineA2UiForm(payload: A2UiPayload | null | undefined): pa
   return payload?.kind === "form" && Array.isArray((payload as A2UiForm).fields) && (payload as A2UiForm).fields.length >= 2;
 }
 
+type ComposerRunState = {
+  sessionId: string;
+  runId: string | null;
+  status: "dispatching" | ChatRunStatus;
+  phase: ChatRunPhase | null;
+  messageId?: string;
+  reason?: string | null;
+};
+
+const TERMINAL_RUN_STATUSES = new Set<ChatRunStatus>(["canceled", "completed", "failed"]);
+
+/** 读取当前会话上已经持久化的运行态，供前端 stop 按钮与输入框复用。 */
+function readSessionRunState(session: ChatSession | null | undefined): ComposerRunState | null {
+  const runState = session?.chatRunState;
+  if (!session || !runState) return null;
+  if (runState.status !== "running" && runState.status !== "canceling") return null;
+  return {
+    sessionId: session.id,
+    runId: runState.runId,
+    status: runState.status,
+    phase: runState.phase,
+    messageId: runState.activeMessageId,
+    reason: runState.lastReason ?? null,
+  };
+}
+
+/** 兼容扁平事件与 payload 包裹事件，提取 runtime.status 的关键字段。 */
+function readRuntimeStatus(event: Record<string, unknown>): ChatRunRuntimeStatusPayload | null {
+  const payload = event.payload && typeof event.payload === "object"
+    ? event.payload as Record<string, unknown>
+    : event;
+  const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : null;
+  const runId = typeof payload.runId === "string" ? payload.runId : null;
+  const status = typeof payload.status === "string" ? payload.status as ChatRunStatus : null;
+  const phase = typeof payload.phase === "string" ? payload.phase as ChatRunPhase : null;
+  if (!sessionId || !runId || !status || !phase) return null;
+  return {
+    sessionId,
+    runId,
+    status,
+    phase,
+    ...(typeof payload.messageId === "string" ? { messageId: payload.messageId } : {}),
+    ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
+  };
+}
+
 // ─── 主页面组件 ───────────────────────────────────────────────────────────────
 
 /** 渲染聊天主界面，并负责消息流、审批和内联表单交互。 */
 export default function ChatPage() {
   const workspace = useWorkspaceStore();
   const [composerDraft, setComposerDraft] = useState("");
-  const [sending, setSending] = useState(false);
+  const [activeRunState, setActiveRunState] = useState<ComposerRunState | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
   const [deletingSessionIds, setDeletingSessionIds] = useState<Set<string>>(new Set());
   const [resolvingApprovalIds, setResolvingApprovalIds] = useState<Set<string>>(new Set());
@@ -281,6 +330,31 @@ export default function ChatPage() {
   }) | null)?.planModeState ?? null;
   const planModeEnabled = sessionRuntimeIntent?.workflowMode === "plan"
     || sessionRuntimeIntent?.planModeEnabled === true;
+  const isRunBusy = activeRunState !== null;
+  const isRunCanceling = activeRunState?.status === "canceling";
+
+  useEffect(() => {
+    setActiveRunState((current) => {
+      const next = readSessionRunState(session);
+      if (!session?.id) return null;
+      if (next) {
+        if (current?.sessionId === session.id && current.status === "canceling" && (!current.runId || current.runId === next.runId)) {
+          return { ...next, status: "canceling", reason: current.reason ?? next.reason ?? null };
+        }
+        return next;
+      }
+      if (current?.sessionId !== session.id) return null;
+      if (current.status === "dispatching") return current;
+      return null;
+    });
+  }, [
+    session?.id,
+    session?.chatRunState?.runId,
+    session?.chatRunState?.status,
+    session?.chatRunState?.phase,
+    session?.chatRunState?.activeMessageId,
+    session?.chatRunState?.lastReason,
+  ]);
 
   const { captureTrigger: captureConfirmTrigger } = useDialogA11y({
     isOpen: confirmDialog !== null,
@@ -353,7 +427,7 @@ export default function ChatPage() {
   }, [session, workspace.approvalRequests]);
 
   const isAwaitingModelResponse = useMemo(() => {
-    if (!sending) return false;
+    if (!isRunBusy) return false;
     const msgs = session?.messages;
     if (!msgs || msgs.length === 0) return true;
     const lastMsg = msgs[msgs.length - 1];
@@ -361,7 +435,7 @@ export default function ChatPage() {
       return !textOf(lastMsg.content).trim() && !(lastMsg as any).reasoning?.trim();
     }
     return lastMsg.role === "user" || lastMsg.role === "system";
-  }, [sending, session]);
+  }, [isRunBusy, session]);
 
   // ─── Slash 命令菜单 ─────────────────────────────────────────────────────────
 
@@ -382,7 +456,7 @@ export default function ChatPage() {
     return [...builtins, ...skillEntries];
   }, [workspace.skills]);
 
-  const slashMenuOpen = /^\/[^\s]*$/.test(composerDraft) && !sending;
+  const slashMenuOpen = /^\/[^\s]*$/.test(composerDraft) && !isRunBusy;
   const slashFilter = composerDraft.slice(1).toLowerCase();
   const filteredSlash = useMemo(() => {
     if (!slashMenuOpen) return [];
@@ -439,6 +513,7 @@ export default function ChatPage() {
   useEffect(() => {
     const unsubscribe = window.myClawAPI.onSessionStream((event) => {
       const ws = useWorkspaceStore.getState();
+      const runtimeStatus = readRuntimeStatus(event);
       const {
         type, sessionId, messageId, delta,
         session: updatedSession,
@@ -457,23 +532,55 @@ export default function ChatPage() {
         error?: string;
         round?: number;
       };
+      const eventSessionId = runtimeStatus?.sessionId ?? sessionId ?? updatedSession?.id;
 
-      if (!sessionId) return;
+      if (type !== "approval.requested" && !eventSessionId) return;
 
       if (type === "run.started") {
         const round = (event as any).round ?? 0;
         if (round > 0) setCurrentRound(round);
-      } else if (type === "message.delta" && messageId && delta?.content) {
-        ws.patchStreamingMessage(sessionId, messageId, delta.content);
+      } else if (type === "runtime.status" && runtimeStatus) {
+        if (runtimeStatus.sessionId !== ws.currentSession?.id) return;
+        if (TERMINAL_RUN_STATUSES.has(runtimeStatus.status)) {
+          setActiveRunState(null);
+          setCurrentRound(0);
+          setActiveTools(new Map());
+        } else {
+          setActiveRunState({
+            sessionId: runtimeStatus.sessionId,
+            runId: runtimeStatus.runId,
+            status: runtimeStatus.status,
+            phase: runtimeStatus.phase,
+            messageId: runtimeStatus.messageId,
+            reason: runtimeStatus.reason ?? null,
+          });
+        }
+      } else if (type === "message.delta" && eventSessionId && messageId && delta?.content) {
+        ws.patchStreamingMessage(eventSessionId, messageId, delta.content);
       } else if (type === "session.updated" && updatedSession) {
         ws.applySessionUpdate(updatedSession);
+        if (updatedSession.id === ws.currentSession?.id) {
+          setActiveRunState((current) => {
+            const next = readSessionRunState(updatedSession);
+            if (next) {
+              if (current?.sessionId === updatedSession.id && current.status === "canceling" && (!current.runId || current.runId === next.runId)) {
+                return { ...next, status: "canceling", reason: current.reason ?? next.reason ?? null };
+              }
+              return next;
+            }
+            if (current?.sessionId === updatedSession.id && current.status === "dispatching") {
+              return current;
+            }
+            return null;
+          });
+        }
         setCurrentRound(0);
         setActiveTools(new Map());
-      } else if (type === "tasks.updated" && sessionId) {
+      } else if (type === "tasks.updated" && eventSessionId) {
         // Task V2 实时更新：将最新 tasks 合并到当前 session
         const tasks = (event as { tasks?: unknown[] }).tasks;
         if (Array.isArray(tasks)) {
-          ws.patchSessionTasks(sessionId, tasks as import("@shared/contracts").Task[]);
+          ws.patchSessionTasks(eventSessionId, tasks as import("@shared/contracts").Task[]);
         }
       } else if (type === "tool.started" && toolCallId) {
         setActiveTools((prev) => {
@@ -604,21 +711,61 @@ export default function ChatPage() {
 
   /** 把输入内容发送给运行时，统一处理发送态和异常展示。 */
   async function sendMessageToRuntime(draft: string): Promise<boolean> {
-    setSending(true);
+    if (!session?.id) return false;
+    setCurrentRound(0);
+    setActiveTools(new Map());
+    setActiveRunState({
+      sessionId: session.id,
+      runId: session.chatRunState?.runId ?? null,
+      status: "dispatching",
+      phase: planModeEnabled && planModeState?.mode !== "executing" ? "planning" : "model",
+      messageId: session.chatRunState?.activeMessageId,
+      reason: null,
+    });
     try {
       // Slash 命令仍按普通消息发送，由模型自行解析意图并调用工具。
       await workspace.sendMessage(draft);
       return true;
     } catch (error) {
+      setActiveRunState(null);
       reportChatError(error);
       return false;
-    } finally {
-      setSending(false);
     }
   }
 
   /** 提交当前输入框内容。 */
+  /** 璇锋眰涓柇褰撳墠杩愯涓殑鑱婂ぉ鍥炲悎锛屼繚鐣欏凡缁忔祦鍑虹殑鍗婃埅鍥炵瓟銆?*/
+  async function handleStopRun() {
+    if (!session || !activeRunState) return;
+    setActiveRunState((current) => {
+      if (!current || current.sessionId !== session.id) return current;
+      return {
+        ...current,
+        status: "canceling",
+        reason: current.reason ?? "user_stop",
+      };
+    });
+    try {
+      await workspace.cancelSessionRun({
+        runId: activeRunState.runId ?? undefined,
+        messageId: activeRunState.messageId,
+        reason: "user_stop",
+      });
+    } catch (error) {
+      setActiveRunState((current) => {
+        if (!current || current.sessionId !== session.id) return current;
+        return {
+          ...current,
+          status: current.status === "canceling" ? "running" : current.status,
+          reason: null,
+        };
+      });
+      reportChatError(error);
+    }
+  }
+
   async function submitMessage() {
+    if (isRunBusy) return;
     const draft = composerDraft.trim();
     if (!draft) return;
     setComposerDraft("");
@@ -771,7 +918,7 @@ export default function ChatPage() {
             {form.description && <p className="message-form-description">{form.description}</p>}
           </div>
         </div>
-        <fieldset disabled={isSubmitted || sending} className="message-form-fieldset">
+        <fieldset disabled={isSubmitted || isRunBusy} className="message-form-fieldset">
           <div className="message-form-fields">
             {form.fields.map((field) => (
               <label key={`${message.id}-${field.name}`} className="message-form-field">
@@ -824,7 +971,7 @@ export default function ChatPage() {
                 className="primary form-submit-btn"
                 onClick={() => void submitA2UiForm(message)}
               >
-                {sending ? "提交中..." : (form.submitLabel ?? "提交表单")}
+                {isRunBusy ? "提交中..." : (form.submitLabel ?? "提交表单")}
               </button>
             ) : (
               <div className="form-success-badge">
@@ -1161,8 +1308,8 @@ export default function ChatPage() {
               value={composerDraft}
               onChange={(e) => setComposerDraft(e.target.value)}
               className="composer-input"
-              placeholder={sending ? "正在响应..." : "输入消息 (Enter 发送, Shift+Enter 换行)，或输入 / 获取快捷命令"}
-              disabled={sending}
+              placeholder={isRunBusy ? "正在响应..." : "输入消息 (Enter 发送, Shift+Enter 换行)，或输入 / 获取快捷命令"}
+              disabled={isRunBusy}
               rows={1}
               onKeyDown={handleComposerKeyDown}
             />
@@ -1198,7 +1345,7 @@ export default function ChatPage() {
                   Plan
                 </button>
               </div>
-              {!sending ? (
+              {!isRunBusy ? (
                 <button
                   data-testid="composer-submit"
                   className="submit-btn"
@@ -1209,7 +1356,12 @@ export default function ChatPage() {
                   <ArrowUp size={18} strokeWidth={2.5} />
                 </button>
               ) : (
-                <button data-testid="composer-stop" className="stop-btn" disabled>
+                <button
+                  data-testid="composer-stop"
+                  className="stop-btn"
+                  disabled={!session || isRunCanceling}
+                  onClick={() => void handleStopRun()}
+                >
                   <Square size={14} fill="currentColor" strokeWidth={0} />
                 </button>
               )}
@@ -1383,11 +1535,14 @@ export default function ChatPage() {
         .effort-btn:hover { color: var(--text-secondary); background: rgba(255,255,255,0.04); }
         .effort-btn.active { color: var(--accent-cyan); background: rgba(16,163,127,0.15); }
         .effort-btn.active:hover { background: rgba(16,163,127,0.2); }
-        .submit-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: var(--accent-cyan); color: #fff; border: none; box-shadow: 0 4px 12px rgba(16,163,127,0.3); transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
+        .submit-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: var(--accent-cyan); color: #fff; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(16,163,127,0.3); transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
         .submit-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(16,163,127,0.4); background: #0ec490; }
         .submit-btn:active:not(:disabled) { transform: translateY(0); }
         .submit-btn:disabled { background: var(--bg-sidebar); color: var(--text-muted); box-shadow: none; border: 1px solid var(--glass-border); opacity: 1; cursor: not-allowed; transform: none; }
-        .stop-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: var(--text-primary); color: var(--bg-base); border: none; cursor: not-allowed; animation: stop-pulse 1.2s cubic-bezier(0.4,0,0.2,1) infinite; }
+        .stop-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: var(--text-primary); color: var(--bg-base); border: none; cursor: pointer; animation: stop-pulse 1.2s cubic-bezier(0.4,0,0.2,1) infinite; transition: transform 0.2s cubic-bezier(0.4,0,0.2,1), box-shadow 0.2s cubic-bezier(0.4,0,0.2,1), background 0.2s cubic-bezier(0.4,0,0.2,1); }
+        .stop-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(255,255,255,0.16); background: #f5f5f5; }
+        .stop-btn:active:not(:disabled) { transform: translateY(0); }
+        .stop-btn:disabled { cursor: not-allowed; opacity: 0.7; box-shadow: none; transform: none; }
         @keyframes stop-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .primary, .secondary { padding: 8px 16px; border-radius: var(--radius-md); font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--glass-border); transition: all 0.2s ease; }
         .primary { background: var(--text-primary); color: var(--bg-base); border-color: var(--text-primary); }

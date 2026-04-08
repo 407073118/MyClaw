@@ -1,6 +1,7 @@
 import type {
   ApprovalPolicy,
   ApprovalRequest,
+  ChatRunPhase,
   ChatSession,
   LocalEmployeeSummary,
   McpServer,
@@ -18,6 +19,16 @@ import type { MyClawPaths } from "./directory-service";
 import type { McpServerManager } from "./mcp-server-manager";
 import type { ResolvedModelCapability } from "./model-capability-resolver";
 
+export type ActiveSessionRun = {
+  runId: string;
+  abortController: AbortController;
+  status: "running" | "canceling";
+  phase: ChatRunPhase;
+  currentMessageId: string;
+  pendingApprovalIds: string[];
+  cancelRequested: boolean;
+};
+
 export type RuntimeContext = {
   runtime: {
     myClawRootPath: string;
@@ -34,6 +45,7 @@ export type RuntimeContext = {
     workflowRuns: WorkflowRunSummary[];
     /** 正在执行的 PregelRunner 实例，key 为 runId */
     activeWorkflowRuns: Map<string, any>;
+    activeSessionRuns: Map<string, ActiveSessionRun>;
     getDefaultModelProfileId: () => string | null;
     setDefaultModelProfileId: (id: string | null) => void;
     getWorkflows: () => WorkflowSummary[];

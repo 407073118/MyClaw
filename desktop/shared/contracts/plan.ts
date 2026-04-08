@@ -30,6 +30,7 @@ export type PlanModeStateValue =
   | "awaiting_approval"
   | "executing"
   | "completed"
+  | "canceled"
   | "blocked";
 
 export const PLAN_MODE_STATE_VALUES = [
@@ -38,6 +39,7 @@ export const PLAN_MODE_STATE_VALUES = [
   "awaiting_approval",
   "executing",
   "completed",
+  "canceled",
   "blocked",
 ] as const satisfies readonly PlanModeStateValue[];
 

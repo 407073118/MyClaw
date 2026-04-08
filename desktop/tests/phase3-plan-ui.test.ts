@@ -293,6 +293,56 @@ describe("Phase 3 plan mode UI", () => {
     await waitFor(() => expect(composer.value).toBe(""));
     expect(mocks.workspace.sendMessage).toHaveBeenCalledWith("请根据最新补充继续完善当前计划。");
   }, CHAT_PAGE_UI_TIMEOUT_MS);
+  it("restores the composer from runtime.status after plan revise enters a long-running send", async () => {
+    mocks.session.planState = mocks.basePlanState;
+    mocks.session.planModeState = {
+      mode: "awaiting_approval",
+      approvalStatus: "pending",
+      structuredPlan: {
+        goal: "Ship visible plan mode",
+      },
+    };
+
+    let sessionStreamHandler: ((event: Record<string, unknown>) => void) | undefined;
+    mocks.workspace.sendMessage.mockReturnValue(new Promise<void>(() => {}));
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn((callback: (event: Record<string, unknown>) => void) => {
+          sessionStreamHandler = callback;
+          return vi.fn();
+        }),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    const composer = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "请把计划拆成实现和验证" } });
+    fireEvent.click(screen.getByTestId("plan-revise-button"));
+
+    const stopButton = await screen.findByTestId("composer-stop") as HTMLButtonElement;
+    expect(stopButton.disabled).toBe(false);
+    expect(mocks.workspace.sendMessage).toHaveBeenCalledWith("请把计划拆成实现和验证");
+
+    sessionStreamHandler?.({
+      type: "runtime.status",
+      payload: {
+        sessionId: "chat-session-plan",
+        runId: "run-plan-1",
+        status: "completed",
+        phase: "persisting",
+      },
+    });
+
+    await waitFor(() => {
+      expect((screen.getByTestId("composer-input") as HTMLTextAreaElement).disabled).toBe(false);
+      expect(screen.getByTestId("composer-submit")).toBeTruthy();
+    });
+  }, CHAT_PAGE_UI_TIMEOUT_MS);
 });
 
 describe("Phase 3 plan UI", () => {

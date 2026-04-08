@@ -67649,9 +67649,9 @@ var require_core2 = __commonJS({
   }
 });
 
-// dist/modules/database/database.service.js
+// dist/modules/database/services/database.service.js
 var require_database_service = __commonJS({
-  "dist/modules/database/database.service.js"(exports2) {
+  "dist/modules/database/services/database.service.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -67707,9 +67707,9 @@ var require_database_module = __commonJS({
   }
 });
 
-// dist/modules/artifact/artifact-storage.port.js
+// dist/modules/artifact/ports/artifact-storage.port.js
 var require_artifact_storage_port = __commonJS({
-  "dist/modules/artifact/artifact-storage.port.js"(exports2) {
+  "dist/modules/artifact/ports/artifact-storage.port.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.ARTIFACT_STORAGE_PORT = void 0;
@@ -67717,9 +67717,9 @@ var require_artifact_storage_port = __commonJS({
   }
 });
 
-// dist/modules/artifact/artifact.service.js
+// dist/modules/artifact/services/artifact.service.js
 var require_artifact_service = __commonJS({
-  "dist/modules/artifact/artifact.service.js"(exports2) {
+  "dist/modules/artifact/services/artifact.service.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -67751,7 +67751,7 @@ var require_artifact_service = __commonJS({
       }
       /** 获取 MCP 版本的连接配置清单 */
       async getManifest(releaseId) {
-        this.logger.log(`load manifest for releaseId=${releaseId}`);
+        this.logger.log(`\u5F00\u59CB\u8BFB\u53D6 MCP \u6E05\u5355\uFF0CreleaseId=${releaseId}`);
         const mcpRelease = await this.databaseService.mcpServerRelease.findUnique({
           where: { id: releaseId },
           include: { server: true }
@@ -67766,7 +67766,7 @@ var require_artifact_service = __commonJS({
             config
           };
         }
-        this.logger.warn(`mcp release not found, using fallback manifest for releaseId=${releaseId}`);
+        this.logger.warn(`\u672A\u627E\u5230 MCP \u7248\u672C\uFF0C\u4F7F\u7528\u515C\u5E95\u6E05\u5355\uFF0CreleaseId=${releaseId}`);
         return {
           kind: "mcp",
           name: "Filesystem MCP",
@@ -67779,14 +67779,14 @@ var require_artifact_service = __commonJS({
           }
         };
       }
-      /** Create a download token for a release artifact. */
+      /** 为指定发布版本的工件创建下载令牌。 */
       async createDownloadToken(releaseId) {
-        this.logger.log(`create download token for releaseId=${releaseId}`);
+        this.logger.log(`\u5F00\u59CB\u521B\u5EFA\u4E0B\u8F7D\u4EE4\u724C\uFF0CreleaseId=${releaseId}`);
         return this.artifactStorage.createDownloadDescriptor(releaseId);
       }
-      /** Read persisted artifact metadata for a release. */
+      /** 读取指定发布版本已持久化的工件元数据。 */
       async getStoredSkillArtifact(releaseId) {
-        this.logger.log(`load artifact metadata for releaseId=${releaseId}`);
+        this.logger.log(`\u5F00\u59CB\u8BFB\u53D6\u5DE5\u4EF6\u5143\u6570\u636E\uFF0CreleaseId=${releaseId}`);
         const skillReleaseModel = this.databaseService.skillRelease;
         const release = await skillReleaseModel?.findUnique?.({
           where: { id: releaseId },
@@ -67798,14 +67798,14 @@ var require_artifact_service = __commonJS({
           }
         });
         if (!release) {
-          this.logger.warn(`release not found, releaseId=${releaseId}`);
+          this.logger.warn(`\u672A\u627E\u5230\u53D1\u5E03\u7248\u672C\u8BB0\u5F55\uFF0CreleaseId=${releaseId}`);
           return null;
         }
         if (!release.artifactFileName || !release.artifactStoragePath) {
-          this.logger.warn(`release missing artifact metadata, releaseId=${releaseId}`);
+          this.logger.warn(`\u53D1\u5E03\u7248\u672C\u7F3A\u5C11\u5DE5\u4EF6\u5143\u6570\u636E\uFF0CreleaseId=${releaseId}`);
           return null;
         }
-        this.logger.log(`artifact metadata loaded, releaseId=${releaseId}, storageKey=${release.artifactStoragePath}, fileSize=${release.artifactFileSize}`);
+        this.logger.log(`\u5DE5\u4EF6\u5143\u6570\u636E\u8BFB\u53D6\u5B8C\u6210\uFF0CreleaseId=${releaseId}\uFF0CstorageKey=${release.artifactStoragePath}\uFF0CfileSize=${release.artifactFileSize}`);
         return {
           fileName: release.artifactFileName,
           fileSize: release.artifactFileSize,
@@ -67813,14 +67813,14 @@ var require_artifact_service = __commonJS({
           storageUrl: release.artifactDownloadUrl || release.artifactStoragePath
         };
       }
-      /** Persist an uploaded artifact in the backing storage. */
+      /** 将上传的工件持久化到后端存储。 */
       async storeSkillArtifact(input) {
-        this.logger.log(`store artifact releaseId=${input.releaseId}, fileName=${input.fileName}, fileSize=${input.fileBytes.byteLength}`);
+        this.logger.log(`\u5F00\u59CB\u6301\u4E45\u5316\u5DE5\u4EF6\uFF0CreleaseId=${input.releaseId}\uFF0CfileName=${input.fileName}\uFF0CfileSize=${input.fileBytes.byteLength}`);
         return this.artifactStorage.storeSkillArtifact(input);
       }
-      /** Open an artifact stream for download proxying. */
+      /** 打开工件读取流，供下载代理转发。 */
       async openSkillArtifactReadStream(artifact) {
-        this.logger.log(`open artifact stream for storageKey=${artifact.storageKey}`);
+        this.logger.log(`\u5F00\u59CB\u6253\u5F00\u5DE5\u4EF6\u8BFB\u53D6\u6D41\uFF0CstorageKey=${artifact.storageKey}`);
         return this.artifactStorage.openSkillArtifactReadStream(artifact);
       }
     };
@@ -67833,9 +67833,9 @@ var require_artifact_service = __commonJS({
   }
 });
 
-// dist/modules/artifact/artifact.controller.js
+// dist/modules/artifact/controllers/artifact.controller.js
 var require_artifact_controller = __commonJS({
-  "dist/modules/artifact/artifact.controller.js"(exports2) {
+  "dist/modules/artifact/controllers/artifact.controller.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -67910,9 +67910,9 @@ var require_artifact_controller = __commonJS({
   }
 });
 
-// dist/modules/artifact/fastdfs-artifact-storage.js
+// dist/modules/artifact/providers/fastdfs-artifact-storage.js
 var require_fastdfs_artifact_storage = __commonJS({
-  "dist/modules/artifact/fastdfs-artifact-storage.js"(exports2) {
+  "dist/modules/artifact/providers/fastdfs-artifact-storage.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -68147,9 +68147,9 @@ var require_artifact_module = __commonJS({
   }
 });
 
-// dist/modules/auth/cas-internal-auth.provider.js
+// dist/modules/auth/providers/cas-internal-auth.provider.js
 var require_cas_internal_auth_provider = __commonJS({
-  "dist/modules/auth/cas-internal-auth.provider.js"(exports2) {
+  "dist/modules/auth/providers/cas-internal-auth.provider.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -68319,9 +68319,9 @@ var require_cas_internal_auth_provider = __commonJS({
   }
 });
 
-// dist/modules/auth/auth-session.repository.js
+// dist/modules/auth/ports/auth-session.repository.js
 var require_auth_session_repository = __commonJS({
-  "dist/modules/auth/auth-session.repository.js"(exports2) {
+  "dist/modules/auth/ports/auth-session.repository.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.AUTH_SESSION_REPOSITORY = void 0;
@@ -68329,9 +68329,9 @@ var require_auth_session_repository = __commonJS({
   }
 });
 
-// dist/modules/auth/internal-auth-provider.js
+// dist/modules/auth/ports/internal-auth-provider.js
 var require_internal_auth_provider = __commonJS({
-  "dist/modules/auth/internal-auth-provider.js"(exports2) {
+  "dist/modules/auth/ports/internal-auth-provider.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.INTERNAL_AUTH_PROVIDER = void 0;
@@ -68339,9 +68339,9 @@ var require_internal_auth_provider = __commonJS({
   }
 });
 
-// dist/modules/auth/auth.service.js
+// dist/modules/auth/services/auth.service.js
 var require_auth_service = __commonJS({
-  "dist/modules/auth/auth.service.js"(exports2) {
+  "dist/modules/auth/services/auth.service.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -68583,9 +68583,9 @@ var require_auth_service = __commonJS({
   }
 });
 
-// dist/modules/auth/auth.controller.js
+// dist/modules/auth/controllers/auth.controller.js
 var require_auth_controller = __commonJS({
-  "dist/modules/auth/auth.controller.js"(exports2) {
+  "dist/modules/auth/controllers/auth.controller.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -68671,9 +68671,9 @@ var require_auth_controller = __commonJS({
   }
 });
 
-// dist/modules/auth/mock-internal-auth.provider.js
+// dist/modules/auth/providers/mock-internal-auth.provider.js
 var require_mock_internal_auth_provider = __commonJS({
-  "dist/modules/auth/mock-internal-auth.provider.js"(exports2) {
+  "dist/modules/auth/providers/mock-internal-auth.provider.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -68723,9 +68723,9 @@ var require_mock_internal_auth_provider = __commonJS({
   }
 });
 
-// dist/modules/auth/prisma-auth-session.repository.js
+// dist/modules/auth/repositories/prisma-auth-session.repository.js
 var require_prisma_auth_session_repository = __commonJS({
-  "dist/modules/auth/prisma-auth-session.repository.js"(exports2) {
+  "dist/modules/auth/repositories/prisma-auth-session.repository.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -68896,9 +68896,9 @@ var require_auth_module = __commonJS({
   }
 });
 
-// dist/modules/install/install-log.repository.js
+// dist/modules/install/ports/install-log.repository.js
 var require_install_log_repository = __commonJS({
-  "dist/modules/install/install-log.repository.js"(exports2) {
+  "dist/modules/install/ports/install-log.repository.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.INSTALL_LOG_REPOSITORY = void 0;
@@ -68906,9 +68906,9 @@ var require_install_log_repository = __commonJS({
   }
 });
 
-// dist/modules/install/install.service.js
+// dist/modules/install/services/install.service.js
 var require_install_service = __commonJS({
-  "dist/modules/install/install.service.js"(exports2) {
+  "dist/modules/install/services/install.service.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -68933,6 +68933,7 @@ var require_install_service = __commonJS({
       constructor(installLogRepository) {
         this.installLogRepository = installLogRepository;
       }
+      /** 记录一次安装行为并返回统一成功响应。 */
       async log(account, input) {
         await this.installLogRepository.create({
           account,
@@ -68942,6 +68943,7 @@ var require_install_service = __commonJS({
           ok: true
         };
       }
+      /** 列出安装日志，并裁剪出前端需要的字段结构。 */
       async list() {
         const logs = await this.installLogRepository.list();
         return logs.map(({ account: _account, createdAt: _createdAt, id: _id, ...item }) => ({
@@ -68959,9 +68961,9 @@ var require_install_service = __commonJS({
   }
 });
 
-// dist/modules/install/install.controller.js
+// dist/modules/install/controllers/install.controller.js
 var require_install_controller = __commonJS({
-  "dist/modules/install/install.controller.js"(exports2) {
+  "dist/modules/install/controllers/install.controller.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -69026,9 +69028,9 @@ var require_install_controller = __commonJS({
   }
 });
 
-// dist/modules/install/prisma-install-log.repository.js
+// dist/modules/install/repositories/prisma-install-log.repository.js
 var require_prisma_install_log_repository = __commonJS({
-  "dist/modules/install/prisma-install-log.repository.js"(exports2) {
+  "dist/modules/install/repositories/prisma-install-log.repository.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -69121,9 +69123,9 @@ var require_install_module = __commonJS({
   }
 });
 
-// dist/modules/mcp/mcp.repository.js
+// dist/modules/mcp/ports/mcp.repository.js
 var require_mcp_repository = __commonJS({
-  "dist/modules/mcp/mcp.repository.js"(exports2) {
+  "dist/modules/mcp/ports/mcp.repository.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.MCP_REPOSITORY = void 0;
@@ -69131,9 +69133,9 @@ var require_mcp_repository = __commonJS({
   }
 });
 
-// dist/modules/mcp/mcp.service.js
+// dist/modules/mcp/services/mcp.service.js
 var require_mcp_service = __commonJS({
-  "dist/modules/mcp/mcp.service.js"(exports2) {
+  "dist/modules/mcp/services/mcp.service.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -69234,7 +69236,7 @@ var require_mcp_service = __commonJS({
           throw new common_1.BadRequestException("mcp_config_invalid_transport");
         }
       }
-      /** 构建版本 ID */
+      /** 按统一规则拼装版本 ID。 */
       buildReleaseId(itemId, version) {
         return `release-${itemId}-${version}`;
       }
@@ -69248,9 +69250,9 @@ var require_mcp_service = __commonJS({
   }
 });
 
-// dist/modules/mcp/mcp.controller.js
+// dist/modules/mcp/controllers/mcp.controller.js
 var require_mcp_controller = __commonJS({
-  "dist/modules/mcp/mcp.controller.js"(exports2) {
+  "dist/modules/mcp/controllers/mcp.controller.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -69391,9 +69393,9 @@ var require_mcp_controller = __commonJS({
   }
 });
 
-// dist/modules/mcp/prisma-mcp.repository.js
+// dist/modules/mcp/repositories/prisma-mcp.repository.js
 var require_prisma_mcp_repository = __commonJS({
-  "dist/modules/mcp/prisma-mcp.repository.js"(exports2) {
+  "dist/modules/mcp/repositories/prisma-mcp.repository.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -69570,9 +69572,9 @@ var require_mcp_module = __commonJS({
   }
 });
 
-// dist/modules/skills/prisma-skills.repository.js
+// dist/modules/skills/repositories/prisma-skills.repository.js
 var require_prisma_skills_repository = __commonJS({
-  "dist/modules/skills/prisma-skills.repository.js"(exports2) {
+  "dist/modules/skills/repositories/prisma-skills.repository.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -69777,9 +69779,9 @@ var require_prisma_skills_repository = __commonJS({
   }
 });
 
-// dist/modules/skills/skills.repository.js
+// dist/modules/skills/ports/skills.repository.js
 var require_skills_repository = __commonJS({
-  "dist/modules/skills/skills.repository.js"(exports2) {
+  "dist/modules/skills/ports/skills.repository.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.SKILLS_REPOSITORY = void 0;
@@ -69787,9 +69789,9 @@ var require_skills_repository = __commonJS({
   }
 });
 
-// dist/modules/skills/skills.service.js
+// dist/modules/skills/services/skills.service.js
 var require_skills_service = __commonJS({
-  "dist/modules/skills/skills.service.js"(exports2) {
+  "dist/modules/skills/services/skills.service.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
@@ -69897,9 +69899,9 @@ var require_skills_service = __commonJS({
   }
 });
 
-// dist/modules/skills/skills.controller.js
+// dist/modules/skills/controllers/skills.controller.js
 var require_skills_controller = __commonJS({
-  "dist/modules/skills/skills.controller.js"(exports2) {
+  "dist/modules/skills/controllers/skills.controller.js"(exports2) {
     "use strict";
     var __decorate2 = exports2 && exports2.__decorate || function(decorators, target, key, desc) {
       var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;

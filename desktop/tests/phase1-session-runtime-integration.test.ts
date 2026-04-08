@@ -97,6 +97,7 @@ function buildContext(): RuntimeContext {
       workflowDefinitions: {},
       workflowRuns: [],
       activeWorkflowRuns: new Map(),
+      activeSessionRuns: new Map(),
       getDefaultModelProfileId: () => "profile-1",
       setDefaultModelProfileId: () => {},
       getWorkflows: () => [],
@@ -138,6 +139,33 @@ describe("phase1 session runtime integration", () => {
     resolveSessionRuntimeIntentMock.mockReset();
     buildExecutionPlanMock.mockReset();
     saveSessionMock.mockReset();
+  });
+
+  it("exposes activeSessionRuns as a session-scoped in-flight registry", () => {
+    const ctx = buildContext();
+    const registry = ctx.state.activeSessionRuns;
+
+    expect(registry).toBeInstanceOf(Map);
+
+    const runState = {
+      runId: "run-1",
+      abortController: new AbortController(),
+      status: "running" as const,
+      phase: "model" as const,
+      currentMessageId: "msg-1",
+      pendingApprovalIds: ["approval-1"],
+      cancelRequested: false,
+    };
+
+    registry?.set("session-1", runState);
+    expect(registry?.get("session-1")).toMatchObject({
+      runId: "run-1",
+      status: "running",
+      phase: "model",
+    });
+
+    registry?.delete("session-1");
+    expect(registry?.has("session-1")).toBe(false);
   });
 
   it("creates sessions with runtimeVersion and passes execution plans to callModel", async () => {

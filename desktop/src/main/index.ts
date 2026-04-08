@@ -350,6 +350,7 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
       employees,
       workflowRuns,
       activeWorkflowRuns: new Map(),
+      activeSessionRuns: new Map(),
       skills,
       workflowDefinitions,
       getDefaultModelProfileId: () => {

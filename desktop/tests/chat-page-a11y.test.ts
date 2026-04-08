@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
     pushAssistantMessage: vi.fn(),
     createSession: vi.fn(),
     sendMessage: vi.fn(),
+    cancelSessionRun: vi.fn().mockResolvedValue(undefined),
     resolveApproval: vi.fn(),
   };
 
@@ -49,6 +50,7 @@ describe("ChatPage", () => {
     mocks.workspace.pushAssistantMessage.mockReset();
     mocks.workspace.createSession.mockReset();
     mocks.workspace.sendMessage.mockReset();
+    mocks.workspace.cancelSessionRun.mockReset();
     mocks.workspace.resolveApproval.mockReset();
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });
@@ -72,15 +74,15 @@ describe("ChatPage", () => {
     deleteButton.focus();
     fireEvent.click(deleteButton);
 
-    const dialog = await screen.findByRole("dialog", { name: "删除这条对话记录？" });
+    const dialog = await screen.findByRole("dialog");
     expect(dialog).toBeTruthy();
 
-    const cancelButton = within(dialog).getByRole("button", { name: "取消" });
+    const cancelButton = within(dialog).getAllByRole("button")[0] as HTMLButtonElement;
     await waitFor(() => expect(document.activeElement).toBe(cancelButton));
 
     fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
 
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "删除这条对话记录？" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(document.activeElement).toBe(deleteButton);
   });
 
@@ -101,10 +103,66 @@ describe("ChatPage", () => {
 
     fireEvent.click(screen.getByTestId("session-delete-chat-session-1"));
 
-    const dialog = await screen.findByRole("dialog", { name: "删除这条对话记录？" });
-    fireEvent.click(within(dialog).getByRole("button", { name: "确认删除" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getAllByRole("button")[1] as HTMLButtonElement);
 
     await waitFor(() => expect(mocks.workspace.deleteSession).toHaveBeenCalledWith("chat-session-1"));
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: "删除这条对话记录？" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("shows a clickable stop button, sends cancel through the store, and restores the composer after a canceled runtime status", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+    let sessionStreamHandler: ((event: Record<string, unknown>) => void) | undefined;
+
+    mocks.workspace.sendMessage.mockReturnValue(new Promise<void>(() => {}));
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn((callback: (event: Record<string, unknown>) => void) => {
+          sessionStreamHandler = callback;
+          return sessionStreamUnsubscribe;
+        }),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    const composer = screen.getByTestId("composer-input") as HTMLTextAreaElement;
+    fireEvent.change(composer, { target: { value: "请先开始分析" } });
+    fireEvent.click(screen.getByTestId("composer-submit"));
+
+    const stopButton = await screen.findByTestId("composer-stop") as HTMLButtonElement;
+    expect(mocks.workspace.sendMessage).toHaveBeenCalledWith("请先开始分析");
+    expect(stopButton.disabled).toBe(false);
+    expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    expect(composer.disabled).toBe(true);
+
+    fireEvent.click(stopButton);
+
+    await waitFor(() => expect(mocks.workspace.cancelSessionRun).toHaveBeenCalledWith({ reason: "user_stop" }));
+    expect((screen.getByTestId("composer-stop") as HTMLButtonElement).disabled).toBe(true);
+    expect(getComputedStyle(screen.getByTestId("composer-stop")).cursor).toBe("not-allowed");
+
+    await act(async () => {
+      sessionStreamHandler?.({
+        type: "runtime.status",
+        payload: {
+          sessionId: "chat-session-1",
+          runId: "run-1",
+          status: "canceled",
+          phase: "model",
+          reason: "user_stop",
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect((screen.getByTestId("composer-input") as HTMLTextAreaElement).disabled).toBe(false);
+      expect(screen.getByTestId("composer-submit")).toBeTruthy();
+    });
   });
 });

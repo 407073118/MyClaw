@@ -103,6 +103,12 @@ type StreamOptions = {
   onSnapshot?: (snapshot: SessionPayload) => void;
 };
 
+type CancelSessionRunInput = {
+  runId?: string;
+  messageId?: string;
+  reason?: string;
+};
+
 // ---------------------------------------------------------------------------
 // window.myClawAPI declaration
 //
@@ -151,6 +157,10 @@ declare global {
         sessionId: string,
         content: string,
         options?: StreamOptions,
+      ) => Promise<SessionPayload>;
+      cancelSessionRun: (
+        sessionId: string,
+        input?: CancelSessionRunInput,
       ) => Promise<SessionPayload>;
       requestExecutionIntent: (
         sessionId: string,
