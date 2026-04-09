@@ -84,6 +84,17 @@ export type CloudSkillDetail = CloudSkillSummary & {
   }>;
 };
 
+export type AppUpdateState = {
+  enabled: boolean;
+  stage: "disabled" | "idle" | "checking" | "available" | "downloading" | "downloaded" | "no-update" | "error";
+  currentVersion: string;
+  latestVersion: string | null;
+  progressPercent: number | null;
+  message: string;
+  feedLabel: string | null;
+  downloadPageUrl: string | null;
+};
+
 type CancelSessionRunInput = {
   runId?: string;
   messageId?: string;
@@ -124,6 +135,7 @@ type WorkspaceState = {
   approvals: ApprovalPolicy | null;
   approvalRequests: ApprovalRequest[];
   personalPrompt: PersonalPromptProfile;
+  appUpdate: AppUpdateState | null;
 
   // WebPanel
   webPanel: {
@@ -189,6 +201,10 @@ type WorkspaceState = {
   }) => Promise<ApprovalPolicy>;
   loadPersonalPrompt: () => Promise<PersonalPromptProfile>;
   updatePersonalPrompt: (prompt: string) => Promise<PersonalPromptProfile>;
+  checkForAppUpdates: () => Promise<AppUpdateState>;
+  downloadAppUpdate: () => Promise<AppUpdateState>;
+  quitAndInstallAppUpdate: () => Promise<{ accepted: boolean }>;
+  openAppUpdateDownloadPage: () => Promise<{ opened: boolean }>;
 
   importCloudSkill: (input: { releaseId: string; skillName: string }) => Promise<unknown>;
   importCloudMcp: (input: { releaseId: string; servers: McpServerConfig[] }) => Promise<unknown>;
@@ -317,6 +333,8 @@ function computeCurrentSession(
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
+  let hasSubscribedToAppUpdates = false;
+
   // Wrap set() so currentSession is recomputed after every state change.
   const set = (
     partial:
@@ -366,6 +384,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     tags: [],
     updatedAt: null,
   },
+  appUpdate: null,
 
   webPanel: {
     isOpen: false,
@@ -426,9 +445,17 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
           tags: [],
           updatedAt: null,
         },
+        appUpdate: payload.updates ?? null,
         ready: true,
         error: null,
       });
+
+      if (!hasSubscribedToAppUpdates) {
+        hasSubscribedToAppUpdates = true;
+        window.myClawAPI.onAppUpdateStateChanged((updates) => {
+          set({ appUpdate: updates as AppUpdateState });
+        });
+      }
 
       // Auto-create a default session if none exist (e.g. fresh install)
       if (!payload.sessions || payload.sessions.length === 0) {
@@ -807,6 +834,26 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     const profile = await window.myClawAPI.updatePersonalPrompt({ prompt });
     set({ personalPrompt: profile });
     return profile;
+  },
+
+  async checkForAppUpdates() {
+    const updates = await window.myClawAPI.checkForAppUpdates();
+    set({ appUpdate: updates });
+    return updates;
+  },
+
+  async downloadAppUpdate() {
+    const updates = await window.myClawAPI.downloadAppUpdate();
+    set({ appUpdate: updates });
+    return updates;
+  },
+
+  async quitAndInstallAppUpdate() {
+    return window.myClawAPI.quitAndInstallAppUpdate();
+  },
+
+  async openAppUpdateDownloadPage() {
+    return window.myClawAPI.openAppUpdateDownloadPage();
   },
 
   // -------------------------------------------------------------------------

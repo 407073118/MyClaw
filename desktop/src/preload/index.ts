@@ -54,6 +54,13 @@ const myClawAPI = {
 
   // ---- 启动初始化 ----------------------------------------------------------
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
+  getAppUpdateState: () => ipcRenderer.invoke("update:get-state"),
+  checkForAppUpdates: () => ipcRenderer.invoke("update:check"),
+  downloadAppUpdate: () => ipcRenderer.invoke("update:download"),
+  quitAndInstallAppUpdate: () => ipcRenderer.invoke("update:quit-and-install"),
+  openAppUpdateDownloadPage: () => ipcRenderer.invoke("update:open-download-page"),
+  onAppUpdateStateChanged: (callback: (payload: Record<string, unknown>) => void): UnsubscribeFn =>
+    onChannel("update:state-changed", callback),
 
   // ---- 认证 ----------------------------------------------------------------
   auth: {

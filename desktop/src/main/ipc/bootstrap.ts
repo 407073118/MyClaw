@@ -16,6 +16,7 @@ import type {
 } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
+import type { AppUpdateSnapshot } from "../services/app-updater";
 
 function hasConfiguredModel(models: ModelProfile[]): boolean {
   return models.some((m) => {
@@ -44,6 +45,7 @@ export type BootstrapPayload = {
   skillsRootPath: string;
   sessionsRootPath: string;
   requiresInitialSetup: boolean;
+  updates: AppUpdateSnapshot;
 };
 
 export function registerBootstrapHandlers(ctx: RuntimeContext): void {
@@ -70,6 +72,7 @@ export function registerBootstrapHandlers(ctx: RuntimeContext): void {
       skillsRootPath: ctx.runtime.skillsRootPath,
       sessionsRootPath: ctx.runtime.sessionsRootPath,
       requiresInitialSetup: !hasConfiguredModel(ctx.state.models),
+      updates: ctx.services.appUpdater.getSnapshot(),
     };
   });
 }

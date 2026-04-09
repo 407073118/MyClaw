@@ -39,7 +39,7 @@ describe("workflow IPC handlers", () => {
         getWorkflows: () => workflows,
       },
       runtime: {
-        paths: {},
+        paths: { myClawDir: "/tmp/myclaw" },
       },
     } as any;
 
@@ -103,7 +103,7 @@ describe("workflow IPC handlers", () => {
         getWorkflows: () => workflows,
       },
       runtime: {
-        paths: {},
+        paths: { myClawDir: "/tmp/myclaw" },
       },
     } as any;
 
@@ -155,7 +155,7 @@ describe("workflow IPC handlers", () => {
         getWorkflows: () => workflows,
       },
       runtime: {
-        paths: {},
+        paths: { myClawDir: "/tmp/myclaw" },
       },
     } as any;
 
@@ -208,7 +208,7 @@ describe("workflow IPC handlers", () => {
         getWorkflows: () => [],
       },
       runtime: {
-        paths: {},
+        paths: { myClawDir: "/tmp/myclaw" },
       },
     } as any;
 
@@ -241,7 +241,7 @@ describe("workflow IPC handlers", () => {
         getWorkflows: () => [],
       },
       runtime: {
-        paths: {},
+        paths: { myClawDir: "/tmp/myclaw" },
       },
     } as any;
 
@@ -288,12 +288,24 @@ describe("workflow IPC handlers", () => {
         myClawRootPath: "/tmp/myclaw",
         skillsRootPath: "/tmp/myclaw/skills",
         sessionsRootPath: "/tmp/myclaw/sessions",
-        paths: {},
+        paths: { myClawDir: "/tmp/myclaw" },
       },
       services: {
         refreshSkills: async () => [],
         listMcpServers: () => [],
         mcpManager: null,
+        appUpdater: {
+          getSnapshot: () => ({
+            enabled: false,
+            stage: "disabled",
+            currentVersion: "0.1.0",
+            latestVersion: null,
+            progressPercent: null,
+            message: "disabled",
+            feedLabel: null,
+            downloadPageUrl: null,
+          }),
+        },
       },
       tools: {
         resolveBuiltinTools: () => [],

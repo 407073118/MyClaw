@@ -68,6 +68,17 @@ export default function SettingsPage() {
   const myClawRootPath = workspace.myClawRootPath ?? "未设置";
   const skillsRootPath = workspace.skillsRootPath ?? "未设置";
   const sessionsRootPath = workspace.sessionsRootPath ?? "未设置";
+  const appUpdate = workspace.appUpdate ?? {
+    enabled: false,
+    stage: "disabled",
+    currentVersion: "0.1.0",
+    latestVersion: null,
+    progressPercent: null,
+    message: "未配置公开发布仓库，暂不启用自动更新。",
+    feedLabel: null,
+    downloadPageUrl: null,
+  };
+  const appUpdateSourceLabel = appUpdate.feedLabel ?? "未配置公开发布仓库";
 
   /** 测试指定模型配置的连通性并回写状态文案。 */
   async function testModelProfile(profileId: string) {
@@ -107,6 +118,44 @@ export default function SettingsPage() {
       autoApproveReadOnly: approvalDraft.autoApproveReadOnly,
       autoApproveSkills: approvalDraft.autoApproveSkills,
     });
+  }
+
+  /** 根据当前更新状态渲染主操作按钮，保持设置页交互明确且最小。 */
+  function renderAppUpdatePrimaryAction() {
+    if (appUpdate.stage === "available") {
+      return (
+        <button data-testid="app-update-download" className="primary" onClick={() => void workspace.downloadAppUpdate()}>
+          下载更新
+        </button>
+      );
+    }
+
+    if (appUpdate.stage === "downloading") {
+      return (
+        <button data-testid="app-update-downloading" className="secondary" disabled>
+          正在下载 {appUpdate.progressPercent ?? 0}%
+        </button>
+      );
+    }
+
+    if (appUpdate.stage === "downloaded") {
+      return (
+        <button data-testid="app-update-install" className="primary" onClick={() => void workspace.quitAndInstallAppUpdate()}>
+          重启并安装
+        </button>
+      );
+    }
+
+    return (
+      <button
+        data-testid="app-update-check"
+        className="secondary"
+        disabled={!appUpdate.enabled}
+        onClick={() => void workspace.checkForAppUpdates()}
+      >
+        检查更新
+      </button>
+    );
   }
 
   return (
@@ -231,6 +280,40 @@ export default function SettingsPage() {
               <p data-testid="initial-setup-hint" className="setup-hint">首次使用请先添加有效模型 Token 并设为默认。</p>
             )}
           </section>
+
+          <section data-testid="app-update-section" className="storage-section card update-section">
+            <p className="eyebrow">应用更新</p>
+            <h4>桌面端版本</h4>
+            <div className="update-meta-list">
+              <div className="storage-path-item">
+                <span className="storage-path-label">当前版本</span>
+                <p className="path-text">{appUpdate.currentVersion}</p>
+              </div>
+              <div className="storage-path-item">
+                <span className="storage-path-label">更新源</span>
+                <p className="path-text">{appUpdateSourceLabel}</p>
+              </div>
+              {appUpdate.latestVersion && (
+                <div className="storage-path-item">
+                  <span className="storage-path-label">最新版本</span>
+                  <p className="path-text">{appUpdate.latestVersion}</p>
+                </div>
+              )}
+            </div>
+            <p data-testid="app-update-status" className="update-status-text">{appUpdate.message}</p>
+            <div className="update-actions">
+              {renderAppUpdatePrimaryAction()}
+              {appUpdate.downloadPageUrl && (
+                <button
+                  data-testid="app-update-open-download-page"
+                  className="secondary"
+                  onClick={() => void workspace.openAppUpdateDownloadPage()}
+                >
+                  手动下载安装包
+                </button>
+              )}
+            </div>
+          </section>
         </article>
       )}
 
@@ -354,6 +437,10 @@ export default function SettingsPage() {
         .storage-path-label { font-size: 12px; color: var(--text-muted); font-weight: 600; }
         .path-text { font-family: monospace; font-size: 12px; background: var(--bg-base); padding: 8px; border-radius: 4px; border: 1px solid var(--glass-border); margin: 0; color: var(--text-primary) !important; }
         .setup-hint { margin-top: 16px !important; color: var(--status-yellow) !important; font-size: 13px !important; }
+        .update-section { display: flex; flex-direction: column; gap: 16px; }
+        .update-meta-list { display: flex; flex-direction: column; gap: 12px; }
+        .update-status-text { color: var(--text-primary) !important; }
+        .update-actions { display: flex; flex-wrap: wrap; gap: 12px; }
         .approval-controls { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
         .approval-controls .field { display: flex; flex-direction: column; gap: 8px; }
         .approval-controls .field span { font-size: 13px; color: var(--text-secondary); }

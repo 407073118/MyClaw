@@ -18,6 +18,7 @@ import type {
 import type { MyClawPaths } from "./directory-service";
 import type { McpServerManager } from "./mcp-server-manager";
 import type { ResolvedModelCapability } from "./model-capability-resolver";
+import type { AppUpdaterService } from "./app-updater";
 
 export type ActiveSessionRun = {
   runId: string;
@@ -59,6 +60,7 @@ export type RuntimeContext = {
     refreshSkills: () => Promise<SkillDefinition[]>;
     listMcpServers: () => McpServer[];
     mcpManager: McpServerManager | null;
+    appUpdater: AppUpdaterService;
     resolveModelCapability?: (profile: ModelProfile) => ResolvedModelCapability;
   };
   tools: {

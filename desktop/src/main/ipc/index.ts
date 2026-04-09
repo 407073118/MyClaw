@@ -9,6 +9,7 @@ import { registerPersonalPromptHandlers } from "./personal-prompt";
 import { registerSessionHandlers } from "./sessions";
 import { registerToolHandlers } from "./tools";
 import { registerSkillFileHandlers } from "./skill-files";
+import { registerUpdateHandlers } from "./update";
 import { registerWebPanelHandlers } from "./web-panel";
 import { registerWorkflowHandlers } from "./workflows";
 
@@ -27,6 +28,7 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerWorkflowHandlers(ctx);
   registerCloudHandlers(ctx);
   registerEmployeeHandlers(ctx);
+  registerUpdateHandlers(ctx);
   registerWebPanelHandlers(ctx);
   registerSkillFileHandlers(ctx);
 }
