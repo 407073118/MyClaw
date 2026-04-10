@@ -600,6 +600,13 @@ function buildSystemPrompt(
   parts.push(`- \`http_fetch\` — Fetch a URL via HTTP GET.`);
   parts.push(`- Browser workflow: \`browser_open\` → \`browser_snapshot\` (accessibility tree, use ref=N) → \`browser_click\`/\`browser_type\` → \`browser_snapshot\` to verify.`);
   parts.push(`- Also: \`browser_screenshot\`, \`browser_evaluate\`, \`browser_select\`, \`browser_hover\`, \`browser_scroll\`, \`browser_press_key\`, \`browser_back\`, \`browser_forward\`, \`browser_wait\`.`);
+  parts.push(`## Presentation (PPT)`);
+  parts.push(`- \`ppt_themes\` — List available presentation themes (call first to show user the options).`);
+  parts.push(`- \`ppt_generate\` — Generate an editable .pptx file from structured slide data.`);
+  parts.push(`- When the user asks to create a PPT, presentation, slide deck, 汇报, 演示, or 幻灯片: **always use ppt_generate**, not plain text.`);
+  parts.push(`- Workflow: understand requirements → \`ppt_themes\` to pick a theme → structure slides as JSON → \`ppt_generate\` to create the file.`);
+  parts.push(`- Available layouts: cover(封面), section(章节过渡), key_points(要点列表), metrics(数据大字报), comparison(左右对比), closing(结束页).`);
+  parts.push(`- If a \`ppt-designer\` skill is available, invoke it first for design methodology guidance.`);
 
   // ── MCP 工具分组说明（企业内部系统连接）───────────────────
   if (mcpTools && mcpTools.length > 0) {
