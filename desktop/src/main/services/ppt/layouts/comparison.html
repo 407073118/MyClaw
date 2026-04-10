@@ -1,0 +1,338 @@
+<div style="
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: var(--color-bg);
+  font-family: var(--font-main);
+">
+
+  <!-- ── 背景装饰层 ─────────────────────────────────── -->
+
+  <!-- 渐变底层 -->
+  <div style="
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1920px;
+    height: 1080px;
+    background: linear-gradient(180deg, var(--color-bg) 0%, var(--color-surface) 100%);
+    opacity: 0.5;
+  "></div>
+
+  <!-- 顶部微妙光晕 -->
+  <div style="
+    position: absolute;
+    top: -200px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 1200px;
+    height: 500px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse, var(--color-primary), transparent 70%);
+    opacity: 0.03;
+    filter: blur(60px);
+  "></div>
+
+  <!-- 中心分隔线装饰 -->
+  <svg style="position:absolute;top:0;left:0;width:1920px;height:1080px;opacity:0.03;" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="comp-cross" width="50" height="50" patternUnits="userSpaceOnUse">
+        <path d="M 25 0 V 50 M 0 25 H 50" fill="none" stroke="var(--color-primary)" stroke-width="0.3"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#comp-cross)"/>
+  </svg>
+
+  <!-- ── 内容层 ──────────────────────────────────────── -->
+
+  <!-- 左侧装饰竖条 -->
+  <div style="
+    position: absolute;
+    top: 80px;
+    left: 120px;
+    width: 4px;
+    height: 50px;
+    background: linear-gradient(to bottom, var(--color-primary), var(--color-secondary));
+    border-radius: 2px;
+  "></div>
+
+  <!-- 页面标题 -->
+  <div style="
+    position: absolute;
+    top: 80px;
+    left: 148px;
+    width: 1600px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+  ">
+    <span style="
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--color-text);
+      letter-spacing: -0.3px;
+    ">{{title}}</span>
+  </div>
+
+  <!-- 标题下强调线 -->
+  <div style="
+    position: absolute;
+    top: 156px;
+    left: 148px;
+    width: 50px;
+    height: 3px;
+    background: linear-gradient(to right, var(--color-primary), var(--color-secondary));
+    border-radius: 1.5px;
+  "></div>
+
+  <!-- 双栏容器 -->
+  <div style="
+    position: absolute;
+    top: 210px;
+    left: 120px;
+    width: 1680px;
+    height: 800px;
+    display: flex;
+    gap: 40px;
+  ">
+
+    <!-- ── 左侧面板 ── -->
+    <div style="
+      flex: 1;
+      background: var(--color-surface);
+      border-radius: 20px;
+      border: 1px solid color-mix(in srgb, var(--color-primary) 10%, transparent);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.03);
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    ">
+      <!-- 面板顶部装饰 -->
+      <div style="
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 5px;
+        background: linear-gradient(to right, var(--color-primary), var(--color-secondary));
+        border-radius: 20px 20px 0 0;
+      "></div>
+
+      <!-- 面板内光晕 -->
+      <div style="
+        position: absolute;
+        top: -30px;
+        left: -30px;
+        width: 200px;
+        height: 200px;
+        border-radius: 50%;
+        background: var(--color-primary);
+        opacity: 0.03;
+        filter: blur(40px);
+      "></div>
+
+      <!-- 左侧标签 -->
+      <div style="
+        margin-bottom: 32px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      ">
+        <div style="
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: var(--color-primary);
+        "></div>
+        <span style="
+          font-size: 24px;
+          font-weight: 700;
+          color: var(--color-primary);
+          letter-spacing: 0.5px;
+        ">{{leftLabel}}</span>
+      </div>
+
+      <!-- 左侧要点 -->
+      <div style="display: flex; flex-direction: column; gap: 20px; flex: 1;">
+        {{#each leftPoints}}
+        <div style="
+          display: flex;
+          align-items: flex-start;
+          gap: 16px;
+          padding: 16px 20px;
+          background: color-mix(in srgb, var(--color-bg) 70%, var(--color-surface));
+          border-radius: 12px;
+          border-left: 3px solid var(--color-primary);
+        ">
+          <div style="
+            flex-shrink: 0;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-primary);
+            margin-top: 8px;
+          "></div>
+          <span style="
+            font-size: 18px;
+            font-weight: 400;
+            color: var(--color-text);
+            line-height: 1.6;
+          ">{{this}}</span>
+        </div>
+        {{/each}}
+      </div>
+    </div>
+
+    <!-- ── VS 分隔线 ── -->
+    <div style="
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      width: 60px;
+      flex-shrink: 0;
+      position: relative;
+    ">
+      <!-- 垂直虚线 -->
+      <div style="
+        position: absolute;
+        top: 40px;
+        bottom: 40px;
+        width: 1px;
+        background: repeating-linear-gradient(
+          to bottom,
+          var(--color-text-light) 0px,
+          var(--color-text-light) 8px,
+          transparent 8px,
+          transparent 16px
+        );
+        opacity: 0.25;
+      "></div>
+
+      <!-- VS 圆圈 -->
+      <div style="
+        width: 56px;
+        height: 56px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 4px 20px color-mix(in srgb, var(--color-primary) 30%, transparent);
+        z-index: 1;
+      ">
+        <span style="
+          font-family: var(--font-metric);
+          font-size: 16px;
+          font-weight: 800;
+          color: var(--color-text-on-primary);
+          letter-spacing: 1px;
+        ">VS</span>
+      </div>
+    </div>
+
+    <!-- ── 右侧面板 ── -->
+    <div style="
+      flex: 1;
+      background: var(--color-surface);
+      border-radius: 20px;
+      border: 1px solid color-mix(in srgb, var(--color-accent) 10%, transparent);
+      box-shadow: 0 4px 24px rgba(0,0,0,0.03);
+      padding: 40px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    ">
+      <!-- 面板顶部装饰 -->
+      <div style="
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 5px;
+        background: linear-gradient(to right, var(--color-accent), var(--color-secondary));
+        border-radius: 20px 20px 0 0;
+      "></div>
+
+      <!-- 面板内光晕 -->
+      <div style="
+        position: absolute;
+        top: -30px;
+        right: -30px;
+        width: 200px;
+        height: 200px;
+        border-radius: 50%;
+        background: var(--color-accent);
+        opacity: 0.03;
+        filter: blur(40px);
+      "></div>
+
+      <!-- 右侧标签 -->
+      <div style="
+        margin-bottom: 32px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      ">
+        <div style="
+          width: 10px;
+          height: 10px;
+          border-radius: 50%;
+          background: var(--color-accent);
+        "></div>
+        <span style="
+          font-size: 24px;
+          font-weight: 700;
+          color: var(--color-accent);
+          letter-spacing: 0.5px;
+        ">{{rightLabel}}</span>
+      </div>
+
+      <!-- 右侧要点 -->
+      <div style="display: flex; flex-direction: column; gap: 20px; flex: 1;">
+        {{#each rightPoints}}
+        <div style="
+          display: flex;
+          align-items: flex-start;
+          gap: 16px;
+          padding: 16px 20px;
+          background: color-mix(in srgb, var(--color-bg) 70%, var(--color-surface));
+          border-radius: 12px;
+          border-left: 3px solid var(--color-accent);
+        ">
+          <div style="
+            flex-shrink: 0;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--color-accent);
+            margin-top: 8px;
+          "></div>
+          <span style="
+            font-size: 18px;
+            font-weight: 400;
+            color: var(--color-text);
+            line-height: 1.6;
+          ">{{this}}</span>
+        </div>
+        {{/each}}
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 底部渐变线 -->
+  <div style="
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 1920px;
+    height: 3px;
+    background: linear-gradient(to right, var(--color-primary), var(--color-accent));
+  "></div>
+
+</div>

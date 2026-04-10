@@ -452,6 +452,37 @@ function persistPartialAssistantDraft(
 }
 
 /**
+ * 修补会话中孤立的 tool_calls：为每个缺少 tool result 的 tool_call 补充占位消息。
+ *
+ * 场景：用户在工具审批/执行阶段终止运行，assistant 消息已含 tool_calls 但
+ * 对应的 tool result 尚未写入。下次发消息时 API 会因消息序列不完整而拒绝。
+ */
+function patchOrphanedToolCalls(session: ChatSession, now: string): void {
+  // 收集所有已存在的 tool result 的 tool_call_id
+  const existingToolResultIds = new Set(
+    session.messages
+      .filter((m) => m.role === "tool" && m.tool_call_id)
+      .map((m) => m.tool_call_id!),
+  );
+
+  for (const msg of session.messages) {
+    if (msg.role !== "assistant" || !msg.tool_calls) continue;
+    for (const tc of msg.tool_calls) {
+      if (!existingToolResultIds.has(tc.id)) {
+        session.messages.push({
+          id: randomUUID(),
+          role: "tool",
+          content: "[已取消] 工具调用因用户终止而未执行。",
+          tool_call_id: tc.id,
+          createdAt: now,
+        });
+        existingToolResultIds.add(tc.id);
+      }
+    }
+  }
+}
+
+/**
  * 统一识别用户主动 stop 触发的中断错误。
  */
 function isAbortError(error: unknown): boolean {
@@ -2447,6 +2478,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           terminalStatus = "canceled";
           terminalReason = activeRun.cancelRequested ? "user_requested" : "aborted";
           persistPartialAssistantDraft(session, currentMessageId, streamedDrafts, now);
+          // 修复：为所有孤立的 tool_calls 补充占位 tool result，
+          // 避免下次发消息时 API 报 "No tool output found for function call" 400 错误。
+          patchOrphanedToolCalls(session, now);
           if (session.planModeState) {
             session.planModeState = {
               ...session.planModeState,

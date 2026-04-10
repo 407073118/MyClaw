@@ -283,6 +283,29 @@ const RESOLVED_BUILTIN_TOOLS: ResolvedBuiltinTool[] = [
     exposedToModel: true,
     effectiveApprovalMode: "always-ask",
   },
+  // ── ppt.* ── 演示文稿生成工具组 ──────────────────────
+  {
+    id: "ppt.themes",
+    name: "PPT 主题列表",
+    description: "获取所有可用的演示文稿主题及其配色预览。",
+    group: "ppt",
+    risk: ToolRiskCategory.Read,
+    requiresAttachedDirectory: false,
+    enabled: true,
+    exposedToModel: true,
+    effectiveApprovalMode: "inherit",
+  },
+  {
+    id: "ppt.generate",
+    name: "生成 PPT",
+    description: "根据结构化内容生成可编辑的 .pptx 演示文稿。",
+    group: "ppt",
+    risk: ToolRiskCategory.Write,
+    requiresAttachedDirectory: false,
+    enabled: true,
+    exposedToModel: true,
+    effectiveApprovalMode: "always-ask",
+  },
 ];
 
 export function listBuiltinToolDefinitions(): ResolvedBuiltinTool[] {

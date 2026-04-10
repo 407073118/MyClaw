@@ -18,6 +18,7 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import type { SkillDefinition } from "@shared/contracts";
 import { BrowserService } from "./browser-service";
+import { PptEngine } from "./ppt/index";
 
 export type ToolExecutionResult = {
   success: boolean;
@@ -446,6 +447,7 @@ function findFilesInDir(base: string, root: string, pattern: string, maxResults:
 export class BuiltinToolExecutor {
   private skills: SkillDefinition[] = [];
   private browserService = new BrowserService();
+  private pptEngine = new PptEngine();
   private _allowExternalPaths = false;
 
   /** 更新技能列表。 */
@@ -453,9 +455,10 @@ export class BuiltinToolExecutor {
     this.skills = skills;
   }
 
-  /** 关闭浏览器资源。 */
+  /** 关闭浏览器与 PPT 引擎资源。 */
   async shutdown(): Promise<void> {
     await this.browserService.close();
+    await this.pptEngine.shutdown();
   }
 
   /** 设置是否允许访问工作区外部路径。 */
@@ -606,6 +609,38 @@ export class BuiltinToolExecutor {
 
     if (toolId === "web.search") {
       return this.executeWebSearch(label.trim(), options?.signal);
+    }
+
+    // ── ppt.* ─────────────────────────────────────────
+    if (toolId === "ppt.themes") {
+      const themes = this.pptEngine.getThemes();
+      return {
+        success: true,
+        output: JSON.stringify(themes, null, 2),
+      };
+    }
+
+    if (toolId === "ppt.generate") {
+      let input: Record<string, unknown>;
+      try {
+        input = JSON.parse(label);
+      } catch {
+        return { success: false, output: "", error: "ppt.generate 参数 JSON 格式无效" };
+      }
+      // 安全校验输出路径
+      if (typeof input.outputPath !== "string" || !input.outputPath) {
+        return { success: false, output: "", error: "缺少 outputPath 参数" };
+      }
+      const safePath = this.resolvePathSafe(cwd, input.outputPath as string);
+      input.outputPath = safePath;
+      const result = await this.pptEngine.generate(input as any);
+      if (!result.success) {
+        return { success: false, output: "", error: result.error };
+      }
+      return {
+        success: true,
+        output: `已生成演示文稿：${result.outputPath}（${result.slideCount} 页，可在 PowerPoint / WPS 中编辑）`,
+      };
     }
 
     if (toolId.startsWith("skill_invoke__")) {

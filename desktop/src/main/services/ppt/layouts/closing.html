@@ -1,0 +1,168 @@
+<div style="
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: linear-gradient(160deg, var(--color-bg) 0%, var(--color-surface) 40%, var(--color-bg) 100%);
+  font-family: var(--font-main);
+">
+
+  <!-- ── 背景装饰层 ─────────────────────────────────── -->
+
+  <!-- 中央大光晕 -->
+  <div style="
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 900px;
+    height: 900px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--color-primary), transparent 65%);
+    opacity: 0.04;
+    filter: blur(80px);
+  "></div>
+
+  <!-- 左上角辅助光晕 -->
+  <div style="
+    position: absolute;
+    top: -200px;
+    left: -200px;
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--color-secondary), transparent 70%);
+    opacity: 0.05;
+    filter: blur(60px);
+  "></div>
+
+  <!-- 右下角强调色光晕 -->
+  <div style="
+    position: absolute;
+    bottom: -200px;
+    right: -150px;
+    width: 500px;
+    height: 500px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--color-accent), transparent 65%);
+    opacity: 0.05;
+    filter: blur(60px);
+  "></div>
+
+  <!-- 微妙点阵纹理 -->
+  <svg style="position:absolute;top:0;left:0;width:1920px;height:1080px;opacity:0.025;" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="close-dots" width="48" height="48" patternUnits="userSpaceOnUse">
+        <circle cx="24" cy="24" r="1.2" fill="var(--color-primary)"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#close-dots)"/>
+  </svg>
+
+  <!-- 装饰环 — 左上 -->
+  <svg style="position:absolute;top:100px;left:100px;opacity:0.05;" width="160" height="160" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="80" cy="80" r="70" fill="none" stroke="var(--color-secondary)" stroke-width="1.5"/>
+    <circle cx="80" cy="80" r="50" fill="none" stroke="var(--color-secondary)" stroke-width="1"/>
+  </svg>
+
+  <!-- 装饰环 — 右下 -->
+  <svg style="position:absolute;bottom:80px;right:80px;opacity:0.05;" width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="100" cy="100" r="90" fill="none" stroke="var(--color-primary)" stroke-width="1.5"/>
+    <circle cx="100" cy="100" r="65" fill="none" stroke="var(--color-primary)" stroke-width="1"/>
+    <circle cx="100" cy="100" r="40" fill="none" stroke="var(--color-primary)" stroke-width="0.5"/>
+  </svg>
+
+  <!-- 水平装饰线 — 标题上方 -->
+  <div style="
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -120px);
+    width: 60px;
+    height: 3px;
+    background: linear-gradient(to right, var(--color-primary), var(--color-secondary));
+    border-radius: 1.5px;
+  "></div>
+
+  <!-- ── 内容层 ──────────────────────────────────────── -->
+
+  <!-- 感谢语 -->
+  <div style="
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -60px);
+    width: 1400px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  ">
+    <span style="
+      font-size: 52px;
+      font-weight: 700;
+      color: var(--color-text);
+      letter-spacing: 2px;
+      line-height: 1.3;
+    ">{{message}}</span>
+  </div>
+
+  <!-- 联系方式 -->
+  {{#if contact}}
+  <div style="
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, 80px);
+    width: 800px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  ">
+    <span style="
+      font-size: 18px;
+      font-weight: 300;
+      color: var(--color-text-light);
+      letter-spacing: 0.5px;
+    ">{{contact}}</span>
+  </div>
+  {{/if}}
+
+  <!-- 底部装饰 — 三色渐变线 -->
+  <div style="
+    position: absolute;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 200px;
+    height: 2px;
+    background: linear-gradient(to right, var(--color-primary), var(--color-secondary), var(--color-accent));
+    border-radius: 1px;
+  "></div>
+
+  <!-- 强调色小菱形装饰 -->
+  <div style="
+    position: absolute;
+    bottom: 54px;
+    left: 50%;
+    transform: translateX(-50%) rotate(45deg);
+    width: 8px;
+    height: 8px;
+    background: var(--color-accent);
+    border-radius: 1px;
+  "></div>
+
+  <!-- 底部全宽渐变线 -->
+  <div style="
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 1920px;
+    height: 4px;
+    background: linear-gradient(to right, var(--color-primary), var(--color-secondary), var(--color-accent));
+  "></div>
+
+</div>

@@ -220,6 +220,9 @@ declare global {
         diagnostics?: BrMiniMaxRuntimeDiagnostics;
         profile?: ModelProfile;
       }>;
+      testModelByConfig: (
+        input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
+      ) => Promise<{ success: boolean; ok: boolean; latencyMs?: number; error?: string }>;
       fetchModelCatalog: (
         input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
       ) => Promise<{ modelIds: ModelCatalogItem[] }>;

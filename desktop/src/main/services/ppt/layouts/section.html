@@ -1,0 +1,157 @@
+<div style="
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: linear-gradient(160deg, var(--color-primary) 0%, color-mix(in srgb, var(--color-primary) 80%, black) 100%);
+  font-family: var(--font-main);
+">
+
+  <!-- ── 背景装饰层 ─────────────────────────────────── -->
+
+  <!-- 大型圆弧光晕 — 右侧 -->
+  <div style="
+    position: absolute;
+    top: -200px;
+    right: -300px;
+    width: 1000px;
+    height: 1000px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 50%, var(--color-secondary), transparent 70%);
+    opacity: 0.15;
+    filter: blur(40px);
+  "></div>
+
+  <!-- 次要光晕 — 左下 -->
+  <div style="
+    position: absolute;
+    bottom: -300px;
+    left: -100px;
+    width: 700px;
+    height: 700px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--color-accent), transparent 65%);
+    opacity: 0.08;
+    filter: blur(60px);
+  "></div>
+
+  <!-- 细微网格纹理 -->
+  <svg style="position:absolute;top:0;left:0;width:1920px;height:1080px;opacity:0.04;" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="section-grid" width="80" height="80" patternUnits="userSpaceOnUse">
+        <circle cx="40" cy="40" r="1" fill="var(--color-text-on-primary)"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#section-grid)"/>
+  </svg>
+
+  <!-- 左上角三角装饰 -->
+  <svg style="position:absolute;top:0;left:0;opacity:0.06;" width="400" height="400" xmlns="http://www.w3.org/2000/svg">
+    <polygon points="0,0 400,0 0,400" fill="var(--color-secondary)"/>
+  </svg>
+
+  <!-- 右下角几何装饰 -->
+  <svg style="position:absolute;bottom:0;right:0;opacity:0.05;" width="500" height="350" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="400" cy="250" r="180" fill="none" stroke="var(--color-text-on-primary)" stroke-width="1.5"/>
+    <circle cx="400" cy="250" r="120" fill="none" stroke="var(--color-text-on-primary)" stroke-width="1"/>
+    <circle cx="400" cy="250" r="60" fill="none" stroke="var(--color-text-on-primary)" stroke-width="0.5"/>
+  </svg>
+
+  <!-- 水平装饰线 -->
+  <div style="
+    position: absolute;
+    top: 50%;
+    left: 120px;
+    width: 100px;
+    height: 2px;
+    background: var(--color-accent);
+    opacity: 0.6;
+    transform: translateY(-50px);
+  "></div>
+
+  <!-- ── 内容层 ──────────────────────────────────────── -->
+
+  <!-- 章节编号 -->
+  {{#if sectionNumber}}
+  <div style="
+    position: absolute;
+    top: 300px;
+    left: 260px;
+    width: 200px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+  ">
+    <span style="
+      font-family: var(--font-metric);
+      font-size: 100px;
+      font-weight: 800;
+      color: var(--color-text-on-primary);
+      opacity: 0.12;
+      line-height: 1;
+    ">{{sectionNumber}}</span>
+  </div>
+  {{/if}}
+
+  <!-- 章节标题 -->
+  <div style="
+    position: absolute;
+    top: 420px;
+    left: 260px;
+    width: 1400px;
+    height: 160px;
+    display: flex;
+    align-items: center;
+  ">
+    <span style="
+      font-size: 52px;
+      font-weight: 700;
+      color: var(--color-text-on-primary);
+      line-height: 1.3;
+      letter-spacing: 1px;
+    ">{{title}}</span>
+  </div>
+
+  <!-- 标题下装饰线 -->
+  <div style="
+    position: absolute;
+    top: 600px;
+    left: 260px;
+    width: 80px;
+    height: 4px;
+    background: var(--color-accent);
+    border-radius: 2px;
+  "></div>
+
+  <!-- 底部页码风格装饰 -->
+  <div style="
+    position: absolute;
+    bottom: 60px;
+    right: 120px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  ">
+    <div style="width: 40px; height: 1px; background: var(--color-text-on-primary); opacity: 0.3;"></div>
+    {{#if sectionNumber}}
+    <span style="
+      font-family: var(--font-metric);
+      font-size: 14px;
+      color: var(--color-text-on-primary);
+      opacity: 0.4;
+      letter-spacing: 2px;
+    ">PART {{sectionNumber}}</span>
+    {{/if}}
+  </div>
+
+  <!-- 底部渐变线 -->
+  <div style="
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 1920px;
+    height: 4px;
+    background: linear-gradient(to right, var(--color-accent), var(--color-secondary), transparent);
+  "></div>
+
+</div>

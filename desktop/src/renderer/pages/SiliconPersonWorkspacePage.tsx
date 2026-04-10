@@ -130,6 +130,7 @@ export default function SiliconPersonWorkspacePage() {
   const [approvalError, setApprovalError] = useState("");
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [activeStudioTab, setActiveStudioTab] = useState<"profile" | "tasks" | "capabilities">("profile");
+  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
 
   // 草稿状态，与当前硅基员工实体保持同构。
   const [draftName, setDraftName] = useState("");
@@ -371,10 +372,10 @@ export default function SiliconPersonWorkspacePage() {
   }
 
   /** 保存侧栏中的硅基员工角色卡和 workflow 绑定信息。 */
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSave() {
     if (!siliconPersonId) return;
 
+    setShowSaveConfirm(false);
     setSaveError("");
     setIsSaving(true);
     try {
@@ -506,7 +507,7 @@ export default function SiliconPersonWorkspacePage() {
             </div>
           </div>
           {siliconPerson && (
-            <button className="btn-premium accent" type="button" data-testid="profile-tab-save" onClick={(e) => void handleSave(e as unknown as React.FormEvent)} disabled={isSaving} style={{ opacity: isSaving ? 0.55 : undefined, cursor: isSaving ? "not-allowed" : undefined }}>
+            <button className="btn-premium accent" type="button" data-testid="profile-tab-save" onClick={() => setShowSaveConfirm(true)} disabled={isSaving} style={{ opacity: isSaving ? 0.55 : undefined, cursor: isSaving ? "not-allowed" : undefined }}>
               {isSaving ? "保存中..." : "保存"}
             </button>
           )}
@@ -811,6 +812,33 @@ export default function SiliconPersonWorkspacePage() {
 
       </section>
 
+      {/* 保存确认弹窗 */}
+      {showSaveConfirm && (
+        <div className="sp-confirm-overlay" onClick={() => setShowSaveConfirm(false)}>
+          <div
+            className="sp-confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sp-confirm-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sp-confirm-icon">
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+            </div>
+            <p id="sp-confirm-title" className="sp-confirm-message">确定保存对「{draftName || siliconPerson?.name}」的配置修改吗？</p>
+            <p className="sp-confirm-hint">修改将立即生效，新会话将使用更新后的配置。</p>
+            <div className="sp-confirm-actions">
+              <button className="sp-confirm-cancel" onClick={() => setShowSaveConfirm(false)}>取消</button>
+              <button className="sp-confirm-ok" onClick={() => void handleSave()}>确认保存</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         /* ── Layout ── */
         .ws { height: 100%; overflow-y: auto; padding: 28px 32px; display: flex; flex-direction: column; gap: 20px; }
@@ -981,6 +1009,92 @@ export default function SiliconPersonWorkspacePage() {
           .ws-form-fields { grid-template-columns: 1fr; }
           .ws-readonly-grid { grid-template-columns: 1fr 1fr; }
           .ws-binding-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── Save Confirm Dialog ── */
+        .sp-confirm-overlay {
+          position: fixed; inset: 0; z-index: 9999;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(0, 0, 0, 0.55);
+          backdrop-filter: blur(6px);
+          animation: sp-overlay-in 0.18s ease;
+        }
+        @keyframes sp-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+
+        .sp-confirm-dialog {
+          background: var(--bg-card, #1e1e2e);
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-xl, 14px);
+          padding: 32px 32px 26px;
+          min-width: 360px; max-width: 420px;
+          box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+          animation: sp-dialog-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          display: flex; flex-direction: column; align-items: center;
+          text-align: center;
+        }
+        @keyframes sp-dialog-in {
+          from { opacity: 0; transform: scale(0.92) translateY(10px); }
+          to   { opacity: 1; transform: none; }
+        }
+
+        .sp-confirm-icon {
+          width: 52px; height: 52px;
+          border-radius: 14px;
+          background: rgba(16, 163, 127, 0.1);
+          border: 1px solid rgba(16, 163, 127, 0.2);
+          display: flex; align-items: center; justify-content: center;
+          color: var(--accent-cyan, #10a37f);
+          margin-bottom: 18px;
+          flex-shrink: 0;
+        }
+
+        .sp-confirm-message {
+          margin: 0 0 6px;
+          font-size: 15px; font-weight: 600;
+          color: var(--text-primary);
+          line-height: 1.45;
+        }
+
+        .sp-confirm-hint {
+          margin: 0 0 24px;
+          font-size: 13px;
+          color: var(--text-muted);
+          line-height: 1.5;
+        }
+
+        .sp-confirm-actions {
+          display: flex; gap: 12px; width: 100%;
+        }
+
+        .sp-confirm-cancel, .sp-confirm-ok {
+          flex: 1;
+          padding: 10px 20px;
+          border-radius: var(--radius-md, 7px);
+          font-size: 13px; font-weight: 600;
+          cursor: pointer;
+          transition: all 0.15s;
+          border: 1px solid var(--glass-border);
+        }
+
+        .sp-confirm-cancel {
+          background: transparent;
+          color: var(--text-secondary);
+        }
+        .sp-confirm-cancel:hover {
+          background: var(--glass-reflection);
+          color: var(--text-primary);
+        }
+
+        .sp-confirm-ok {
+          background: linear-gradient(135deg, var(--accent-cyan, #10a37f), #0d8a6a);
+          color: #fff;
+          border-color: transparent;
+          box-shadow: 0 2px 8px rgba(16, 163, 127, 0.3);
+        }
+        .sp-confirm-ok:hover {
+          background: linear-gradient(135deg, #0ea882, #0b7a5e);
+          box-shadow: 0 4px 16px rgba(16, 163, 127, 0.4);
+          transform: translateY(-1px);
         }
       `}</style>
     </main>

@@ -292,6 +292,74 @@ export function buildToolSchemas(
         },
       },
     },
+    // ── ppt.* ── 演示文稿生成工具 ────────────────────────
+    {
+      type: "function",
+      function: {
+        name: "ppt_themes",
+        description: "获取所有可用的演示文稿主题列表，包括 ID、名称、配色预览和适用场景。在调用 ppt_generate 之前先用此工具了解可选主题。",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "ppt_generate",
+        description: [
+          "根据结构化 slide 数据生成可编辑的 .pptx 演示文稿。",
+          "每张 slide 只需指定 type（版式类型）和 data（内容数据），所有设计排版由内置模板自动完成。",
+          "可用版式类型: cover(封面), section(章节), key_points(要点), metrics(数据大字报), comparison(对比), closing(结束页)。",
+          "生成前建议先查阅 ppt-designer 技能获取设计指导。",
+        ].join(" "),
+        parameters: {
+          type: "object",
+          properties: {
+            outputPath: {
+              type: "string",
+              description: "输出文件的绝对路径，如 C:/Users/xxx/Desktop/report.pptx",
+            },
+            theme: {
+              type: "string",
+              description: "主题 ID，通过 ppt_themes 获取，如 business-blue",
+            },
+            meta: {
+              type: "object",
+              description: "演示文稿元数据",
+              properties: {
+                title: { type: "string", description: "文稿标题" },
+                subtitle: { type: "string", description: "副标题" },
+                author: { type: "string", description: "作者" },
+                date: { type: "string", description: "日期" },
+              },
+            },
+            slides: {
+              type: "array",
+              description: "Slide 列表，按展示顺序排列",
+              items: {
+                type: "object",
+                properties: {
+                  type: {
+                    type: "string",
+                    description: "版式类型: cover | section | key_points | metrics | comparison | closing",
+                  },
+                  data: {
+                    type: "object",
+                    description: "该版式所需的内容数据，具体字段参见 ppt-designer 技能说明",
+                  },
+                },
+                required: ["type", "data"],
+              },
+            },
+          },
+          required: ["outputPath", "theme", "slides"],
+        },
+      },
+    },
+
     // ── task.* ── Task V2 任务追踪 ────────────────────────────
     {
       type: "function",
@@ -780,6 +848,12 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
 
     case "skill.view":
       // 把完整参数作为 JSON 传递，便于执行器解析 skill_id、page 和 data
+      return JSON.stringify(args);
+
+    case "ppt.themes":
+      return "";
+
+    case "ppt.generate":
       return JSON.stringify(args);
 
     default: {

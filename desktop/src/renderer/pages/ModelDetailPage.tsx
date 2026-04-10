@@ -74,6 +74,8 @@ export default function ModelDetailPage() {
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [modelCatalogError, setModelCatalogError] = useState("");
   const [availableModelIds, setAvailableModelIds] = useState<string[]>([]);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs?: number; error?: string } | null>(null);
 
   const managedBrMiniMax = selectedPresetId === "br-minimax";
   const brMiniMaxDiagnostics = readBrMiniMaxRuntimeDiagnostics(profile);
@@ -237,6 +239,31 @@ export default function ModelDetailPage() {
     }
   }
 
+  /** 基于当前表单配置测试服务联通性。 */
+  async function testConnectivity() {
+    setTestResult(null);
+    setIsTesting(true);
+    try {
+      const parsedHeaders = headersText.trim() ? JSON.parse(headersText) : {};
+      const parsedBody = requestBodyText.trim() ? JSON.parse(requestBodyText) : {};
+      const result = await window.myClawAPI.testModelByConfig({
+        provider: profile.provider,
+        providerFlavor: profile.providerFlavor,
+        baseUrl: profile.baseUrl.trim(),
+        baseUrlMode: profile.baseUrlMode,
+        apiKey: profile.apiKey.trim(),
+        model: managedBrMiniMax ? BR_MINIMAX_MODEL : profile.model.trim(),
+        headers: parsedHeaders,
+        requestBody: managedBrMiniMax ? BR_MINIMAX_REQUEST_BODY : parsedBody,
+      });
+      setTestResult(result);
+    } catch (e: unknown) {
+      setTestResult({ ok: false, error: (e as Error)?.message ?? "测试失败" });
+    } finally {
+      setIsTesting(false);
+    }
+  }
+
   return (
     <div className="model-detail-layout">
       {/* 紧凑顶部栏 */}
@@ -328,7 +355,6 @@ export default function ModelDetailPage() {
                   <select
                     value={selectedPresetId}
                     data-testid="model-preset-select"
-                    disabled={!isNew && managedBrMiniMax}
                     onChange={(e) => {
                       setSelectedPresetId(e.target.value);
                       applyPreset(e.target.value);
@@ -457,6 +483,15 @@ export default function ModelDetailPage() {
                   <button
                     type="button"
                     className="secondary-action-btn"
+                    data-testid="model-test-connectivity"
+                    disabled={isTesting}
+                    onClick={testConnectivity}
+                  >
+                    {isTesting ? "测试中..." : "测试联通"}
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-action-btn"
                     data-testid="model-fetch-list"
                     disabled={isFetchingModels || managedBrMiniMax}
                     onClick={loadModelCatalog}
@@ -464,6 +499,13 @@ export default function ModelDetailPage() {
                     {managedBrMiniMax ? "托管类型无需拉取" : isFetchingModels ? "加载中..." : "获取模型列表"}
                   </button>
                 </div>
+                {testResult && (
+                  <div className={`field-hint ${testResult.ok ? "success-hint" : "error-hint"}`}>
+                    {testResult.ok
+                      ? `联通成功${testResult.latencyMs != null ? ` (${testResult.latencyMs}ms)` : ""}`
+                      : `联通失败：${testResult.error ?? "未知错误"}`}
+                  </div>
+                )}
                 {modelCatalogError && (
                   <div className="field-hint error-hint">{modelCatalogError}</div>
                 )}
@@ -862,7 +904,7 @@ export default function ModelDetailPage() {
           margin-top: 4px;
         }
 
-        .field-inline { margin-top: 10px; }
+        .field-inline { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
 
         .secondary-action-btn {
           height: 36px;
@@ -878,6 +920,7 @@ export default function ModelDetailPage() {
         .secondary-action-btn:disabled { cursor: not-allowed; opacity: 0.6; }
 
         .error-hint { color: #fca5a5; }
+        .success-hint { color: #86efac; }
 
         .flex-fill { flex: 1; }
 

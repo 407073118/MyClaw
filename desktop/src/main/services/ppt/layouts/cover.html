@@ -1,0 +1,231 @@
+<div style="
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--color-bg) 0%, var(--color-surface) 50%, var(--color-bg) 100%);
+  font-family: var(--font-main);
+">
+
+  <!-- ── 背景装饰层 ─────────────────────────────────── -->
+
+  <!-- 主色大圆弧 — 右上角 -->
+  <div style="
+    position: absolute;
+    top: -320px;
+    right: -200px;
+    width: 900px;
+    height: 900px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 40% 60%, var(--color-secondary), var(--color-primary));
+    opacity: 0.12;
+    filter: blur(60px);
+  "></div>
+
+  <!-- 辅助光晕 — 左下角 -->
+  <div style="
+    position: absolute;
+    bottom: -200px;
+    left: -150px;
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--color-accent), transparent 70%);
+    opacity: 0.08;
+    filter: blur(80px);
+  "></div>
+
+  <!-- 细网格纹理 -->
+  <svg style="position:absolute;top:0;left:0;width:1920px;height:1080px;opacity:0.03;" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="cover-grid" width="60" height="60" patternUnits="userSpaceOnUse">
+        <path d="M 60 0 L 0 0 0 60" fill="none" stroke="var(--color-primary)" stroke-width="0.5"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#cover-grid)"/>
+  </svg>
+
+  <!-- 右侧垂直装饰带 -->
+  <div style="
+    position: absolute;
+    top: 0;
+    right: 120px;
+    width: 3px;
+    height: 1080px;
+    background: linear-gradient(to bottom, transparent 0%, var(--color-secondary) 30%, var(--color-primary) 70%, transparent 100%);
+    opacity: 0.25;
+  "></div>
+
+  <!-- 右侧辅助线 -->
+  <div style="
+    position: absolute;
+    top: 0;
+    right: 140px;
+    width: 1px;
+    height: 1080px;
+    background: linear-gradient(to bottom, transparent 0%, var(--color-secondary) 40%, transparent 100%);
+    opacity: 0.12;
+  "></div>
+
+  <!-- 几何装饰 — 右上菱形 -->
+  <svg style="position:absolute;top:80px;right:180px;opacity:0.08;" width="200" height="200" xmlns="http://www.w3.org/2000/svg">
+    <rect x="50" y="0" width="100" height="100" rx="4" transform="rotate(45 100 50)" fill="none" stroke="var(--color-primary)" stroke-width="2"/>
+  </svg>
+
+  <!-- 几何装饰 — 右侧小圆点阵列 -->
+  <svg style="position:absolute;top:300px;right:200px;opacity:0.06;" width="160" height="300" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="0" cy="0" r="3" fill="var(--color-primary)"/>
+    <circle cx="40" cy="0" r="3" fill="var(--color-primary)"/>
+    <circle cx="80" cy="0" r="3" fill="var(--color-primary)"/>
+    <circle cx="120" cy="0" r="3" fill="var(--color-primary)"/>
+    <circle cx="0" cy="40" r="3" fill="var(--color-primary)"/>
+    <circle cx="40" cy="40" r="3" fill="var(--color-primary)"/>
+    <circle cx="80" cy="40" r="3" fill="var(--color-primary)"/>
+    <circle cx="120" cy="40" r="3" fill="var(--color-primary)"/>
+    <circle cx="0" cy="80" r="3" fill="var(--color-primary)"/>
+    <circle cx="40" cy="80" r="3" fill="var(--color-primary)"/>
+    <circle cx="80" cy="80" r="3" fill="var(--color-primary)"/>
+    <circle cx="120" cy="80" r="3" fill="var(--color-primary)"/>
+    <circle cx="0" cy="120" r="3" fill="var(--color-primary)"/>
+    <circle cx="40" cy="120" r="3" fill="var(--color-primary)"/>
+    <circle cx="80" cy="120" r="3" fill="var(--color-primary)"/>
+    <circle cx="120" cy="120" r="3" fill="var(--color-primary)"/>
+    <circle cx="0" cy="160" r="3" fill="var(--color-primary)"/>
+    <circle cx="40" cy="160" r="3" fill="var(--color-primary)"/>
+    <circle cx="80" cy="160" r="3" fill="var(--color-primary)"/>
+    <circle cx="120" cy="160" r="3" fill="var(--color-primary)"/>
+    <circle cx="0" cy="200" r="3" fill="var(--color-primary)"/>
+    <circle cx="40" cy="200" r="3" fill="var(--color-primary)"/>
+    <circle cx="80" cy="200" r="3" fill="var(--color-primary)"/>
+    <circle cx="120" cy="200" r="3" fill="var(--color-primary)"/>
+    <circle cx="0" cy="240" r="3" fill="var(--color-primary)"/>
+    <circle cx="40" cy="240" r="3" fill="var(--color-primary)"/>
+    <circle cx="80" cy="240" r="3" fill="var(--color-primary)"/>
+    <circle cx="120" cy="240" r="3" fill="var(--color-primary)"/>
+  </svg>
+
+  <!-- ── 内容层 ──────────────────────────────────────── -->
+
+  <!-- 左侧主色竖条 -->
+  <div style="
+    position: absolute;
+    top: 260px;
+    left: 160px;
+    width: 6px;
+    height: 120px;
+    background: linear-gradient(to bottom, var(--color-primary), var(--color-secondary));
+    border-radius: 3px;
+  "></div>
+
+  <!-- 主标题 -->
+  <div style="
+    position: absolute;
+    top: 250px;
+    left: 190px;
+    width: 1400px;
+    height: 140px;
+    display: flex;
+    align-items: flex-end;
+  ">
+    <span style="
+      font-size: 56px;
+      font-weight: 700;
+      color: var(--color-text);
+      line-height: 1.3;
+      letter-spacing: -0.5px;
+    ">{{title}}</span>
+  </div>
+
+  <!-- 副标题 -->
+  {{#if subtitle}}
+  <div style="
+    position: absolute;
+    top: 420px;
+    left: 190px;
+    width: 1400px;
+    height: 80px;
+    display: flex;
+    align-items: center;
+  ">
+    <span style="
+      font-size: 26px;
+      font-weight: 300;
+      color: var(--color-text-light);
+      letter-spacing: 1px;
+    ">{{subtitle}}</span>
+  </div>
+  {{/if}}
+
+  <!-- 底部分隔线 -->
+  <div style="
+    position: absolute;
+    bottom: 180px;
+    left: 160px;
+    width: 400px;
+    height: 2px;
+    background: linear-gradient(to right, var(--color-primary), var(--color-secondary), transparent);
+    border-radius: 1px;
+  "></div>
+
+  <!-- 强调色小点 -->
+  <div style="
+    position: absolute;
+    bottom: 176px;
+    left: 160px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--color-accent);
+  "></div>
+
+  <!-- 作者 -->
+  {{#if author}}
+  <div style="
+    position: absolute;
+    bottom: 120px;
+    left: 160px;
+    width: 600px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+  ">
+    <span style="
+      font-size: 18px;
+      font-weight: 400;
+      color: var(--color-text);
+      letter-spacing: 0.5px;
+    ">{{author}}</span>
+  </div>
+  {{/if}}
+
+  <!-- 日期 -->
+  {{#if date}}
+  <div style="
+    position: absolute;
+    bottom: 75px;
+    left: 160px;
+    width: 600px;
+    height: 35px;
+    display: flex;
+    align-items: center;
+  ">
+    <span style="
+      font-size: 15px;
+      font-weight: 300;
+      color: var(--color-text-light);
+      letter-spacing: 0.5px;
+    ">{{date}}</span>
+  </div>
+  {{/if}}
+
+  <!-- 底部渐变装饰带 -->
+  <div style="
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 1920px;
+    height: 6px;
+    background: linear-gradient(to right, var(--color-primary), var(--color-secondary), var(--color-accent));
+  "></div>
+
+</div>

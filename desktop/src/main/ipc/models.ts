@@ -331,6 +331,94 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
     },
   );
 
+  // Test connectivity by raw config (no saved profile needed)
+  ipcMain.handle(
+    "model:test-by-config",
+    async (
+      _event,
+      input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
+    ): Promise<{
+      success: boolean;
+      ok: boolean;
+      latencyMs?: number;
+      error?: string;
+    }> => {
+      const tempProfile: ModelProfile = {
+        id: "temp-test",
+        name: "temp",
+        provider: input.provider,
+        providerFlavor: input.providerFlavor,
+        baseUrl: input.baseUrl,
+        baseUrlMode: input.baseUrlMode,
+        apiKey: input.apiKey,
+        model: input.model,
+        headers: input.headers,
+        requestBody: input.requestBody,
+      };
+
+      if (isBrMiniMaxProfile(tempProfile)) {
+        try {
+          const probe = await probeBrMiniMaxRuntime(tempProfile);
+          return {
+            success: probe.ok,
+            ok: probe.ok,
+            latencyMs: probe.latencyMs,
+            error: probe.error,
+          };
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          return { success: false, ok: false, error: message };
+        }
+      }
+
+      const url = resolveModelEndpointUrl(tempProfile);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      const startTime = Date.now();
+      const testHeaders = buildRequestHeaders(tempProfile);
+
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: testHeaders,
+          body: JSON.stringify({
+            model: tempProfile.model,
+            messages: [{ role: "user", content: "ping" }],
+            max_tokens: 1,
+          }),
+          signal: controller.signal,
+        });
+
+        const latencyMs = Date.now() - startTime;
+
+        if (!response.ok) {
+          if (response.status === 401 || response.status === 403) {
+            return {
+              success: false,
+              ok: false,
+              latencyMs,
+              error: `认证失败 (HTTP ${response.status})`,
+            };
+          }
+          return { success: true, ok: true, latencyMs };
+        }
+
+        return { success: true, ok: true, latencyMs };
+      } catch (err: unknown) {
+        const latencyMs = Date.now() - startTime;
+        const message =
+          err instanceof Error
+            ? err.name === "AbortError"
+              ? "请求超时 (8 秒)"
+              : err.message
+            : String(err);
+        return { success: false, ok: false, latencyMs, error: message };
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  );
+
   // Get model catalog for a profile (lists available model IDs from the provider)
   ipcMain.handle(
     "model:catalog",

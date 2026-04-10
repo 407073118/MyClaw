@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PPT 设计助手 — 预览</title>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html,body{
+    height:100%;
+    background:#0c0c0c;
+    color:#ededed;
+    font-family:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    font-size:14px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+
+  /* ── Layout Shell ── */
+  .shell{
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+  }
+
+  /* ── Top Bar ── */
+  .top-bar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 20px;
+    border-bottom:1px solid rgba(255,255,255,0.08);
+    background:#0c0c0c;
+    flex-shrink:0;
+  }
+  .top-bar-left{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    min-width:0;
+  }
+  .top-title{
+    font-size:15px;
+    font-weight:600;
+    letter-spacing:-0.2px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .top-author{
+    font-size:12px;
+    color:#737373;
+    white-space:nowrap;
+  }
+  .top-bar-right{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    flex-shrink:0;
+  }
+  .theme-dots{
+    display:flex;
+    align-items:center;
+    gap:5px;
+  }
+  .theme-dot{
+    width:10px;height:10px;
+    border-radius:50%;
+    border:1px solid rgba(255,255,255,0.1);
+  }
+  .theme-label{
+    font-size:11px;
+    color:#737373;
+    margin-left:4px;
+  }
+
+  /* ── Body ── */
+  .body{
+    display:flex;
+    flex:1;
+    min-height:0;
+  }
+
+  /* ── Sidebar ── */
+  .sidebar{
+    width:220px;
+    flex-shrink:0;
+    border-right:1px solid rgba(255,255,255,0.08);
+    overflow-y:auto;
+    padding:12px;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+  }
+  .sidebar::-webkit-scrollbar{width:4px}
+  .sidebar::-webkit-scrollbar-track{background:transparent}
+  .sidebar::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}
+
+  .thumb{
+    position:relative;
+    background:#141414;
+    border:2px solid transparent;
+    border-radius:6px;
+    padding:10px;
+    cursor:pointer;
+    transition:all 0.2s;
+    aspect-ratio:16/9;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    overflow:hidden;
+  }
+  .thumb:hover{
+    border-color:rgba(255,255,255,0.12);
+  }
+  .thumb.active{
+    border-color:rgba(16,163,127,0.6);
+    background:#1a1a1a;
+  }
+  .thumb-num{
+    position:absolute;
+    top:4px;left:6px;
+    font-size:9px;
+    font-weight:600;
+    color:#737373;
+  }
+  .thumb-type{
+    position:absolute;
+    bottom:4px;right:6px;
+    font-size:8px;
+    font-weight:500;
+    color:#525252;
+    text-transform:uppercase;
+    letter-spacing:0.5px;
+  }
+
+  /* Thumbnail content previews */
+  .thumb-cover{text-align:center}
+  .thumb-cover .tt{font-size:9px;font-weight:600;color:#ededed;line-height:1.3}
+  .thumb-cover .ts{font-size:7px;color:#737373;margin-top:2px}
+
+  .thumb-section{text-align:center}
+  .thumb-section .sn{font-size:16px;font-weight:700;opacity:0.15;line-height:1}
+  .thumb-section .tt{font-size:9px;font-weight:600;margin-top:2px}
+
+  .thumb-key-points .tt{font-size:8px;font-weight:600;margin-bottom:3px}
+  .thumb-key-points .tp{font-size:6px;color:#a3a3a3;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .thumb-metrics{display:flex;flex-wrap:wrap;gap:3px;justify-content:center;align-items:center}
+  .thumb-metrics .tm{
+    font-size:8px;font-weight:700;
+    padding:2px 4px;
+    border-radius:2px;
+    background:rgba(255,255,255,0.05);
+    line-height:1;
+  }
+
+  .thumb-comparison{display:flex;gap:4px;align-items:stretch}
+  .thumb-comparison .tc{
+    flex:1;
+    background:rgba(255,255,255,0.03);
+    border-radius:2px;
+    padding:3px;
+    font-size:6px;
+    color:#a3a3a3;
+    overflow:hidden;
+  }
+  .thumb-comparison .tc-label{font-size:7px;font-weight:600;color:#ededed;margin-bottom:2px}
+
+  .thumb-closing{text-align:center}
+  .thumb-closing .tt{font-size:8px;color:#a3a3a3;font-style:italic}
+
+  /* ── Main Preview ── */
+  .main{
+    flex:1;
+    min-width:0;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+    position:relative;
+  }
+
+  .slide-frame{
+    width:100%;
+    max-width:800px;
+    aspect-ratio:16/9;
+    background:#141414;
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:10px;
+    overflow:hidden;
+    position:relative;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    align-items:center;
+    padding:40px 56px;
+  }
+
+  /* ── Slide Content Renderers ── */
+
+  /* cover */
+  .slide-cover{
+    text-align:center;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    height:100%;
+  }
+  .slide-cover .cover-title{
+    font-size:32px;
+    font-weight:700;
+    letter-spacing:-0.5px;
+    line-height:1.3;
+    margin-bottom:12px;
+  }
+  .slide-cover .cover-subtitle{
+    font-size:16px;
+    color:#a3a3a3;
+    margin-bottom:24px;
+  }
+  .slide-cover .cover-meta{
+    font-size:12px;
+    color:#525252;
+    display:flex;
+    gap:16px;
+  }
+
+  /* section */
+  .slide-section{
+    text-align:center;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    height:100%;
+  }
+  .slide-section .section-number{
+    font-size:72px;
+    font-weight:800;
+    opacity:0.08;
+    line-height:1;
+    margin-bottom:-12px;
+  }
+  .slide-section .section-title{
+    font-size:28px;
+    font-weight:700;
+    letter-spacing:-0.3px;
+  }
+
+  /* key_points */
+  .slide-key-points{
+    width:100%;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+  }
+  .slide-key-points .kp-title{
+    font-size:22px;
+    font-weight:700;
+    margin-bottom:24px;
+    padding-bottom:16px;
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+  .slide-key-points .kp-list{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    justify-content:center;
+    gap:14px;
+  }
+  .kp-item{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    font-size:15px;
+  }
+  .kp-icon{
+    font-size:20px;
+    width:36px;
+    height:36px;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:rgba(255,255,255,0.04);
+    border-radius:8px;
+    flex-shrink:0;
+  }
+  .kp-text{color:#d4d4d4}
+
+  /* metrics */
+  .slide-metrics{
+    width:100%;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+  }
+  .slide-metrics .mt-title{
+    font-size:22px;
+    font-weight:700;
+    margin-bottom:24px;
+    padding-bottom:16px;
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+  .slide-metrics .mt-grid{
+    flex:1;
+    display:grid;
+    gap:16px;
+    align-content:center;
+  }
+  .mt-card{
+    background:rgba(255,255,255,0.03);
+    border:1px solid rgba(255,255,255,0.06);
+    border-radius:10px;
+    padding:20px 24px;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .mt-label{
+    font-size:12px;
+    color:#737373;
+    text-transform:uppercase;
+    letter-spacing:0.5px;
+  }
+  .mt-value{
+    font-size:32px;
+    font-weight:800;
+    letter-spacing:-0.5px;
+    line-height:1.1;
+  }
+  .mt-change{
+    font-size:12px;
+    font-weight:500;
+    display:flex;
+    align-items:center;
+    gap:4px;
+  }
+  .mt-change.up{color:#10a37f}
+  .mt-change.down{color:#ef4444}
+  .mt-change-arrow{font-size:10px}
+
+  /* comparison */
+  .slide-comparison{
+    width:100%;
+    height:100%;
+    display:flex;
+    flex-direction:column;
+  }
+  .slide-comparison .cmp-title{
+    font-size:22px;
+    font-weight:700;
+    margin-bottom:24px;
+    padding-bottom:16px;
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+  .slide-comparison .cmp-body{
+    flex:1;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:20px;
+    align-content:center;
+  }
+  .cmp-col{
+    background:rgba(255,255,255,0.03);
+    border:1px solid rgba(255,255,255,0.06);
+    border-radius:10px;
+    padding:20px;
+  }
+  .cmp-label{
+    font-size:14px;
+    font-weight:700;
+    margin-bottom:14px;
+    padding-bottom:10px;
+    border-bottom:1px solid rgba(255,255,255,0.06);
+  }
+  .cmp-point{
+    font-size:13px;
+    color:#a3a3a3;
+    padding:6px 0;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .cmp-point::before{
+    content:"";
+    width:5px;height:5px;
+    border-radius:50%;
+    flex-shrink:0;
+    background:var(--dot-color, #a3a3a3);
+  }
+
+  /* closing */
+  .slide-closing{
+    text-align:center;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    width:100%;
+    height:100%;
+  }
+  .slide-closing .closing-msg{
+    font-size:24px;
+    font-weight:600;
+    color:#a3a3a3;
+    line-height:1.5;
+    margin-bottom:16px;
+  }
+  .slide-closing .closing-contact{
+    font-size:13px;
+    color:#525252;
+  }
+
+  /* unknown type fallback */
+  .slide-unknown{
+    text-align:center;
+    color:#525252;
+    font-size:14px;
+  }
+
+  /* ── Bottom Bar ── */
+  .bottom-bar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:10px 20px;
+    border-top:1px solid rgba(255,255,255,0.08);
+    background:#0c0c0c;
+    flex-shrink:0;
+  }
+  .slide-counter{
+    font-size:13px;
+    color:#a3a3a3;
+    font-variant-numeric:tabular-nums;
+  }
+  .slide-counter strong{
+    color:#ededed;
+    font-weight:600;
+  }
+  .type-badge{
+    font-size:11px;
+    font-weight:500;
+    padding:3px 10px;
+    border-radius:6px;
+    background:rgba(16,163,127,0.12);
+    color:#10a37f;
+    border:1px solid rgba(16,163,127,0.25);
+    text-transform:uppercase;
+    letter-spacing:0.5px;
+  }
+  .bottom-nav{
+    display:flex;
+    gap:6px;
+  }
+  .bottom-nav-btn{
+    width:28px;height:28px;
+    display:flex;align-items:center;justify-content:center;
+    border-radius:6px;
+    border:1px solid rgba(255,255,255,0.08);
+    background:transparent;
+    color:#a3a3a3;
+    font-size:14px;
+    font-family:inherit;
+    cursor:pointer;
+    transition:all 0.15s;
+    user-select:none;
+  }
+  .bottom-nav-btn:hover{
+    border-color:rgba(255,255,255,0.18);
+    color:#ededed;
+  }
+  .bottom-nav-btn:active{
+    background:rgba(255,255,255,0.05);
+  }
+  .bottom-nav-btn:disabled{
+    opacity:0.3;
+    cursor:default;
+  }
+
+  /* ── Empty State ── */
+  .empty-state{
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    color:#525252;
+    gap:8px;
+  }
+  .empty-icon{font-size:40px;opacity:0.3;margin-bottom:4px}
+  .empty-title{font-size:15px;font-weight:600;color:#737373}
+  .empty-desc{font-size:12px}
+
+  /* ── Responsive ── */
+  @media(max-width:640px){
+    .sidebar{width:160px;padding:8px}
+    .main{padding:12px}
+    .slide-frame{padding:20px 28px}
+  }
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="top-bar-left">
+      <span class="top-title" id="topTitle">PPT 预览</span>
+      <span class="top-author" id="topAuthor"></span>
+    </div>
+    <div class="top-bar-right">
+      <div class="theme-dots" id="themeDots"></div>
+      <span class="theme-label" id="themeLabel"></span>
+    </div>
+  </div>
+
+  <div class="body">
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar"></div>
+
+    <!-- Main Preview -->
+    <div class="main" id="mainArea">
+      <div class="empty-state">
+        <div class="empty-icon">&#9656;</div>
+        <div class="empty-title">等待数据</div>
+        <div class="empty-desc">AI 正在准备演示文稿预览...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom Bar -->
+  <div class="bottom-bar" id="bottomBar" style="display:none">
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="type-badge" id="typeBadge"></span>
+      <span class="slide-counter"><strong id="currentNum">1</strong> / <span id="totalNum">0</span></span>
+    </div>
+    <div class="bottom-nav">
+      <button class="bottom-nav-btn" id="btnPrev" onclick="navigate(-1)">&#8592;</button>
+      <button class="bottom-nav-btn" id="btnNext" onclick="navigate(1)">&#8594;</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── State ── */
+let slides = [];
+let currentIndex = 0;
+let themeId = "";
+let themeColors = {};
+let meta = {};
+
+/* ── Known Theme Palettes ── */
+const THEME_PALETTES = {
+  "business-blue": {
+    primary: "#1e3a5f",
+    secondary: "#4a90d9",
+    accent: "#f5a623",
+    surface: "#f8fafc",
+    text: "#1a1a2e",
+    textLight: "#64748b",
+    success: "#10b981",
+    danger: "#ef4444",
+  },
+  "tech-dark": {
+    primary: "#3b82f6",
+    secondary: "#8b5cf6",
+    accent: "#22d3ee",
+    surface: "#1e293b",
+    text: "#f1f5f9",
+    textLight: "#94a3b8",
+    success: "#34d399",
+    danger: "#f87171",
+  },
+  "fresh-green": {
+    primary: "#059669",
+    secondary: "#34d399",
+    accent: "#f59e0b",
+    surface: "#f0fdf4",
+    text: "#1a1a2e",
+    textLight: "#6b7280",
+    success: "#10b981",
+    danger: "#ef4444",
+  },
+};
+
+/* ── postMessage Protocol ── */
+window.addEventListener("message", (e) => {
+  if (e.data?.type === "skill-data" && e.data.payload) {
+    handleData(e.data.payload);
+  }
+  if (e.data?.type === "skill-update" && e.data.payload) {
+    handleData(e.data.payload);
+  }
+});
+
+function handleData(payload) {
+  themeId = payload.theme || "business-blue";
+  themeColors = payload.themeColors || THEME_PALETTES[themeId] || THEME_PALETTES["business-blue"];
+  meta = payload.meta || {};
+  slides = payload.slides || [];
+  currentIndex = 0;
+  renderAll();
+}
+
+/* ── Render All ── */
+function renderAll() {
+  renderTopBar();
+  renderSidebar();
+  renderMainSlide();
+  renderBottomBar();
+}
+
+/* ── Top Bar ── */
+function renderTopBar() {
+  document.getElementById("topTitle").textContent = meta.title || "PPT 预览";
+  document.getElementById("topAuthor").textContent = meta.author ? ("by " + meta.author) : "";
+
+  const dotsEl = document.getElementById("themeDots");
+  const labelEl = document.getElementById("themeLabel");
+  const colors = [themeColors.primary, themeColors.secondary, themeColors.accent].filter(Boolean);
+  dotsEl.innerHTML = colors.map(c => '<div class="theme-dot" style="background:' + c + '"></div>').join("");
+  labelEl.textContent = themeId;
+}
+
+/* ── Sidebar ── */
+function renderSidebar() {
+  const el = document.getElementById("sidebar");
+  el.innerHTML = slides.map((s, i) => {
+    const active = i === currentIndex ? " active" : "";
+    return '<div class="thumb' + active + '" onclick="selectSlide(' + i + ')">' +
+      '<span class="thumb-num">' + (i + 1) + '</span>' +
+      thumbContent(s) +
+      '<span class="thumb-type">' + s.type + '</span>' +
+    '</div>';
+  }).join("");
+}
+
+function thumbContent(slide) {
+  const d = slide.data || {};
+  switch (slide.type) {
+    case "cover":
+      return '<div class="thumb-cover">' +
+        '<div class="tt">' + esc(d.title || "") + '</div>' +
+        '<div class="ts">' + esc(d.subtitle || "") + '</div>' +
+      '</div>';
+    case "section":
+      return '<div class="thumb-section">' +
+        (d.sectionNumber ? '<div class="sn">' + pad2(d.sectionNumber) + '</div>' : '') +
+        '<div class="tt">' + esc(d.title || "") + '</div>' +
+      '</div>';
+    case "key_points":
+      var pts = (d.points || []).slice(0, 3);
+      return '<div class="thumb-key-points">' +
+        '<div class="tt">' + esc(d.title || "") + '</div>' +
+        pts.map(function(p) { return '<div class="tp">' + esc((p.icon || "\u2022") + " " + (p.text || "")) + '</div>'; }).join("") +
+      '</div>';
+    case "metrics":
+      var items = (d.items || []).slice(0, 4);
+      return '<div class="thumb-metrics">' +
+        items.map(function(it) {
+          return '<div class="tm" style="color:' + themeColors.primary + '">' + esc(it.value || "") + '</div>';
+        }).join("") +
+      '</div>';
+    case "comparison":
+      return '<div class="thumb-comparison">' +
+        '<div class="tc"><div class="tc-label">' + esc(d.leftLabel || "A") + '</div></div>' +
+        '<div class="tc"><div class="tc-label">' + esc(d.rightLabel || "B") + '</div></div>' +
+      '</div>';
+    case "closing":
+      return '<div class="thumb-closing"><div class="tt">' + esc(d.message || "") + '</div></div>';
+    default:
+      return '<div class="thumb-closing"><div class="tt">' + esc(slide.type) + '</div></div>';
+  }
+}
+
+/* ── Main Slide ── */
+function renderMainSlide() {
+  const mainEl = document.getElementById("mainArea");
+  if (!slides.length) {
+    mainEl.innerHTML = '<div class="empty-state">' +
+      '<div class="empty-icon">&#9656;</div>' +
+      '<div class="empty-title">等待数据</div>' +
+      '<div class="empty-desc">AI 正在准备演示文稿预览...</div>' +
+    '</div>';
+    return;
+  }
+
+  const slide = slides[currentIndex];
+  const d = slide.data || {};
+  let inner = "";
+
+  switch (slide.type) {
+    case "cover":
+      inner = '<div class="slide-cover">' +
+        '<div class="cover-title" style="color:' + themeColors.primary + '">' + esc(d.title || "") + '</div>' +
+        (d.subtitle ? '<div class="cover-subtitle">' + esc(d.subtitle) + '</div>' : '') +
+        '<div class="cover-meta">' +
+          (d.author ? '<span>' + esc(d.author) + '</span>' : '') +
+          (d.date ? '<span>' + esc(d.date) + '</span>' : '') +
+        '</div>' +
+      '</div>';
+      break;
+
+    case "section":
+      inner = '<div class="slide-section">' +
+        (d.sectionNumber ? '<div class="section-number" style="color:' + themeColors.primary + '">' + pad2(d.sectionNumber) + '</div>' : '') +
+        '<div class="section-title">' + esc(d.title || "") + '</div>' +
+      '</div>';
+      break;
+
+    case "key_points":
+      var points = d.points || [];
+      inner = '<div class="slide-key-points">' +
+        '<div class="kp-title">' + esc(d.title || "") + '</div>' +
+        '<div class="kp-list">' +
+          points.map(function(p) {
+            return '<div class="kp-item">' +
+              '<span class="kp-icon">' + (p.icon || "\u2022") + '</span>' +
+              '<span class="kp-text">' + esc(p.text || "") + '</span>' +
+            '</div>';
+          }).join("") +
+        '</div>' +
+      '</div>';
+      break;
+
+    case "metrics":
+      var items = d.items || [];
+      var cols = items.length <= 2 ? "repeat(" + items.length + ",1fr)" : items.length === 3 ? "repeat(3,1fr)" : "repeat(2,1fr)";
+      inner = '<div class="slide-metrics">' +
+        '<div class="mt-title">' + esc(d.title || "") + '</div>' +
+        '<div class="mt-grid" style="grid-template-columns:' + cols + '">' +
+          items.map(function(it) {
+            var changeHtml = "";
+            if (it.change) {
+              var dir = it.trend || "up";
+              var arrow = dir === "up" ? "\u2191" : "\u2193";
+              changeHtml = '<div class="mt-change ' + dir + '">' +
+                '<span class="mt-change-arrow">' + arrow + '</span>' +
+                esc(it.change) +
+              '</div>';
+            }
+            return '<div class="mt-card">' +
+              '<div class="mt-label">' + esc(it.label || "") + '</div>' +
+              '<div class="mt-value" style="color:' + themeColors.primary + '">' + esc(it.value || "") + '</div>' +
+              changeHtml +
+            '</div>';
+          }).join("") +
+        '</div>' +
+      '</div>';
+      break;
+
+    case "comparison":
+      var lp = d.leftPoints || [];
+      var rp = d.rightPoints || [];
+      inner = '<div class="slide-comparison">' +
+        '<div class="cmp-title">' + esc(d.title || "") + '</div>' +
+        '<div class="cmp-body">' +
+          '<div class="cmp-col">' +
+            '<div class="cmp-label" style="color:' + themeColors.secondary + '">' + esc(d.leftLabel || "A") + '</div>' +
+            lp.map(function(pt) { return '<div class="cmp-point" style="--dot-color:' + themeColors.secondary + '">' + esc(pt) + '</div>'; }).join("") +
+          '</div>' +
+          '<div class="cmp-col">' +
+            '<div class="cmp-label" style="color:' + themeColors.primary + '">' + esc(d.rightLabel || "B") + '</div>' +
+            rp.map(function(pt) { return '<div class="cmp-point" style="--dot-color:' + themeColors.primary + '">' + esc(pt) + '</div>'; }).join("") +
+          '</div>' +
+        '</div>' +
+      '</div>';
+      break;
+
+    case "closing":
+      inner = '<div class="slide-closing">' +
+        '<div class="closing-msg">' + esc(d.message || "") + '</div>' +
+        (d.contact ? '<div class="closing-contact">' + esc(d.contact) + '</div>' : '') +
+      '</div>';
+      break;
+
+    default:
+      inner = '<div class="slide-unknown">未知版式类型：' + esc(slide.type) + '</div>';
+  }
+
+  mainEl.innerHTML = '<div class="slide-frame" style="border-color:rgba(' + hexToRgb(themeColors.primary) + ',0.15)">' + inner + '</div>';
+}
+
+/* ── Bottom Bar ── */
+function renderBottomBar() {
+  const bar = document.getElementById("bottomBar");
+  if (!slides.length) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  document.getElementById("typeBadge").textContent = slides[currentIndex].type;
+  document.getElementById("currentNum").textContent = currentIndex + 1;
+  document.getElementById("totalNum").textContent = slides.length;
+  document.getElementById("btnPrev").disabled = currentIndex === 0;
+  document.getElementById("btnNext").disabled = currentIndex === slides.length - 1;
+}
+
+/* ── Navigation ── */
+function selectSlide(i) {
+  currentIndex = i;
+  renderSidebar();
+  renderMainSlide();
+  renderBottomBar();
+}
+
+function navigate(delta) {
+  var next = currentIndex + delta;
+  if (next >= 0 && next < slides.length) {
+    selectSlide(next);
+  }
+}
+
+/* Keyboard nav */
+document.addEventListener("keydown", function(e) {
+  if (e.key === "ArrowLeft" || e.key === "ArrowUp") { navigate(-1); e.preventDefault(); }
+  if (e.key === "ArrowRight" || e.key === "ArrowDown") { navigate(1); e.preventDefault(); }
+});
+
+/* ── Helpers ── */
+function esc(s) {
+  var d = document.createElement("div");
+  d.appendChild(document.createTextNode(String(s)));
+  return d.innerHTML;
+}
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function hexToRgb(hex) {
+  if (!hex) return "255,255,255";
+  hex = hex.replace("#", "");
+  if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+  var r = parseInt(hex.substring(0,2),16);
+  var g = parseInt(hex.substring(2,4),16);
+  var b = parseInt(hex.substring(4,6),16);
+  return r + "," + g + "," + b;
+}
+
+/* ── Fallback Demo (auto-populate after 3s if no data received) ── */
+var demoTimer = setTimeout(function() {
+  if (slides.length === 0) {
+    handleData({
+      theme: "business-blue",
+      meta: { title: "PPT 预览面板", author: "MyClaw" },
+      slides: [
+        { type: "cover", data: { title: "演示文稿预览", subtitle: "等待 AI 生成内容", author: "MyClaw", date: "2026" } },
+        { type: "section", data: { title: "示例章节", sectionNumber: 1 } },
+        { type: "key_points", data: { title: "示例要点", points: [
+          { icon: "\ud83d\ude80", text: "这是第一个要点" },
+          { icon: "\ud83d\udcca", text: "这是第二个要点" },
+          { icon: "\u2728", text: "这是第三个要点" }
+        ] } },
+      ]
+    });
+  }
+}, 3000);
+
+/* Cancel demo if real data arrives */
+window.addEventListener("message", function() { clearTimeout(demoTimer); }, { once: true });
+</script>
+
+</body>
+</html>

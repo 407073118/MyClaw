@@ -1,0 +1,247 @@
+<div style="
+  position: relative;
+  width: 1920px;
+  height: 1080px;
+  overflow: hidden;
+  background: var(--color-bg);
+  font-family: var(--font-main);
+">
+
+  <!-- ── 背景装饰层 ─────────────────────────────────── -->
+
+  <!-- 渐变底层 -->
+  <div style="
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1920px;
+    height: 1080px;
+    background: linear-gradient(170deg, var(--color-bg) 0%, var(--color-surface) 60%, var(--color-bg) 100%);
+  "></div>
+
+  <!-- 顶部大圆弧 -->
+  <div style="
+    position: absolute;
+    top: -500px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2000px;
+    height: 800px;
+    border-radius: 50%;
+    background: radial-gradient(ellipse, var(--color-primary), transparent 70%);
+    opacity: 0.04;
+    filter: blur(60px);
+  "></div>
+
+  <!-- 右上角二次装饰 -->
+  <div style="
+    position: absolute;
+    top: -100px;
+    right: -80px;
+    width: 400px;
+    height: 400px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--color-accent), transparent 65%);
+    opacity: 0.05;
+    filter: blur(50px);
+  "></div>
+
+  <!-- 细线纹理 -->
+  <svg style="position:absolute;top:0;left:0;width:1920px;height:1080px;opacity:0.02;" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <pattern id="metrics-lines" width="100" height="100" patternUnits="userSpaceOnUse">
+        <line x1="0" y1="100" x2="100" y2="0" stroke="var(--color-primary)" stroke-width="0.3"/>
+      </pattern>
+    </defs>
+    <rect width="100%" height="100%" fill="url(#metrics-lines)"/>
+  </svg>
+
+  <!-- ── 内容层 ──────────────────────────────────────── -->
+
+  <!-- 左侧装饰竖条 -->
+  <div style="
+    position: absolute;
+    top: 100px;
+    left: 120px;
+    width: 4px;
+    height: 50px;
+    background: linear-gradient(to bottom, var(--color-primary), var(--color-secondary));
+    border-radius: 2px;
+  "></div>
+
+  <!-- 页面标题 -->
+  <div style="
+    position: absolute;
+    top: 100px;
+    left: 148px;
+    width: 1600px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+  ">
+    <span style="
+      font-size: 36px;
+      font-weight: 700;
+      color: var(--color-text);
+      letter-spacing: -0.3px;
+    ">{{title}}</span>
+  </div>
+
+  <!-- 标题下强调线 -->
+  <div style="
+    position: absolute;
+    top: 178px;
+    left: 148px;
+    width: 50px;
+    height: 3px;
+    background: linear-gradient(to right, var(--color-accent), var(--color-secondary));
+    border-radius: 1.5px;
+  "></div>
+
+  <!-- KPI 卡片容器 -->
+  <div style="
+    position: absolute;
+    top: 260px;
+    left: 120px;
+    width: 1680px;
+    height: 580px;
+    display: flex;
+    gap: 32px;
+    align-items: stretch;
+  ">
+
+    {{#each items}}
+    <div style="
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: var(--color-surface);
+      border-radius: 24px;
+      border: 1px solid color-mix(in srgb, var(--color-primary) 8%, transparent);
+      box-shadow:
+        0 4px 24px rgba(0,0,0,0.04),
+        0 1px 4px rgba(0,0,0,0.02),
+        inset 0 1px 0 rgba(255,255,255,0.6);
+      padding: 40px 32px;
+      position: relative;
+      overflow: hidden;
+    ">
+      <!-- 卡片内部顶部光晕 -->
+      <div style="
+        position: absolute;
+        top: -40px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 200px;
+        height: 100px;
+        border-radius: 50%;
+        background: var(--color-primary);
+        opacity: 0.04;
+        filter: blur(30px);
+      "></div>
+
+      <!-- 趋势图标背景圆 -->
+      <div style="
+        width: 64px;
+        height: 64px;
+        border-radius: 50%;
+        background: color-mix(in srgb, {{#if (eq trend 'up')}}var(--color-success){{else}}{{#if (eq trend 'down')}}var(--color-danger){{else}}var(--color-secondary){{/if}}{{/if}} 12%, transparent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 28px;
+      ">
+        <span style="font-size: 28px;">
+          {{#if (eq trend 'up')}}
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M7 17L17 7M17 7H7M17 7V17" stroke="var(--color-success)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          {{else}}
+            {{#if (eq trend 'down')}}
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M7 7L17 17M17 17H7M17 17V7" stroke="var(--color-danger)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            {{else}}
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M5 12H19" stroke="var(--color-secondary)" stroke-width="2.5" stroke-linecap="round"/>
+              </svg>
+            {{/if}}
+          {{/if}}
+        </span>
+      </div>
+
+      <!-- 大数值 -->
+      <div style="
+        margin-bottom: 12px;
+        text-align: center;
+      ">
+        <span style="
+          font-family: var(--font-metric);
+          font-size: 56px;
+          font-weight: 800;
+          color: var(--color-text);
+          line-height: 1.1;
+          letter-spacing: -1px;
+        ">{{value}}</span>
+      </div>
+
+      <!-- 标签 -->
+      <div style="
+        margin-bottom: 16px;
+        text-align: center;
+      ">
+        <span style="
+          font-size: 18px;
+          font-weight: 400;
+          color: var(--color-text-light);
+          letter-spacing: 0.5px;
+        ">{{label}}</span>
+      </div>
+
+      <!-- 变化值 -->
+      {{#if change}}
+      <div style="
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 16px;
+        border-radius: 20px;
+        background: color-mix(in srgb, {{#if (eq trend 'up')}}var(--color-success){{else}}{{#if (eq trend 'down')}}var(--color-danger){{else}}var(--color-secondary){{/if}}{{/if}} 8%, transparent);
+      ">
+        <span style="
+          font-size: 14px;
+          font-weight: 600;
+          color: {{#if (eq trend 'up')}}var(--color-success){{else}}{{#if (eq trend 'down')}}var(--color-danger){{else}}var(--color-text-light){{/if}}{{/if}};
+        ">{{change}}</span>
+      </div>
+      {{/if}}
+
+      <!-- 底部装饰线 -->
+      <div style="
+        position: absolute;
+        bottom: 0;
+        left: 10%;
+        width: 80%;
+        height: 3px;
+        background: linear-gradient(to right, transparent, {{#if (eq trend 'up')}}var(--color-success){{else}}{{#if (eq trend 'down')}}var(--color-danger){{else}}var(--color-secondary){{/if}}{{/if}}, transparent);
+        opacity: 0.4;
+        border-radius: 1.5px;
+      "></div>
+    </div>
+    {{/each}}
+
+  </div>
+
+  <!-- 底部渐变线 -->
+  <div style="
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 1920px;
+    height: 3px;
+    background: linear-gradient(to right, var(--color-primary), var(--color-secondary), transparent);
+  "></div>
+
+</div>
