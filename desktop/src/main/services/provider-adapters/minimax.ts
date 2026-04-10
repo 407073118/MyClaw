@@ -19,19 +19,34 @@ const THINKING_BUDGET_MAP: Record<SessionReasoningEffort, number> = {
   high: 32768,
 };
 
-/** 将带 reasoning 的 MiniMax assistant 消息物化为可重放的 think 内容。 */
+/**
+ * 将 MiniMax assistant 消息物化为可重放的 think 内容。
+ * 当 thinking 开启时，MiniMax 要求所有 assistant 消息都带 <think> 标签，
+ * 即使 reasoning 为空也必须包含 <think></think>，否则 API 返回 400。
+ */
 function materializeMiniMaxReplayMessage(message: ProviderAdapterMessage): ProviderAdapterMessage {
   if (message.role !== "assistant") return { ...message };
 
-  const content = typeof message.content === "string" ? message.content : null;
+  let content: string | null = null;
+  if (typeof message.content === "string") {
+    content = message.content;
+  } else if (Array.isArray(message.content)) {
+    // 多模态数组：提取文本部分拼接（assistant 重放场景下图片信息无法嵌入 <think> 格式）
+    const textParts = (message.content as Array<{ type: string; text?: string }>)
+      .filter((part) => part.type === "text" && part.text)
+      .map((part) => part.text!);
+    if (textParts.length > 0) {
+      content = textParts.join("\n");
+    }
+  }
   const reasoning = typeof message.reasoning === "string" ? message.reasoning.trim() : "";
-  if (!reasoning) return { ...message };
 
+  const thinkTag = reasoning ? `<think>${reasoning}</think>` : `<think></think>`;
   return {
     ...message,
     content: content && content.trim().length > 0
-      ? `<think>${reasoning}</think>\n\n${content}`
-      : `<think>${reasoning}</think>`,
+      ? `${thinkTag}\n\n${content}`
+      : thinkTag,
     reasoning: undefined,
   };
 }

@@ -14,8 +14,9 @@ import McpPage from "../pages/McpPage";
 import McpDetailPage from "../pages/McpDetailPage";
 import SkillsPage from "../pages/SkillsPage";
 import SkillDetailPage from "../pages/SkillDetailPage";
-import EmployeesPage from "../pages/EmployeesPage";
-import EmployeeStudioPage from "../pages/EmployeeStudioPage";
+import SiliconPersonEntryPage from "../pages/SiliconPersonEntryPage";
+import SiliconPersonCreatePage from "../pages/SiliconPersonCreatePage";
+import SiliconPersonWorkspacePage from "../pages/SiliconPersonWorkspacePage";
 import WorkflowsPage from "../pages/WorkflowsPage";
 import WorkflowStudioPage from "../pages/WorkflowStudioPage";
 import PublishDraftPage from "../pages/PublishDraftPage";
@@ -68,8 +69,9 @@ export function AppRoutes() {
         <Route path="/mcp/:id" element={<McpDetailPage />} />
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/skills/:id" element={<SkillDetailPage />} />
-        <Route path="/employees" element={<EmployeesPage />} />
-        <Route path="/employees/:id" element={<EmployeeStudioPage />} />
+        <Route path="/employees" element={<SiliconPersonEntryPage />} />
+        <Route path="/employees/new" element={<SiliconPersonCreatePage />} />
+        <Route path="/employees/:id" element={<SiliconPersonWorkspacePage />} />
         <Route path="/workflows" element={<WorkflowsPage />} />
         <Route path="/workflows/:id" element={<WorkflowStudioPage />} />
         <Route path="/publish-drafts" element={<PublishDraftPage />} />

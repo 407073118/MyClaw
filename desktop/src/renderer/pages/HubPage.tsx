@@ -137,28 +137,35 @@ export default function HubPage() {
     }
   }
 
+  // 保持 loadData 最新引用，供 focus handler 等异步场景使用
+  const loadDataRef = useRef(loadData);
+  loadDataRef.current = loadData;
+
+  // 初始加载（tab 切换由 switchTab 自行处理）
   useEffect(() => {
     void loadData();
     return () => { if (retryTimerRef.current) clearTimeout(retryTimerRef.current); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在挂载时触发初始加载，tab 切换由 switchTab 处理
   }, []);
 
+  // keyword/sortBy 变化时重新加载 skill 列表
   useEffect(() => {
     if (activeTab === "skill") void loadSkills();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadSkills 随 keyword/sortBy 变化重建，此处仅关注这两个触发源
   }, [keyword, sortBy]);
 
+  // selectedCategory 变化时重置 tag 并重新加载
   useEffect(() => {
     setSelectedTag("");
     if (activeTab === "skill") void loadSkills();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在 selectedCategory 变化时触发
   }, [selectedCategory]);
 
+  // 窗口获焦时重试（使用 ref 避免闭包过期）
   useEffect(() => {
-    function onWindowFocus() { if (cloudError) void loadData(); }
+    function onWindowFocus() { if (cloudError) void loadDataRef.current(); }
     window.addEventListener("focus", onWindowFocus);
     return () => window.removeEventListener("focus", onWindowFocus);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cloudError]);
 
   async function switchTab(tab: CloudHubItemType) {
@@ -199,7 +206,11 @@ export default function HubPage() {
     setImportFeedback("");
     setImportError("");
     workspace.clearCloudSkillDetail();
-    try { await workspace.loadCloudSkillDetail(skillId); } catch { /* handled */ }
+    try {
+      await workspace.loadCloudSkillDetail(skillId);
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "加载详情失败");
+    }
   }
 
   async function openHubItemDetail(itemId: string, trigger?: HTMLElement | null) {
@@ -212,7 +223,9 @@ export default function HubPage() {
       const detail = await workspace.loadCloudHubDetail(itemId);
       const releaseId = (detail as any).releases[0]?.id;
       if (releaseId) await workspace.loadCloudHubManifest(releaseId);
-    } catch { /* handled */ }
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "加载详情失败");
+    }
   }
 
   async function installSkill() {
@@ -242,7 +255,7 @@ export default function HubPage() {
         const releaseId = detail.releases[0]?.id;
         if (!releaseId) throw new Error("无可用版本。");
         if (detail.type === "employee-package") {
-          await workspace.importCloudEmployeePackage({ itemId: detail.id, releaseId, name: detail.name, summary: detail.summary, manifest });
+          await workspace.importCloudSiliconPersonPackage({ itemId: detail.id, releaseId, name: detail.name, summary: detail.summary, manifest });
           setImportFeedback("已导入到本地员工列表。");
         } else {
           await workspace.importCloudWorkflowPackage({ itemId: detail.id, releaseId, name: detail.name, summary: detail.summary, manifest });

@@ -81,6 +81,7 @@ function applySseChunk(
   payload: unknown,
   state: SseState,
   onDelta?: (delta: { content?: string; reasoning?: string }) => void,
+  onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void,
 ): void {
   if (!payload || typeof payload !== "object") return;
 
@@ -139,6 +140,7 @@ function applySseChunk(
     }
     if (typeof fn["arguments"] === "string") {
       acc.argumentsJson += fn["arguments"];
+      onToolCallDelta?.({ toolCallId: acc.id, name: acc.name, argumentsDelta: fn["arguments"] });
     }
   }
 
@@ -212,6 +214,7 @@ function finaliseSseState(state: SseState): {
 export async function consumeSseStream(
   response: Response,
   onDelta?: (delta: { content?: string; reasoning?: string }) => void,
+  onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void,
 ): Promise<{
   content: string;
   reasoning: string;
@@ -235,7 +238,7 @@ export async function consumeSseStream(
       const payload = line.slice("data:".length).trim();
       if (!payload || payload === "[DONE]") continue;
       const parsed = tryParseJson(payload);
-      if (parsed !== null) applySseChunk(parsed, state, onDelta);
+      if (parsed !== null) applySseChunk(parsed, state, onDelta, onToolCallDelta);
     }
     return finaliseSseState(state);
   }
@@ -250,7 +253,7 @@ export async function consumeSseStream(
     const payload = trimmed.slice("data:".length).trim();
     if (!payload || payload === "[DONE]") return;
     const parsed = tryParseJson(payload);
-    if (parsed !== null) applySseChunk(parsed, state, onDelta);
+    if (parsed !== null) applySseChunk(parsed, state, onDelta, onToolCallDelta);
   };
 
   while (true) {

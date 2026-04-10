@@ -3,6 +3,7 @@ import type { Task } from "@shared/contracts";
 
 type PlanStatePanelProps = {
   tasks?: Task[];
+  onDismiss?: () => void;
 };
 
 const TASK_V2_STATUS_ICONS: Record<string, string> = {
@@ -26,6 +27,9 @@ const TASK_V2_STYLES = `
   .task-v2-progress-bar { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,0.08); overflow: hidden; min-width: 60px; }
   .task-v2-progress-fill { height: 100%; border-radius: 2px; background: var(--accent-cyan); transition: width 0.3s ease; }
 
+  .task-v2-dismiss { flex-shrink: 0; width: 22px; height: 22px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; line-height: 1; padding: 0; transition: background 0.15s ease, color 0.15s ease; }
+  .task-v2-dismiss:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+
   .task-v2-body { padding: 0 14px 12px; max-height: 240px; overflow-y: auto; }
   .task-v2-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
   .task-v2-task { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--radius-md); font-size: 13px; }
@@ -39,7 +43,7 @@ const TASK_V2_STYLES = `
 `;
 
 /** Task V2 进度面板 — 紧贴输入框上方的紧凑可折叠栏（仅用于普通对话的任务追踪）。 */
-export function PlanStatePanel({ tasks }: PlanStatePanelProps) {
+export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const prevCountRef = useRef(tasks?.length ?? 0);
   const [autoCollapsed, setAutoCollapsed] = useState(false);
@@ -95,6 +99,20 @@ export function PlanStatePanel({ tasks }: PlanStatePanelProps) {
               <span style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
                 {activeTask.activeForm ?? activeTask.subject}
               </span>
+            )}
+
+            {onDismiss && (
+              <button
+                className="task-v2-dismiss"
+                title="关闭任务面板"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDismiss();
+                }}
+              >
+                ×
+              </button>
             )}
           </summary>
 

@@ -67,7 +67,7 @@ describe("phase1 openai-compatible adapter", () => {
     }]);
   });
 
-  it("keeps non-BR assistant reasoning replay as pass-through", () => {
+  it("converts assistant reasoning to reasoning_content for OpenAI-compatible APIs", () => {
     const adapter = getProviderAdapter("openai-compatible");
     const profile = makeProfile();
 
@@ -83,7 +83,7 @@ describe("phase1 openai-compatible adapter", () => {
 
     expect(replayMessages).toEqual([
       { role: "user", content: "first" },
-      { role: "assistant", content: "final answer", reasoning: "step one\nstep two" },
+      { role: "assistant", content: "final answer", reasoning_content: "step one\nstep two" },
     ]);
   });
 

@@ -122,3 +122,15 @@ export function updateTask(
 
   return { tasks: next, updated };
 }
+
+/** 新轮次开始时清理已完成的任务，保留 pending / in_progress。 */
+export function clearCompletedTasks(tasks: Task[]): {
+  tasks: Task[];
+  cleared: number;
+} {
+  const remaining = tasks.filter((t) => t.status !== "completed");
+  return {
+    tasks: remaining,
+    cleared: tasks.length - remaining.length,
+  };
+}

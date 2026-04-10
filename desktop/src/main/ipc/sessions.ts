@@ -9,7 +9,8 @@ import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestAppr
 import type { ActiveSessionRun, RuntimeContext } from "../services/runtime-context";
 import { callModel } from "../services/model-client";
 import type { ChatMessage as ModelChatMessage, ChatMessageContent, ResolvedToolCall } from "../services/model-client";
-import { saveSession, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles } from "../services/state-persistence";
+import { saveSession, saveSiliconPerson, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles } from "../services/state-persistence";
+import { trackSave } from "../services/pending-saves";
 import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../services/tool-schemas";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { resolveModelCapability } from "../services/model-capability-resolver";
@@ -18,8 +19,9 @@ import { buildPersonalPromptContext } from "../services/personal-prompt-profile"
 import { extractEnrichedContext, buildEnrichedContextBlock } from "../services/context-enricher";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
 import { syncSiliconPersonExecutionResult } from "../services/silicon-person-session";
+import { getOrCreateWorkspace } from "../services/silicon-person-workspace";
 import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
-import { createTask, listTasks, getTask, updateTask } from "../services/task-store";
+import { createTask, listTasks, getTask, updateTask, clearCompletedTasks } from "../services/task-store";
 import type { TaskCreateInput, TaskUpdateInput } from "../services/task-store";
 
 // ---------------------------------------------------------------------------
@@ -63,12 +65,13 @@ async function getGitBranchAsync(cwd: string): Promise<string | null> {
 }
 
 /** 只读工具允许并发执行的最大数量。 */
-const PARALLEL_LIMIT = 5;
+const PARALLEL_LIMIT = 10;
 
 /** 仅执行读取操作、可安全并行运行的工具集合。 */
 const READ_ONLY_TOOLS = new Set([
   "fs.read", "fs.list", "fs.search", "fs.find",
   "git.status", "git.diff", "git.log", "task.list", "task.get",
+  "web.search", "http.fetch",  // 网络只读操作，可安全并行
 ]);
 
 /**
@@ -483,6 +486,7 @@ function buildSystemPrompt(
   personalPromptProfile?: PersonalPromptProfile | null,
   reasoningEffort?: "low" | "medium" | "high" | null,
   enrichedContextBlock?: string | null,
+  mcpTools?: Array<{ id: string; name: string; description?: string; serverId: string }>,
 ): string {
   const now = new Date();
   const parts: string[] = [];
@@ -520,24 +524,33 @@ function buildSystemPrompt(
   }
 
   // ── Task Management（强化引导）──────────────────────────
-  parts.push(`\n# Task Management`);
+  parts.push(`\n# Task Planning (IMPORTANT)`);
   if (effort === "low") {
     parts.push(`You have task tracking tools (task_create, task_update, etc.) — use them only when explicitly asked.`);
   } else {
-    parts.push(`You have 4 task tools for tracking multi-step work. **Use them proactively** — they help both you and the user track progress.`);
-    parts.push(`- \`task_create({ subject, description, activeForm })\` — Create a task. Always provide activeForm (present continuous, e.g. "Fixing the login bug").`);
-    parts.push(`- \`task_update({ id, status })\` — Mark task "in_progress" before starting, "completed" immediately after finishing.`);
+    parts.push(`You have task tools for decomposing and tracking user requests. **This is your primary workflow — use it for every non-trivial request.**`);
+    parts.push(`\n## Mandatory Workflow`);
+    parts.push(`When you receive a user request (except simple Q&A like "what is X?"), you MUST follow this workflow:`);
+    parts.push(`1. **Analyze** — Understand what the user really wants. Identify the logical steps needed.`);
+    parts.push(`2. **Decompose** — Call \`task_create\` for EACH step to build a task list. This shows the user your execution plan BEFORE you start working.`);
+    parts.push(`3. **Execute** — Work through tasks one by one: \`task_update(id, status: "in_progress")\` → do the work → \`task_update(id, status: "completed")\``);
+    parts.push(`\n## Tools`);
+    parts.push(`- \`task_create({ subject, description, activeForm })\` — subject: imperative (e.g. "修复登录Bug"), activeForm: present continuous (e.g. "正在修复登录Bug"). Always provide activeForm.`);
+    parts.push(`- \`task_update({ id, status })\` — Mark "in_progress" before starting, "completed" immediately after finishing.`);
     parts.push(`- \`task_list()\` / \`task_get({ id })\` — Check current task state.`);
     parts.push(`- **Status flow**: pending → in_progress → completed. Only ONE task can be in_progress at a time.`);
+    parts.push(`\n## Key Rules`);
+    parts.push(`- **Plan first, execute second** — Create ALL tasks before starting the first one. Let the user see the full plan.`);
+    parts.push(`- **Even single-step requests get a task** — Creating a task signals "I understood your request and here's what I'll do."`);
+    parts.push(`- **Discover new steps? Add tasks** — If you find additional work during execution, create new tasks to track it.`);
+    parts.push(`- **Skip tasks ONLY for**: direct factual Q&A, greetings, or clarification questions.`);
     if (effort === "high") {
-      parts.push(`\n**Deep reasoning task protocol (MANDATORY):**`);
-      parts.push(`1. For ANY request with 2+ steps: call \`task_create\` for each step BEFORE starting work.`);
-      parts.push(`2. Mark each task \`in_progress\` BEFORE starting it, \`completed\` IMMEDIATELY after finishing.`);
-      parts.push(`3. Think about dependencies — which tasks block others? Set \`blocks\`/\`blockedBy\` to reflect this.`);
-      parts.push(`4. If a task fails or gets blocked, update its description with the reason and create a follow-up task.`);
-      parts.push(`5. Plan edge cases and failure modes before executing. Verify results after completing.`);
-    } else {
-      parts.push(`**When to use**: For requests with 2+ distinct steps (e.g. "read this file and fix the bug" = 2 tasks). Skip for single-action requests.`);
+      parts.push(`\n## Deep Reasoning Protocol (MANDATORY)`);
+      parts.push(`- Before creating tasks, output your analysis: what is the core need? what are the constraints? what could go wrong?`);
+      parts.push(`- Express task dependencies via \`blocks\`/\`blockedBy\` fields.`);
+      parts.push(`- If a task fails or is blocked, update its description with the reason and create a follow-up task.`);
+      parts.push(`- After completing each task, verify the result before marking completed.`);
+      parts.push(`- Consider edge cases and failure modes for every task.`);
     }
   }
 
@@ -556,6 +569,105 @@ function buildSystemPrompt(
   parts.push(`- \`http_fetch\` — Fetch a URL via HTTP GET.`);
   parts.push(`- Browser workflow: \`browser_open\` → \`browser_snapshot\` (accessibility tree, use ref=N) → \`browser_click\`/\`browser_type\` → \`browser_snapshot\` to verify.`);
   parts.push(`- Also: \`browser_screenshot\`, \`browser_evaluate\`, \`browser_select\`, \`browser_hover\`, \`browser_scroll\`, \`browser_press_key\`, \`browser_back\`, \`browser_forward\`, \`browser_wait\`.`);
+
+  // ── MCP 工具分组说明（企业内部系统连接）───────────────────
+  if (mcpTools && mcpTools.length > 0) {
+    parts.push(`\n## Connected Services (MCP)`);
+    parts.push(`You have access to the following enterprise tools via MCP servers.`);
+    parts.push(`These connect to internal company systems — use them when you need corporate data.`);
+    parts.push(``);
+    for (const tool of mcpTools) {
+      const desc = tool.description ? ` — ${tool.description}` : "";
+      parts.push(`- \`${tool.name}\`${desc}`);
+    }
+    parts.push(``);
+    parts.push(`When the user asks about internal projects, tasks, or company data, prefer these MCP tools over web_search.`);
+  }
+
+  // ── Tool Strategy（按 effort 分级）────────────────────────
+  if (effort === "low") {
+    parts.push(`\n# Tool Strategy`);
+    parts.push(`- You can call multiple independent tools in a single response — no need to call them one by one.`);
+    parts.push(`- Keep tool usage minimal. One search or file read is usually sufficient.`);
+    parts.push(`- Answer directly when you already know the answer.`);
+  } else if (effort === "medium") {
+    parts.push(`\n# Tool Strategy`);
+    parts.push(``);
+    parts.push(`## Parallel Calling`);
+    parts.push(`You can call MULTIPLE tools in a single response. When operations are independent, issue them all at once.`);
+    parts.push(``);
+    parts.push(`Examples:`);
+    parts.push(`- Need 3 files? → 3× fs_read in one response (parallel)`);
+    parts.push(`- Need to search 2 topics? → 2× web_search in one response (parallel)`);
+    parts.push(`- Need git status + file content? → Both in one response (parallel)`);
+    parts.push(``);
+    parts.push(`BAD: web_search → wait for result → another web_search → wait → ... (sequential, slow)`);
+    parts.push(`GOOD: web_search + web_search + web_search in one response (parallel, fast)`);
+    parts.push(``);
+    parts.push(`## Iterative Gathering`);
+    parts.push(`After receiving tool results, assess whether you have enough information:`);
+    parts.push(`- If yes → proceed to answer or next task`);
+    parts.push(`- If gaps remain → call more tools to fill them`);
+    parts.push(``);
+    parts.push(`For research questions, expect 1-2 rounds of tool calls before answering.`);
+  } else if (effort === "high") {
+    parts.push(`\n# Tool Strategy (Deep Research Mode)`);
+    parts.push(``);
+    parts.push(`## Aggressive Parallel Calling`);
+    parts.push(`Call up to 10 tools in a single response. NEVER call independent tools one by one.`);
+    parts.push(``);
+    parts.push(`For information research, plan 3-5 different search queries and issue them ALL at once:`);
+    parts.push(`- Vary keywords and angles to maximize coverage`);
+    parts.push(`- Mix languages (Chinese + English) for broader sources`);
+    parts.push(`- Use specific terms alongside general queries`);
+    parts.push(``);
+    parts.push(`For code investigation, batch-read all related files in one response:`);
+    parts.push(`- Source files, type definitions, tests, configs — read them all at once`);
+    parts.push(`- Then read upstream/downstream dependencies in the next round`);
+    parts.push(``);
+    parts.push(`## Iterative Research Loop (MANDATORY)`);
+    parts.push(`One round of tool calls is NEVER enough for deep thinking. Follow this cycle:`);
+    parts.push(``);
+    parts.push(`  Round 1 — Broad gathering`);
+    parts.push(`    Issue multiple parallel tool calls to cover different angles.`);
+    parts.push(`    (e.g., 5 web_searches with different queries, or 8 fs_reads for all related files)`);
+    parts.push(``);
+    parts.push(`  Assess — Review what you received`);
+    parts.push(`    What did you learn? What's still unclear? What needs deeper investigation?`);
+    parts.push(``);
+    parts.push(`  Round 2 — Targeted deep-dive`);
+    parts.push(`    Based on gaps identified, issue focused tool calls:`);
+    parts.push(`    - http_fetch to read full articles from promising search results`);
+    parts.push(`    - fs_read for dependency files that turned out to be relevant`);
+    parts.push(`    - Additional web_search with refined queries`);
+    parts.push(``);
+    parts.push(`  Assess — Is information sufficient?`);
+    parts.push(`    Can you give a comprehensive, verified answer? Are there contradictions to resolve?`);
+    parts.push(``);
+    parts.push(`  Round 3+ — Fill remaining gaps`);
+    parts.push(`    Continue gathering until you can answer with confidence.`);
+    parts.push(`    There is no round limit — keep going until the information is sufficient.`);
+    parts.push(``);
+    parts.push(`## Web Research Escalation`);
+    parts.push(`For information gathering, prefer this escalation order:`);
+    parts.push(`1. web_search — Fast, returns summarized results`);
+    parts.push(`2. http_fetch — Read full page content from promising URLs`);
+    parts.push(`3. browser_open + browser_snapshot — For pages that http_fetch can't render (JS-heavy sites, SPAs, pages behind simple interactions)`);
+    parts.push(``);
+    parts.push(`## Verification`);
+    parts.push(`- Cross-reference key facts across multiple sources`);
+    parts.push(`- If search results contradict each other, investigate further`);
+    parts.push(`- For code changes, read back modified files to verify correctness`);
+    parts.push(``);
+    parts.push(`## Skill Awareness`);
+    parts.push(`Before starting complex tasks, review available skills — a skill may already encapsulate the workflow you need. Skills can be combined with other tools in the same task (e.g., invoke a code-review skill, then use its output to guide your fs_edit calls).`);
+    parts.push(``);
+    parts.push(`## What NOT to Over-Research`);
+    parts.push(`Even in deep mode, skip deep research for:`);
+    parts.push(`- Direct factual Q&A you already know ("what is a closure?")`);
+    parts.push(`- Greetings and clarification questions`);
+    parts.push(`- Requests where the user explicitly wants a quick answer`);
+  }
 
   // ── Skills ────────────────────────────────────────────────
   if (skills && skills.length > 0) {
@@ -1338,12 +1450,36 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
   // 按 ID 删除会话
   ipcMain.handle("session:delete", async (_event, sessionId: string): Promise<SessionsPayload> => {
+    const session = ctx.state.sessions.find((s) => s.id === sessionId);
     const index = ctx.state.sessions.findIndex((s) => s.id === sessionId);
     if (index !== -1) {
       ctx.state.sessions.splice(index, 1);
     }
 
-    await deleteSessionFiles(ctx.runtime.paths, sessionId);
+    await deleteSessionFiles(ctx.runtime.paths, sessionId, session?.siliconPersonId);
+
+    // 如果被删的 session 归属硅基员工，同步清理该员工的 sessions 摘要
+    if (session?.siliconPersonId) {
+      const siliconPerson = ctx.state.siliconPersons.find((sp) => sp.id === session.siliconPersonId);
+      if (siliconPerson) {
+        siliconPerson.sessions = siliconPerson.sessions.filter((s) => s.id !== sessionId);
+        siliconPerson.unreadCount = siliconPerson.sessions.reduce((total, s) => total + s.unreadCount, 0);
+        siliconPerson.hasUnread = siliconPerson.sessions.some((s) => s.hasUnread);
+        siliconPerson.needsApproval = siliconPerson.sessions.some((s) => s.needsApproval);
+        if (siliconPerson.currentSessionId === sessionId) {
+          siliconPerson.currentSessionId = siliconPerson.sessions[0]?.id ?? null;
+        }
+        siliconPerson.updatedAt = new Date().toISOString();
+        trackSave(
+          saveSiliconPerson(ctx.runtime.paths, siliconPerson).catch((error) => {
+            console.error("[session:delete] 同步硅基员工摘要持久化失败", {
+              siliconPersonId: siliconPerson.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }),
+        );
+      }
+    }
 
     return {
       sessions: [...ctx.state.sessions],
@@ -1399,6 +1535,19 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         messageId: currentMessageId,
         reason: null,
       });
+
+      // 新轮次开始：清理上一轮已完成的 task，保持面板干净
+      if (session.tasks && session.tasks.length > 0) {
+        const clearResult = clearCompletedTasks(session.tasks);
+        if (clearResult.cleared > 0) {
+          session.tasks = clearResult.tasks;
+          broadcastToRenderers("session:stream", {
+            type: EventType.TasksUpdated,
+            sessionId,
+            tasks: session.tasks,
+          });
+        }
+      }
 
       // 追加用户消息
       session.messages.push({
@@ -1457,16 +1606,27 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         return { session };
       }
 
-      // 为函数调用构建工具 schema
-      const workingDir = session.attachedDirectory || ctx.runtime.myClawRootPath || process.cwd();
-      const enabledSkills = ctx.state.skills.filter((s) => s.enabled && !s.disableModelInvocation);
+      // 硅基员工使用自己工作空间的 skills、MCP 和独立工作目录；主助手使用全局资源
+      const personWorkspace = session.siliconPersonId
+        ? await getOrCreateWorkspace(ctx.runtime.paths, session.siliconPersonId)
+        : null;
 
-      // 汇总所有已连接 MCP 服务提供的工具
-      const mcpTools = ctx.services.mcpManager?.getAllTools() ?? [];
+      // 为函数调用构建工具 schema；硅基员工在自己的 workspace/ 目录工作
+      const workingDir = personWorkspace
+        ? personWorkspace.paths.workspaceDir
+        : (session.attachedDirectory || ctx.runtime.myClawRootPath || process.cwd());
+
+      const allSkills = personWorkspace ? personWorkspace.skills : ctx.state.skills;
+      const enabledSkills = allSkills.filter((s) => s.enabled && !s.disableModelInvocation);
+      const activeMcpManager = personWorkspace ? personWorkspace.mcpManager : ctx.services.mcpManager;
+
+      // 汇总已连接 MCP 服务提供的工具
+      const mcpTools = activeMcpManager?.getAllTools() ?? [];
       const tools = buildToolSchemas(workingDir, enabledSkills, mcpTools);
 
       console.info("[session:send-message] tools summary", {
-        totalSkills: ctx.state.skills.length,
+        siliconPersonId: session.siliconPersonId ?? null,
+        totalSkills: allSkills.length,
         enabledSkills: enabledSkills.length,
         enabledSkillNames: enabledSkills.map(s => s.name),
         mcpTools: mcpTools.length,
@@ -1474,8 +1634,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         toolNames: tools.map(t => t.function.name),
       });
 
-      // 用当前技能与路径权限刷新工具执行器
-      toolExecutor.setSkills(ctx.state.skills);
+      // 用当前技能与路径权限刷新工具执行器（硅基员工使用自己的技能）
+      toolExecutor.setSkills(allSkills);
       toolExecutor.setAllowExternalPaths(allowsExternalPaths(ctx.state.getApprovals().mode));
 
       // ----- 预先异步计算 Git 分支（非阻塞） -----
@@ -1486,10 +1646,36 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       // 从 session 的 runtimeIntent 中读取 reasoningEffort，传入 system prompt 构造器
       // enrichedContext 在每轮动态提取，因为 session messages 和 tasks 会随循环变化
       const sessionReasoningEffort = resolveSessionRuntimeIntent(session).reasoningEffort as "low" | "medium" | "high" | undefined;
+
+      // 硅基员工身份信息，注入系统提示
+      const siliconPersonIdentity = session.siliconPersonId
+        ? ctx.state.siliconPersons.find((sp) => sp.id === session.siliconPersonId) ?? null
+        : null;
+
       const boundBuildSystemPrompt = (s: ChatSession, wd: string, sk?: SkillDefinition[]) => {
         const enriched = extractEnrichedContext(s);
         const enrichedBlock = buildEnrichedContextBlock(enriched);
-        return buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile(), sessionReasoningEffort, enrichedBlock || null);
+        let prompt = buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile(), sessionReasoningEffort, enrichedBlock || null, mcpTools);
+
+        // 硅基员工身份注入：告诉模型自己是谁、在哪工作
+        if (siliconPersonIdentity) {
+          const spBlock = [
+            `\n# Silicon Person Identity`,
+            `You are a Silicon Person (硅基员工), an autonomous AI worker with your own isolated workspace.`,
+            `- Name: ${siliconPersonIdentity.name}`,
+            `- Title: ${siliconPersonIdentity.title}`,
+            siliconPersonIdentity.soul ? `- Persona: ${siliconPersonIdentity.soul}` : null,
+            `- Workspace: ${wd}`,
+            `\n## Workspace Rules`,
+            `- All file operations (read, write, create, execute) happen within your workspace directory: ${wd}`,
+            `- Your skills are stored in your own skills directory, separate from the main assistant.`,
+            `- You operate independently. When asked to create files, scripts, or skills, write them in YOUR workspace unless the user explicitly specifies a different path.`,
+            `- Do not modify files outside your workspace without explicit user instruction.`,
+          ].filter(Boolean).join("\n");
+          prompt = `${prompt}\n${spBlock}`;
+        }
+
+        return prompt;
       };
 
       if (isPlanModeEnabled(session) && session.planModeState?.mode !== "executing") {
@@ -1638,6 +1824,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       const roundSignatures: string[] = [];
       let loopWarningInjected = false;
       let completedNormally = false;
+      let compactionCount = 0;
+      let suggestNewChatSent = false;
 
       try {
         while (round < SAFETY_CEILING) {
@@ -1711,12 +1899,25 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             skills: enabledSkills,
             systemPromptBuilder: boundBuildSystemPrompt,
             executionPlan,
+            priorCompactionCount: compactionCount,
           });
           if (assembled.wasCompacted) {
+            compactionCount++;
             console.info(
               `[session:context] Round ${round}: compacted ${assembled.removedCount} messages` +
-              ` (${assembled.compactionReason}), budget used: ${assembled.budgetUsed}`,
+              ` (${assembled.compactionReason}), masked ${assembled.maskedToolOutputCount} tool outputs` +
+              `, budget used: ${assembled.budgetUsed}`,
             );
+          }
+          if (assembled.shouldSuggestNewChat && !suggestNewChatSent) {
+            suggestNewChatSent = true;
+            broadcastToRenderers("session:stream", {
+              type: EventType.ContextLimitWarning,
+              sessionId,
+              compactionCount,
+              removedCount: assembled.removedCount,
+              maskedToolOutputCount: assembled.maskedToolOutputCount,
+            });
           }
           const modelMessages = assembled.messages as ModelChatMessage[];
           const executionGuidance = buildPlanExecutionGuidance(session);
@@ -1926,10 +2127,10 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                     const safeName = t.id.replace(/[^a-zA-Z0-9_-]/g, "_");
                     return safeName === toolCall.name;
                   });
-                  if (!mcpTool || !ctx.services.mcpManager) {
+                  if (!mcpTool || !activeMcpManager) {
                     throw new Error(`MCP tool not found: ${toolCall.name}`);
                   }
-                  toolOutput = await ctx.services.mcpManager.callTool(
+                  toolOutput = await activeMcpManager.callTool(
                     mcpTool.serverId,
                     mcpTool.name,
                     toolCall.input,

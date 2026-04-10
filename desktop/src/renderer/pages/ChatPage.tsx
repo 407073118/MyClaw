@@ -321,9 +321,40 @@ export default function ChatPage() {
   const [activeTools, setActiveTools] = useState<Map<string, { toolId: string; toolName: string; startTime: number; args?: Record<string, unknown> }>>(new Map());
   const [toolTimings, setToolTimings] = useState<Map<string, number>>(new Map());
   const [currentRound, setCurrentRound] = useState(0);
+  const [taskPanelDismissed, setTaskPanelDismissed] = useState(false);
+  const [showContextWarning, setShowContextWarning] = useState(false);
+  const prevTaskCountRef = React.useRef(0);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
 
+  // @ 投递硅基员工（store-backed，SiliconRail 和 @ 菜单共享）
+  const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
+  const [mentionFilter, setMentionFilter] = useState("");
+  const [mentionMenuIndex, setMentionMenuIndex] = useState(0);
+  const targetSiliconPersonId = workspace.activeSiliconPersonId;
+  const setTargetSiliconPersonId = workspace.setActiveSiliconPersonId;
+  const [dispatchTraces, setDispatchTraces] = useState<Array<{ id: string; personName: string; personId: string; content: string; timestamp: string }>>([]);
+
+  const siliconPersons = workspace.siliconPersons ?? [];
+  const targetSiliconPerson = targetSiliconPersonId
+    ? siliconPersons.find((sp) => sp.id === targetSiliconPersonId) ?? null
+    : null;
+
+  const filteredMentions = useMemo(() => {
+    if (!mentionMenuOpen) return [];
+    const q = mentionFilter.toLowerCase();
+    return siliconPersons.filter(
+      (sp) => sp.name.toLowerCase().includes(q) || sp.title.toLowerCase().includes(q),
+    );
+  }, [mentionMenuOpen, mentionFilter, siliconPersons]);
+
+  // ── Session 解析 ──────────────────────────────────────────────────────────
   const session = workspace.currentSession;
+
+  /** 只展示主聊天 session（非硅基员工私域 session）。 */
+  const displaySessions = useMemo(() => {
+    return workspace.sessions.filter((s) => !s.siliconPersonId);
+  }, [workspace.sessions]);
+
   const sessionRuntimeIntent = session?.runtimeIntent as Record<string, unknown> | undefined;
   const planModeState = (session as (ChatSession & {
     planModeState?: { mode?: string; approvalStatus?: string; planVersion?: number } | null;
@@ -355,6 +386,20 @@ export default function ChatPage() {
     session?.chatRunState?.activeMessageId,
     session?.chatRunState?.lastReason,
   ]);
+
+  // 切换 session 时重置上下文警告
+  useEffect(() => {
+    setShowContextWarning(false);
+  }, [session?.id]);
+
+  // 新 task 被创建时自动取消 dismissed，重新显示面板
+  useEffect(() => {
+    const count = session?.tasks?.length ?? 0;
+    if (count > prevTaskCountRef.current) {
+      setTaskPanelDismissed(false);
+    }
+    prevTaskCountRef.current = count;
+  }, [session?.tasks?.length]);
 
   const { captureTrigger: captureConfirmTrigger } = useDialogA11y({
     isOpen: confirmDialog !== null,
@@ -396,9 +441,34 @@ export default function ChatPage() {
   }, [sessionMessages]);
 
   const groupedMessages = useMemo(() => {
+    // 收集所有 task 工具调用的 call ID，用于过滤对应的 tool 输出消息
+    const taskCallIds = new Set<string>();
+    for (const msg of parsedMessages) {
+      if (msg.role === "assistant" && Array.isArray((msg as any).tool_calls)) {
+        for (const tc of (msg as any).tool_calls as Array<{ id: string; function: { name: string } }>) {
+          if (tc.function.name.startsWith("task_")) {
+            taskCallIds.add(tc.id);
+          }
+        }
+      }
+    }
+
     const result: any[] = [];
     let currentGroup: any = null;
     for (const message of parsedMessages) {
+      // 过滤 task 工具的输出消息
+      if (message.role === "tool" && message.tool_call_id && taskCallIds.has(message.tool_call_id)) {
+        continue;
+      }
+      // 过滤纯 task 调用的 assistant 消息（所有 tool_calls 都是 task_*）
+      if (message.role === "assistant" && Array.isArray((message as any).tool_calls) && (message as any).tool_calls.length > 0) {
+        const calls = (message as any).tool_calls as Array<{ function: { name: string } }>;
+        const allTask = calls.every((tc) => tc.function.name.startsWith("task_"));
+        if (allTask && !textOf(message.content).trim()) {
+          continue;
+        }
+      }
+
       const isTechnical = message.role === "system" || message.role === "tool";
       // 没有正文但带 `tool_calls` 的助手消息属于中间思考步骤，归并到技术链中展示。
       const isToolCallAssistant = message.role === "assistant"
@@ -417,7 +487,8 @@ export default function ChatPage() {
         result.push({ ...message, isTechnicalGroup: false });
       }
     }
-    return result;
+    // 移除过滤后变空的技术分组
+    return result.filter((g) => !g.isTechnicalGroup || (g.items && g.items.length > 0));
   }, [parsedMessages]);
 
   const sessionApprovalRequests = useMemo(() => {
@@ -509,6 +580,10 @@ export default function ChatPage() {
     });
   }, [isNearBottom]);
 
+  // 保持 ref 与最新的 scrollToBottom 同步，供流式回调内部调用。
+  const scrollToBottomRef = useRef(scrollToBottom);
+  scrollToBottomRef.current = scrollToBottom;
+
   // 订阅主进程转发的 `session:stream` 事件，接收实时流式消息与工具状态。
   useEffect(() => {
     const unsubscribe = window.myClawAPI.onSessionStream((event) => {
@@ -534,13 +609,18 @@ export default function ChatPage() {
       };
       const eventSessionId = runtimeStatus?.sessionId ?? sessionId ?? updatedSession?.id;
 
+      // 判断事件 sessionId 是否属于当前活跃视图。
+      const isActiveViewSession = (sid: string): boolean => {
+        return sid === ws.currentSession?.id;
+      };
+
       if (type !== "approval.requested" && !eventSessionId) return;
 
       if (type === "run.started") {
         const round = (event as any).round ?? 0;
         if (round > 0) setCurrentRound(round);
       } else if (type === "runtime.status" && runtimeStatus) {
-        if (runtimeStatus.sessionId !== ws.currentSession?.id) return;
+        if (!isActiveViewSession(runtimeStatus.sessionId)) return;
         if (TERMINAL_RUN_STATUSES.has(runtimeStatus.status)) {
           setActiveRunState(null);
           setCurrentRound(0);
@@ -557,9 +637,11 @@ export default function ChatPage() {
         }
       } else if (type === "message.delta" && eventSessionId && messageId && delta?.content) {
         ws.patchStreamingMessage(eventSessionId, messageId, delta.content);
+        // 流式输出时持续滚动到底部，避免用户需要手动滚动查看新内容。
+        scrollToBottomRef.current("smooth");
       } else if (type === "session.updated" && updatedSession) {
         ws.applySessionUpdate(updatedSession);
-        if (updatedSession.id === ws.currentSession?.id) {
+        if (isActiveViewSession(updatedSession.id)) {
           setActiveRunState((current) => {
             const next = readSessionRunState(updatedSession);
             if (next) {
@@ -621,6 +703,10 @@ export default function ChatPage() {
           next.delete(toolCallId);
           return next;
         });
+      } else if (type === "context.limit_warning" && eventSessionId) {
+        if (eventSessionId === ws.currentSession?.id) {
+          setShowContextWarning(true);
+        }
       } else if (type === "approval.requested") {
         const req = (event as any).approvalRequest;
         if (req) {
@@ -711,6 +797,31 @@ export default function ChatPage() {
 
   /** 把输入内容发送给运行时，统一处理发送态和异常展示。 */
   async function sendMessageToRuntime(draft: string): Promise<boolean> {
+    // 如果有 @ 投递目标，fire-and-forget 投递到硅基员工队列（不阻塞主聊天）
+    if (targetSiliconPersonId) {
+      try {
+        const person = siliconPersons.find((sp) => sp.id === targetSiliconPersonId);
+        await workspace.sendSiliconPersonMessage(targetSiliconPersonId, draft);
+        if (person) {
+          setDispatchTraces((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-${targetSiliconPersonId}`,
+              personName: person.name,
+              personId: person.id,
+              content: draft,
+              timestamp: new Date().toLocaleTimeString(),
+            },
+          ]);
+        }
+        setTargetSiliconPersonId(null);
+        return true;
+      } catch (error) {
+        reportChatError(error);
+        return false;
+      }
+    }
+
     if (!session?.id) return false;
     setCurrentRound(0);
     setActiveTools(new Map());
@@ -772,8 +883,15 @@ export default function ChatPage() {
     await sendMessageToRuntime(draft);
   }
 
-  /** 处理输入框快捷键，包括 Slash 菜单导航和回车发送。 */
+  /** 处理输入框快捷键，包括 Slash 菜单、@ 菜单导航和回车发送。 */
   function handleComposerKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // @ mention 菜单导航
+    if (mentionMenuOpen && filteredMentions.length > 0) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setMentionMenuIndex((i) => (i + 1) % filteredMentions.length); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setMentionMenuIndex((i) => (i - 1 + filteredMentions.length) % filteredMentions.length); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectMentionItem(filteredMentions[mentionMenuIndex]); return; }
+      if (e.key === "Escape") { e.preventDefault(); setMentionMenuOpen(false); setMentionFilter(""); return; }
+    }
     if (slashMenuOpen && filteredSlash.length > 0) {
       if (e.key === "ArrowDown") { e.preventDefault(); setSlashMenuIndex((i) => (i + 1) % filteredSlash.length); return; }
       if (e.key === "ArrowUp") { e.preventDefault(); setSlashMenuIndex((i) => (i - 1 + filteredSlash.length) % filteredSlash.length); return; }
@@ -784,6 +902,16 @@ export default function ChatPage() {
       e.preventDefault();
       void submitMessage();
     }
+  }
+
+  /** 选择 @ 菜单中的硅基员工。 */
+  function selectMentionItem(person: (typeof siliconPersons)[number]) {
+    setTargetSiliconPersonId(person.id);
+    setMentionMenuOpen(false);
+    setMentionFilter("");
+    // 把 @xxx 替换成干净的输入——去掉 @ 前缀部分
+    setComposerDraft((prev) => prev.replace(/@\S*$/, "").trimEnd() + (prev.replace(/@\S*$/, "").trimEnd() ? " " : ""));
+    requestAnimationFrame(() => composerRef.current?.focus());
   }
 
   /** 读取某条内联表单消息中指定字段的草稿值。 */
@@ -991,6 +1119,7 @@ export default function ChatPage() {
         {/* 顶部栏 */}
         <header className="chat-title-header">
           <div className="header-left">
+            {/* 会话下拉选择器 */}
             <div className="session-dropdown-container">
               <button className="session-dropdown-trigger" aria-haspopup="listbox">
                 <h1 className="header-title">{session?.title ?? "暂无会话"}</h1>
@@ -1001,13 +1130,15 @@ export default function ChatPage() {
               <div className="session-dropdown-menu">
                 <div className="dropdown-header">历史记录</div>
                 <ul data-testid="session-list" className="session-list session-list-dropdown">
-                  {workspace.sessions.map((item: ChatSession) => (
+                  {displaySessions.map((item: ChatSession) => (
                     <li key={item.id}>
                       <div className={`session-row${item.id === session?.id ? " active" : ""}`}>
                         <button
                           data-testid={`session-item-${item.id}`}
                           className={`session-item${item.id === session?.id ? " active" : ""}`}
-                          onClick={() => workspace.selectSession(item.id)}
+                          onClick={() => {
+                            workspace.selectSession(item.id);
+                          }}
                         >
                           <div className="session-info">
                             <strong>{item.title}</strong>
@@ -1039,12 +1170,12 @@ export default function ChatPage() {
           <div className="header-right">
             <button
               data-testid="new-chat-button"
-              className="primary new-chat-btn"
+              className="chat-header-action-btn chat-header-action-btn--primary"
               disabled={creatingSession}
               onClick={() => void createSession()}
               title="新建对话"
             >
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
               <span>新对话</span>
@@ -1055,6 +1186,33 @@ export default function ChatPage() {
         {/* 时间线区域 */}
         <section className="timeline-panel" ref={timelinePanelRef as React.RefObject<HTMLElement>}>
           <div className="timeline">
+
+            {/* 上下文压缩警告 */}
+            {showContextWarning && (
+              <div className="context-limit-warning">
+                <div className="context-limit-warning-content">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>当前对话较长，上下文已多次压缩，回答质量可能下降。建议新建对话继续工作。</span>
+                  <div className="context-limit-warning-actions">
+                    <button
+                      className="btn-new-chat"
+                      onClick={async () => {
+                        setShowContextWarning(false);
+                        const ws = useWorkspaceStore.getState();
+                        await ws.createSession();
+                      }}
+                    >
+                      新建对话
+                    </button>
+                    <button className="btn-dismiss" onClick={() => setShowContextWarning(false)}>
+                      继续当前对话
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {groupedMessages.map((message, index) => {
               if (!message.isTechnicalGroup) {
@@ -1275,11 +1433,68 @@ export default function ChatPage() {
         </section>
 
         {/* 计划面板 - Codex 风格，紧贴输入框上方 */}
-        <PlanStatePanel tasks={session?.tasks ?? []} />
+        {!taskPanelDismissed && (
+          <PlanStatePanel tasks={session?.tasks ?? []} onDismiss={() => setTaskPanelDismissed(true)} />
+        )}
+
+        {/* @ 投递痕迹卡片 */}
+        {dispatchTraces.length > 0 && (
+          <div className="dispatch-traces">
+            {dispatchTraces.map((trace) => (
+              <div key={trace.id} className="dispatch-trace-card">
+                <span className="dispatch-trace-dot" />
+                <span className="dispatch-trace-text">
+                  已投递给 @{trace.personName}: {trace.content.length > 30 ? `${trace.content.slice(0, 30)}...` : trace.content}
+                </span>
+                <button
+                  type="button"
+                  className="dispatch-trace-link"
+                  onClick={() => workspace.setActiveSiliconPersonId(trace.personId)}
+                >进入对话</button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* 输入区 */}
         <footer className="composer-panel">
           <div className="composer-container">
+            {/* @ mention 目标指示器 */}
+            {targetSiliconPerson && (
+              <div data-testid="mention-target-indicator" className="mention-target-indicator">
+                <span className="mention-target-label">投递给</span>
+                <span className="mention-target-name">@{targetSiliconPerson.name}</span>
+                <button
+                  type="button"
+                  className="mention-target-clear"
+                  onClick={() => setTargetSiliconPersonId(null)}
+                  title="取消投递"
+                >
+                  &times;
+                </button>
+              </div>
+            )}
+
+            {/* @ mention 弹出菜单 */}
+            {mentionMenuOpen && filteredMentions.length > 0 && (
+              <div className="slash-menu mention-menu" data-testid="mention-menu">
+                {filteredMentions.map((person, idx) => (
+                  <div
+                    key={person.id}
+                    ref={idx === mentionMenuIndex ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+                    className={`slash-menu-item${idx === mentionMenuIndex ? " active" : ""}`}
+                    onMouseDown={(e) => { e.preventDefault(); selectMentionItem(person); }}
+                    onMouseEnter={() => setMentionMenuIndex(idx)}
+                  >
+                    <span className="mention-avatar">{(person.name || "?").charAt(0).toUpperCase()}</span>
+                    <span className="slash-cmd">{person.name}</span>
+                    <span className="slash-desc">{person.description.slice(0, 40)}</span>
+                    <span className={`mention-status mention-status-${person.status}`}>{person.status}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {slashMenuOpen && filteredSlash.length > 0 && (
               <div className="slash-menu">
                 {filteredSlash.map((item, idx) => {
@@ -1306,7 +1521,20 @@ export default function ChatPage() {
               ref={composerRef}
               data-testid="composer-input"
               value={composerDraft}
-              onChange={(e) => setComposerDraft(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setComposerDraft(val);
+                // 检测 @ 触发
+                const atMatch = val.match(/@(\S*)$/);
+                if (atMatch && siliconPersons.length > 0) {
+                  setMentionMenuOpen(true);
+                  setMentionFilter(atMatch[1] ?? "");
+                  setMentionMenuIndex(0);
+                } else if (mentionMenuOpen) {
+                  setMentionMenuOpen(false);
+                  setMentionFilter("");
+                }
+              }}
               className="composer-input"
               placeholder={isRunBusy ? "正在响应..." : "输入消息 (Enter 发送, Shift+Enter 换行)，或输入 / 获取快捷命令"}
               disabled={isRunBusy}
@@ -1320,30 +1548,34 @@ export default function ChatPage() {
                 ) : (
                   <span className="composer-hints"></span>
                 )}
-                <div className="effort-selector" data-testid="effort-selector">
-                  {(["low", "medium", "high"] as const).map((level) => (
+                {(
+                  <>
+                    <div className="effort-selector" data-testid="effort-selector">
+                      {(["low", "medium", "high"] as const).map((level) => (
+                        <button
+                          key={level}
+                          className={`effort-btn${(session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort === level || (!((session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort) && level === "medium") ? " active" : ""}`}
+                          onClick={() => void workspace.updateSessionRuntimeIntent({ reasoningEffort: level })}
+                          title={level === "low" ? "快速回答" : level === "medium" ? "默认思考" : "深度推理"}
+                        >
+                          {level === "low" ? "快速" : level === "medium" ? "思考" : "深度"}
+                        </button>
+                      ))}
+                    </div>
                     <button
-                      key={level}
-                      className={`effort-btn${(session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort === level || (!((session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort) && level === "medium") ? " active" : ""}`}
-                      onClick={() => void workspace.updateSessionRuntimeIntent({ reasoningEffort: level })}
-                      title={level === "low" ? "快速回答" : level === "medium" ? "默认思考" : "深度推理"}
+                      type="button"
+                      data-testid="plan-mode-toggle"
+                      className={`effort-btn${planModeEnabled ? " active" : ""}`}
+                      onClick={() => void workspace.updateSessionRuntimeIntent({
+                        workflowMode: planModeEnabled ? "default" : "plan",
+                        planModeEnabled: !planModeEnabled,
+                      })}
+                      title={planModeEnabled ? "关闭 Plan Mode" : "开启 Plan Mode"}
                     >
-                      {level === "low" ? "快速" : level === "medium" ? "思考" : "深度"}
+                      Plan
                     </button>
-                  ))}
-                </div>
-                <button
-                  type="button"
-                  data-testid="plan-mode-toggle"
-                  className={`effort-btn${planModeEnabled ? " active" : ""}`}
-                  onClick={() => void workspace.updateSessionRuntimeIntent({
-                    workflowMode: planModeEnabled ? "default" : "plan",
-                    planModeEnabled: !planModeEnabled,
-                  })}
-                  title={planModeEnabled ? "关闭 Plan Mode" : "开启 Plan Mode"}
-                >
-                  Plan
-                </button>
+                  </>
+                )}
               </div>
               {!isRunBusy ? (
                 <button
@@ -1423,7 +1655,14 @@ export default function ChatPage() {
         .session-dropdown-menu { position: absolute; top: calc(100% + 8px); left: -12px; width: 320px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-lg); box-shadow: 0 12px 40px rgba(0,0,0,0.4); opacity: 0; visibility: hidden; transform: translateY(-8px); transition: all 0.2s cubic-bezier(0.16,1,0.3,1); display: flex; flex-direction: column; max-height: 60vh; }
         .session-dropdown-container:hover .session-dropdown-menu, .session-dropdown-container:focus-within .session-dropdown-menu { opacity: 1; visibility: visible; transform: translateY(0); }
         .dropdown-header { padding: 16px; border-bottom: 1px solid var(--glass-border); font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-        .new-chat-btn { display: flex; align-items: center; gap: 6px; padding: 8px 14px; }
+
+        /* ── 头部操作按钮 ── */
+        .header-right { display: flex; align-items: center; gap: 6px; }
+        .chat-header-action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--glass-border); border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: all 0.15s; text-decoration: none; white-space: nowrap; line-height: 1; }
+        .chat-header-action-btn:hover:not(:disabled) { border-color: var(--glass-border-hover); color: var(--text-primary); background: rgba(255,255,255,0.04); }
+        .chat-header-action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+        .chat-header-action-btn--primary { border-color: var(--accent-cyan); color: var(--accent-cyan); background: rgba(16,163,127,0.06); }
+        .chat-header-action-btn--primary:hover:not(:disabled) { background: rgba(16,163,127,0.12); border-color: var(--accent-cyan); color: var(--accent-cyan); }
         .session-list-dropdown { flex: 1; overflow-y: auto; padding: 8px; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
         .session-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: all 0.2s ease; }
         .session-item:hover { background: var(--glass-reflection); }
@@ -1587,6 +1826,35 @@ export default function ChatPage() {
         .confirm-cancel:hover { background: var(--glass-reflection); color: var(--text-primary); }
         .confirm-ok { background: #ef4444; color: #fff; border-color: transparent; }
         .confirm-ok:hover { background: #dc2626; }
+
+        .mention-target-indicator { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--glass-border); font-size: 13px; }
+        .mention-target-label { color: var(--text-muted); }
+        .mention-target-name { color: var(--accent-cyan); font-weight: 600; }
+        .mention-target-clear { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 4px; transition: color 0.15s; }
+        .mention-target-clear:hover { color: var(--status-red); }
+        .mention-avatar { width: 24px; height: 24px; border-radius: 6px; background: linear-gradient(135deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03)); border: 1px solid var(--glass-border); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: var(--text-primary); flex-shrink: 0; }
+        .mention-status { font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--glass-border); color: var(--text-muted); flex-shrink: 0; }
+        .mention-status-running { color: var(--accent-cyan); border-color: rgba(16,163,127,0.3); }
+        .mention-status-needs_approval { color: var(--status-yellow); border-color: rgba(245,158,11,0.3); }
+        .mention-status-done { color: var(--status-green); border-color: rgba(34,197,94,0.3); }
+        .mention-status-error { color: var(--status-red); border-color: rgba(239,68,68,0.3); }
+        .dispatch-traces { display: flex; flex-direction: column; gap: 6px; max-width: 800px; margin: 0 auto; padding: 0 24px 8px; }
+        .dispatch-trace-card { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-md); font-size: 13px; line-height: 1.4; }
+        .dispatch-trace-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-cyan); flex-shrink: 0; }
+        .dispatch-trace-text { flex: 1; min-width: 0; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .dispatch-trace-link { flex-shrink: 0; color: var(--accent-cyan); font-size: 12px; font-weight: 500; text-decoration: none; transition: opacity 0.15s; background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
+        .dispatch-trace-link:hover { opacity: 0.8; text-decoration: underline; }
+
+        /* ── 上下文压缩警告 ── */
+        .context-limit-warning { padding: 0 24px 16px; max-width: 800px; margin: 0 auto; }
+        .context-limit-warning-content { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.25); border-radius: var(--radius-md); font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+        .context-limit-warning-content > svg { flex-shrink: 0; color: #f59e0b; }
+        .context-limit-warning-content > span { flex: 1; min-width: 200px; }
+        .context-limit-warning-actions { display: flex; gap: 8px; flex-shrink: 0; }
+        .btn-new-chat { padding: 5px 14px; border-radius: var(--radius-sm); border: none; background: var(--accent-cyan); color: #000; font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+        .btn-new-chat:hover { opacity: 0.85; }
+        .btn-dismiss { padding: 5px 14px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: background 0.15s; }
+        .btn-dismiss:hover { background: var(--glass-reflection); }
       `}</style>
     </section>
   );

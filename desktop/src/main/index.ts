@@ -1,6 +1,5 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { dirname, join, resolve } from "node:path";
-import { existsSync, readdirSync, readFileSync, mkdirSync, cpSync, statSync } from "node:fs";
+import { join } from "node:path";
 
 import type {
   ApprovalRequest,
@@ -17,22 +16,19 @@ import { createRuntimeContext } from "./services/runtime-context";
 import { listBuiltinToolDefinitions } from "./services/builtin-tool-stubs";
 import { initializeDirectories, redirectUserData } from "./services/directory-service";
 import { initLogger, createLogger } from "./services/logger";
+import { loadSkillsFromDisk, seedBuiltinSkills } from "./services/skill-loader";
 
 const log = createLogger("main");
 
-/** 记录待完成的保存操作，便于优雅退出。 */
-const pendingSaves = new Set<Promise<unknown>>();
-
-export function trackSave(promise: Promise<unknown>): void {
-  pendingSaves.add(promise);
-  promise.finally(() => pendingSaves.delete(promise));
-}
+import { trackSave, waitForPendingSaves, getPendingSavesCount } from "./services/pending-saves";
+export { trackSave };
 
 import type { MyClawPaths } from "./services/directory-service";
 import { loadPersistedState } from "./services/state-persistence";
 import { registerAllIpcHandlers } from "./ipc";
 import { McpServerManager } from "./services/mcp-server-manager";
 import { shutdownToolExecutor } from "./ipc/sessions";
+import { shutdownAllWorkspaces } from "./services/silicon-person-workspace";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -99,221 +95,6 @@ function createMainWindow(): BrowserWindow {
   }
 
   return win;
-}
-
-// ---------------------------------------------------------------------------
-// 内置技能种子器：首次启动时将内置示例复制到用户 skills 目录
-// ---------------------------------------------------------------------------
-
-/**
- * 递归复制整个目录树。
- * 可兼容 asar 归档（cpSync 在 Electron 中未必完全可用）。
- */
-function copyDirRecursive(src: string, dest: string): void {
-  mkdirSync(dest, { recursive: true });
-  for (const entry of readdirSync(src)) {
-    const srcPath = join(src, entry);
-    const destPath = join(dest, entry);
-    const st = statSync(srcPath);
-    if (st.isDirectory()) {
-      copyDirRecursive(srcPath, destPath);
-    } else {
-      const content = readFileSync(srcPath);
-      const { writeFileSync: wfs } = require("node:fs") as typeof import("node:fs");
-      wfs(destPath, content);
-    }
-  }
-}
-
-function seedBuiltinSkills(skillsDir: string): void {
-  // 打包后 builtin-skills 位于 app.asar 根目录
-  const candidates = [
-    join(app.getAppPath(), "builtin-skills"),           // works for both dev and packed
-    join(__dirname, "../../builtin-skills"),             // dev: dist/src/main → builtin-skills
-    join(__dirname, "../../../builtin-skills"),           // packed fallback
-  ];
-
-  let builtinDir: string | null = null;
-  for (const c of candidates) {
-    if (existsSync(c)) { builtinDir = c; break; }
-  }
-  if (!builtinDir) {
-    log.warn("No builtin-skills directory found", { candidates });
-    return;
-  }
-  log.info(`Found builtin-skills at: ${builtinDir}`);
-
-  try {
-    const entries = readdirSync(builtinDir);
-    for (const entry of entries) {
-      const src = join(builtinDir, entry);
-      const dest = join(skillsDir, entry);
-      // 仅当用户目录中不存在时才复制，避免覆盖用户修改
-      if (!existsSync(dest)) {
-        copyDirRecursive(src, dest);
-        log.info(`Seeded builtin skill: ${entry}`);
-      }
-    }
-  } catch (err) {
-    log.warn("Failed to seed builtin skills", { error: String(err) });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 技能加载器
-// ---------------------------------------------------------------------------
-
-/**
- * 扫描 `skillsDir` 中的技能定义。
- *
- * 支持两种磁盘格式：
- *
- * 1. JSON manifest：即 `<name>.json` 文件，内容符合
- *    `SkillDefinition` 结构，这是 newApp 使用的轻量格式。
- *
- * 2. SKILL.md 目录：即包含 `SKILL.md` 文件的子目录，
- *    与 desktop 应用安装的技能兼容。系统会自动推导出最小
- *    `SkillDefinition`，信息来源于目录名以及
- *    markdown 正文中第一条非标题文本。
- */
-function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
-  if (!existsSync(skillsDir)) {
-    return [];
-  }
-
-  const skills: SkillDefinition[] = [];
-
-  let entries: string[];
-  try {
-    entries = readdirSync(skillsDir);
-  } catch {
-    return [];
-  }
-
-  for (const entry of entries) {
-    const fullPath = resolve(skillsDir, entry);
-
-    // --- 形式 1：JSON manifest 文件 ---
-    if (entry.endsWith(".json")) {
-      try {
-        const raw = readFileSync(fullPath, "utf-8");
-        const parsed = JSON.parse(raw) as Partial<SkillDefinition>;
-        if (parsed && typeof parsed === "object" && typeof parsed.id === "string" && typeof parsed.name === "string") {
-          const skillDir = parsed.path ?? fullPath;
-          let jsonViewFiles: string[] = [];
-          try {
-            const dirPath = statSync(skillDir).isDirectory() ? skillDir : dirname(skillDir);
-            jsonViewFiles = readdirSync(dirPath).filter((f) => f.endsWith(".html"));
-          } catch { /* ignore */ }
-          skills.push({
-            id: parsed.id,
-            name: parsed.name,
-            description: parsed.description ?? "",
-            path: skillDir,
-            enabled: parsed.enabled !== false,
-            allowedTools: parsed.allowedTools,
-            disableModelInvocation: parsed.disableModelInvocation ?? false,
-            workingDirectory: parsed.workingDirectory ?? null,
-            entrypoint: parsed.entrypoint ?? null,
-            hasScriptsDirectory: parsed.hasScriptsDirectory ?? false,
-            hasReferencesDirectory: parsed.hasReferencesDirectory ?? false,
-            hasAssetsDirectory: parsed.hasAssetsDirectory ?? false,
-            hasTestsDirectory: parsed.hasTestsDirectory ?? false,
-            hasAgentsDirectory: parsed.hasAgentsDirectory ?? false,
-            hasViewFile: jsonViewFiles.length > 0,
-            viewFiles: parsed.viewFiles ?? jsonViewFiles,
-          });
-        }
-      } catch {
-        log.warn("Failed to parse JSON skill manifest", { path: fullPath });
-      }
-      continue;
-    }
-
-    // --- 形式 2：SKILL.md 目录 ---
-    // 当前条目必须是一个包含 SKILL.md 的目录。
-    const skillMdPath = join(fullPath, "SKILL.md");
-    if (!existsSync(skillMdPath)) {
-      continue;
-    }
-
-    try {
-      const markdown = readFileSync(skillMdPath, "utf-8");
-      const { name, description, workspaceDir } = extractSkillMeta(entry, markdown);
-
-      // 识别标准子目录约定。
-      let subEntries: string[] = [];
-      try { subEntries = readdirSync(fullPath); } catch { /* ignore */ }
-      const subDirs = new Set(subEntries.map((e) => e.toLowerCase()));
-
-      const skillId = `skill-${name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")}`;
-
-      // 扫描技能根目录中的所有 .html 视图文件
-      const viewFiles = subEntries.filter((f) => f.endsWith(".html"));
-
-      skills.push({
-        id: skillId,
-        name,
-        description,
-        path: fullPath,
-        enabled: true,
-        allowedTools: undefined,
-        disableModelInvocation: false,
-        workingDirectory: workspaceDir,
-        entrypoint: null,
-        hasScriptsDirectory: subDirs.has("scripts"),
-        hasReferencesDirectory: subDirs.has("references"),
-        hasAssetsDirectory: subDirs.has("assets"),
-        hasTestsDirectory: subDirs.has("tests"),
-        hasAgentsDirectory: subDirs.has("agents"),
-        hasViewFile: viewFiles.length > 0,
-        viewFiles,
-      });
-    } catch {
-      log.warn("Failed to read SKILL.md in directory", { path: fullPath });
-    }
-  }
-
-  skills.sort((a, b) => a.name.localeCompare(b.name));
-  return skills;
-}
-
-/**
- * 从 SKILL.md 中提取 `name` 与 `description`。
- * 如果存在 `---` 包裹的 YAML 风格 frontmatter，则优先读取；
- * 否则回退到目录名以及正文中第一条非标题文本。
- */
-function extractSkillMeta(dirName: string, markdown: string): { name: string; description: string; workspaceDir: string | null } {
-  const lines = markdown.split(/\r?\n/);
-  let name = dirName;
-  let description = "";
-  let workspaceDir: string | null = null;
-
-  if (lines[0]?.trim() === "---") {
-    const closingIdx = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
-    if (closingIdx > 0) {
-      for (const rawLine of lines.slice(1, closingIdx)) {
-        const line = rawLine.trim();
-        const colonIdx = line.indexOf(":");
-        if (colonIdx <= 0) continue;
-        const key = line.slice(0, colonIdx).trim().toLowerCase();
-        const value = line.slice(colonIdx + 1).trim().replace(/^["']|["']$/g, "");
-        if (key === "name" && value) name = value;
-        if (key === "description" && value) description = value;
-        if (key === "workspacedir" && value) workspaceDir = value;
-      }
-      // 如果 frontmatter 中没有 description，则改为从正文提取。
-      if (!description) {
-        const bodyLines = lines.slice(closingIdx + 1);
-        description = bodyLines.find((l) => l.trim() && !l.trim().startsWith("#"))?.trim() ?? "";
-      }
-      return { name, description, workspaceDir };
-    }
-  }
-
-  // 如果没有 frontmatter，就从正文第一条非标题文本中提取描述。
-  description = lines.find((l) => l.trim() && !l.trim().startsWith("#"))?.trim() ?? "";
-  return { name, description, workspaceDir };
 }
 
 // ---------------------------------------------------------------------------
@@ -478,12 +259,15 @@ let isQuitting = false;
 app.on("before-quit", (event) => {
   // 关闭浏览器进程（如果存在），避免遗留孤儿 Chrome 进程
   shutdownToolExecutor().catch(() => {});
+  // 关闭所有硅基员工工作空间的 MCP 连接
+  shutdownAllWorkspaces().catch(() => {});
 
-  if (pendingSaves.size > 0 && !isQuitting) {
+  const pendingCount = getPendingSavesCount();
+  if (pendingCount > 0 && !isQuitting) {
     event.preventDefault();
     isQuitting = true;
-    log.info(`[shutdown] Waiting for ${pendingSaves.size} pending save(s)...`);
-    Promise.allSettled([...pendingSaves]).then(() => {
+    log.info(`[shutdown] Waiting for ${pendingCount} pending save(s)...`);
+    waitForPendingSaves().then(() => {
       app.quit();
     });
     return;

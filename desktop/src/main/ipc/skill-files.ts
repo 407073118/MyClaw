@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { ipcMain, shell } from "electron";
 import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import type { RuntimeContext } from "../services/runtime-context";
@@ -83,5 +83,16 @@ export function registerSkillFileHandlers(ctx: RuntimeContext): void {
     }
 
     return readFileSync(filePath, "utf-8");
+  });
+
+  /** 重新扫描磁盘上的 Skills 目录，返回最新列表。 */
+  ipcMain.handle("skills:refresh", async () => {
+    const skills = await ctx.services.refreshSkills();
+    return { items: skills };
+  });
+
+  /** 在系统文件管理器中打开 Skills 根目录。 */
+  ipcMain.handle("skills:open-folder", async () => {
+    await shell.openPath(ctx.runtime.skillsRootPath);
   });
 }

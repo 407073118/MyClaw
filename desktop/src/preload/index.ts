@@ -310,8 +310,8 @@ const myClawAPI = {
   importCloudMcp: (input: { releaseId?: string; servers?: McpServerConfig[]; manifest?: unknown }) =>
     ipcRenderer.invoke("cloud:import-mcp", input),
 
-  installEmployeePackageFromCloud: (input: Record<string, unknown>) =>
-    ipcRenderer.invoke("cloud:import-employee-package", input),
+  importSiliconPersonPackage: (input: Record<string, unknown>) =>
+    ipcRenderer.invoke("cloud:import-silicon-person-package", input),
 
   installWorkflowPackageFromCloud: (input: Record<string, unknown>) =>
     ipcRenderer.invoke("cloud:import-workflow-package", input),
@@ -339,8 +339,9 @@ const myClawAPI = {
   switchSiliconPersonSession: (siliconPersonId: string, sessionId: string) =>
     ipcRenderer.invoke("silicon-person:switch-session", siliconPersonId, sessionId).catch(() => ({ siliconPerson: null, session: null })),
 
+  /** fire-and-forget：入队后立即返回，后台按队列串行执行，结果通过 stream 事件推送。 */
   sendSiliconPersonMessage: (siliconPersonId: string, content: string) =>
-    ipcRenderer.invoke("silicon-person:send-message", siliconPersonId, { content }).catch(() => ({ siliconPerson: null, session: null })),
+    ipcRenderer.invoke("silicon-person:send-message", siliconPersonId, { content }).catch(() => ({ dispatched: false, siliconPersonId })),
 
   /** 标记硅基员工会话为已读，只回写当前会话的未读状态，不改变 currentSession。 */
   markSiliconPersonSessionRead: (siliconPersonId: string, sessionId: string) =>
@@ -349,10 +350,36 @@ const myClawAPI = {
   startSiliconPersonWorkflowRun: (siliconPersonId: string, workflowId: string) =>
     ipcRenderer.invoke("silicon-person:start-workflow-run", siliconPersonId, workflowId).catch(() => ({ siliconPerson: null, session: null, runId: null })),
 
+  /** 获取硅基员工工作空间路径信息。 */
+  getSiliconPersonPaths: (siliconPersonId: string) =>
+    ipcRenderer.invoke("silicon-person:get-paths", siliconPersonId).catch(() => ({ personDir: "", skillsDir: "", sessionsDir: "" })),
+
+  /** 获取硅基员工独立工作空间的技能列表。 */
+  listSiliconPersonSkills: (siliconPersonId: string) =>
+    ipcRenderer.invoke("silicon-person:list-skills", siliconPersonId).catch(() => ({ items: [] })),
+
+  /** 刷新硅基员工独立工作空间的技能列表。 */
+  refreshSiliconPersonSkills: (siliconPersonId: string) =>
+    ipcRenderer.invoke("silicon-person:refresh-skills", siliconPersonId).catch(() => ({ items: [] })),
+
+  /** 获取硅基员工独立工作空间的 MCP 服务列表。 */
+  listSiliconPersonMcpServers: (siliconPersonId: string) =>
+    ipcRenderer.invoke("silicon-person:list-mcp-servers", siliconPersonId).catch(() => ({ servers: [] })),
+
   // ---- 技能 ----------------------------------------------------------------
   fetchSkillDetail: (skillId: string) =>
     ipcRenderer.invoke("skill:detail", skillId)
       .catch(() => ({ skill: null })),
+
+  /** 重新扫描磁盘上的 Skills 目录，返回最新列表。 */
+  refreshSkills: () =>
+    ipcRenderer.invoke("skills:refresh")
+      .catch(() => ({ items: [] })),
+
+  /** 在系统文件管理器中打开 Skills 根目录。 */
+  openSkillsFolder: () =>
+    ipcRenderer.invoke("skills:open-folder")
+      .catch(() => {}),
 
   // ---- 发布草稿 ------------------------------------------------------------
   createPublishDraft: (input: Record<string, unknown>) =>

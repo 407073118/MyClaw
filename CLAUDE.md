@@ -250,6 +250,15 @@ MyClaw 是一个企业级 AI 工作平台，包含企业内部统一管理能力
 - Cloud API controllers and services use Nest exceptions such as `UnauthorizedException`, `BadRequestException`, and `NotFoundException`, for example in `cloud/apps/cloud-api/src/modules/auth/services/auth.service.ts` and `cloud/apps/cloud-api/src/modules/skills/controllers/skills.controller.ts`.
 - Cloud web server handlers normalize backend failures through `createError` in `cloud/apps/cloud-web/server/lib/cloud-api.ts`.
 ## Cross-Cutting Concerns
+
+### Desktop UI Style Guide
+Desktop 前端页面必须遵循 `desktop/docs/ui-style-guide.md` 中定义的设计规范。核心规则：
+- 页面布局使用全局 `.page-container` + `.page-header`
+- 按钮使用 `.btn-premium`（描边风格）或 `.glass-action-btn`，禁止实心填充按钮
+- 卡片使用 `.glass-card`，圆角 `var(--radius-xl)` (14px)
+- 状态徽章使用 `.glass-pill`，全圆 `999px`，禁止矩形 pill
+- 按钮圆角 `var(--radius-md)` (7px)，不要使用 8px、10px 等非标准值
+- 新页面提交前对照 `desktop/docs/ui-style-guide.md` 底部 Checklist 自查
 <!-- GSD:architecture-end -->
 
 <!-- GSD:workflow-start source:GSD defaults -->

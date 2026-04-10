@@ -26,7 +26,10 @@ describe("isReadOnlyTool", () => {
     "git.status",
     "git.diff",
     "git.log",
-    "task.manage",
+    "task.list",
+    "task.get",
+    "web.search",
+    "http.fetch",
   ];
 
   const writeTools = [
@@ -34,8 +37,6 @@ describe("isReadOnlyTool", () => {
     "fs.edit",
     "exec.command",
     "git.commit",
-    "http.fetch",
-    "web.search",
   ];
 
   for (const toolId of readOnlyTools) {

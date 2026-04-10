@@ -139,13 +139,13 @@ describe("Phase 2 degradation integration", () => {
     expect(resolvedCapability.effective.maxOutputTokens).toBeGreaterThan(0);
     expect(executionPlan).toMatchObject({
       adapterId: "openai-compatible",
-      replayPolicy: "content-only",
+      replayPolicy: "assistant-turn-with-reasoning",
       degradationReason: null,
     });
     expect(assembled.messages).toEqual([
       expect.objectContaining({ role: "system" }),
       { role: "user", content: "Summarize the prior run" },
-      { role: "assistant", content: "Final answer" },
+      { role: "assistant", content: "Final answer", reasoning: "step one\nstep two" },
     ]);
   });
 
@@ -271,12 +271,13 @@ describe("Phase 2 degradation integration", () => {
 
     expect(executionPlan).toMatchObject({
       adapterId: "openai-compatible",
-      replayPolicy: "content-only",
+      replayPolicy: "assistant-turn-with-reasoning",
       degradationReason: null,
     });
     expect(assembled.messages[2]).toEqual({
       role: "assistant",
       content: "Final answer",
+      reasoning: "step one\nstep two",
     });
   });
 });

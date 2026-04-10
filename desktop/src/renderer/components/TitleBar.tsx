@@ -11,7 +11,7 @@ const PAGE_LABELS: Record<string, string> = {
   "/tools": "Tools",
   "/mcp": "MCP Servers",
   "/skills": "Skills",
-  "/employees": "Employees",
+  "/employees": "硅基员工",
   "/workflows": "Workflows",
   "/publish-drafts": "Publish",
   "/me/prompt": "My Prompt",

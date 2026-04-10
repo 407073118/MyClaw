@@ -46,6 +46,10 @@ vi.mock("../src/renderer/components/WebPanel", () => ({
   default: () => null,
 }));
 
+vi.mock("../src/renderer/components/SiliconRail", () => ({
+  default: () => null,
+}));
+
 vi.mock("../src/renderer/stores/auth", () => ({
   useAuthStore: (selector?: (state: typeof mocks.auth) => unknown) =>
     (typeof selector === "function" ? selector(mocks.auth) : mocks.auth),
@@ -56,9 +60,19 @@ vi.mock("../src/renderer/stores/workspace", () => ({
     (typeof selector === "function" ? selector(mocks.workspace) : mocks.workspace),
 }));
 
+vi.mock("../src/renderer/stores/workflow-runs", () => ({
+  useWorkflowRunsStore: Object.assign(
+    () => ({}),
+    { getState: () => ({ handleStreamEvent: vi.fn() }) },
+  ),
+}));
+
 describe("AppShell footer status", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (globalThis as any).window ??= {};
+    (window as any).myClawAPI ??= {};
+    (window as any).myClawAPI.onWorkflowStream ??= vi.fn();
   });
 
   afterEach(() => {

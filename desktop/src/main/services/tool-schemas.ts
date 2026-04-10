@@ -297,7 +297,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_create",
-        description: "Create a new task to track multi-step work. Use when the user's request requires 3+ steps, or for complex non-trivial tasks. Each task should have a clear subject (imperative: 'Run tests') and activeForm (present continuous: 'Running tests').",
+        description: "Create a task as part of your execution plan. When you receive a user request, decompose it into tasks BEFORE starting work. Each task represents one logical step you will execute. Provide subject (imperative: 'Run tests') and activeForm (present continuous: 'Running tests').",
         parameters: {
           type: "object",
           properties: {
@@ -314,7 +314,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_list",
-        description: "List all tasks in the current session with their status and details.",
+        description: "List all tasks in the current execution plan with their status and details.",
         parameters: {
           type: "object",
           properties: {},
@@ -325,7 +325,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_get",
-        description: "Get a task by its ID with full details including blocking relationships.",
+        description: "Get a specific task by ID with full details including status and blocking relationships.",
         parameters: {
           type: "object",
           properties: {
@@ -339,7 +339,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_update",
-        description: "Update a task's fields or status. Mark as 'in_progress' before starting work, 'completed' after finishing. Only ONE task should be in_progress at a time — others are automatically demoted to pending.",
+        description: "Update a task's status or details. Set 'in_progress' before you start working on a task, 'completed' immediately after you finish. Only ONE task should be in_progress at a time — others are automatically demoted to pending.",
         parameters: {
           type: "object",
           properties: {
@@ -579,9 +579,18 @@ export function buildToolSchemas(
 
   // 生成 MCP 工具 schema
   if (mcpTools && mcpTools.length > 0) {
+    const usedMcpNames = new Set<string>();
     for (const tool of mcpTools) {
       // 函数名格式：mcp__<serverId_short>__<toolName>
-      const safeName = tool.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+      let safeName = tool.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+      // 去重：如果净化后名称冲突，追加数字后缀
+      const baseName = safeName;
+      let suffix = 2;
+      while (usedMcpNames.has(safeName)) {
+        safeName = `${baseName}_${suffix}`;
+        suffix++;
+      }
+      usedMcpNames.add(safeName);
       staticTools.push({
         type: "function",
         function: {

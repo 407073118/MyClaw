@@ -98,6 +98,10 @@ export type ContextBudgetPolicy = {
   safetyMarginTokens?: number;
   compactTriggerRatio?: number;
   minRecentTurnsToKeep?: number;
+  /** 保留最近 N 条工具输出的完整内容，更早的替换为摘要占位符（Observation Masking）。 */
+  recentToolOutputTurnsToKeep?: number;
+  /** 累计压缩次数达到此阈值时，建议用户新建对话。 */
+  suggestNewChatAfterCompactions?: number;
   maxSummaryBlocks?: number;
   enableLongTermMemory?: boolean;
   enableContextCheckpoint?: boolean;
@@ -111,6 +115,8 @@ export const DEFAULT_CONTEXT_BUDGET_POLICY: Readonly<Required<ContextBudgetPolic
   safetyMarginTokens: 1024,
   compactTriggerRatio: 0.8,
   minRecentTurnsToKeep: 12,
+  recentToolOutputTurnsToKeep: 10,
+  suggestNewChatAfterCompactions: 2,
   maxSummaryBlocks: 4,
   enableLongTermMemory: true,
   enableContextCheckpoint: true,

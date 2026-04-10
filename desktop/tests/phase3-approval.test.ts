@@ -76,7 +76,7 @@ describe("Phase 3: Read-only tools auto-approved", () => {
     expect(shouldRequestApproval({
       policy,
       source: "builtin-tool",
-      toolId: "task.manage",
+      toolId: "git.status",
       risk: ToolRiskCategory.Read,
     })).toBe(false);
   });

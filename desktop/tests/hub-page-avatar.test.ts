@@ -40,7 +40,7 @@ const mockWorkspace = vi.hoisted(() => ({
   clearCloudHubDetail: vi.fn(),
   importCloudSkill: vi.fn(),
   importCloudMcp: vi.fn(),
-  importCloudEmployeePackage: vi.fn(),
+  importCloudSiliconPersonPackage: vi.fn(),
   importCloudWorkflowPackage: vi.fn(),
 }));
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { SkillDefinition, SkillDetail } from "@shared/contracts";
@@ -27,13 +27,19 @@ function describeSkillPackage(skill: SkillDefinition): string[] {
 // ── SkillsPage ────────────────────────────────────────────────────────────────
 
 export default function SkillsPage() {
-  const workspace = useWorkspaceStore();
+  const skills = useWorkspaceStore((s) => s.skills);
+  const skillDetails = useWorkspaceStore((s) => s.skillDetails);
+  const refreshSkills = useWorkspaceStore((s) => s.refreshSkills);
+  const openSkillsFolder = useWorkspaceStore((s) => s.openSkillsFolder);
+  const loadSkillDetail = useWorkspaceStore((s) => s.loadSkillDetail);
+  const openWebPanel = useWorkspaceStore((s) => s.openWebPanel);
   const navigate = useNavigate();
 
   const [selectedSkill, setSelectedSkill] = useState<SkillDefinition | null>(null);
   const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const detailModalRef = useRef<HTMLElement>(null);
 
   const selectedEntryPath = selectedSkill
@@ -55,17 +61,36 @@ export default function SkillsPage() {
     dialogName: "skills-detail",
   });
 
+  /** 重新扫描磁盘上的 Skills 目录。 */
+  async function handleRefresh() {
+    setRefreshing(true);
+    console.info("[skills-view] 刷新本地 Skills 列表");
+    try {
+      await refreshSkills();
+    } catch (error) {
+      console.error("[skills-view] 刷新 Skills 失败", { detail: String(error) });
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  /** 在系统文件管理器中打开 Skills 目录，方便用户手动放入 Skill 文件夹。 */
+  function handleOpenFolder() {
+    console.info("[skills-view] 打开 Skills 目录");
+    openSkillsFolder();
+  }
+
   /** 打开指定 Skill 的详情弹层，并按需加载完整的 SKILL.md。 */
   async function openSkillDetail(skill: SkillDefinition, trigger?: HTMLElement | null) {
     captureDialogTrigger(trigger);
     setSelectedSkill(skill);
-    setSelectedSkillDetail((workspace.skillDetails[skill.id] as SkillDetail | undefined) ?? null);
+    setSelectedSkillDetail((skillDetails[skill.id] as SkillDetail | undefined) ?? null);
     setDetailLoading(true);
     setDetailError(null);
     console.info("[skills-view] 加载 Skill 详情", { skillId: skill.id, skillName: skill.name });
 
     try {
-      const detail = await workspace.loadSkillDetail(skill.id);
+      const detail = await loadSkillDetail(skill.id);
       setSelectedSkillDetail(detail as SkillDetail);
     } catch (error) {
       const msg = error instanceof Error ? error.message : "加载 Skill 详情失败";
@@ -83,11 +108,11 @@ export default function SkillsPage() {
       console.warn("[skills-view] No view.html found for skill", skill.id);
       return;
     }
-    workspace.openWebPanel(viewPath, skill.name, { skillId: skill.id, skillName: skill.name });
+    openWebPanel(viewPath, skill.name, { skillId: skill.id, skillName: skill.name });
   }
 
   return (
-    <main className="page-container">
+    <main className="page-container" style={{ height: "100%", overflowY: "auto" }}>
       <header className="page-header">
         <div className="header-text">
           <span className="eyebrow">Managed Skills</span>
@@ -96,45 +121,65 @@ export default function SkillsPage() {
             本地 Skills 列表。点击卡片查看详情，点击「预览」在右侧面板中打开。
           </p>
         </div>
+        <div className="header-actions">
+          <button
+            type="button"
+            className="btn-premium"
+            onClick={handleOpenFolder}
+          >
+            打开目录
+          </button>
+          <button
+            type="button"
+            className="btn-premium accent"
+            disabled={refreshing}
+            onClick={handleRefresh}
+          >
+            {refreshing ? "刷新中..." : "刷新"}
+          </button>
+        </div>
       </header>
 
-      {workspace.skills.length === 0 ? (
-        <p className="empty-copy">当前还没有可用 Skill。</p>
+      {skills.length === 0 ? (
+        <p className="skill-empty-copy">当前还没有可用 Skill。</p>
       ) : (
-        <section className="skills-grid">
-          {workspace.skills.map((skill) => (
+        <section className="glass-grid glass-grid--sm">
+          {skills.map((skill) => (
             <div
               key={skill.id}
-              className="skill-card"
+              className="glass-card glass-card--accent"
               data-testid={`skill-card-${skill.id}`}
             >
               <button
                 type="button"
-                className="skill-header skill-header-button"
+                className="skill-header-button"
                 aria-label={`打开 ${skill.name} 详情`}
                 onClick={(event) => void openSkillDetail(skill, event.currentTarget)}
               >
-                <div className="skill-title-block">
-                  <h3>{skill.name}</h3>
-                  <span className={`status-badge${skill.enabled ? " enabled" : ""}`}>
+                <div className="glass-card__header" style={{ paddingBottom: 0 }}>
+                  <h3 className="skill-card-title">{skill.name}</h3>
+                  <span className={`glass-pill glass-pill--${skill.enabled ? "green" : "muted"}`}>
                     {skill.enabled ? "已启用" : "已停用"}
                   </span>
                 </div>
-                <p className="skill-desc">{skill.description}</p>
+                <div className="glass-card__body" style={{ paddingTop: 8 }}>
+                  <p className="skill-desc">{skill.description}</p>
+                </div>
               </button>
 
               <div className="skill-chips">
                 {describeSkillPackage(skill).map((feature) => (
-                  <span key={`${skill.id}-${feature}`} className="package-chip">
+                  <span key={`${skill.id}-${feature}`} className="skill-package-chip">
                     {feature}
                   </span>
                 ))}
               </div>
 
-              <div className="skill-actions">
+              <div className="glass-card__footer skill-actions-footer">
                 <button
                   type="button"
-                  className="btn-detail"
+                  className="glass-action-btn"
+                  style={{ flex: 1, justifyContent: "center" }}
                   onClick={() => navigate(`/skills/${skill.id}`)}
                 >
                   查看详情
@@ -142,10 +187,11 @@ export default function SkillsPage() {
                 {skill.hasViewFile && (
                   <button
                     type="button"
-                    className="btn-open-panel"
+                    className="glass-action-btn glass-action-btn--primary"
+                    style={{ flex: 1, justifyContent: "center" }}
                     onClick={() => handleOpenSkillView(skill)}
                   >
-                    ▶ 预览
+                    预览
                   </button>
                 )}
               </div>
@@ -155,41 +201,41 @@ export default function SkillsPage() {
       )}
 
       {selectedSkill && (
-        <div className="modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeSkillDetail(); }}>
+        <div className="skill-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeSkillDetail(); }}>
           <section
             ref={detailModalRef}
-            className="detail-modal"
+            className="skill-detail-modal"
             role="dialog"
             aria-modal="true"
             aria-labelledby="skill-detail-title"
             tabIndex={-1}
           >
-            <header className="detail-header">
-              <div className="detail-header-copy">
+            <header className="skill-detail-header">
+              <div style={{ minWidth: 0 }}>
                 <span className="eyebrow">Skill Detail</span>
-                <h3 id="skill-detail-title" className="detail-title" data-testid="skill-detail-title">{selectedSkill.name}</h3>
-                <p className="detail-summary">{selectedSkill.description}</p>
+                <h3 id="skill-detail-title" className="skill-detail-title" data-testid="skill-detail-title">{selectedSkill.name}</h3>
+                <p className="skill-detail-summary">{selectedSkill.description}</p>
               </div>
               <button
                 type="button"
-                className="icon-button"
+                className="skill-icon-button"
                 aria-label="Close skill detail"
                 onClick={closeSkillDetail}
               >
-                ×
+                x
               </button>
             </header>
 
-            <div className="detail-meta-grid">
-              <div className="detail-meta-item">
-                <span className="meta-label">入口文件</span>
-                <code className="entry-path" data-testid="skill-detail-entry-path">{selectedEntryPath}</code>
+            <div className="skill-detail-meta-grid">
+              <div className="skill-detail-meta-item">
+                <span className="skill-meta-label">入口文件</span>
+                <code className="skill-entry-path" data-testid="skill-detail-entry-path">{selectedEntryPath}</code>
               </div>
-              <div className="detail-meta-item">
-                <span className="meta-label">标准目录</span>
-                <div className="package-chip-list">
+              <div className="skill-detail-meta-item">
+                <span className="skill-meta-label">标准目录</span>
+                <div className="skill-chip-list">
                   {describeSkillPackage(selectedSkill).map((feature) => (
-                    <span key={`detail-${selectedSkill.id}-${feature}`} className="package-chip">
+                    <span key={`detail-${selectedSkill.id}-${feature}`} className="skill-package-chip">
                       {feature}
                     </span>
                   ))}
@@ -198,99 +244,24 @@ export default function SkillsPage() {
             </div>
 
             {detailError ? (
-              <p className="detail-error">{detailError}</p>
+              <p className="skill-detail-error">{detailError}</p>
             ) : detailLoading ? (
-              <div className="detail-loading">正在加载 SKILL.md…</div>
+              <div className="skill-detail-loading">正在加载 SKILL.md...</div>
             ) : selectedSkillDetail?.content ? (
               <div
-                className="detail-content markdown-preview"
+                className="skill-detail-content markdown-preview"
                 data-testid="skill-detail-content"
                 dangerouslySetInnerHTML={{ __html: renderSafeSkillMarkdown(selectedSkillDetail.content) }}
               />
             ) : selectedSkillDetail ? (
-              <p className="detail-loading">该 Skill 没有 SKILL.md 文件</p>
+              <p className="skill-detail-loading">该 Skill 没有 SKILL.md 文件</p>
             ) : null}
           </section>
         </div>
       )}
 
       <style>{`
-        .page-container {
-          height: 100%;
-          overflow-y: auto;
-        }
-
-        .page-header {
-          margin-bottom: 24px;
-        }
-
-        .eyebrow {
-          display: inline-block;
-          margin-bottom: 8px;
-          color: var(--accent-cyan, #67e8f9);
-          font-size: 12px;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-
-        .page-title {
-          margin: 0;
-          color: var(--text-primary, #fff);
-          font-size: 24px;
-        }
-
-        .page-subtitle {
-          margin: 8px 0 0;
-          color: var(--text-secondary, #b0b0b8);
-          font-size: 13px;
-          line-height: 1.6;
-        }
-
-        /* ---- 卡片网格 ---- */
-        .skills-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-          gap: 16px;
-        }
-
-        .empty-copy {
-          color: var(--text-secondary);
-          font-size: 14px;
-          text-align: center;
-          padding: 48px;
-          background: color-mix(in srgb, var(--bg-card, #1e1e24) 40%, transparent);
-          border: 1px dashed var(--glass-border, #333338);
-          border-radius: 12px;
-        }
-
-        /* ---- Skill 卡片 ---- */
-        .skill-card {
-          display: flex;
-          flex-direction: column;
-          border-radius: var(--radius-xl);
-          background: var(--bg-card);
-          border: 1px solid var(--glass-border);
-          backdrop-filter: var(--blur-std);
-          -webkit-backdrop-filter: var(--blur-std);
-          box-shadow: var(--shadow-card), var(--glass-inner-glow);
-          transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
-        }
-
-        .skill-card:hover {
-          border-color: var(--glass-border-hover);
-          box-shadow: var(--shadow-card-hover), var(--glass-inner-glow);
-          transform: translateY(-2px);
-        }
-
-        .skill-header {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          padding: 16px 16px 12px;
-          cursor: pointer;
-          flex: 1;
-        }
-
+        /* ── Skill Card Inner ── */
         .skill-header-button {
           width: 100%;
           border: none;
@@ -299,21 +270,16 @@ export default function SkillsPage() {
           appearance: none;
           color: inherit;
           font: inherit;
+          cursor: pointer;
+          padding: 0;
         }
 
         .skill-header-button:focus-visible {
-          outline: 2px solid rgba(103, 232, 249, 0.65);
+          outline: 2px solid rgba(16, 163, 127, 0.65);
           outline-offset: -2px;
         }
 
-        .skill-title-block {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-        }
-
-        .skill-title-block h3 {
+        .skill-card-title {
           font-size: 15px;
           font-weight: 600;
           color: var(--text-primary);
@@ -323,27 +289,10 @@ export default function SkillsPage() {
           white-space: nowrap;
         }
 
-        .status-badge {
-          flex-shrink: 0;
-          padding: 2px 8px;
-          border-radius: 999px;
-          font-size: 10px;
-          font-weight: 600;
-          background: var(--bg-base);
-          border: 1px solid var(--glass-border);
-          color: var(--text-muted);
-        }
-
-        .status-badge.enabled {
-          background: rgba(46, 160, 67, 0.1);
-          border-color: rgba(46, 160, 67, 0.2);
-          color: #2ea043;
-        }
-
         .skill-desc {
           color: var(--text-secondary);
-          font-size: 12px;
-          line-height: 1.5;
+          font-size: 13px;
+          line-height: 1.55;
           margin: 0;
           display: -webkit-box;
           -webkit-line-clamp: 2;
@@ -352,19 +301,20 @@ export default function SkillsPage() {
           overflow: hidden;
         }
 
-        /* ---- 结构标签 ---- */
         .skill-chips {
           display: flex;
           flex-wrap: wrap;
           gap: 6px;
-          padding: 0 16px 12px;
+          padding: 0 20px 14px;
+          position: relative;
+          z-index: 1;
         }
 
-        .package-chip {
+        .skill-package-chip {
           display: inline-flex;
           align-items: center;
           padding: 2px 8px;
-          border-radius: 4px;
+          border-radius: var(--radius-sm);
           border: 1px solid var(--glass-border);
           background: var(--bg-base);
           color: var(--text-muted);
@@ -373,43 +323,36 @@ export default function SkillsPage() {
           font-family: "Cascadia Code", "Fira Code", monospace;
         }
 
-        /* ---- 操作按钮 ---- */
-        .skill-actions {
+        .skill-actions-footer {
           display: flex;
-          border-top: 1px solid var(--glass-border);
+          gap: 0;
         }
 
-        .skill-actions button {
-          flex: 1;
-          padding: 9px 0;
+        .skill-actions-footer .glass-action-btn {
+          border-radius: 0;
           border: none;
-          background: transparent;
-          cursor: pointer;
-          font-size: 12px;
-          font-weight: 600;
-          transition: background 0.15s;
+          border-top: none;
+          height: auto;
+          padding: 10px 0;
         }
 
-        .btn-detail {
+        .skill-actions-footer .glass-action-btn + .glass-action-btn {
+          border-left: 1px solid var(--glass-border);
+        }
+
+        /* ── Empty State ── */
+        .skill-empty-copy {
           color: var(--text-secondary);
+          font-size: 14px;
+          text-align: center;
+          padding: 48px;
+          background: color-mix(in srgb, var(--bg-card) 40%, transparent);
+          border: 1px dashed var(--glass-border);
+          border-radius: var(--radius-xl);
         }
 
-        .btn-detail:hover {
-          background: rgba(255, 255, 255, 0.04);
-          color: var(--text-primary);
-        }
-
-        .btn-open-panel {
-          color: var(--accent-cyan, #67e8f9);
-          border-left: 1px solid var(--glass-border) !important;
-        }
-
-        .btn-open-panel:hover {
-          background: rgba(103, 232, 249, 0.08);
-        }
-
-        /* ---- 详情弹层 ---- */
-        .modal-overlay {
+        /* ── Detail Modal ── */
+        .skill-modal-overlay {
           position: fixed;
           inset: 0;
           z-index: 1000;
@@ -420,169 +363,165 @@ export default function SkillsPage() {
           padding: 24px;
         }
 
-        .detail-modal {
+        .skill-detail-modal {
           width: min(920px, 100%);
           max-height: min(80vh, 900px);
           overflow: hidden;
           display: flex;
           flex-direction: column;
-          background: var(--bg-card, #18181b);
-          border: 1px solid var(--glass-border, #27272a);
-          border-radius: 16px;
+          background: var(--bg-card);
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-xl);
           box-shadow: 0 20px 40px rgba(0, 0, 0, 0.38);
         }
 
-        .detail-header {
+        .skill-detail-header {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
           gap: 16px;
           padding: 24px;
-          border-bottom: 1px solid var(--glass-border, #27272a);
+          border-bottom: 1px solid var(--glass-border);
         }
 
-        .detail-header-copy { min-width: 0; }
-
-        .detail-title {
+        .skill-detail-title {
           margin: 0;
           font-size: 22px;
+          font-weight: 700;
           color: var(--text-primary);
         }
 
-        .detail-summary {
+        .skill-detail-summary {
           margin: 8px 0 0;
           color: var(--text-secondary);
           line-height: 1.6;
         }
 
-        .icon-button {
+        .skill-icon-button {
           background: transparent;
-          border: 1px solid var(--glass-border, #3f3f46);
-          color: var(--text-secondary, #a1a1aa);
+          border: 1px solid var(--glass-border);
+          color: var(--text-secondary);
           cursor: pointer;
           width: 32px;
           height: 32px;
-          border-radius: 8px;
+          border-radius: var(--radius-md);
           display: grid;
           place-items: center;
           transition: all 0.2s;
           font-size: 18px;
         }
 
-        .icon-button:hover {
+        .skill-icon-button:hover {
           color: var(--text-primary);
-          border-color: var(--text-primary);
+          border-color: var(--glass-border-hover);
         }
 
-        .detail-meta-grid {
+        .skill-detail-meta-grid {
           display: grid;
           grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
           gap: 16px;
           padding: 20px 24px 0;
         }
 
-        .detail-meta-item {
+        .skill-detail-meta-item {
           display: flex;
           flex-direction: column;
           gap: 8px;
         }
 
-        .meta-label {
+        .skill-meta-label {
           font-size: 11px;
           color: var(--text-muted);
           text-transform: uppercase;
           letter-spacing: 0.05em;
+          font-weight: 700;
         }
 
-        .package-chip-list {
+        .skill-chip-list {
           display: flex;
           flex-wrap: wrap;
           gap: 6px;
         }
 
-        .entry-path {
+        .skill-entry-path {
           font-size: 12px;
           color: var(--text-primary);
           word-break: break-all;
         }
 
-        .detail-loading, .detail-error {
+        .skill-detail-loading, .skill-detail-error {
           margin: 20px 24px 24px;
-        }
-
-        .detail-loading, .detail-error {
           font-size: 14px;
           color: var(--text-secondary);
         }
 
-        .detail-error { color: #ef4444; }
+        .skill-detail-error { color: var(--status-red); }
 
-        .detail-content {
+        .skill-detail-content {
           flex: 1;
           overflow: auto;
           padding: 20px 24px;
-          border-radius: 12px;
-          background: var(--bg-base, #121214);
-          border: 1px solid var(--glass-border, #27272a);
+          border-radius: var(--radius-lg);
+          background: var(--bg-base);
+          border: 1px solid var(--glass-border);
           margin: 20px 24px 24px;
           line-height: 1.65;
           color: var(--text-primary);
           font-size: 13px;
         }
 
-        .detail-content.markdown-preview h1 {
+        .skill-detail-content.markdown-preview h1 {
           font-size: 22px; font-weight: 700; margin: 0 0 12px;
-          padding-bottom: 8px; border-bottom: 1px solid var(--glass-border, #333338);
+          padding-bottom: 8px; border-bottom: 1px solid var(--glass-border);
         }
-        .detail-content.markdown-preview h2 {
+        .skill-detail-content.markdown-preview h2 {
           font-size: 18px; font-weight: 600; margin: 24px 0 8px;
         }
-        .detail-content.markdown-preview h3 {
+        .skill-detail-content.markdown-preview h3 {
           font-size: 15px; font-weight: 600; margin: 20px 0 6px;
         }
-        .detail-content.markdown-preview p { margin: 0 0 10px; }
-        .detail-content.markdown-preview a {
-          color: var(--accent-cyan, #67e8f9); text-decoration: none;
+        .skill-detail-content.markdown-preview p { margin: 0 0 10px; }
+        .skill-detail-content.markdown-preview a {
+          color: var(--accent-cyan); text-decoration: none;
         }
-        .detail-content.markdown-preview a:hover { text-decoration: underline; }
-        .detail-content.markdown-preview code {
+        .skill-detail-content.markdown-preview a:hover { text-decoration: underline; }
+        .skill-detail-content.markdown-preview code {
           font-family: "Cascadia Code", "Fira Code", monospace;
           font-size: 0.9em; background: rgba(255,255,255,0.06);
-          padding: 2px 6px; border-radius: 4px;
+          padding: 2px 6px; border-radius: var(--radius-sm);
         }
-        .detail-content.markdown-preview pre {
+        .skill-detail-content.markdown-preview pre {
           background: rgba(255,255,255,0.04);
-          border: 1px solid var(--glass-border, #333338);
-          border-radius: 6px; padding: 12px 14px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md); padding: 12px 14px;
           overflow-x: auto; margin: 0 0 12px;
         }
-        .detail-content.markdown-preview pre code {
+        .skill-detail-content.markdown-preview pre code {
           background: none; padding: 0; font-size: 12px; line-height: 1.6;
         }
-        .detail-content.markdown-preview ul, .detail-content.markdown-preview ol {
+        .skill-detail-content.markdown-preview ul, .skill-detail-content.markdown-preview ol {
           margin: 0 0 10px; padding-left: 24px;
         }
-        .detail-content.markdown-preview li { margin-bottom: 4px; }
-        .detail-content.markdown-preview blockquote {
+        .skill-detail-content.markdown-preview li { margin-bottom: 4px; }
+        .skill-detail-content.markdown-preview blockquote {
           margin: 0 0 10px; padding: 8px 14px;
-          border-left: 3px solid var(--accent-cyan, #67e8f9);
+          border-left: 3px solid var(--accent-cyan);
           background: rgba(255,255,255,0.02);
-          color: var(--text-secondary, #b0b0b8);
+          color: var(--text-secondary);
         }
-        .detail-content.markdown-preview table {
+        .skill-detail-content.markdown-preview table {
           width: 100%; border-collapse: collapse; margin: 0 0 12px;
         }
-        .detail-content.markdown-preview th, .detail-content.markdown-preview td {
-          border: 1px solid var(--glass-border, #333338);
+        .skill-detail-content.markdown-preview th, .skill-detail-content.markdown-preview td {
+          border: 1px solid var(--glass-border);
           padding: 6px 10px; text-align: left; font-size: 12px;
         }
-        .detail-content.markdown-preview th {
+        .skill-detail-content.markdown-preview th {
           background: rgba(255,255,255,0.04); font-weight: 600;
         }
 
         @media (max-width: 700px) {
-          .detail-meta-grid { grid-template-columns: 1fr; }
-          .skills-grid { grid-template-columns: 1fr; }
+          .skill-detail-meta-grid { grid-template-columns: 1fr; }
         }
       `}</style>
     </main>

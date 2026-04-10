@@ -36,7 +36,6 @@ describe("functionNameToToolId — browser tools", () => {
     expect(functionNameToToolId("git_commit")).toBe("git.commit");
     expect(functionNameToToolId("http_fetch")).toBe("http.fetch");
     expect(functionNameToToolId("web_search")).toBe("web.search");
-    expect(functionNameToToolId("task_manage")).toBe("task.manage");
   });
 
   it("preserves skill_invoke__ prefix as-is", () => {

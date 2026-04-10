@@ -148,7 +148,7 @@ function resolveDegradationReason(
   capability: Pick<ModelCapability, "supportsReasoning"> | null | undefined,
 ): ResolvedExecutionPlan["degradationReason"] {
   if (explicitReplayPolicy === "assistant-turn-with-reasoning") {
-    if (adapterId !== "br-minimax") return "adapter-fallback";
+    // 所有适配器均已支持推理重放，不再按 adapter 区分
     if (isReasoningDisabled(resolvedIntent)) return "reasoning-disabled";
     if (capability?.supportsReasoning === false) return "capability-missing";
   }
@@ -168,24 +168,38 @@ function resolveDegradationReason(
   return null;
 }
 
-/** 根据 adapter、intent 与能力信息生成 replay 决策。 */
+/**
+ * 根据 adapter、intent 与能力信息生成 replay 决策。
+ *
+ * 当推理（thinking）开启时，Kimi / DeepSeek / MiniMax 等 API
+ * 要求对话历史中所有 assistant 消息都携带 reasoning 内容，
+ * 否则返回 400。因此不能仅对 MiniMax 开启推理重放。
+ */
 function resolveReplayPolicy(
   adapterId: SessionRuntimeAdapterId,
   explicitReplayPolicy: SessionReplayPolicy | undefined,
   resolvedIntent: ResolvedSessionRuntimeIntent,
   capability: Pick<ModelCapability, "supportsReasoning"> | null | undefined,
 ): SessionReplayPolicy {
+  // 显式指定 with-reasoning 但推理不可用时降级
   if (explicitReplayPolicy === "assistant-turn-with-reasoning"
-    && (adapterId !== "br-minimax"
-      || isReasoningDisabled(resolvedIntent)
+    && (isReasoningDisabled(resolvedIntent)
       || capability?.supportsReasoning === false)) {
     return "assistant-turn";
   }
 
   if (explicitReplayPolicy) return explicitReplayPolicy;
-  if (adapterId !== "br-minimax") return "content-only";
-  if (isReasoningDisabled(resolvedIntent)) return "assistant-turn";
-  if (capability?.supportsReasoning === false) return "assistant-turn";
+
+  // 推理已禁用
+  if (isReasoningDisabled(resolvedIntent)) {
+    return adapterId === "br-minimax" ? "assistant-turn" : "content-only";
+  }
+  // 能力明确不支持推理
+  if (capability?.supportsReasoning === false) {
+    return adapterId === "br-minimax" ? "assistant-turn" : "content-only";
+  }
+  // 所有可能支持推理的模型都重放 reasoning，
+  // 对于不产出 reasoning 的模型无副作用（没有内容可重放）
   return "assistant-turn-with-reasoning";
 }
 

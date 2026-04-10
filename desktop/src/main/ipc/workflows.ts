@@ -6,6 +6,7 @@ import type { ChatSession, ModelProfile, Task, WorkflowDefinition, WorkflowRunSu
 
 import type { RuntimeContext } from "../services/runtime-context";
 import { saveSession, saveWorkflow, saveWorkflowRun, deleteWorkflowFile } from "../services/state-persistence";
+import { trackSave } from "../services/pending-saves";
 import { callModel } from "../services/model-client";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import {
@@ -176,13 +177,15 @@ function syncSiliconPersonWorkflowTasks(
     reason,
     taskCount: tasks.length,
   });
-  saveSession(ctx.runtime.paths, session).catch((err) => {
-    console.error("[workflow] 持久化 session tasklist 失败", {
-      sessionId: session.id,
-      reason,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  });
+  trackSave(
+    saveSession(ctx.runtime.paths, session).catch((err) => {
+      console.error("[workflow] 持久化 session tasklist 失败", {
+        sessionId: session.id,
+        reason,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }),
+  );
   broadcastSessionTasksUpdated(session.id, tasks);
 }
 
@@ -400,9 +403,11 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         edges: [],
         stateSchema: [],
       };
-      saveWorkflow(ctx.runtime.paths, definition).catch((err) => {
-        console.error("[workflow:create] failed to persist workflow", workflow.id, err);
-      });
+      trackSave(
+        saveWorkflow(ctx.runtime.paths, definition).catch((err) => {
+          console.error("[workflow:create] failed to persist workflow", workflow.id, err);
+        }),
+      );
 
       return { workflow, items: [...ctx.state.getWorkflows()] };
     },
@@ -444,9 +449,11 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         workflows[idx] = updated;
       }
 
-      saveWorkflow(ctx.runtime.paths, ctx.state.workflowDefinitions[workflowId]).catch((err) => {
-        console.error("[workflow:update] failed to persist workflow", workflowId, err);
-      });
+      trackSave(
+        saveWorkflow(ctx.runtime.paths, ctx.state.workflowDefinitions[workflowId]).catch((err) => {
+          console.error("[workflow:update] failed to persist workflow", workflowId, err);
+        }),
+      );
 
       return { workflow: updated, items: workflows.map((w) => (w.id === workflowId ? updated : w)) };
     },
@@ -549,9 +556,11 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         updatedAt: now,
       };
       upsertWorkflowRun(ctx, runSummary);
-      saveWorkflowRun(ctx.runtime.paths, runSummary).catch((err) => {
-        console.error("[workflow:start-run] failed to persist run", runId, err);
-      });
+      trackSave(
+        saveWorkflowRun(ctx.runtime.paths, runSummary).catch((err) => {
+          console.error("[workflow:start-run] failed to persist run", runId, err);
+        }),
+      );
       if (siliconPersonSession) {
         const seededTasks = seedWorkflowDrivenTasksForSession({
           session: siliconPersonSession,
@@ -570,9 +579,11 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
           updatedAt: new Date().toISOString(),
         };
         upsertWorkflowRun(ctx, completedRun);
-        saveWorkflowRun(ctx.runtime.paths, completedRun).catch((err) => {
-          console.error("[workflow:start-run] failed to persist completed run", runId, err);
-        });
+        trackSave(
+          saveWorkflowRun(ctx.runtime.paths, completedRun).catch((err) => {
+            console.error("[workflow:start-run] failed to persist completed run", runId, err);
+          }),
+        );
         if (siliconPersonSession) {
           const settledTasks = applyWorkflowEventToSessionTasks({
             session: siliconPersonSession,
@@ -605,7 +616,7 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
           updatedAt: new Date().toISOString(),
         };
         upsertWorkflowRun(ctx, failedRun);
-        saveWorkflowRun(ctx.runtime.paths, failedRun).catch(() => {});
+        trackSave(saveWorkflowRun(ctx.runtime.paths, failedRun).catch(() => {}));
         if (siliconPersonSession) {
           const failedTasks = applyWorkflowEventToSessionTasks({
             session: siliconPersonSession,
@@ -670,9 +681,11 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
             error: result.error,
           };
           upsertWorkflowRun(ctx, completedRun);
-          saveWorkflowRun(ctx.runtime.paths, completedRun).catch((err) => {
-            console.error("[workflow:interrupt-resume] 保存完成记录失败", input.runId, err);
-          });
+          trackSave(
+            saveWorkflowRun(ctx.runtime.paths, completedRun).catch((err) => {
+              console.error("[workflow:interrupt-resume] 保存完成记录失败", input.runId, err);
+            }),
+          );
 
           // 若非等待输入状态，清理活跃运行
           if (result.status !== "waiting-input") {
@@ -696,7 +709,7 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
               error: errorMsg,
             };
             upsertWorkflowRun(ctx, failedRun);
-            saveWorkflowRun(ctx.runtime.paths, failedRun).catch(() => {});
+            trackSave(saveWorkflowRun(ctx.runtime.paths, failedRun).catch(() => {}));
           }
           ctx.state.activeWorkflowRuns.delete(input.runId);
           console.error("[workflow:interrupt-resume] 工作流恢复异常", { runId: input.runId, error: errorMsg });
@@ -733,9 +746,11 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
           updatedAt: new Date().toISOString(),
         };
         upsertWorkflowRun(ctx, canceled);
-        saveWorkflowRun(ctx.runtime.paths, canceled).catch((err) => {
-          console.error("[workflow:cancel-run] failed to persist canceled run", runId, err);
-        });
+        trackSave(
+          saveWorkflowRun(ctx.runtime.paths, canceled).catch((err) => {
+            console.error("[workflow:cancel-run] failed to persist canceled run", runId, err);
+          }),
+        );
       }
 
       return { success: true };

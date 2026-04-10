@@ -35,6 +35,8 @@ export const BR_MINIMAX_BUDGET_POLICY: Readonly<Required<ContextBudgetPolicy>> =
   safetyMarginTokens: 2048,
   compactTriggerRatio: 0.88,
   minRecentTurnsToKeep: 16,
+  recentToolOutputTurnsToKeep: 10,
+  suggestNewChatAfterCompactions: 2,
   maxSummaryBlocks: 6,
   enableLongTermMemory: true,
   enableContextCheckpoint: true,

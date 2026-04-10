@@ -329,16 +329,32 @@ describe("silicon person ipc", () => {
 
     expect(sendMessageHandler).toBeTypeOf("function");
 
-    const payload = await sendMessageHandler?.({}, "sp-1", {
+    // fire-and-forget：立即返回 dispatched，后台排队执行
+    const dispatchResult = await sendMessageHandler?.({}, "sp-1", {
       content: "请整理今天的运营事项",
-    }) as {
-      siliconPerson: SiliconPerson;
-      session: ChatSession;
-    };
+    }) as { dispatched: boolean; siliconPersonId: string };
 
-    expect(callModelMock).toHaveBeenCalledTimes(1);
-    expect(payload.session.siliconPersonId).toBe("sp-1");
-    expect(payload.session.messages).toEqual(expect.arrayContaining([
+    expect(dispatchResult).toMatchObject({ dispatched: true, siliconPersonId: "sp-1" });
+
+    // 等待后台队列消费完成
+    await vi.waitFor(() => {
+      expect(callModelMock).toHaveBeenCalledTimes(1);
+    });
+
+    // 再等待状态同步
+    await vi.waitFor(() => {
+      expect(ctx.state.siliconPersons[0]?.status).toBe("done");
+    });
+
+    const sp = ctx.state.siliconPersons[0]!;
+    expect(sp.currentSessionId).toBeTruthy();
+    expect(sp.unreadCount).toBe(1);
+    expect(sp.hasUnread).toBe(true);
+    expect(sp.needsApproval).toBe(false);
+
+    const spSession = ctx.state.sessions.find((s) => s.siliconPersonId === "sp-1");
+    expect(spSession).toBeDefined();
+    expect(spSession!.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "user",
         content: "请整理今天的运营事项",
@@ -348,24 +364,6 @@ describe("silicon person ipc", () => {
         content: "今天的运营事项已经整理完成。",
       }),
     ]));
-    expect(payload.session.chatRunState).toMatchObject({
-      status: "completed",
-      phase: "model",
-    });
-    expect(payload.siliconPerson.currentSessionId).toBe(payload.session.id);
-    expect(payload.siliconPerson.status).toBe("done");
-    expect(payload.siliconPerson.unreadCount).toBe(1);
-    expect(payload.siliconPerson.hasUnread).toBe(true);
-    expect(payload.siliconPerson.needsApproval).toBe(false);
-    expect(payload.siliconPerson.sessions).toEqual([
-      expect.objectContaining({
-        id: payload.session.id,
-        status: "done",
-        unreadCount: 1,
-        hasUnread: true,
-        needsApproval: false,
-      }),
-    ]);
   });
 
   it("marks the silicon person as canceling before the shared session run settles to canceled", async () => {
@@ -433,12 +431,10 @@ describe("silicon person ipc", () => {
     expect(sendMessageHandler).toBeTypeOf("function");
     expect(cancelHandler).toBeTypeOf("function");
 
-    const responsePromise = sendMessageHandler?.({}, "sp-1", {
+    // fire-and-forget：立即返回
+    await sendMessageHandler?.({}, "sp-1", {
       content: "请先输出一半，再取消",
-    }) as Promise<{
-      siliconPerson: SiliconPerson;
-      session: ChatSession;
-    }>;
+    });
 
     await vi.waitFor(() => {
       expect(ctx.state.siliconPersons[0]?.currentSessionId).toBeTruthy();
@@ -465,10 +461,12 @@ describe("silicon person ipc", () => {
       status: "canceling",
     });
 
-    const payload = await responsePromise;
+    // 等待后台队列完成（cancel 结束后 drain 会 settle）
+    await vi.waitFor(() => {
+      expect(ctx.state.siliconPersons[0]?.status).toBe("canceled");
+    });
 
-    expect(payload.siliconPerson.status).toBe("canceled");
-    expect(payload.siliconPerson.sessions[0]).toMatchObject({
+    expect(ctx.state.siliconPersons[0]?.sessions[0]).toMatchObject({
       id: sessionId,
       status: "canceled",
     });
@@ -550,12 +548,10 @@ describe("silicon person ipc", () => {
     expect(sendMessageHandler).toBeTypeOf("function");
     expect(resolveApprovalHandler).toBeTypeOf("function");
 
-    const responsePromise = sendMessageHandler?.({}, "sp-1", {
+    // fire-and-forget
+    await sendMessageHandler?.({}, "sp-1", {
       content: "请写入一个文件",
-    }) as Promise<{
-      siliconPerson: SiliconPerson;
-      session: ChatSession;
-    }>;
+    });
 
     await vi.waitFor(() => {
       expect(ctx.state.getApprovalRequests()).toHaveLength(1);
@@ -575,10 +571,12 @@ describe("silicon person ipc", () => {
 
     await resolveApprovalHandler?.({}, approvalRequest.id, "deny");
 
-    const payload = await responsePromise;
+    // 等待后台队列完成
+    await vi.waitFor(() => {
+      expect(ctx.state.siliconPersons[0]?.needsApproval).toBe(false);
+    });
 
-    expect(payload.siliconPerson.needsApproval).toBe(false);
-    expect(payload.siliconPerson.status).not.toBe("needs_approval");
+    expect(ctx.state.siliconPersons[0]?.status).not.toBe("needs_approval");
   });
 
   it("bypasses shared approval prompts when the silicon person approvalMode is auto_approve", async () => {
@@ -658,18 +656,19 @@ describe("silicon person ipc", () => {
 
     expect(sendMessageHandler).toBeTypeOf("function");
 
-    const payload = await sendMessageHandler?.({}, "sp-1", {
+    // fire-and-forget
+    await sendMessageHandler?.({}, "sp-1", {
       content: "请直接写入一个文件，不要再问我",
-    }) as {
-      siliconPerson: SiliconPerson;
-      session: ChatSession;
-    };
+    });
+
+    // 等待后台队列完成
+    await vi.waitFor(() => {
+      expect(ctx.state.siliconPersons[0]?.status).toBe("done");
+    });
 
     expect(ctx.state.getApprovalRequests()).toHaveLength(0);
-    expect(payload.siliconPerson.needsApproval).toBe(false);
-    expect(payload.siliconPerson.status).toBe("done");
-    expect(payload.siliconPerson.sessions[0]).toMatchObject({
-      id: payload.session.id,
+    expect(ctx.state.siliconPersons[0]?.needsApproval).toBe(false);
+    expect(ctx.state.siliconPersons[0]?.sessions[0]).toMatchObject({
       needsApproval: false,
       status: "done",
     });

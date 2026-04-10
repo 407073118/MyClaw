@@ -5,7 +5,6 @@
  * - fs.read, fs.write, fs.edit, fs.list, fs.search, fs.find
  * - exec.command safety checks
  * - git tools (status, diff, log)
- * - task.manage
  * - skill_invoke__* dispatch
  */
 
@@ -171,40 +170,6 @@ describe("exec.command", () => {
     const result = await executor.execute("exec.command", "rm -rf /", testDir);
     expect(result.success).toBe(false);
     expect(result.error).toContain("安全策略拒绝");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// task.manage
-// ---------------------------------------------------------------------------
-
-describe("task.manage", () => {
-  it("should add and list tasks", async () => {
-    const add1 = await executor.execute("task.manage", "add Write tests", testDir);
-    expect(add1.success).toBe(true);
-    expect(add1.output).toContain("Write tests");
-
-    const add2 = await executor.execute("task.manage", "add Fix bugs", testDir);
-    expect(add2.success).toBe(true);
-
-    const list = await executor.execute("task.manage", "list", testDir);
-    expect(list.success).toBe(true);
-    expect(list.output).toContain("Write tests");
-    expect(list.output).toContain("Fix bugs");
-  });
-
-  it("should mark tasks as done", async () => {
-    await executor.execute("task.manage", "add Task A", testDir);
-    const done = await executor.execute("task.manage", "done 1", testDir);
-    expect(done.success).toBe(true);
-    expect(done.output).toContain("[x]");
-  });
-
-  it("should clear all tasks", async () => {
-    await executor.execute("task.manage", "add Task A", testDir);
-    const clear = await executor.execute("task.manage", "clear", testDir);
-    expect(clear.success).toBe(true);
-    expect(clear.output).toContain("已清空");
   });
 });
 

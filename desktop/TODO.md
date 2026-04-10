@@ -128,7 +128,7 @@
 - [ ] `fetchCloudHubDownloadToken` — 获取临时下载 URL
 - [ ] `importCloudSkill` — 下载技能包 → 解压到 skillsDir → 刷新技能列表
 - [ ] `importCloudMcp` — 下载 MCP 配置 → 创建服务器 → 启动
-- [ ] `installEmployeePackageFromCloud` — 下载员工包 → 创建本地员工记录
+- [ ] `importSiliconPersonPackage` — 下载员工包 → 创建本地硅基员工记录
 - [ ] `installWorkflowPackageFromCloud` — 下载工作流包 → 创建本地工作流
 - **涉及文件**：
   - `src/preload/index.ts` — 5 个 Promise.resolve stub

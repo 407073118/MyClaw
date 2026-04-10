@@ -161,11 +161,8 @@ describe("workspace silicon person session actions", () => {
     const siliconPerson = buildSiliconPerson();
 
     sendSiliconPersonMessage.mockResolvedValue({
-      siliconPerson: {
-        ...siliconPerson,
-        status: "running",
-      },
-      session: routedSession,
+      dispatched: true,
+      siliconPersonId: "sp-1",
     });
 
     const { useWorkspaceStore } = await import("../src/renderer/stores/workspace");
@@ -174,12 +171,10 @@ describe("workspace silicon person session actions", () => {
       sessions: [session1],
     });
 
-    const session = await useWorkspaceStore.getState().sendSiliconPersonMessage("sp-1", "请先拆解任务");
+    // fire-and-forget：不再返回 session
+    await useWorkspaceStore.getState().sendSiliconPersonMessage("sp-1", "请先拆解任务");
 
     expect(sendSiliconPersonMessage).toHaveBeenCalledWith("sp-1", "请先拆解任务");
-    expect(session.messages).toHaveLength(1);
-    expect(useWorkspaceStore.getState().sessions.find((item) => item.id === "session-1")?.messages).toHaveLength(1);
-    expect(useWorkspaceStore.getState().siliconPersons[0]?.status).toBe("running");
   });
 
   it("switches the silicon person current session using the explicit preload payload", async () => {

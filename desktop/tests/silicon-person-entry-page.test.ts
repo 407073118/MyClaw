@@ -63,20 +63,20 @@ describe("Silicon person entry page", () => {
     mocks.workspace.createSiliconPerson.mockClear();
   });
 
-  it("renders the rewritten silicon person entry instead of the old employees library wording", async () => {
-    const { default: EmployeesPage } = await import("../src/renderer/pages/EmployeesPage");
+  it("renders card grid layout with silicon person cards", async () => {
+    const { default: SiliconPersonEntryPage } = await import("../src/renderer/pages/SiliconPersonEntryPage");
 
     render(
       React.createElement(
         MemoryRouter,
         undefined,
-        React.createElement(EmployeesPage),
+        React.createElement(SiliconPersonEntryPage),
       ),
     );
 
     expect(screen.getByTestId("silicon-person-entry-view")).toBeTruthy();
     expect(screen.getByText("硅基员工")).toBeTruthy();
-    expect(screen.queryByText(/^Employees$/)).toBeNull();
+    expect(screen.getByTestId("silicon-person-create-btn")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-card-sp-1")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-open-sp-1")).toBeTruthy();
   });

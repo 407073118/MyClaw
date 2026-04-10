@@ -49,11 +49,7 @@ type ExecSyncError = {
   message?: string;
 };
 
-type TaskItem = {
-  id: number;
-  text: string;
-  done: boolean;
-};
+
 
 type ToolExecutionOptions = {
   signal?: AbortSignal;
@@ -358,14 +354,18 @@ function buildSkillExecutionGuidance(skillPath: string): string {
     "- Windows 上如果 python 不可用，优先改用 py -3。",
     `- 推荐写法：cd /d "${skillPath}" && py -3 scripts/<script>.py`,
     `- 也可以直接执行绝对路径：py -3 "${join(scriptsDir, "<script>.py")}"`,
-    `- structured input 绀轰緥锛?${structuredCommandExample}`,
+    `- structured input 示例：${structuredCommandExample}`,
     "",
   ].join("\n");
 }
 
+/** 搜索递归上限：已扫描目录数超过此值时提前退出，防止在超大目录树中阻塞主进程。 */
+const MAX_SCAN_DIRS = 2000;
+
 /** 递归搜索文本内容。 */
-function searchTextInDir(base: string, pattern: string, maxResults: number, results: string[]): void {
-  if (results.length >= maxResults) return;
+function searchTextInDir(base: string, pattern: string, maxResults: number, results: string[], scanned: { count: number } = { count: 0 }): void {
+  if (results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) return;
+  scanned.count++;
 
   let entries;
   try {
@@ -375,11 +375,11 @@ function searchTextInDir(base: string, pattern: string, maxResults: number, resu
   }
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (results.length >= maxResults) break;
+    if (results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) break;
     const fullPath = join(base, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === ".git") continue;
-      searchTextInDir(fullPath, pattern, maxResults, results);
+      searchTextInDir(fullPath, pattern, maxResults, results, scanned);
     } else {
       try {
         const content = readFileSync(fullPath, "utf8");
@@ -419,8 +419,9 @@ function matchGlob(relPath: string, pattern: string): boolean {
 }
 
 /** 递归查找符合 glob 的文件。 */
-function findFilesInDir(base: string, root: string, pattern: string, maxResults: number, results: string[]): void {
-  if (results.length >= maxResults) return;
+function findFilesInDir(base: string, root: string, pattern: string, maxResults: number, results: string[], scanned: { count: number } = { count: 0 }): void {
+  if (results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) return;
+  scanned.count++;
 
   let entries;
   try {
@@ -430,12 +431,12 @@ function findFilesInDir(base: string, root: string, pattern: string, maxResults:
   }
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (results.length >= maxResults) break;
+    if (results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) break;
     const fullPath = join(base, entry.name);
     const relPath = normalizeSep(relative(root, fullPath));
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === ".git") continue;
-      findFilesInDir(fullPath, root, pattern, maxResults, results);
+      findFilesInDir(fullPath, root, pattern, maxResults, results, scanned);
     } else if (matchGlob(relPath, pattern)) {
       results.push(relPath);
     }
@@ -446,8 +447,6 @@ export class BuiltinToolExecutor {
   private skills: SkillDefinition[] = [];
   private browserService = new BrowserService();
   private _allowExternalPaths = false;
-  private tasks: TaskItem[] = [];
-  private nextTaskId = 1;
 
   /** 更新技能列表。 */
   setSkills(skills: SkillDefinition[]): void {
@@ -599,10 +598,6 @@ export class BuiltinToolExecutor {
         // 忽略暂存失败，交给 commit 结果统一反馈。
       }
       return this.runGit(["commit", "-m", message], cwd);
-    }
-
-    if (toolId === "task.manage") {
-      return this.executeTaskManage(label);
     }
 
     if (toolId === "http.fetch") {
@@ -856,49 +851,6 @@ export class BuiltinToolExecutor {
         error: execErr.message ?? String(err),
       };
     }
-  }
-
-  /** 处理任务列表的增删改查。 */
-  private executeTaskManage(label: string): ToolExecutionResult {
-    const input = label.trim();
-    if (!input) {
-      return { success: false, output: "", error: "task.manage 需要子命令。" };
-    }
-
-    if (input === "list") {
-      const output = this.tasks.length > 0
-        ? this.tasks.map((task) => `${task.done ? "[x]" : "[ ]"} ${task.id}. ${task.text}`).join("\n")
-        : "(空任务列表)";
-      return { success: true, output };
-    }
-
-    if (input === "clear") {
-      this.tasks = [];
-      this.nextTaskId = 1;
-      return { success: true, output: "已清空任务列表" };
-    }
-
-    if (input.startsWith("add ")) {
-      const text = input.slice(4).trim();
-      if (!text) {
-        return { success: false, output: "", error: "add 需要任务内容。" };
-      }
-      const task: TaskItem = { id: this.nextTaskId++, text, done: false };
-      this.tasks.push(task);
-      return { success: true, output: `[ ] ${task.id}. ${task.text}` };
-    }
-
-    if (input.startsWith("done ")) {
-      const id = Number.parseInt(input.slice(5).trim(), 10);
-      const task = this.tasks.find((item) => item.id === id);
-      if (!task) {
-        return { success: false, output: "", error: "未找到任务：" + id };
-      }
-      task.done = true;
-      return { success: true, output: `[x] ${task.id}. ${task.text}` };
-    }
-
-    return { success: false, output: "", error: "未知 task.manage 子命令：" + input };
   }
 
   /** 发起简单 HTTP GET 请求。 */

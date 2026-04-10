@@ -139,18 +139,6 @@ const RESOLVED_BUILTIN_TOOLS: ResolvedBuiltinTool[] = [
     exposedToModel: true,
     effectiveApprovalMode: "always-ask",
   },
-  {
-    id: "task.manage",
-    name: "任务管理",
-    description: "创建、更新或查看多步骤工作的任务列表。",
-    group: "task",
-    risk: ToolRiskCategory.Read,
-    requiresAttachedDirectory: false,
-    enabled: true,
-    exposedToModel: true,
-    effectiveApprovalMode: "inherit",
-  },
-
   // ── browser.* ── 浏览器自动化工具组 ──────────────────────
   {
     id: "browser.open",

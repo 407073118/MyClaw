@@ -143,9 +143,10 @@ function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
   const lowerModel = profile.model.toLowerCase();
 
   // MiniMax 无论 provider 如何设置，都使用 OpenAI 兼容协议
+  // 域名级匹配：检查 URL host 部分是否包含 minimax，避免路径中偶然出现 minimax 导致误判
   if (isBrMiniMaxProfile(profile)
     || profile.providerFlavor === "minimax-anthropic"
-    || lowerUrl.includes("minimax") || lowerUrl.includes("minimaxi")
+    || /[:./]minimax[i]?\./.test(lowerUrl)
     || lowerModel.startsWith("minimax")) {
     return "generic";
   }
@@ -308,8 +309,10 @@ function buildWireMessages(
 
     const shouldReplayReasoning = message.role === "assistant"
       && replayPolicy === "assistant-turn-with-reasoning";
-    if (shouldReplayReasoning && message.reasoning) {
-      base["reasoning"] = message.reasoning;
+    if (shouldReplayReasoning) {
+      // 始终包含 reasoning，即使为空。
+      // 启用 thinking 的 API 要求所有 assistant 消息都带此字段。
+      base["reasoning"] = message.reasoning || "";
     }
     if (message.tool_call_id) {
       base["tool_call_id"] = message.tool_call_id;
@@ -352,6 +355,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     messages,
     tools,
     onDelta,
+    onToolCallDelta,
     signal,
     timeoutMs = 120_000,
     executionPlan,
@@ -401,7 +405,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   const isEventStream = contentType.includes("text/event-stream");
 
   if (isEventStream || response.body) {
-    const result = await consumeSseStream(response, onDelta);
+    const result = await consumeSseStream(response, onDelta, onToolCallDelta);
     return {
       content: result.content,
       ...(result.reasoning ? { reasoning: result.reasoning } : {}),

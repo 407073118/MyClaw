@@ -168,11 +168,11 @@ describe("Phase 2 execution plan runtime", () => {
       degradationReason: "capability-missing",
       planSource: "capability",
     });
-    expect(genericProvider.replayPolicy).toBe("content-only");
+    expect(genericProvider.replayPolicy).toBe("assistant-turn-with-reasoning");
     expect(genericExplicitReasoningReplay).toMatchObject({
       reasoningEnabled: true,
-      replayPolicy: "assistant-turn",
-      degradationReason: "adapter-fallback",
+      replayPolicy: "assistant-turn-with-reasoning",
+      degradationReason: null,
       planSource: "intent",
     });
   });

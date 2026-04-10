@@ -8,7 +8,7 @@
  *   <myClawDir>/models/<id>.json
  *   <myClawDir>/sessions/<id>/session.json
  *   <myClawDir>/sessions/<id>/messages.json
- *   <myClawDir>/silicon-persons/<id>.json
+ *   <myClawDir>/silicon-persons/<id>/person.json  (legacy: <id>.json)
  *   <myClawDir>/workflows/<id>.json
  *   <myClawDir>/settings.json
  */
@@ -19,6 +19,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { writeFile, mkdir, rm, rename } from "node:fs/promises";
@@ -124,9 +125,8 @@ function hydrateSession(
   meta: PersistedSessionMetadata,
   messages: ChatSession["messages"],
 ): ChatSession {
-  const hydratedSession = { ...meta, messages } as ChatSession;
   // 兼容迁移期旧会话：缺少 planState / planModeState 时保持缺字段；显式 null/对象则原样恢复。
-  const hydrated = { ...meta, messages } as ChatSession;
+  const hydratedSession = { ...meta, messages } as ChatSession;
   if (hasOwnPlanModeState(meta)) {
     hydratedSession.planModeState = meta.planModeState;
   }
@@ -212,11 +212,38 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
   const personDir = siliconPersonsDir(paths);
   ensureDir(personDir);
   try {
-    for (const file of readdirSync(personDir)) {
-      if (!file.endsWith(".json")) continue;
-      const data = tryReadJson<SiliconPerson>(join(personDir, file));
-      if (data && data.id) {
-        siliconPersons.push(data);
+    for (const entry of readdirSync(personDir)) {
+      const entryPath = join(personDir, entry);
+      try {
+        if (statSync(entryPath).isDirectory()) {
+          // 新格式：<id>/person.json
+          const data = tryReadJson<SiliconPerson>(join(entryPath, "person.json"));
+          if (data && data.id) {
+            siliconPersons.push(data);
+
+            // 加载该员工独立目录下的 sessions
+            const personSessionsDir = join(entryPath, "sessions");
+            if (existsSync(personSessionsDir)) {
+              try {
+                for (const sid of readdirSync(personSessionsDir)) {
+                  const sDir = join(personSessionsDir, sid);
+                  const sMeta = tryReadJson<PersistedSessionMetadata>(join(sDir, "session.json"));
+                  if (!sMeta || !sMeta.id) continue;
+                  const sMsgs = tryReadJson<ChatSession["messages"]>(join(sDir, "messages.json")) ?? [];
+                  sessions.push(hydrateSession(sMeta, sMsgs));
+                }
+              } catch { /* 不可读时跳过 */ }
+            }
+          }
+        } else if (entry.endsWith(".json")) {
+          // 旧格式兼容：<id>.json
+          const data = tryReadJson<SiliconPerson>(entryPath);
+          if (data && data.id) {
+            siliconPersons.push(data);
+          }
+        }
+      } catch {
+        // 单条目不可读时跳过
       }
     }
   } catch {
@@ -305,26 +332,46 @@ export async function deleteModelProfileFile(
   }
 }
 
+/**
+ * 解析 session 的实际存储目录。
+ *
+ * 硅基员工的 session 存储在 `silicon-persons/<personId>/sessions/`，
+ * 主助手的 session 存储在全局 `sessions/`。
+ */
+function resolveSessionsDir(paths: MyClawPaths, session: { siliconPersonId?: string | null }): string {
+  if (session.siliconPersonId) {
+    return join(siliconPersonsDir(paths), session.siliconPersonId, "sessions");
+  }
+  return paths.sessionsDir;
+}
+
 export async function saveSession(
   paths: MyClawPaths,
   session: ChatSession,
 ): Promise<void> {
-  const sessionDir = join(paths.sessionsDir, session.id);
+  const sessionsDir = resolveSessionsDir(paths, session);
+  const sessionDir = join(sessionsDir, session.id);
   await mkdir(sessionDir, { recursive: true });
 
   // 拆分保存：metadata（不含 messages）与 messages 分别落盘
   // 两者都使用原子写入（临时文件 + rename）避免数据损坏
+  // 先写 messages 再写 session：session.json 存在即表示该次保存已完成，
+  // 若中间崩溃只有 messages 写入则 session.json 仍为上一版本，加载时不会出错。
   const { messages } = session;
   const meta = dehydrateSession(session);
-  await atomicWriteFile(join(sessionDir, "session.json"), JSON.stringify(meta, null, 2));
   await atomicWriteFile(join(sessionDir, "messages.json"), JSON.stringify(messages, null, 2));
+  await atomicWriteFile(join(sessionDir, "session.json"), JSON.stringify(meta, null, 2));
 }
 
 export async function deleteSessionFiles(
   paths: MyClawPaths,
   id: string,
+  siliconPersonId?: string | null,
 ): Promise<void> {
-  const sessionDir = join(paths.sessionsDir, id);
+  const sessionsDir = siliconPersonId
+    ? join(siliconPersonsDir(paths), siliconPersonId, "sessions")
+    : paths.sessionsDir;
+  const sessionDir = join(sessionsDir, id);
   if (existsSync(sessionDir)) {
     await rm(sessionDir, { recursive: true, force: true });
   }
@@ -334,9 +381,9 @@ export async function saveSiliconPerson(
   paths: MyClawPaths,
   siliconPerson: SiliconPerson,
 ): Promise<void> {
-  const dir = siliconPersonsDir(paths);
-  ensureDir(dir);
-  await atomicWriteFile(join(dir, `${siliconPerson.id}.json`), JSON.stringify(siliconPerson, null, 2));
+  const personDirPath = join(siliconPersonsDir(paths), siliconPerson.id);
+  await mkdir(personDirPath, { recursive: true });
+  await atomicWriteFile(join(personDirPath, "person.json"), JSON.stringify(siliconPerson, null, 2));
 }
 
 export async function saveWorkflow(
@@ -383,4 +430,17 @@ export async function saveSettings(
 ): Promise<void> {
   ensureDir(paths.myClawDir);
   await atomicWriteFile(paths.settingsFile, JSON.stringify(settings, null, 2));
+}
+
+/** 初始化或获取指定硅基员工的运行时数据库。 */
+export async function openSiliconPersonRuntime(
+  paths: MyClawPaths,
+  siliconPersonId: string,
+): Promise<import("./silicon-person-runtime-store").SiliconPersonRuntimeStore> {
+  const { SiliconPersonRuntimeStore } = await import("./silicon-person-runtime-store");
+  const personDir = join(siliconPersonsDir(paths), siliconPersonId);
+  ensureDir(personDir);
+  const store = new SiliconPersonRuntimeStore(join(personDir, "runtime.db"));
+  await store.init();
+  return store;
 }

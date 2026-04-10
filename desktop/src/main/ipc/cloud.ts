@@ -21,6 +21,9 @@ import type {
 import type { RuntimeContext } from "../services/runtime-context";
 import { appEnv, APP_ENV_NAME } from "../../../config";
 import { saveSiliconPerson, saveWorkflow } from "../services/state-persistence";
+import { trackSave } from "../services/pending-saves";
+import { deriveSiliconPersonPaths } from "../services/directory-service";
+import { getOrCreateWorkspace, initializeWorkspaceDirectories, refreshWorkspaceSkills } from "../services/silicon-person-workspace";
 
 // ---------------------------------------------------------------------------
 // Hub types (subset of what CloudHubProxy returns)
@@ -170,23 +173,27 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
   );
 
   // ---- Cloud Skill import (download zip → extract → install to skills dir) ----
+  // 支持 siliconPersonId：有则安装到员工自己的 skills/，否则安装到全局 skills/
   ipcMain.handle(
     "cloud:import-skill",
-    async (_event, input: { releaseId: string; skillName: string }) => {
+    async (_event, input: { releaseId: string; skillName: string; siliconPersonId?: string }) => {
       const releaseId = input.releaseId?.trim();
       const skillName = input.skillName?.trim();
       if (!releaseId || !skillName) throw new Error("releaseId and skillName are required");
       const downloadUrl = `${CLOUD_API_BASE}/artifacts/download/${encodeURIComponent(releaseId)}`;
 
-      const skillsDir = ctx.runtime.paths.skillsDir;
-      await mkdir(skillsDir, { recursive: true });
+      // 根据是否指定硅基员工决定安装目标目录
+      const targetSkillsDir = input.siliconPersonId
+        ? deriveSiliconPersonPaths(ctx.runtime.paths, input.siliconPersonId).skillsDir
+        : ctx.runtime.paths.skillsDir;
+      await mkdir(targetSkillsDir, { recursive: true });
 
       // Normalize directory name
       const dirName = skillName.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "cloud-skill";
-      const workingRoot = await mkdtemp(join(skillsDir, ".cloud-import-"));
+      const workingRoot = await mkdtemp(join(targetSkillsDir, ".cloud-import-"));
       const archivePath = join(workingRoot, "release.zip");
       const extractPath = join(workingRoot, "extracted");
-      const destinationPath = join(skillsDir, dirName);
+      const destinationPath = join(targetSkillsDir, dirName);
 
       try {
         await mkdir(extractPath, { recursive: true });
@@ -222,8 +229,14 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
         await rm(destinationPath, { recursive: true, force: true });
         await cp(sourcePath, destinationPath, { recursive: true, force: true });
 
-        // Refresh skills list
-        const skills = await ctx.services.refreshSkills();
+        // 刷新技能列表：全局或硅基员工工作空间
+        let skills: SkillDefinition[];
+        if (input.siliconPersonId) {
+          const workspace = await getOrCreateWorkspace(ctx.runtime.paths, input.siliconPersonId);
+          skills = refreshWorkspaceSkills(workspace);
+        } else {
+          skills = await ctx.services.refreshSkills();
+        }
         const installed = skills.find((s) => resolve(s.path) === resolve(destinationPath));
 
         return { skill: installed ?? null, skills: { items: skills } };
@@ -234,12 +247,11 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
   );
 
   // ---- Cloud MCP import (register MCP server config locally) ----
+  // 支持 siliconPersonId：有则注册到员工的 MCP 管理器，否则注册到全局
   ipcMain.handle(
     "cloud:import-mcp",
-    async (_event, input: { manifest: Record<string, unknown> }) => {
+    async (_event, input: { manifest: Record<string, unknown>; siliconPersonId?: string }) => {
       const manifest = input.manifest ?? input;
-      const mcpManager = ctx.services.mcpManager;
-      if (!mcpManager) throw new Error("MCP manager not available");
 
       const transport = (manifest.transport as string) ?? "stdio";
       const name = (manifest.name as string) ?? "Cloud MCP";
@@ -261,15 +273,25 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
             enabled: true,
           };
 
+      // 全局或硅基员工的 MCP 管理器
+      let mcpManager: typeof ctx.services.mcpManager;
+      if (input.siliconPersonId) {
+        const workspace = await getOrCreateWorkspace(ctx.runtime.paths, input.siliconPersonId);
+        mcpManager = workspace.mcpManager;
+      } else {
+        mcpManager = ctx.services.mcpManager;
+      }
+      if (!mcpManager) throw new Error("MCP manager not available");
+
       const server = await mcpManager.createServer(config);
-      const servers = ctx.services.listMcpServers();
+      const servers = mcpManager.listServers();
       return { server, servers };
     },
   );
 
-  // ---- Cloud Employee Package import ----
+  // ---- Cloud SiliconPerson Package import ----
   ipcMain.handle(
-    "cloud:import-employee-package",
+    "cloud:import-silicon-person-package",
     async (_event, input: Record<string, unknown>) => {
       const manifest = input.manifest as Record<string, unknown> | undefined;
       const siliconPerson: SiliconPerson = {
@@ -289,10 +311,15 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
         updatedAt: new Date().toISOString(),
       };
 
+      // 初始化员工独立工作空间目录（skills/、sessions/、内置技能种子）
+      initializeWorkspaceDirectories(ctx.runtime.paths, siliconPerson.id);
+
       ctx.state.siliconPersons.push(siliconPerson);
-      saveSiliconPerson(ctx.runtime.paths, siliconPerson).catch((err) => {
-        console.error("[cloud:import-employee-package] 硅基员工持久化失败", err);
-      });
+      trackSave(
+        saveSiliconPerson(ctx.runtime.paths, siliconPerson).catch((err) => {
+          console.error("[cloud:import-silicon-person-package] 硅基员工持久化失败", err);
+        }),
+      );
 
       return { siliconPerson, items: [...ctx.state.siliconPersons] };
     },
@@ -326,9 +353,11 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
         stateSchema: [],
       };
       ctx.state.workflowDefinitions[workflow.id] = definition;
-      saveWorkflow(ctx.runtime.paths, definition).catch((err) => {
-        console.error("[cloud:import-workflow-package] persist failed", err);
-      });
+      trackSave(
+        saveWorkflow(ctx.runtime.paths, definition).catch((err) => {
+          console.error("[cloud:import-workflow-package] persist failed", err);
+        }),
+      );
 
       return { workflow, items: [...ctx.state.getWorkflows()] };
     },

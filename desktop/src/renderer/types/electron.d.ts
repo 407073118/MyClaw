@@ -278,7 +278,7 @@ declare global {
         releaseId: string;
         servers: McpServerConfig[];
       }) => Promise<McpServersPayload>;
-      installEmployeePackageFromCloud: (input: {
+      importSiliconPersonPackage: (input: {
         itemId: string;
         releaseId: string;
         name: string;
@@ -330,6 +330,23 @@ declare global {
         workflowId: string,
       ) => Promise<{ siliconPerson: SiliconPerson; session: ChatSession; runId: string | null }>;
 
+      /** 获取硅基员工工作空间路径信息。 */
+      getSiliconPersonPaths: (
+        siliconPersonId: string,
+      ) => Promise<{ personDir: string; skillsDir: string; sessionsDir: string }>;
+      /** 获取硅基员工独立工作空间的技能列表。 */
+      listSiliconPersonSkills: (
+        siliconPersonId: string,
+      ) => Promise<{ items: SkillDefinition[] }>;
+      /** 刷新硅基员工独立工作空间的技能列表。 */
+      refreshSiliconPersonSkills: (
+        siliconPersonId: string,
+      ) => Promise<{ items: SkillDefinition[] }>;
+      /** 获取硅基员工独立工作空间的 MCP 服务列表。 */
+      listSiliconPersonMcpServers: (
+        siliconPersonId: string,
+      ) => Promise<{ servers: McpServer[] }>;
+
       // --- Workflows ---
       fetchWorkflows: () => Promise<{ items: WorkflowDefinitionSummary[] }>;
       getWorkflow: (workflowId: string) => Promise<{ workflow: unknown }>;
@@ -352,6 +369,10 @@ declare global {
 
       // --- Skills ---
       fetchSkillDetail: (skillId: string) => Promise<{ skill: unknown }>;
+      /** 重新扫描磁盘上的 Skills 目录，返回最新列表。 */
+      refreshSkills: () => Promise<{ items: SkillDefinition[] }>;
+      /** 在系统文件管理器中打开 Skills 根目录。 */
+      openSkillsFolder: () => Promise<void>;
 
       // --- Web Panels ---
       webPanelResolveView: (skillId: string) => Promise<string | null>;

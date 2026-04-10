@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import TitleBar from "../components/TitleBar";
 import WebPanel from "../components/WebPanel";
+import SiliconRail from "../components/SiliconRail";
 
 import { useAuthStore } from "../stores/auth";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -123,7 +124,7 @@ const navItems: NavItem[] = [
   { to: "/tools", label: "Tools", icon: IconSkills, testId: "nav-tools" },
   { to: "/mcp", label: "MCP", icon: IconMcp, testId: "nav-mcp" },
   { to: "/skills", label: "Skills", icon: IconSkills, testId: "nav-skills" },
-  { to: "/employees", label: "Employees", icon: IconEmployees, testId: "nav-employees" },
+  { to: "/employees", label: "硅基员工", icon: IconEmployees, testId: "nav-employees" },
   { to: "/workflows", label: "Workflows", icon: IconWorkflows, testId: "nav-workflows" },
   // { to: "/publish-drafts", label: "Publish", icon: IconPublish, testId: "nav-publish-drafts" },
 ];
@@ -242,9 +243,9 @@ export default function AppShell() {
 
   // 全局订阅工作流引擎流式事件，确保无论当前页面是哪个都能捕获到事件。
   useEffect(() => {
-    const handleStreamEvent = useWorkflowRunsStore.getState().handleStreamEvent;
     const unsub = window.myClawAPI.onWorkflowStream?.((event: unknown) => {
-      handleStreamEvent(event as import("@shared/contracts").WorkflowStreamEvent);
+      // 每次事件到达时动态获取最新 handler，避免闭包过期
+      useWorkflowRunsStore.getState().handleStreamEvent(event as import("@shared/contracts").WorkflowStreamEvent);
     });
     return () => unsub?.();
   }, []);
@@ -310,6 +311,7 @@ export default function AppShell() {
                 to={item.to}
                 end={item.to === "/"}
                 className={["nav-link", isNavItemActive(item.to) ? "active" : ""].filter(Boolean).join(" ")}
+                onClick={() => workspace.setActiveSiliconPersonId(null)}
               >
                 <div className="nav-icon-box">
                   <item.icon />
@@ -387,6 +389,7 @@ export default function AppShell() {
         <Outlet />
       </section>
 
+      <SiliconRail />
       <WebPanel />
 
       <style>{`

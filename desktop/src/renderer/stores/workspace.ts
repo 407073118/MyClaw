@@ -112,6 +112,8 @@ type WorkspaceState = {
   skills: SkillDefinition[];
   skillDetails: Record<string, unknown>;
   siliconPersons: SiliconPerson[];
+  /** 当前 @投递目标硅基员工 ID，发送一条消息后自动清除。 */
+  activeSiliconPersonId: string | null;
   workflows: WorkflowDefinitionSummary[];
   workflowSummaries: Record<string, WorkflowDefinitionSummary>;
   workflowDefinitions: Record<string, unknown>;
@@ -192,7 +194,7 @@ type WorkspaceState = {
 
   importCloudSkill: (input: { releaseId: string; skillName: string }) => Promise<unknown>;
   importCloudMcp: (input: { releaseId: string; servers: McpServerConfig[] }) => Promise<unknown>;
-  importCloudEmployeePackage: (input: {
+  importCloudSiliconPersonPackage: (input: {
     itemId: string;
     releaseId: string;
     name: string;
@@ -214,12 +216,15 @@ type WorkspaceState = {
   updateSiliconPerson: (siliconPersonId: string, input: Partial<SiliconPerson>) => Promise<SiliconPerson>;
   createSiliconPersonSession: (siliconPersonId: string, input?: { title?: string }) => Promise<ChatSession>;
   switchSiliconPersonSession: (siliconPersonId: string, sessionId: string) => Promise<ChatSession>;
-  sendSiliconPersonMessage: (siliconPersonId: string, content: string) => Promise<ChatSession>;
+  /** fire-and-forget：入队后立即返回，不阻塞 UI。 */
+  sendSiliconPersonMessage: (siliconPersonId: string, content: string) => Promise<void>;
   startSiliconPersonWorkflowRun: (siliconPersonId: string, workflowId: string) => Promise<{
     siliconPerson: SiliconPerson;
     session: ChatSession;
     runId: string | null;
   }>;
+  /** 切换 Rail 选中的硅基员工（切换或取消选中）。 */
+  setActiveSiliconPersonId: (id: string | null) => void;
 
   // Workflows
   loadWorkflows: () => Promise<WorkflowDefinitionSummary[]>;
@@ -233,6 +238,8 @@ type WorkspaceState = {
   cancelWorkflowRun: (runId: string) => Promise<{ success: boolean }>;
 
   // Skills
+  refreshSkills: () => Promise<void>;
+  openSkillsFolder: () => Promise<void>;
   loadSkillDetail: (skillId: string) => Promise<unknown>;
 
   // Missing actions used by pages
@@ -324,9 +331,15 @@ function mergeSiliconPersonSessionPayload(
 // Store
 // ---------------------------------------------------------------------------
 
+/** 只保留主聊天 session（siliconPersonId 为空的）。 */
+function mainSessions(sessions: ChatSession[]): ChatSession[] {
+  return sessions.filter((s) => !s.siliconPersonId);
+}
+
 /** Pick the most recently active session (by last message time, then createdAt). */
 function getMostRecentSessionId(sessions: ChatSession[]): string | null {
-  if (sessions.length === 0) return null;
+  const candidates = mainSessions(sessions);
+  if (candidates.length === 0) return null;
   const getLastActivity = (s: ChatSession): string => {
     if (s.messages.length > 0) {
       const last = s.messages[s.messages.length - 1];
@@ -334,18 +347,19 @@ function getMostRecentSessionId(sessions: ChatSession[]): string | null {
     }
     return s.createdAt || "";
   };
-  const sorted = [...sessions].sort((a, b) =>
+  const sorted = [...candidates].sort((a, b) =>
     getLastActivity(b).localeCompare(getLastActivity(a))
   );
   return sorted[0].id;
 }
 
-/** Compute current session from state. */
+/** Compute current session from state — only considers main chat sessions. */
 function computeCurrentSession(
   sessions: ChatSession[],
   activeSessionId: string | null,
 ): ChatSession | null {
-  return sessions.find((s) => s.id === activeSessionId) ?? sessions[0] ?? null;
+  const candidates = mainSessions(sessions);
+  return candidates.find((s) => s.id === activeSessionId) ?? candidates[0] ?? null;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
@@ -381,6 +395,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   skills: [],
   skillDetails: {},
   siliconPersons: [],
+  activeSiliconPersonId: null,
   workflows: [],
   workflowSummaries: {},
   workflowDefinitions: {},
@@ -490,6 +505,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   },
 
   async deleteSession(sessionId) {
+    // 删除前记录该 session 是否归属硅基员工
+    const deletedSession = get().sessions.find((s) => s.id === sessionId);
+    const ownerSiliconPersonId = deletedSession?.siliconPersonId ?? null;
+
     const payload = await window.myClawAPI.deleteSession(sessionId);
     set((s) => {
       const sessions: ChatSession[] = payload.sessions;
@@ -500,6 +519,16 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
           : s.activeSessionId;
       return { sessions, approvalRequests, activeSessionId };
     });
+
+    // 如果被删的 session 归属硅基员工，刷新该员工摘要以同步 sessions 列表
+    if (ownerSiliconPersonId) {
+      try {
+        await get().loadSiliconPersonById(ownerSiliconPersonId);
+      } catch {
+        // 员工可能已被删除，忽略
+      }
+    }
+
     return payload;
   },
 
@@ -860,12 +889,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return payload;
   },
 
-  async importCloudEmployeePackage(input) {
+  async importCloudSiliconPersonPackage(input) {
     if (input.manifest.kind !== "employee-package") {
       throw new Error("Cloud manifest is not an employee package.");
     }
     const token = await window.myClawAPI.fetchCloudHubDownloadToken(input.releaseId);
-    const payload = await window.myClawAPI.installEmployeePackageFromCloud({
+    const payload = await window.myClawAPI.importSiliconPersonPackage({
       itemId: input.itemId,
       releaseId: input.releaseId,
       name: input.name,
@@ -965,15 +994,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return payload.session;
   },
 
-  /** 把消息路由到硅基员工 currentSession，并同步最新会话正文。 */
+  /** fire-and-forget：指令入队后立即返回，后台串行执行，结果通过 stream 推送。 */
   async sendSiliconPersonMessage(siliconPersonId, content) {
-    console.info("[workspace] 发送硅基员工消息", {
+    console.info("[workspace] 投递硅基员工消息（fire-and-forget）", {
       siliconPersonId,
       contentLength: content.trim().length,
     });
-    const payload = await window.myClawAPI.sendSiliconPersonMessage(siliconPersonId, content);
-    set((s) => mergeSiliconPersonSessionPayload(s, payload));
-    return payload.session;
+    await window.myClawAPI.sendSiliconPersonMessage(siliconPersonId, content);
   },
 
   /** 将指定硅基员工会话标记为已读，只同步当前会话未读状态，不改变 currentSession。 */
@@ -1013,6 +1040,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       };
     });
     return payload;
+  },
+
+  setActiveSiliconPersonId(id) {
+    set({ activeSiliconPersonId: id });
   },
 
   // -------------------------------------------------------------------------
@@ -1139,6 +1170,15 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   // -------------------------------------------------------------------------
   // Skills
   // -------------------------------------------------------------------------
+
+  async refreshSkills() {
+    const payload = await window.myClawAPI.refreshSkills();
+    set({ skills: payload.items ?? [], skillDetails: {} });
+  },
+
+  async openSkillsFolder() {
+    await window.myClawAPI.openSkillsFolder();
+  },
 
   async loadSkillDetail(skillId) {
     const state = get();

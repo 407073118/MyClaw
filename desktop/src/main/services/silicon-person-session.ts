@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  ApprovalPolicy,
   ChatRunStatus,
   ChatSession,
   SiliconPerson,
+  SiliconPersonApprovalMode,
   SiliconPersonSessionSummary,
   SiliconPersonStatus,
 } from "@shared/contracts";
@@ -13,7 +15,7 @@ import {
 } from "@shared/contracts";
 
 import type { RuntimeContext } from "./runtime-context";
-import { saveSession, saveSiliconPerson } from "./state-persistence";
+import { openSiliconPersonRuntime, saveSession, saveSiliconPerson } from "./state-persistence";
 
 /** 统一构建硅基员工会话摘要，避免各层重复拼装状态字段。 */
 function buildSiliconPersonSessionSummary(input: {
@@ -63,16 +65,23 @@ function buildSiliconPersonSession(
   },
 ): ChatSession {
   const now = new Date().toISOString();
-  return {
+  const modelProfileId = input.siliconPerson.modelProfileId
+    || ctx.state.getDefaultModelProfileId()
+    || "";
+  const session: ChatSession = {
     id: randomUUID(),
     title: input.title?.trim() || input.fallbackTitle,
-    modelProfileId: ctx.state.getDefaultModelProfileId() ?? "",
+    modelProfileId,
     attachedDirectory: null,
     createdAt: now,
     runtimeVersion: SESSION_RUNTIME_VERSION,
     siliconPersonId: input.siliconPerson.id,
     messages: [],
   };
+  if (input.siliconPerson.reasoningEffort) {
+    session.runtimeIntent = { reasoningEffort: input.siliconPerson.reasoningEffort };
+  }
+  return session;
 }
 
 /** 把聊天运行态映射为硅基员工状态，避免 renderer 侧重复理解 session 语义。 */
@@ -93,6 +102,18 @@ function mapChatRunStatusToSiliconPersonStatus(
     default:
       return "idle";
   }
+}
+
+/** 根据硅基员工审批模式解析实际审批策略，供 IPC 入口在执行链启动前记录和传递。 */
+export function resolveSiliconPersonApprovalPolicy(
+  siliconPerson: SiliconPerson,
+  globalPolicy: ApprovalPolicy | null,
+): SiliconPersonApprovalMode {
+  if (siliconPerson.approvalMode === "auto_approve") return "auto_approve";
+  if (siliconPerson.approvalMode === "always_ask") return "always_ask";
+  // inherit: 使用全局策略，如果全局策略是 unrestricted 或 auto-allow-all，就 auto，否则 ask
+  const autoModes = ["unrestricted", "auto-allow-all"];
+  return globalPolicy && autoModes.includes(globalPolicy.mode) ? "auto_approve" : "always_ask";
 }
 
 /** 读取某个会话在硅基员工摘要里的现有状态，便于只更新未读等派生字段。 */
@@ -131,7 +152,7 @@ export async function syncSiliconPersonExecutionResult(
     needsApproval,
   });
 
-  return syncSiliconPersonSessionSummary(ctx, {
+  const syncedPerson = await syncSiliconPersonSessionSummary(ctx, {
     siliconPersonId: input.siliconPersonId,
     session: input.session,
     status,
@@ -140,6 +161,32 @@ export async function syncSiliconPersonExecutionResult(
     needsApproval,
     forceCurrentSession: input.forceCurrentSession ?? false,
   });
+
+  // 执行结果同步后，将会话与消息写入运行时数据库
+  try {
+    const runtimeStore = await openSiliconPersonRuntime(ctx.runtime.paths, input.siliconPersonId);
+    try {
+      runtimeStore.upsertSession(input.siliconPersonId, input.session);
+      for (const message of input.session.messages) {
+        try {
+          runtimeStore.insertMessage(input.session.id, message);
+        } catch {
+          // INSERT OR IGNORE 语义：忽略重复消息写入
+        }
+      }
+      runtimeStore.flush();
+    } finally {
+      runtimeStore.close();
+    }
+  } catch (err) {
+    console.warn("[silicon-person-session] 写入运行时数据库失败（syncExecutionResult）", {
+      siliconPersonId: input.siliconPersonId,
+      sessionId: input.session.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return syncedPerson;
 }
 
 /** 把会话状态同步回硅基员工摘要列表，并按规则维护 currentSession。 */
@@ -199,10 +246,11 @@ export async function createSiliconPersonSession(
   },
 ): Promise<{ siliconPerson: SiliconPerson; session: ChatSession }> {
   const siliconPerson = requireSiliconPerson(ctx, input.siliconPersonId);
+  const sessionIndex = siliconPerson.sessions.length + 1;
   const session = buildSiliconPersonSession(ctx, {
     siliconPerson,
     title: input.title,
-    fallbackTitle: `${siliconPerson.title || siliconPerson.name} 新会话`,
+    fallbackTitle: `${siliconPerson.name} 会话 ${sessionIndex}`,
   });
   ctx.state.sessions.push(session);
 
@@ -222,6 +270,23 @@ export async function createSiliconPersonSession(
     needsApproval: false,
     forceCurrentSession: true,
   });
+
+  // 同步写入硅基员工运行时数据库
+  try {
+    const runtimeStore = await openSiliconPersonRuntime(ctx.runtime.paths, siliconPerson.id);
+    try {
+      runtimeStore.upsertSession(siliconPerson.id, session);
+      runtimeStore.flush();
+    } finally {
+      runtimeStore.close();
+    }
+  } catch (err) {
+    console.warn("[silicon-person-session] 写入运行时数据库失败（createSession）", {
+      siliconPersonId: siliconPerson.id,
+      sessionId: session.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 
   return { siliconPerson: syncedSiliconPerson, session };
 }
@@ -262,7 +327,7 @@ export async function ensureSiliconPersonCurrentSession(
   });
   const created = await createSiliconPersonSession(ctx, {
     siliconPersonId: siliconPerson.id,
-    title: input.title?.trim() || `${siliconPerson.title || siliconPerson.name} 默认会话`,
+    title: input.title?.trim() || `${siliconPerson.name} 会话 1`,
   });
   return {
     ...created,

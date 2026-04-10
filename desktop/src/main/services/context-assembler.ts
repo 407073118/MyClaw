@@ -32,6 +32,10 @@ export type AssembledContext = {
   compactionReason: string | null;
   /** 被移除的消息数 */
   removedCount: number;
+  /** 被 Observation Masking 替换的工具输出数 */
+  maskedToolOutputCount: number;
+  /** 是否建议用户新建对话 */
+  shouldSuggestNewChat: boolean;
 };
 
 export type AssembleInput = {
@@ -46,6 +50,8 @@ export type AssembleInput = {
   workingMemory?: string;
   replayPolicy?: SessionReplayPolicy;
   executionPlan?: Pick<ExecutionPlan, "replayPolicy"> | null;
+  /** 已累计执行的压缩次数（由调用方跟踪，用于判断是否建议新建对话） */
+  priorCompactionCount?: number;
 };
 
 // ---------------------------------------------------------------------------
@@ -144,11 +150,26 @@ export function assembleContext(input: AssembleInput): AssembledContext {
     finalMessages.push(entry);
   }
 
+  // 判断是否建议新建对话
+  const wasCompacted = compactionResult.removedCount > 0 || compactionResult.maskedToolOutputCount > 0;
+  const currentCompactionCount = (input.priorCompactionCount ?? 0) + (wasCompacted ? 1 : 0);
+  const suggestThreshold = policy.suggestNewChatAfterCompactions ?? 2;
+  const totalOriginalMessages = session.messages.length;
+  const removedRatio = totalOriginalMessages > 0
+    ? compactionResult.removedCount / totalOriginalMessages
+    : 0;
+  const shouldSuggestNewChat =
+    currentCompactionCount >= suggestThreshold ||
+    totalOriginalMessages >= 100 ||
+    removedRatio > 0.6;
+
   return {
     messages: finalMessages,
     budgetUsed: systemTokens + compactionResult.estimatedTokens,
-    wasCompacted: compactionResult.removedCount > 0,
+    wasCompacted,
     compactionReason: compactionResult.reason,
     removedCount: compactionResult.removedCount,
+    maskedToolOutputCount: compactionResult.maskedToolOutputCount,
+    shouldSuggestNewChat,
   };
 }
