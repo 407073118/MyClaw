@@ -1,0 +1,225 @@
+name: Desktop Public Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_notes:
+        description: "Optional release notes. Leave empty to use the default template."
+        required: false
+        type: string
+      prerelease:
+        description: "Mark this release as a prerelease."
+        required: false
+        default: false
+        type: boolean
+  push:
+    tags:
+      - "desktop-v*"
+
+concurrency:
+  group: desktop-public-release-${{ github.ref_name || github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  DESKTOP_DIR: desktop
+  PUBLIC_RELEASE_REPO: 407073118/MyClaw-desktop-releases
+
+jobs:
+  publish:
+    name: Build And Publish Desktop Release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Source Repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Validate Release Token
+        shell: pwsh
+        env:
+          PUBLIC_RELEASES_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PUBLIC_RELEASES_TOKEN)) {
+            throw "Missing PUBLIC_RELEASES_TOKEN. The workflow cannot upload assets to the public release repository."
+          }
+
+      - name: Install Desktop Dependencies
+        working-directory: ${{ env.DESKTOP_DIR }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve Version And Release Tag
+        id: release_meta
+        shell: pwsh
+        run: |
+          $packageJson = Get-Content "${env:DESKTOP_DIR}/package.json" -Raw | ConvertFrom-Json
+          $version = [string]$packageJson.version
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "desktop/package.json does not declare a version. Publishing cannot continue."
+          }
+
+          $expectedTag = "desktop-v$version"
+          if ("${{ github.event_name }}" -eq "push") {
+            $actualTag = "${{ github.ref_name }}"
+            if ($actualTag -ne $expectedTag) {
+              throw "Pushed tag $actualTag does not match desktop/package.json version $version. Expected $expectedTag."
+            }
+            $tag = $actualTag
+          }
+          else {
+            $tag = $expectedTag
+          }
+
+          $releaseName = "MyClaw Desktop v$version"
+          $isPreRelease = "${{ github.event.inputs.prerelease }}" -eq "true" -or $version.Contains("-")
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "release_name=$releaseName" >> $env:GITHUB_OUTPUT
+          "is_prerelease=$isPreRelease" >> $env:GITHUB_OUTPUT
+
+      - name: Run Desktop Verification
+        working-directory: ${{ env.DESKTOP_DIR }}
+        run: |
+          pnpm typecheck
+          pnpm exec vitest run tests/app-updater-service.test.ts tests/update-ipc.test.ts tests/settings-page-update.test.ts tests/platform-config.test.ts tests/public-release-pipeline.test.ts
+
+      - name: Build Windows Installer
+        working-directory: ${{ env.DESKTOP_DIR }}
+        run: pnpm run dist:prod -- --publish never
+
+      - name: Collect Release Assets
+        id: artifacts
+        shell: pwsh
+        run: |
+          $assets = Get-ChildItem -Path "${env:DESKTOP_DIR}/release" -File | Where-Object {
+            @(".exe", ".yml", ".blockmap") -contains $_.Extension.ToLowerInvariant()
+          } | Sort-Object Name
+
+          if (-not $assets) {
+            throw "No installer or auto-update metadata was found under desktop/release."
+          }
+
+          $assetListPath = Join-Path $env:RUNNER_TEMP "desktop-release-assets.txt"
+          $assets.FullName | Set-Content -Path $assetListPath -Encoding utf8
+          $assetNames = $assets.Name -join ", "
+
+          Write-Host "[desktop-release] Assets: $assetNames"
+          "asset_list_path=$assetListPath" >> $env:GITHUB_OUTPUT
+          "asset_names=$assetNames" >> $env:GITHUB_OUTPUT
+
+      - name: Build Release Notes
+        id: notes
+        shell: pwsh
+        run: |
+          $notesPath = Join-Path $env:RUNNER_TEMP "desktop-release-notes.md"
+          $inputNotes = @'
+${{ github.event.inputs.release_notes }}
+'@
+
+          if ([string]::IsNullOrWhiteSpace($inputNotes)) {
+            $defaultNotes = @"
+# ${{ steps.release_meta.outputs.release_name }}
+
+- Source repository: `${{ github.repository }}`
+- Source commit: `${{ github.sha }}`
+- Public release repository: `${{ env.PUBLIC_RELEASE_REPO }}`
+
+## Assets
+
+- Windows installer (`.exe`)
+- Auto update metadata (`latest.yml`)
+- Differential update metadata (`.blockmap`)
+"@
+            Set-Content -Path $notesPath -Value $defaultNotes -Encoding utf8
+          }
+          else {
+            Set-Content -Path $notesPath -Value $inputNotes.Trim() -Encoding utf8
+          }
+
+          "notes_path=$notesPath" >> $env:GITHUB_OUTPUT
+
+      - name: Create Or Update Public Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
+          RELEASE_NAME: ${{ steps.release_meta.outputs.release_name }}
+          RELEASE_NOTES_PATH: ${{ steps.notes.outputs.notes_path }}
+          RELEASE_PRERELEASE: ${{ steps.release_meta.outputs.is_prerelease }}
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:PUBLIC_RELEASE_REPO *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+
+          if (-not $releaseExists) {
+            $createArgs = @(
+              "release", "create", $env:RELEASE_TAG,
+              "--repo", $env:PUBLIC_RELEASE_REPO,
+              "--title", $env:RELEASE_NAME,
+              "--notes-file", $env:RELEASE_NOTES_PATH
+            )
+
+            if ($env:RELEASE_PRERELEASE -eq "True") {
+              $createArgs += "--prerelease"
+            }
+
+            & gh @createArgs
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create the public GitHub release."
+            }
+          }
+          else {
+            $editArgs = @(
+              "release", "edit", $env:RELEASE_TAG,
+              "--repo", $env:PUBLIC_RELEASE_REPO,
+              "--title", $env:RELEASE_NAME,
+              "--notes-file", $env:RELEASE_NOTES_PATH
+            )
+
+            if ($env:RELEASE_PRERELEASE -eq "True") {
+              $editArgs += "--prerelease"
+            }
+
+            & gh @editArgs
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to update the public GitHub release."
+            }
+          }
+
+      - name: Upload Installer And Update Metadata
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}
+          RELEASE_TAG: ${{ steps.release_meta.outputs.tag }}
+          ASSET_LIST_PATH: ${{ steps.artifacts.outputs.asset_list_path }}
+        run: |
+          $assets = Get-Content $env:ASSET_LIST_PATH
+          if (-not $assets) {
+            throw "No release assets are available to upload."
+          }
+
+          & gh release upload $env:RELEASE_TAG @assets --clobber --repo $env:PUBLIC_RELEASE_REPO
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to upload assets to the public GitHub release."
+          }
+
+      - name: Print Release Summary
+        shell: pwsh
+        run: |
+          Write-Host "[desktop-release] Public release completed."
+          Write-Host "[desktop-release] Version: ${{ steps.release_meta.outputs.version }}"
+          Write-Host "[desktop-release] Tag: ${{ steps.release_meta.outputs.tag }}"
+          Write-Host "[desktop-release] Target repository: ${{ env.PUBLIC_RELEASE_REPO }}"
+          Write-Host "[desktop-release] Assets: ${{ steps.artifacts.outputs.asset_names }}"

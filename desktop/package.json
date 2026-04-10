@@ -22,6 +22,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "lucide-react": "^0.468.0",
     "marked": "^17.0.5",
     "playwright-core": "^1.52.0",
@@ -85,6 +86,12 @@
       "perMachine": true,
       "include": "build/installer.nsh",
       "installerIcon": "build/icon.ico"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "407073118",
+      "repo": "MyClaw-desktop-releases",
+      "releaseType": "release"
     }
   }
 }

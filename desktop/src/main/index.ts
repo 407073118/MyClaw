@@ -17,6 +17,8 @@ import { listBuiltinToolDefinitions } from "./services/builtin-tool-stubs";
 import { initializeDirectories, redirectUserData } from "./services/directory-service";
 import { initLogger, createLogger } from "./services/logger";
 import { loadSkillsFromDisk, seedBuiltinSkills } from "./services/skill-loader";
+import { createAppUpdaterService } from "./services/app-updater";
+import { resolveAppUpdaterConfig } from "./services/update-config";
 
 const log = createLogger("main");
 
@@ -101,7 +103,11 @@ function createMainWindow(): BrowserWindow {
 // 运行时上下文启动（先用启动时加载出的状态初始化）
 // ---------------------------------------------------------------------------
 
-function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
+function buildRuntimeContext(
+  paths: MyClawPaths,
+  mcpManager: McpServerManager,
+  appUpdater: ReturnType<typeof createAppUpdaterService>,
+) {
   // 从磁盘加载所有已持久化状态
   const persisted = loadPersistedState(paths);
 
@@ -165,6 +171,7 @@ function buildRuntimeContext(paths: MyClawPaths, mcpManager: McpServerManager) {
       },
       listMcpServers: () => mcpManager.listServers(),
       mcpManager,
+      appUpdater,
     },
     tools: {
       resolveBuiltinTools: () => {
@@ -195,9 +202,16 @@ app.whenReady().then(async () => {
 
   // 初始化 MCP 服务管理器
   const mcpManager = new McpServerManager(paths.myClawDir);
+  const updaterLog = createLogger("app-updater");
+  const appUpdater = createAppUpdaterService({
+    packaged: app.isPackaged,
+    currentVersion: app.getVersion(),
+    config: resolveAppUpdaterConfig(),
+    logger: updaterLog,
+  });
 
   // 初始化运行时上下文并注册所有 IPC 处理器
-  const ctx = buildRuntimeContext(paths, mcpManager);
+  const ctx = buildRuntimeContext(paths, mcpManager, appUpdater);
   registerAllIpcHandlers(ctx);
 
   // 在后台自动连接所有启用中的 MCP 服务
@@ -229,6 +243,9 @@ app.whenReady().then(async () => {
 
   // 创建主窗口
   mainWindow = createMainWindow();
+  appUpdater.subscribe((snapshot) => {
+    mainWindow?.webContents.send("update:state-changed", snapshot);
+  });
 
   // 窗口最大化状态变化时通知渲染进程
   mainWindow.on("maximize", () => {

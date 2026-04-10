@@ -48,6 +48,17 @@ type AuthLoginResponse = {
 type AuthRefreshResponse = { accessToken: string; expiresIn: number };
 type AuthIntrospectResponse = { active: boolean; user: AuthLoginResponse["user"] | null };
 
+type AppUpdateState = {
+  enabled: boolean;
+  stage: "disabled" | "idle" | "checking" | "available" | "downloading" | "downloaded" | "no-update" | "error";
+  currentVersion: string;
+  latestVersion: string | null;
+  progressPercent: number | null;
+  message: string;
+  feedLabel: string | null;
+  downloadPageUrl: string | null;
+};
+
 type BootstrapPayload = {
   defaultModelProfileId?: string | null;
   sessions: ChatSession[];
@@ -68,6 +79,7 @@ type BootstrapPayload = {
   approvals: ApprovalPolicy;
   approvalRequests: ApprovalRequest[];
   personalPrompt: PersonalPromptProfile;
+  updates: AppUpdateState;
 };
 
 type SessionPayload = {
@@ -145,6 +157,12 @@ declare global {
 
       // --- Bootstrap ---
       bootstrap: () => Promise<BootstrapPayload>;
+      getAppUpdateState: () => Promise<AppUpdateState>;
+      checkForAppUpdates: () => Promise<AppUpdateState>;
+      downloadAppUpdate: () => Promise<AppUpdateState>;
+      quitAndInstallAppUpdate: () => Promise<{ accepted: boolean }>;
+      openAppUpdateDownloadPage: () => Promise<{ opened: boolean }>;
+      onAppUpdateStateChanged: (callback: (payload: AppUpdateState) => void) => () => void;
 
       // --- Sessions ---
       createSession: (data?: {
