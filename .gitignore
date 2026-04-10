@@ -10,3 +10,7 @@
 *.asar
 Thumbs.db
 .worktrees/
+
+# 本地设置 & 安装包备份
+.claude/settings.local.json
+desktop/release-backup-*/
