@@ -13,6 +13,9 @@ describe("br-minimax request body variants", () => {
       apiKey: "br-test-key",
     });
 
+    expect(profile.vendorFamily).toBe("minimax");
+    expect(profile.deploymentProfile).toBe("br-private");
+
     const variants = buildRequestBodyVariants({
       profile,
       messages: [{ role: "user", content: "hello" }],
@@ -147,5 +150,25 @@ describe("br-minimax request body variants", () => {
 
     expect(variants).toHaveLength(1);
     expect(variants[0]).not.toHaveProperty("reasoning_split");
+  });
+
+  it("maps xhigh reasoning effort to a larger MiniMax thinking budget", () => {
+    const profile = createBrMiniMaxProfile({
+      id: "br-minimax-profile",
+      apiKey: "br-test-key",
+    });
+
+    const variants = buildRequestBodyVariants({
+      profile,
+      messages: [{ role: "user", content: "hello" }],
+      adapterId: "br-minimax",
+      reasoningEffort: "xhigh" as any,
+    } as any);
+
+    expect(variants[0]).toMatchObject({
+      chat_template_kwargs: {
+        thinking_budget: 65536,
+      },
+    });
   });
 });

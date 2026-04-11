@@ -15,9 +15,15 @@ describe("coerceManagedProfileWrite", () => {
       requestBody: {
         temperature: 0.1,
       },
+      protocolTarget: "openai-chat-compatible",
     });
 
-    expect(coerced).toMatchObject(createBrMiniMaxProfile({ apiKey: "br-key" }));
+    expect(coerced).toMatchObject({
+      ...createBrMiniMaxProfile({ apiKey: "br-key" }),
+      protocolTarget: "openai-chat-compatible",
+      vendorFamily: "minimax",
+      deploymentProfile: "br-private",
+    });
   });
 
   it("only allows apiKey to change when updating br-minimax", () => {
@@ -38,10 +44,32 @@ describe("coerceManagedProfileWrite", () => {
       name: existing.name,
       provider: existing.provider,
       providerFlavor: existing.providerFlavor,
+      vendorFamily: "minimax",
+      deploymentProfile: "br-private",
       baseUrl: existing.baseUrl,
       baseUrlMode: existing.baseUrlMode,
       model: existing.model,
       requestBody: existing.requestBody,
+    });
+  });
+
+  it("preserves protocolTarget when updating a managed br-minimax profile", () => {
+    const existing = {
+      ...createBrMiniMaxProfile({
+        id: "br-profile",
+        apiKey: "old-key",
+      }),
+      protocolTarget: "openai-chat-compatible" as const,
+    };
+
+    const coerced = coerceManagedProfileWrite(existing, {
+      apiKey: "new-key",
+      protocolTarget: "openai-responses",
+    });
+
+    expect(coerced).toMatchObject({
+      apiKey: "new-key",
+      protocolTarget: "openai-responses",
     });
   });
 });

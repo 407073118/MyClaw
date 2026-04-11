@@ -12,12 +12,12 @@ import type {
   SessionRuntimeIntent,
 } from "@shared/contracts";
 import { SESSION_RUNTIME_VERSION } from "@shared/contracts";
-import { isBrMiniMaxProfile } from "@shared/br-minimax";
+import { resolveProviderAdapterId } from "./provider-adapters";
 
 export type BuildExecutionPlanInput = {
   session?: Pick<ChatSession, "runtimeIntent"> | null;
   intent?: SessionRuntimeIntent | null;
-  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "model">;
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "model" | "vendorFamily" | "deploymentProfile">;
   capability?: Pick<ModelCapability, "supportsReasoning"> | null;
 };
 
@@ -119,16 +119,8 @@ function resolveAdapterSelection(
       adapterSelectionSource: "intent",
     };
   }
-
-  if (isBrMiniMaxProfile(profile)) {
-    return {
-      adapterId: "br-minimax",
-      adapterSelectionSource: "profile",
-    };
-  }
-
   return {
-    adapterId: "openai-compatible",
+    adapterId: resolveProviderAdapterId(profile),
     adapterSelectionSource: "profile",
   };
 }
@@ -154,14 +146,14 @@ function resolveDegradationReason(
   }
 
   if (capability?.supportsReasoning === false
-    && adapterId === "br-minimax"
+    && (adapterId === "br-minimax" || adapterId === "minimax")
     && explicitReplayPolicy !== "assistant-turn"
     && explicitReplayPolicy !== "content-only"
     && !isReasoningDisabled(resolvedIntent)) {
     return "capability-missing";
   }
 
-  if (adapterId === "br-minimax" && isReasoningDisabled(resolvedIntent)) {
+  if ((adapterId === "br-minimax" || adapterId === "minimax") && isReasoningDisabled(resolvedIntent)) {
     return "reasoning-disabled";
   }
 
@@ -192,11 +184,11 @@ function resolveReplayPolicy(
 
   // 推理已禁用
   if (isReasoningDisabled(resolvedIntent)) {
-    return adapterId === "br-minimax" ? "assistant-turn" : "content-only";
+    return adapterId === "br-minimax" || adapterId === "minimax" ? "assistant-turn" : "content-only";
   }
   // 能力明确不支持推理
   if (capability?.supportsReasoning === false) {
-    return adapterId === "br-minimax" ? "assistant-turn" : "content-only";
+    return adapterId === "br-minimax" || adapterId === "minimax" ? "assistant-turn" : "content-only";
   }
   // 所有可能支持推理的模型都重放 reasoning，
   // 对于不产出 reasoning 的模型无副作用（没有内容可重放）
@@ -251,6 +243,6 @@ export function buildExecutionPlan(input: BuildExecutionPlanInput): ExecutionPla
       degradationReason,
       resolvedIntent,
     ),
-    fallbackAdapterIds: adapterSelection.adapterId === "br-minimax" ? ["openai-compatible"] : [],
+    fallbackAdapterIds: adapterSelection.adapterId === "openai-compatible" ? [] : ["openai-compatible"],
   };
 }

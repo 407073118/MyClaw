@@ -26,7 +26,13 @@ export const openAiCompatibleAdapter: ProviderAdapter = {
   },
 
   prepareRequest(context, input) {
-    return [createRequestVariant("primary", buildOpenAiCompatibleBody(context.profile, input))];
+    const body = buildOpenAiCompatibleBody(context.profile, input);
+    if (context.reasoningEffort) {
+      (body as Record<string, unknown>)["reasoning"] = {
+        effort: context.reasoningEffort,
+      };
+    }
+    return [createRequestVariant("primary", body)];
   },
 
   normalizeResponse(payload) {

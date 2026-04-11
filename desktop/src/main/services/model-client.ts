@@ -75,6 +75,17 @@ export type ModelCallResult = {
   toolCalls: ResolvedToolCall[];
   finishReason: string | null;
   usage?: TokenUsage;
+  transport?: {
+    requestVariantId: string;
+    fallbackReason?: string | null;
+    retryCount: number;
+    variantIndex: number;
+    fallbackEvents?: Array<{
+      fromVariant: string;
+      toVariant: string;
+      reason: string;
+    }>;
+  };
 };
 
 /** SSE 累积完成后得到的完整工具调用对象。 */
@@ -91,6 +102,7 @@ type BuildRequestBodyVariantsInput = {
   messages: Array<Record<string, unknown>>;
   tools?: RequestTool[];
   adapterId?: ExecutionPlan["adapterId"];
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh";
 };
 
 // ---------------------------------------------------------------------------
@@ -332,11 +344,11 @@ export function buildRequestBodyVariants(input: BuildRequestBodyVariantsInput): 
     tools: input.tools as ProviderAdapterTool[] | undefined,
   };
   const replayMessages = adapter.materializeReplayMessages(
-    { profile: input.profile },
+    { profile: input.profile, reasoningEffort: input.reasoningEffort },
     adapterInput,
   );
   return adapter.prepareRequest(
-    { profile: input.profile },
+    { profile: input.profile, reasoningEffort: input.reasoningEffort },
     { ...adapterInput, messages: replayMessages },
   ).map((variant) => variant.body);
 }
@@ -390,7 +402,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     ? `${profile.apiKey.slice(0, 6)}...${profile.apiKey.slice(-4)} (len=${profile.apiKey.length})`
     : "(empty)";
   console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model} | adapter=${adapter.id} | reasoningEffort=${adapterContext.reasoningEffort ?? "(none)"} | tools=${tools?.length ?? 0}`);
-  const { response } = await executeRequestVariants({
+  const transportResult = await executeRequestVariants({
     url,
     headers,
     requestVariants,
@@ -400,6 +412,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     retryDelaysMs: RETRY_DELAYS,
     isRetryableError,
   });
+  const { response } = transportResult;
 
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   const isEventStream = contentType.includes("text/event-stream");
@@ -412,6 +425,13 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
       toolCalls: result.toolCalls,
       finishReason: result.finishReason,
       ...(result.usage ? { usage: result.usage } : {}),
+      transport: {
+        requestVariantId: transportResult.variant.id,
+        fallbackReason: transportResult.variant.fallbackReason ?? null,
+        retryCount: transportResult.attempt,
+        variantIndex: transportResult.variantIndex,
+        fallbackEvents: transportResult.fallbackEvents,
+      },
     };
   }
 
@@ -430,5 +450,12 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     content,
     toolCalls: [],
     finishReason: null,
+    transport: {
+      requestVariantId: transportResult.variant.id,
+      fallbackReason: transportResult.variant.fallbackReason ?? null,
+      retryCount: transportResult.attempt,
+      variantIndex: transportResult.variantIndex,
+      fallbackEvents: transportResult.fallbackEvents,
+    },
   };
 }

@@ -45,6 +45,28 @@ describe("Phase 1: SkillTool schemas", () => {
     expect(tools.every((t) => t.type === "function")).toBe(true);
   });
 
+  it("should apply vendor tool policy filtering for conservative profiles", () => {
+    const tools = buildToolSchemas("/test/cwd", undefined, undefined, "qwen.tools.conservative");
+    const names = tools.map((tool) => tool.function.name);
+
+    expect(names).not.toContain("browser_evaluate");
+    expect(names).not.toContain("exec_command");
+    expect(names).not.toContain("git_commit");
+    expect(names).not.toContain("ppt_generate");
+    expect(names).toContain("fs_read");
+    expect(names).toContain("git_status");
+  });
+
+  it("should apply Kimi conservative tool filtering", () => {
+    const tools = buildToolSchemas("/test/cwd", undefined, undefined, "kimi.tools.conservative");
+    const names = tools.map((tool) => tool.function.name);
+
+    expect(names).not.toContain("browser_evaluate");
+    expect(names).not.toContain("git_commit");
+    expect(names).not.toContain("ppt_generate");
+    expect(names).toContain("exec_command");
+  });
+
   it("should append skill_invoke__ tools for enabled skills", () => {
     const skills = [makeSkill()];
     const tools = buildToolSchemas("/test/cwd", skills);

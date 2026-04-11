@@ -131,6 +131,8 @@ export function createBrMiniMaxProfile(input: BrMiniMaxCreateInput): Omit<ModelP
     name: BR_MINIMAX_DEFAULT_NAME,
     provider: "openai-compatible" as const,
     providerFlavor: BR_MINIMAX_PROVIDER_FLAVOR,
+    vendorFamily: "minimax" as const,
+    deploymentProfile: "br-private",
     baseUrl: BR_MINIMAX_BASE_URL,
     baseUrlMode: "provider-root" as const,
     apiKey: input.apiKey,

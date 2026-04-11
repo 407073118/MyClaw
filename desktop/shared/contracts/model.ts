@@ -10,6 +10,7 @@ export type ProviderFlavor =
   | "lm-studio"
   | "vllm"
   | "br-minimax"
+  | "volcengine-ark"
   | "generic-openai-compatible"
   | "anthropic"
   | "minimax-anthropic"
@@ -25,11 +26,102 @@ export const PROVIDER_FLAVOR_VALUES = [
   "lm-studio",
   "vllm",
   "br-minimax",
+  "volcengine-ark",
   "generic-openai-compatible",
   "anthropic",
   "minimax-anthropic",
   "generic-local-gateway",
 ] as const satisfies readonly ProviderFlavor[];
+
+export type ProviderFamily =
+  | "openai-native"
+  | "anthropic-native"
+  | "qwen-dashscope"
+  | "br-minimax"
+  | "volcengine-ark"
+  | "generic-openai-compatible";
+
+export const PROVIDER_FAMILY_VALUES = [
+  "openai-native",
+  "anthropic-native",
+  "qwen-dashscope",
+  "br-minimax",
+  "volcengine-ark",
+  "generic-openai-compatible",
+] as const satisfies readonly ProviderFamily[];
+
+export type VendorFamily =
+  | "openai"
+  | "anthropic"
+  | "qwen"
+  | "kimi"
+  | "volcengine-ark"
+  | "minimax"
+  | "generic-openai-compatible"
+  | "generic-local-gateway";
+
+export const VENDOR_FAMILY_VALUES = [
+  "openai",
+  "anthropic",
+  "qwen",
+  "kimi",
+  "volcengine-ark",
+  "minimax",
+  "generic-openai-compatible",
+  "generic-local-gateway",
+] as const satisfies readonly VendorFamily[];
+
+export type ProtocolTarget =
+  | "openai-responses"
+  | "anthropic-messages"
+  | "openai-chat-compatible";
+
+export const PROTOCOL_TARGET_VALUES = [
+  "openai-responses",
+  "anthropic-messages",
+  "openai-chat-compatible",
+] as const satisfies readonly ProtocolTarget[];
+
+export const PROTOCOL_TARGET_RECOMMENDATION_ORDER = [
+  "openai-responses",
+  "anthropic-messages",
+  "openai-chat-compatible",
+] as const satisfies readonly ProtocolTarget[];
+
+export type ModelRouteProbeEntry = {
+  protocolTarget: ProtocolTarget;
+  ok: boolean;
+  latencyMs?: number;
+  reason?: string | null;
+  notes?: string[];
+};
+
+export type ModelRouteProbeResult = {
+  recommendedProtocolTarget: ProtocolTarget | null;
+  availableProtocolTargets: ProtocolTarget[];
+  entries: ModelRouteProbeEntry[];
+  testedAt: string;
+};
+
+export type ExperienceProfileId =
+  | "gpt-best"
+  | "claude-best"
+  | "qwen-best"
+  | "balanced"
+  | "fast"
+  | "planner-strong"
+  | "long-context"
+  | (string & {});
+
+export const EXPERIENCE_PROFILE_VALUES = [
+  "gpt-best",
+  "claude-best",
+  "qwen-best",
+  "balanced",
+  "fast",
+  "planner-strong",
+  "long-context",
+] as const satisfies readonly ExperienceProfileId[];
 
 export type ModelCapabilitySource =
   | "default"
@@ -127,6 +219,10 @@ export type ModelCatalogItem = {
   name: string;
   provider: ProviderKind;
   providerFlavor?: ProviderFlavor;
+  providerFamily?: ProviderFamily;
+  vendorFamily?: VendorFamily;
+  protocolTarget?: ProtocolTarget;
+  experienceProfileId?: ExperienceProfileId;
   contextWindowTokens?: number;
   maxInputTokens?: number;
   maxOutputTokens?: number;
@@ -141,6 +237,13 @@ export type ModelProfile = {
   name: string;
   provider: ProviderKind;
   providerFlavor?: ProviderFlavor;
+  providerFamily?: ProviderFamily;
+  vendorFamily?: VendorFamily;
+  deploymentProfile?: string;
+  savedProtocolPreferences?: ProtocolTarget[];
+  protocolSelectionSource?: "saved" | "probe" | "registry-default" | "fallback";
+  protocolTarget?: ProtocolTarget;
+  experienceProfileId?: ExperienceProfileId;
   baseUrl: string;
   baseUrlMode?: "manual" | "provider-root";
   apiKey: string;

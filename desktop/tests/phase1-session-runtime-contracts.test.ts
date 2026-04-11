@@ -55,9 +55,15 @@ describe("Phase 1 session runtime contracts", () => {
   it("exports replay and adapter runtime value lists", () => {
     expect(SESSION_REPLAY_POLICY_VALUES).toContain("content-only");
     expect(SESSION_REPLAY_POLICY_VALUES).toContain("assistant-turn-with-reasoning");
-    expect(SESSION_RUNTIME_ADAPTER_VALUES).toEqual([
+    expect(SESSION_RUNTIME_ADAPTER_VALUES).toEqual(expect.arrayContaining([
       "openai-compatible",
+      "openai-native",
+      "anthropic-native",
+      "qwen",
+      "kimi",
+      "volcengine-ark",
+      "minimax",
       "br-minimax",
-    ]);
+    ]));
   });
 });

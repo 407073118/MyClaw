@@ -1,13 +1,35 @@
+import type {
+  ExperienceProfileId,
+  JsonValue,
+  ProtocolTarget,
+  ProviderFamily,
+  VendorFamily,
+} from "./model";
+
 export const SESSION_RUNTIME_VERSION = 1 as const;
 
 export type SessionRuntimeVersion = typeof SESSION_RUNTIME_VERSION;
 
-export type SessionRuntimeAdapterId = "openai-compatible" | "br-minimax";
+export type SessionRuntimeAdapterId =
+  | "openai-compatible"
+  | "openai-native"
+  | "anthropic-native"
+  | "qwen"
+  | "kimi"
+  | "volcengine-ark"
+  | "minimax"
+  | "br-minimax";
 export type SessionRuntimeAdapterHint = SessionRuntimeAdapterId | "auto";
 export type SessionRuntimeAdapterSelectionSource = "intent" | "profile";
 
 export const SESSION_RUNTIME_ADAPTER_VALUES = [
   "openai-compatible",
+  "openai-native",
+  "anthropic-native",
+  "qwen",
+  "kimi",
+  "volcengine-ark",
+  "minimax",
   "br-minimax",
 ] as const satisfies readonly SessionRuntimeAdapterId[];
 
@@ -23,7 +45,7 @@ export const SESSION_REPLAY_POLICY_VALUES = [
 ] as const satisfies readonly SessionReplayPolicy[];
 
 export type SessionReasoningMode = "auto" | "disabled";
-export type SessionReasoningEffort = "low" | "medium" | "high";
+export type SessionReasoningEffort = "low" | "medium" | "high" | "xhigh";
 export type SessionRuntimeToolStrategy = "auto" | "off" | (string & {});
 export type SessionWorkflowMode = "default" | "plan";
 export type ExecutionPlanSource = "default" | "intent" | "profile" | "capability" | (string & {});
@@ -52,7 +74,6 @@ export const EXECUTION_PLAN_SOURCE_VALUES = [
 ] as const satisfies readonly ExecutionPlanSource[];
 
 type SessionRuntimeIntentShell = {
-  /** Phase 2 优先读显式布尔开关，保留 reasoningMode 兼容旧会话。 */
   reasoningMode?: SessionReasoningMode;
   reasoningEffort?: SessionReasoningEffort;
   adapterHint?: SessionRuntimeAdapterHint;
@@ -66,16 +87,9 @@ type SessionRuntimeIntentPhase2 = {
   planModeEnabled?: boolean;
 };
 
-export type Phase2SessionRuntimeIntent =
-  SessionRuntimeIntentShell & SessionRuntimeIntentPhase2;
-
-/** 允许旧 Phase 1 消费方继续读取基础壳，Phase 2 字段按需渐进出现。 */
-export type SessionRuntimeIntent =
-  | SessionRuntimeIntentShell
-  | Phase2SessionRuntimeIntent;
-
-export type ResolvedSessionRuntimeIntent =
-  Required<SessionRuntimeIntentShell> & SessionRuntimeIntentPhase2;
+export type Phase2SessionRuntimeIntent = SessionRuntimeIntentShell & SessionRuntimeIntentPhase2;
+export type SessionRuntimeIntent = SessionRuntimeIntentShell | Phase2SessionRuntimeIntent;
+export type ResolvedSessionRuntimeIntent = Required<SessionRuntimeIntentShell> & SessionRuntimeIntentPhase2;
 
 type ExecutionPlanShell = {
   runtimeVersion: SessionRuntimeVersion;
@@ -98,3 +112,218 @@ export type ResolvedExecutionPlan = ExecutionPlanShell & {
 };
 
 export type ExecutionPlan = ExecutionPlanShell | ResolvedExecutionPlan;
+
+export type TurnReplayMode = "none" | "assistant-turn" | "reasoning-aware" | "family-specific";
+export type TurnCacheMode = "none" | "openai-prefix" | "anthropic-breakpoint" | "family-specific";
+export type TurnMultimodalMode = "text-only" | "canonical-parts";
+
+export type TurnFallbackCandidate = {
+  modelProfileId: string;
+  providerFamily: ProviderFamily;
+  vendorFamily?: VendorFamily;
+  protocolTarget: ProtocolTarget;
+  reason: string;
+};
+
+export type TurnExecutionPlan = {
+  runtimeVersion: number;
+  legacyExecutionPlan: ExecutionPlan;
+  providerFamily: ProviderFamily;
+  vendorFamily?: VendorFamily;
+  supportedProtocolTargets?: ProtocolTarget[];
+  recommendedProtocolTarget?: ProtocolTarget | null;
+  fallbackChain?: ProtocolTarget[];
+  deploymentProfile?: string;
+  protocolSelectionSource?: "saved" | "probe" | "registry-default" | "fallback";
+  protocolSelectionReason?: string | null;
+  protocolTarget: ProtocolTarget;
+  selectedModelProfileId: string;
+  experienceProfileId: ExperienceProfileId;
+  reasoningProfileId?: string;
+  promptPolicyId: string;
+  taskPolicyId: string;
+  toolPolicyId: string;
+  contextPolicyId: string;
+  reliabilityPolicyId: string;
+  replayMode: TurnReplayMode;
+  cacheMode: TurnCacheMode;
+  multimodalMode: TurnMultimodalMode;
+  toolCompileTarget: ProviderFamily;
+  fallbackCandidates: TurnFallbackCandidate[];
+  telemetryTags: Record<string, string>;
+};
+
+export type PromptSectionLayer =
+  | "identity"
+  | "environment"
+  | "context"
+  | "task"
+  | "tools"
+  | "skills"
+  | "guidelines"
+  | "family-overlay"
+  | (string & {});
+
+export type PromptSection = {
+  id: string;
+  layer: PromptSectionLayer;
+  title: string | null;
+  content: string;
+  kind?: string;
+};
+
+export type CanonicalMessagePart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; imageUrl: string; detail?: "low" | "high" | "auto" }
+  | { type: "reasoning"; text: string }
+  | { type: "tool_call_ref"; toolCallId: string }
+  | { type: "tool_result_ref"; toolCallId: string }
+  | { type: "json"; value: JsonValue };
+
+export type CanonicalToolCall = {
+  id: string;
+  name: string;
+  argumentsJson: string;
+  input?: Record<string, unknown> | null;
+};
+
+export type CanonicalMessage = {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | CanonicalMessagePart[];
+  reasoning?: string | null;
+  toolCallId?: string | null;
+  toolCalls?: CanonicalToolCall[] | null;
+  metadata?: Record<string, JsonValue | null>;
+};
+
+export type CanonicalTaskState = {
+  taskCount?: number;
+  inProgressTaskId?: string | null;
+  completedTaskIds?: string[];
+  blockedTaskIds?: string[];
+  summary?: string | null;
+};
+
+export type CanonicalToolSpec = {
+  id: string;
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  source: "builtin" | "skill" | "mcp" | "browser" | "task" | "ppt" | "other";
+  metadata?: Record<string, JsonValue | null>;
+};
+
+export type CanonicalToolResult = {
+  toolCallId: string;
+  name: string;
+  output: string;
+  success: boolean;
+  error?: string | null;
+  metadata?: Record<string, JsonValue | null>;
+};
+
+export type CanonicalApprovalEvent = {
+  id: string;
+  toolCallId: string;
+  status: "pending" | "approved" | "rejected";
+  reason?: string | null;
+  createdAt?: string;
+};
+
+export type CanonicalTurnContent = {
+  systemSections: PromptSection[];
+  userSections: PromptSection[];
+  taskState: CanonicalTaskState | null;
+  messages: CanonicalMessage[];
+  toolCalls: CanonicalToolCall[];
+  toolResults: CanonicalToolResult[];
+  approvalEvents: CanonicalApprovalEvent[];
+  replayHints: {
+    preserveReasoning: boolean;
+    preserveToolLedger: boolean;
+    preserveCachePrefix: boolean;
+  };
+};
+
+export type TurnFallbackEvent = {
+  fromVariant: string;
+  toVariant: string;
+  reason: string;
+};
+
+export type TurnOutcomeUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number;
+};
+
+export type TurnTelemetryTags = Record<string, string>;
+
+export type TurnTelemetryEvent = {
+  experienceProfileId: ExperienceProfileId;
+  promptPolicyId: string;
+  taskPolicyId: string;
+  toolPolicyId: string;
+  contextPolicyId: string;
+  reliabilityPolicyId: string;
+  providerFamily: ProviderFamily;
+  protocolTarget: ProtocolTarget;
+  requestVariantId: string | null;
+  retryCount: number;
+  success: boolean;
+  latencyMs: number;
+  toolCompileMode: string;
+  replayMode: string;
+  fallbackEvents: TurnFallbackEvent[];
+  createdAt: string;
+};
+
+export type TurnOutcome = {
+  id: string;
+  sessionId?: string | null;
+  workflowRunId?: string | null;
+  providerFamily: ProviderFamily;
+  protocolTarget: ProtocolTarget;
+  modelProfileId: string;
+  experienceProfileId: ExperienceProfileId;
+  promptPolicyId?: string;
+  taskPolicyId?: string;
+  toolPolicyId?: string;
+  contextPolicyId?: string;
+  reliabilityPolicyId?: string;
+  requestVariantId?: string | null;
+  fallbackReason?: string | null;
+  retryCount: number;
+  toolCompileMode: string;
+  replayMode: string;
+  startedAt: string;
+  finishedAt: string;
+  success: boolean;
+  finishReason?: string | null;
+  latencyMs: number;
+  usage?: TurnOutcomeUsage;
+  fallbackEvents?: TurnFallbackEvent[];
+  toolCallCount?: number;
+  toolSuccessCount?: number;
+  contextStability?: boolean;
+  telemetry?: TurnTelemetryEvent;
+  telemetryTags?: TurnTelemetryTags;
+};
+
+export type ProviderFamilyScorecard = {
+  providerFamily: ProviderFamily;
+  completionRate: number;
+  toolSuccessRate: number;
+  fallbackRate: number;
+  p95Latency: number;
+  contextStabilityRate: number;
+  sampleSize: number;
+};
+
+export type ProviderRolloutGate = {
+  providerFamily: ProviderFamily;
+  enabled: boolean;
+  rolloutOrder: number;
+};

@@ -3,11 +3,10 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task } from "@shared/contracts";
+import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, ExperienceProfileId, PromptSection, ProviderFamily, TurnOutcome, McpTool } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 
 import type { ActiveSessionRun, RuntimeContext } from "../services/runtime-context";
-import { callModel } from "../services/model-client";
 import type { ChatMessage as ModelChatMessage, ChatMessageContent, ResolvedToolCall } from "../services/model-client";
 import { saveSession, saveSiliconPerson, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
@@ -18,6 +17,12 @@ import { assembleContext } from "../services/context-assembler";
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
 import { extractEnrichedContext, buildEnrichedContextBlock } from "../services/context-enricher";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
+import { buildCanonicalTurnContent } from "../services/model-runtime/canonical-turn-content";
+import { createExecutionGateway } from "../services/model-runtime/execution-gateway";
+import { composePromptSections } from "../services/model-runtime/prompt-composer";
+import { buildCanonicalToolRegistry } from "../services/model-runtime/tool-registry";
+import { resolveTurnExecutionPlan } from "../services/model-runtime/turn-execution-plan-resolver";
+import { updateTurnOutcome } from "../services/model-runtime/turn-outcome-store";
 import { syncSiliconPersonExecutionResult } from "../services/silicon-person-session";
 import { getOrCreateWorkspace } from "../services/silicon-person-workspace";
 import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
@@ -490,7 +495,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 /** 确保旧会话在进入新链路前拥有 runtime version，便于后续做版本化迁移。 */
-/** 鍚戝悗鍏煎鏃х殑娴嬭瘯涓婁笅鏂囷紝纭繚浼氳瘽杩愯娉ㄥ唽琛ㄥ缁堝彲鐢ㄣ€?*/
+/** 向后兼容旧的测试上下文，确保会话运行注册表始终可用。 */
 function getActiveSessionRuns(ctx: RuntimeContext): Map<string, ActiveSessionRun> {
   if (!ctx.state.activeSessionRuns) {
     ctx.state.activeSessionRuns = new Map<string, ActiveSessionRun>();
@@ -501,6 +506,119 @@ function getActiveSessionRuns(ctx: RuntimeContext): Map<string, ActiveSessionRun
 function ensureSessionRuntimeVersion(session: ChatSession): void {
   if (!session.runtimeVersion) {
     session.runtimeVersion = SESSION_RUNTIME_VERSION;
+  }
+}
+
+/**
+ * 从 legacy message 数组中移除 system 消息，避免 canonical prompt sections 与旧 system prompt 重复下发。
+ */
+function stripSystemMessages(messages: ModelChatMessage[]): ModelChatMessage[] {
+  return messages.filter((message) => message.role !== "system");
+}
+
+/**
+ * 为硅基员工会话追加身份 section，确保 canonical prompt 与 legacy prompt 维持相同角色约束。
+ */
+function buildSiliconPersonPromptSection(
+  siliconPersonIdentity: { name: string; title: string; soul?: string | null } | null,
+  workingDir: string,
+): PromptSection[] {
+  if (!siliconPersonIdentity) {
+    return [];
+  }
+
+  return [{
+    id: "silicon-person-identity",
+    title: "Silicon Person Identity",
+    layer: "identity",
+    content: [
+      "You are a Silicon Person (硅基员工), an autonomous AI worker with your own isolated workspace.",
+      `- Name: ${siliconPersonIdentity.name}`,
+      `- Title: ${siliconPersonIdentity.title}`,
+      siliconPersonIdentity.soul ? `- Persona: ${siliconPersonIdentity.soul}` : null,
+      `- Workspace: ${workingDir}`,
+      "",
+      "## Workspace Rules",
+      `- All file operations (read, write, create, execute) happen within your workspace directory: ${workingDir}`,
+      "- Your skills are stored in your own skills directory, separate from the main assistant.",
+      "- You operate independently. When asked to create files, scripts, or skills, write them in YOUR workspace unless the user explicitly specifies a different path.",
+      "- Do not modify files outside your workspace without explicit user instruction.",
+    ].filter((line): line is string => !!line).join("\n"),
+  }];
+}
+
+/**
+ * 统一构建会话的 canonical prompt sections，让 sessions 主链与 PromptComposer 使用同一套结构化 prompt 入口。
+ */
+function buildSessionPromptSections(input: {
+  session: ChatSession;
+  workingDir: string;
+  skills: SkillDefinition[];
+  gitBranch?: string | null;
+  personalPromptProfile?: PersonalPromptProfile | null;
+  reasoningEffort?: "low" | "medium" | "high" | null;
+  enrichedContextBlock?: string | null;
+  mcpTools?: Array<McpTool & { serverId: string }>;
+  providerFamily: ProviderFamily;
+  experienceProfileId: ExperienceProfileId;
+  promptPolicyId?: string | null;
+  toolPolicyId?: string | null;
+  reasoningProfileId?: string | null;
+  siliconPersonIdentity?: { name: string; title: string; soul?: string | null } | null;
+  extraGuidance?: string | null;
+}): PromptSection[] {
+  const sections = composePromptSections({
+    session: input.session,
+    workingDir: input.workingDir,
+    providerFamily: input.providerFamily,
+    experienceProfileId: input.experienceProfileId,
+    promptPolicyId: input.promptPolicyId ?? null,
+    toolPolicyId: input.toolPolicyId ?? null,
+    reasoningProfileId: input.reasoningProfileId ?? null,
+    skills: input.skills,
+    gitBranch: input.gitBranch,
+    personalPromptProfile: input.personalPromptProfile,
+    reasoningEffort: input.reasoningEffort,
+    enrichedContextBlock: input.enrichedContextBlock,
+    mcpTools: input.mcpTools,
+  });
+
+  sections.push(...buildSiliconPersonPromptSection(input.siliconPersonIdentity ?? null, input.workingDir));
+  if (input.extraGuidance?.trim()) {
+    sections.push({
+      id: "runtime-guidance",
+      title: "Runtime Guidance",
+      layer: "guidelines",
+      content: input.extraGuidance.trim(),
+    });
+  }
+  return sections;
+}
+
+/**
+ * 将共享执行网关返回的 turn outcome 追加回会话运行时，补齐工具执行与上下文稳定性指标。
+ */
+async function persistSessionTurnOutcomeMetrics(
+  ctx: RuntimeContext,
+  outcome: TurnOutcome,
+  metrics: {
+    toolCallCount: number;
+    toolSuccessCount: number;
+    contextStability: boolean;
+  },
+): Promise<void> {
+  try {
+    await updateTurnOutcome(ctx.runtime.paths, {
+      ...outcome,
+      toolCallCount: metrics.toolCallCount,
+      toolSuccessCount: metrics.toolSuccessCount,
+      contextStability: (outcome.contextStability !== false) && metrics.contextStability,
+    });
+  } catch (error) {
+    console.warn("[session:runtime] 回写 turn outcome 指标失败", {
+      outcomeId: outcome.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -1543,8 +1661,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       const runId = randomUUID();
       const messageId = randomUUID();
       const now = new Date().toISOString();
+      const initialPlanModeEnabled = session.runtimeIntent != null
+        && (
+          ((session.runtimeIntent as { workflowMode?: string }).workflowMode === "plan")
+          || ((session.runtimeIntent as { planModeEnabled?: boolean }).planModeEnabled === true)
+        );
       const initialPhase: ChatRunPhase = (
-        isPlanModeEnabled(session)
+        initialPlanModeEnabled
         && session.planModeState?.mode !== "executing"
       )
         ? "planning"
@@ -1660,18 +1783,6 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
       // 汇总已连接 MCP 服务提供的工具
       const mcpTools = activeMcpManager?.getAllTools() ?? [];
-      const tools = buildToolSchemas(workingDir, enabledSkills, mcpTools);
-
-      console.info("[session:send-message] tools summary", {
-        siliconPersonId: session.siliconPersonId ?? null,
-        totalSkills: allSkills.length,
-        enabledSkills: enabledSkills.length,
-        enabledSkillNames: enabledSkills.map(s => s.name),
-        mcpTools: mcpTools.length,
-        totalTools: tools.length,
-        toolNames: tools.map(t => t.function.name),
-      });
-
       // 用当前技能与路径权限刷新工具执行器（硅基员工使用自己的技能）
       toolExecutor.setSkills(allSkills);
       toolExecutor.setAllowExternalPaths(allowsExternalPaths(ctx.state.getApprovals().mode));
@@ -1683,7 +1794,39 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       // 避免在每次 agentic 循环中都执行一次 execSync
       // 从 session 的 runtimeIntent 中读取 reasoningEffort，传入 system prompt 构造器
       // enrichedContext 在每轮动态提取，因为 session messages 和 tasks 会随循环变化
-      const sessionReasoningEffort = resolveSessionRuntimeIntent(session).reasoningEffort as "low" | "medium" | "high" | undefined;
+      const sessionRuntimeIntentForPrompt = resolveSessionRuntimeIntent(session);
+      const sessionReasoningEffort = sessionRuntimeIntentForPrompt.reasoningEffort as "low" | "medium" | "high" | undefined;
+      const sessionRuntimeIntentForMode = resolveSessionRuntimeIntent(session);
+      const initialResolvedCapability = resolveModelCapability(modelProfile);
+      const initialExecutionPlan = buildExecutionPlan({
+        session: session.runtimeIntent ? { runtimeIntent: sessionRuntimeIntentForMode } : session.runtimeIntent === null ? { runtimeIntent: null } : undefined,
+        profile: modelProfile,
+        capability: initialResolvedCapability.effective,
+      }) as ResolvedExecutionPlan;
+      const initialTurnExecutionPlan = resolveTurnExecutionPlan({
+        profile: modelProfile,
+        legacyExecutionPlan: initialExecutionPlan,
+        capability: initialResolvedCapability.effective,
+        selectedModelProfileId: modelProfile.id,
+      });
+
+      const tools = buildToolSchemas(
+        workingDir,
+        enabledSkills,
+        mcpTools,
+        initialTurnExecutionPlan.toolPolicyId,
+      );
+
+      console.info("[session:send-message] tools summary", {
+        siliconPersonId: session.siliconPersonId ?? null,
+        totalSkills: allSkills.length,
+        enabledSkills: enabledSkills.length,
+        enabledSkillNames: enabledSkills.map(s => s.name),
+        mcpTools: mcpTools.length,
+        toolPolicyId: initialTurnExecutionPlan.toolPolicyId,
+        totalTools: tools.length,
+        toolNames: tools.map(t => t.function.name),
+      });
 
       // 硅基员工身份信息，注入系统提示
       const siliconPersonIdentity = session.siliconPersonId
@@ -1715,9 +1858,10 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
         return prompt;
       };
+      const executionGateway = createExecutionGateway({ paths: ctx.runtime.paths });
 
-      if (isPlanModeEnabled(session) && session.planModeState?.mode !== "executing") {
-        const runtimeIntent = resolveSessionRuntimeIntent(session);
+      if ((sessionRuntimeIntentForMode.workflowMode === "plan" || sessionRuntimeIntentForMode.planModeEnabled === true) && session.planModeState?.mode !== "executing") {
+        const runtimeIntent = sessionRuntimeIntentForMode;
         const executionPlanSession = session.runtimeIntent
           ? {
               runtimeIntent: {
@@ -1782,19 +1926,49 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           systemPromptBuilder: boundBuildSystemPrompt,
           executionPlan,
         });
-        const plannerMessages = [
-          ...assembled.messages,
-          {
-            role: "system",
-            content: buildPlanAnalysisGuidance(input.content),
-          },
-        ] as ModelChatMessage[];
-        const result = await callModel({
+        const turnExecutionPlan = resolveTurnExecutionPlan({
           profile: modelProfile,
-          messages: plannerMessages,
-          tools: [],
-          executionPlan,
-          onDelta: (delta) => {
+          legacyExecutionPlan: executionPlan,
+          capability: resolved.effective,
+          selectedModelProfileId: modelProfile.id,
+        });
+        const plannerSections = buildSessionPromptSections({
+          session,
+          workingDir,
+          skills: enabledSkills,
+          gitBranch,
+          personalPromptProfile: ctx.state.getPersonalPromptProfile(),
+          reasoningEffort: sessionReasoningEffort,
+          enrichedContextBlock: buildEnrichedContextBlock(extractEnrichedContext(session)) || null,
+          mcpTools,
+          providerFamily: turnExecutionPlan.providerFamily,
+          experienceProfileId: turnExecutionPlan.experienceProfileId,
+          promptPolicyId: turnExecutionPlan.promptPolicyId,
+          toolPolicyId: turnExecutionPlan.toolPolicyId,
+          reasoningProfileId: turnExecutionPlan.reasoningProfileId,
+          siliconPersonIdentity,
+          extraGuidance: buildPlanAnalysisGuidance(input.content),
+        });
+        const plannerContent = buildCanonicalTurnContent({
+          systemSections: plannerSections,
+          legacyMessages: stripSystemMessages(assembled.messages as ModelChatMessage[]),
+          tasks: session.tasks,
+          replayPolicy: turnExecutionPlan.legacyExecutionPlan.replayPolicy,
+        });
+        console.info("[session:runtime] 已切换 canonical 计划执行入口", {
+          sessionId,
+          providerFamily: turnExecutionPlan.providerFamily,
+          protocolTarget: turnExecutionPlan.protocolTarget,
+          sectionCount: plannerSections.length,
+        });
+        const result = await executionGateway.executeTurn({
+          mode: "canonical",
+          profile: modelProfile,
+          content: plannerContent,
+          toolSpecs: [],
+          plan: turnExecutionPlan,
+          sessionId,
+          onDelta: (delta: { content?: string; reasoning?: string }) => {
             appendStreamDraft(streamedDrafts, currentMessageId, delta);
             broadcastToRenderers("session:stream", {
               type: EventType.MessageDelta,
@@ -1804,6 +1978,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             });
           },
           signal: abortController.signal,
+        });
+        session.turnExecutionPlan = result.plan;
+        session.lastTurnOutcomeId = result.outcome.id;
+        await persistSessionTurnOutcomeMetrics(ctx, result.outcome, {
+          toolCallCount: result.toolCalls.length,
+          toolSuccessCount: 0,
+          contextStability: !assembled.wasCompacted,
         });
         const structuredPlan = parseStructuredPlan(result.content, buildPlanTaskTitle(input.content));
         applyStructuredPlanDraft(session, structuredPlan, messageId, new Date().toISOString());
@@ -1916,9 +2097,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             profile: modelProfile,
             capability: resolved.effective,
           }) as ResolvedExecutionPlan;
+          const turnExecutionPlan = resolveTurnExecutionPlan({
+            profile: modelProfile,
+            legacyExecutionPlan: executionPlan,
+            capability: resolved.effective,
+            selectedModelProfileId: modelProfile.id,
+          });
           const sessionWithExecutionPlan = session as SessionWithExecutionPlan;
           session.runtimeVersion = executionPlan.runtimeVersion;
           sessionWithExecutionPlan.executionPlan = executionPlan;
+          session.turnExecutionPlan = turnExecutionPlan;
           console.info("[session:runtime] 已生成执行计划", {
             sessionId,
             round,
@@ -1957,17 +2145,43 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               maskedToolOutputCount: assembled.maskedToolOutputCount,
             });
           }
-          const modelMessages = assembled.messages as ModelChatMessage[];
           const executionGuidance = buildPlanExecutionGuidance(session);
-          const guidedModelMessages = executionGuidance
-            ? [
-                ...modelMessages,
-                {
-                  role: "system",
-                  content: executionGuidance,
-                },
-              ] as ModelChatMessage[]
-            : modelMessages;
+          const canonicalSections = buildSessionPromptSections({
+            session,
+            workingDir,
+            skills: enabledSkills,
+            gitBranch,
+            personalPromptProfile: ctx.state.getPersonalPromptProfile(),
+            reasoningEffort: sessionReasoningEffort,
+            enrichedContextBlock: buildEnrichedContextBlock(extractEnrichedContext(session)) || null,
+            mcpTools,
+            providerFamily: turnExecutionPlan.providerFamily,
+            experienceProfileId: turnExecutionPlan.experienceProfileId,
+            promptPolicyId: turnExecutionPlan.promptPolicyId,
+            toolPolicyId: turnExecutionPlan.toolPolicyId,
+            reasoningProfileId: turnExecutionPlan.reasoningProfileId,
+            siliconPersonIdentity,
+            extraGuidance: executionGuidance,
+          });
+          const canonicalToolSpecs = buildCanonicalToolRegistry(
+            workingDir,
+            enabledSkills,
+            mcpTools,
+            turnExecutionPlan.toolPolicyId,
+          );
+          const canonicalContent = buildCanonicalTurnContent({
+            systemSections: canonicalSections,
+            legacyMessages: stripSystemMessages(assembled.messages as ModelChatMessage[]),
+            tasks: session.tasks,
+            replayPolicy: turnExecutionPlan.legacyExecutionPlan.replayPolicy,
+          });
+          console.info("[session:runtime] 已切换 canonical 执行入口", {
+            sessionId,
+            round,
+            providerFamily: turnExecutionPlan.providerFamily,
+            protocolTarget: turnExecutionPlan.protocolTarget,
+            toolSpecCount: canonicalToolSpecs.length,
+          });
 
           syncChatRunState(session, sessionId, activeRun, {
             runId,
@@ -1977,12 +2191,14 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             reason: activeRun.cancelRequested ? "user_requested" : null,
           });
 
-          const result = await callModel({
+          const result = await executionGateway.executeTurn({
+            mode: "canonical",
             profile: modelProfile,
-            messages: guidedModelMessages,
-            tools,
-            executionPlan,
-            onDelta: (delta) => {
+            content: canonicalContent,
+            toolSpecs: canonicalToolSpecs,
+            plan: turnExecutionPlan,
+            sessionId,
+            onDelta: (delta: { content?: string; reasoning?: string }) => {
               appendStreamDraft(streamedDrafts, currentMessageId, delta);
               broadcastToRenderers("session:stream", {
                 type: EventType.MessageDelta,
@@ -1992,6 +2208,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               });
             },
             signal: abortController.signal,
+          });
+          session.turnExecutionPlan = result.plan;
+          session.lastTurnOutcomeId = result.outcome.id;
+          await persistSessionTurnOutcomeMetrics(ctx, result.outcome, {
+            toolCallCount: result.toolCalls.length,
+            toolSuccessCount: 0,
+            contextStability: !assembled.wasCompacted,
           });
 
           // 检查模型是否发起了工具调用
@@ -2005,7 +2228,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               content: result.content || "",
               ...(result.reasoning ? { reasoning: result.reasoning } : {}),
               ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
-              tool_calls: result.toolCalls.map((tc) => ({
+              tool_calls: result.toolCalls.map((tc: ResolvedToolCall) => ({
                 id: tc.id,
                 type: "function" as const,
                 function: { name: tc.name, arguments: tc.argumentsJson },
@@ -2253,6 +2476,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             };
 
             // ---- 第 3 步：处理被拒绝的工具 ----
+            let successfulToolExecutions = 0;
             for (const { toolCall } of approvedTools.filter((t) => t.denied)) {
               const toolCallId = toolCall.id;
               const toolId = functionNameToToolId(toolCall.name);
@@ -2302,6 +2526,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               );
               // 以固定顺序串行写入消息
               for (const { toolCall, result } of results) {
+                if (result.succeeded) {
+                  successfulToolExecutions++;
+                }
                 markPlanTaskToolProgress(session, activePlanTaskId, {
                   toolName: toolCall.name,
                   succeeded: result.succeeded,
@@ -2326,6 +2553,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             // 写入类工具串行执行
             for (const { toolCall } of writeTasks) {
               const result = await executeSingleTool(toolCall);
+              if (result.succeeded) {
+                successfulToolExecutions++;
+              }
               markPlanTaskToolProgress(session, activePlanTaskId, {
                 toolName: toolCall.name,
                 succeeded: result.succeeded,
@@ -2345,6 +2575,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 session,
               });
             }
+
+            await persistSessionTurnOutcomeMetrics(ctx, result.outcome, {
+              toolCallCount: result.toolCalls.length,
+              toolSuccessCount: successfulToolExecutions,
+              contextStability: !assembled.wasCompacted,
+            });
 
             // ---- 循环检测 ----
             const roundSig = buildRoundSignature(result.toolCalls);
@@ -2592,11 +2828,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         reason,
       });
       releasePendingApprovalsForRun(ctx, activeRun);
-      setTimeout(() => {
-        if (!activeRun.abortController.signal.aborted) {
-          activeRun.abortController.abort();
-        }
-      }, 0);
+      if (!activeRun.abortController.signal.aborted) {
+        activeRun.abortController.abort();
+      }
       await saveSession(ctx.runtime.paths, session);
       await syncSiliconPersonSummaryForSession(ctx, session);
       broadcastToRenderers("session:stream", {

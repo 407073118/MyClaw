@@ -115,4 +115,21 @@ describe("findRegistryCapability", () => {
     expect(capability?.source).toBe("registry");
     expect((capability?.contextWindowTokens ?? 0) > 0).toBe(true);
   });
+
+  it("returns capability from registry for Moonshot/Kimi profiles", () => {
+    const profile = buildProfile({
+      providerFlavor: "moonshot",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k2-0905-preview",
+    });
+
+    const capability = findRegistryCapability(profile);
+
+    expect(capability).not.toBeNull();
+    expect(capability?.source).toBe("registry");
+    expect(capability?.supportsTools).toBe(true);
+    expect(capability?.supportsPromptCaching).toBe(true);
+    expect(capability?.supportsReasoning).toBe(true);
+    expect(capability?.contextWindowTokens).toBe(262144);
+  });
 });

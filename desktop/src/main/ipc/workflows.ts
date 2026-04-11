@@ -2,13 +2,19 @@ import { BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import type { ChatSession, ModelProfile, Task, WorkflowDefinition, WorkflowRunSummary, WorkflowSummary } from "@shared/contracts";
+import type { ChatSession, ModelProfile, Task, TurnOutcome, WorkflowDefinition, WorkflowRunSummary, WorkflowSummary } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
 import { saveSession, saveWorkflow, saveWorkflowRun, deleteWorkflowFile } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
-import { callModel } from "../services/model-client";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
+import { buildCanonicalTurnContent } from "../services/model-runtime/canonical-turn-content";
+import { createExecutionGateway } from "../services/model-runtime/execution-gateway";
+import { composePromptSections } from "../services/model-runtime/prompt-composer";
+import { updateTurnOutcome } from "../services/model-runtime/turn-outcome-store";
+import { hydrateCanonicalToolRegistryFromLegacyTools } from "../services/model-runtime/tool-registry";
+import { resolveTurnExecutionPlan } from "../services/model-runtime/turn-execution-plan-resolver";
+import { buildExecutionPlan } from "../services/reasoning-runtime";
 import {
   PregelRunner,
   NodeExecutorRegistry,
@@ -93,6 +99,33 @@ function upsertWorkflowRun(ctx: RuntimeContext, run: WorkflowRunSummary): Workfl
     ctx.state.workflowRuns.push(run);
   }
   return run;
+}
+
+/**
+ * 将 workflow LLM turn 的共享 outcome 再补写一次，保持 scorecard 指标与 session 路径一致。
+ */
+async function persistWorkflowTurnOutcomeMetrics(
+  ctx: RuntimeContext,
+  outcome: TurnOutcome,
+  metrics: {
+    toolCallCount: number;
+    toolSuccessCount: number;
+    contextStability: boolean;
+  },
+): Promise<void> {
+  try {
+    await updateTurnOutcome(ctx.runtime.paths, {
+      ...outcome,
+      toolCallCount: metrics.toolCallCount,
+      toolSuccessCount: metrics.toolSuccessCount,
+      contextStability: (outcome.contextStability !== false) && metrics.contextStability,
+    });
+  } catch (error) {
+    console.warn("[workflow] 回写 turn outcome 指标失败", {
+      outcomeId: outcome.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /** 判断两份 tasklist 是否真的发生了变化，避免 workflow 事件导致无意义的重复持久化。 */
@@ -192,11 +225,12 @@ function syncSiliconPersonWorkflowTasks(
 /**
  * 创建桥接真实基础设施的节点执行器注册表。
  *
- * Phase 2A：LLM 节点使用 callModel，工具节点使用 BuiltinToolExecutor
- * 和 McpServerManager，替代之前的 stub 占位实现。
+ * Phase 2A：LLM 节点通过共享 ExecutionGateway 执行，工具节点使用
+ * BuiltinToolExecutor 和 McpServerManager，替代之前的 stub 占位实现。
  */
 function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
   const registry = new NodeExecutorRegistry();
+  const executionGateway = createExecutionGateway({ paths: ctx.runtime.paths });
 
   // ── Start / End ──
   registry.register(new StartNodeExecutor());
@@ -205,7 +239,7 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
   // ── Condition ──
   registry.register(new ConditionNodeExecutor());
 
-  // ── LLM — 桥接 callModel ──
+  // ── LLM — 桥接共享 ExecutionGateway ──
   const profileResolver: ModelProfileResolver = (id?: string): ModelProfile | Record<string, never> => {
     if (!id) {
       // 回退到默认模型
@@ -228,16 +262,77 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
       );
     }
 
-    const result = await callModel({
+    const turnExecutionPlan = resolveTurnExecutionPlan({
       profile,
-      messages: opts.messages.map((m) => ({
-        role: m.role as "system" | "user" | "assistant" | "tool",
-        content: m.content,
+      legacyExecutionPlan: buildExecutionPlan({
+        profile,
+        capability: profile.discoveredCapabilities ?? null,
+      }),
+      selectedModelProfileId: profile.id,
+      requestedExperienceProfileId: opts.experienceProfileId ?? null,
+      requestedProviderFamily: opts.providerFamily ?? null,
+      requestedProtocolTarget: opts.protocolTarget ?? null,
+    });
+    const promptSections = composePromptSections({
+      session: {
+        id: opts.workflowRunId ?? "workflow-preview",
+        title: "Workflow LLM",
+        modelProfileId: profile.id,
+        attachedDirectory: ctx.runtime.myClawRootPath,
+        createdAt: new Date().toISOString(),
+        messages: [],
+      },
+      workingDir: ctx.runtime.myClawRootPath,
+      providerFamily: turnExecutionPlan.providerFamily,
+      experienceProfileId: turnExecutionPlan.experienceProfileId,
+      promptPolicyId: turnExecutionPlan.promptPolicyId,
+      toolPolicyId: turnExecutionPlan.toolPolicyId,
+      reasoningProfileId: turnExecutionPlan.reasoningProfileId,
+      skills: ctx.state.skills,
+      personalPromptProfile: ctx.state.getPersonalPromptProfile(),
+      mcpTools: ctx.services.mcpManager?.getAllTools() ?? [],
+    });
+    const canonicalContent = buildCanonicalTurnContent({
+      systemSections: promptSections,
+      legacyMessages: opts.messages.map((message) => ({
+        role: message.role as "system" | "user" | "assistant" | "tool",
+        content: message.content,
       })),
-      tools: opts.tools as any[] | undefined,
+      replayPolicy: turnExecutionPlan.legacyExecutionPlan.replayPolicy,
+    });
+    const canonicalToolSpecs = hydrateCanonicalToolRegistryFromLegacyTools(opts.tools as any[] | undefined);
+    console.info("[workflow] 已切换 canonical 执行入口", {
+      workflowRunId: opts.workflowRunId ?? null,
+      providerFamily: turnExecutionPlan.providerFamily,
+      protocolTarget: turnExecutionPlan.protocolTarget,
+      toolSpecCount: canonicalToolSpecs.length,
+    });
+
+    const result = await executionGateway.executeTurn({
+      mode: "canonical",
+      profile,
+      content: canonicalContent,
+      toolSpecs: canonicalToolSpecs,
+      plan: turnExecutionPlan,
       onDelta: opts.onDelta,
       signal: opts.signal,
+      workflowRunId: opts.workflowRunId,
     });
+
+    if (opts.workflowRunId) {
+      const existingRun = ctx.state.workflowRuns.find((run) => run.id === opts.workflowRunId);
+      if (existingRun && result.outcome?.id) {
+        existingRun.lastTurnOutcomeId = result.outcome.id;
+      }
+    }
+
+    if (result.outcome?.id) {
+      await persistWorkflowTurnOutcomeMetrics(ctx, result.outcome, {
+        toolCallCount: result.toolCalls.length,
+        toolSuccessCount: 0,
+        contextStability: true,
+      });
+    }
 
     return {
       content: result.content,
@@ -515,7 +610,7 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       }
       const siliconPersonSession = resolveSiliconPersonWorkflowSession(ctx, input);
 
-      // 创建执行器注册表（Phase 2A：桥接真实 callModel / BuiltinToolExecutor / MCP）
+      // 创建执行器注册表（Phase 2A：桥接共享 ExecutionGateway / BuiltinToolExecutor / MCP）
       const executorRegistry = createRealExecutorRegistry(ctx);
 
       // 创建 PregelRunner（注入 checkpointer adapter 以持久化运行状态）
@@ -573,8 +668,9 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       // 异步执行 — 不 await，立即返回 runId
       runner.run(input.initialState).then((result) => {
         // 执行完成，更新运行记录
+        const latestRunSummary = ctx.state.workflowRuns.find((run) => run.id === runId) ?? runSummary;
         const completedRun: WorkflowRunSummary = {
-          ...runSummary,
+          ...latestRunSummary,
           status: result.status,
           updatedAt: new Date().toISOString(),
         };
@@ -610,8 +706,9 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         });
       }).catch((err) => {
         const errorMsg = err instanceof Error ? err.message : String(err);
+        const latestRunSummary = ctx.state.workflowRuns.find((run) => run.id === runId) ?? runSummary;
         const failedRun: WorkflowRunSummary = {
-          ...runSummary,
+          ...latestRunSummary,
           status: "failed",
           updatedAt: new Date().toISOString(),
         };

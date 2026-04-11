@@ -39,6 +39,7 @@ describe("Phase 1 reasoning runtime", () => {
       reasoningEffort: "medium",
       adapterHint: "auto",
       replayPolicy: "content-only",
+      workflowMode: "default",
     });
   });
 
@@ -70,6 +71,54 @@ describe("Phase 1 reasoning runtime", () => {
       replayPolicy: "content-only",
       fallbackAdapterIds: [],
     });
+  });
+
+  it("selects vendor-specific adapters for first-tier vendor profiles", () => {
+    expect(buildExecutionPlan({
+      profile: makeProfile({
+        providerFlavor: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        model: "gpt-4.1",
+      }),
+      capability: makeCapability(),
+    }).adapterId).toBe("openai-native");
+
+    expect(buildExecutionPlan({
+      profile: makeProfile({
+        provider: "anthropic",
+        providerFlavor: "anthropic",
+        baseUrl: "https://api.anthropic.com/v1",
+        model: "claude-3-7-sonnet",
+      }),
+      capability: makeCapability(),
+    }).adapterId).toBe("anthropic-native");
+
+    expect(buildExecutionPlan({
+      profile: makeProfile({
+        providerFlavor: "qwen",
+        baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model: "qwen-max",
+      }),
+      capability: makeCapability(),
+    }).adapterId).toBe("qwen");
+
+    expect(buildExecutionPlan({
+      profile: makeProfile({
+        providerFlavor: "moonshot",
+        baseUrl: "https://api.moonshot.cn/v1",
+        model: "kimi-k2-0905-preview",
+      }),
+      capability: makeCapability(),
+    }).adapterId).toBe("kimi");
+
+    expect(buildExecutionPlan({
+      profile: makeProfile({
+        providerFlavor: "volcengine-ark",
+        baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+        model: "doubao-seed-code",
+      }),
+      capability: makeCapability(),
+    }).adapterId).toBe("volcengine-ark");
   });
 
   it("respects explicit replay overrides while keeping the Phase 1 fallback chain", () => {

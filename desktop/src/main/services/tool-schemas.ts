@@ -7,6 +7,10 @@
  */
 
 import type { McpTool, SkillDefinition } from "@shared/contracts";
+import {
+  resolveAllowedBuiltinToolGroups,
+  resolveBlockedBuiltinToolNames,
+} from "./model-runtime/vendor-policy-registry";
 
 export type OpenAIFunctionTool = {
   type: "function";
@@ -17,6 +21,18 @@ export type OpenAIFunctionTool = {
   };
 };
 
+function inferBuiltinToolSchemaGroup(functionName: string): string {
+  if (functionName.startsWith("fs_")) return "fs";
+  if (functionName.startsWith("exec_")) return "exec";
+  if (functionName.startsWith("git_")) return "git";
+  if (functionName.startsWith("http_")) return "http";
+  if (functionName.startsWith("web_")) return "web";
+  if (functionName.startsWith("ppt_")) return "ppt";
+  if (functionName.startsWith("task_")) return "task";
+  if (functionName.startsWith("browser_")) return "browser";
+  return "other";
+}
+
 /**
  * 为所有启用中的内置工具构建 OpenAI function calling 定义。
  * `cwd` 会写入描述中，用于告诉模型当前工作目录。
@@ -25,6 +41,7 @@ export function buildToolSchemas(
   cwd: string,
   skills?: SkillDefinition[],
   mcpTools?: Array<McpTool & { serverId: string }>,
+  toolPolicyId?: string,
 ): OpenAIFunctionTool[] {
   const staticTools: OpenAIFunctionTool[] = [
     {
@@ -644,6 +661,17 @@ export function buildToolSchemas(
       },
     },
   ];
+  const effectiveToolPolicyId = toolPolicyId ?? "generic.tools.default";
+  const blockedBuiltinNames = new Set(resolveBlockedBuiltinToolNames(effectiveToolPolicyId));
+  const allowedBuiltinGroups = new Set(resolveAllowedBuiltinToolGroups(effectiveToolPolicyId));
+  const filteredStaticTools = staticTools.filter((tool) => {
+    const toolName = tool.function.name;
+    const toolGroup = inferBuiltinToolSchemaGroup(toolName);
+    if (!allowedBuiltinGroups.has(toolGroup)) {
+      return false;
+    }
+    return !blockedBuiltinNames.has(toolName);
+  });
 
   // 生成 MCP 工具 schema
   if (mcpTools && mcpTools.length > 0) {
@@ -659,7 +687,7 @@ export function buildToolSchemas(
         suffix++;
       }
       usedMcpNames.add(safeName);
-      staticTools.push({
+      filteredStaticTools.push({
         type: "function",
         function: {
           name: safeName,
@@ -689,7 +717,7 @@ export function buildToolSchemas(
         suffix++;
       }
       usedSkillNames.add(sanitizedId);
-      staticTools.push({
+      filteredStaticTools.push({
         type: "function",
         function: {
           name: `skill_invoke__${sanitizedId}`,
@@ -712,7 +740,7 @@ export function buildToolSchemas(
     const viewSkills = skills.filter((s) => s.enabled && s.hasViewFile && s.viewFiles && s.viewFiles.length > 0);
     if (viewSkills.length > 0) {
       const allPages = viewSkills.flatMap((s) => (s.viewFiles || []).map((f: string) => `${s.id}:${f}`));
-      staticTools.push({
+      filteredStaticTools.push({
         type: "function",
         function: {
           name: "skill_view",
@@ -740,7 +768,7 @@ export function buildToolSchemas(
     }
   }
 
-  return staticTools;
+  return filteredStaticTools;
 }
 
 /**

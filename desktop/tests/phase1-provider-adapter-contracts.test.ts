@@ -4,6 +4,7 @@ import type { ModelProfile } from "@shared/contracts";
 import {
   getProviderAdapter,
   listProviderAdapters,
+  resolveProviderAdapterId,
 } from "../src/main/services/provider-adapters";
 import type {
   ProviderAdapter,
@@ -41,7 +42,16 @@ describe("phase1 provider adapter contracts", () => {
   it("exposes the registered adapter ids", () => {
     const ids = listProviderAdapters().map((adapter) => adapter.id);
 
-    expect(ids).toEqual(["br-minimax", "openai-compatible"]);
+    expect(ids).toEqual([
+      "openai-compatible",
+      "openai-native",
+      "anthropic-native",
+      "qwen",
+      "kimi",
+      "volcengine-ark",
+      "minimax",
+      "br-minimax",
+    ]);
   });
 
   it("defines a stable adapter interface shape", () => {
@@ -94,5 +104,52 @@ describe("phase1 provider adapter contracts", () => {
 
     assertAdapterContract(explicit, "br-minimax");
     assertAdapterContract(selected, "br-minimax");
+  });
+
+  it("routes first-tier compatible vendors through the current compatible adapter until dedicated adapters land", () => {
+    expect(resolveProviderAdapterId(makeProfile({
+      providerFlavor: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-max",
+    }))).toBe("qwen");
+
+    expect(resolveProviderAdapterId(makeProfile({
+      providerFlavor: "moonshot",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k2-0905-preview",
+    }))).toBe("kimi");
+
+    expect(resolveProviderAdapterId(makeProfile({
+      providerFlavor: "volcengine-ark",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      model: "doubao-seed-code",
+    }))).toBe("volcengine-ark");
+
+    expect(resolveProviderAdapterId(makeProfile({
+      vendorFamily: "minimax",
+      deploymentProfile: "br-private",
+      providerFlavor: "generic-openai-compatible",
+      baseUrl: "https://api.minimax.chat/v1",
+      model: "minimax-m2-5",
+    }))).toBe("br-minimax");
+
+    expect(resolveProviderAdapterId(makeProfile({
+      providerFlavor: "minimax-anthropic",
+      baseUrl: "https://api.minimax.chat/v1",
+      model: "minimax-text-01",
+    }))).toBe("minimax");
+
+    expect(resolveProviderAdapterId(makeProfile({
+      providerFlavor: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-4.1",
+    }))).toBe("openai-native");
+
+    expect(resolveProviderAdapterId(makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+    }))).toBe("anthropic-native");
   });
 });

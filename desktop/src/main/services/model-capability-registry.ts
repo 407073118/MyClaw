@@ -30,6 +30,20 @@ const REGISTRY_ENTRIES: RegistryEntry[] = [
     },
   },
   {
+    providerFlavor: "moonshot",
+    modelPattern: /^kimi/i,
+    capability: {
+      contextWindowTokens: 262144,
+      maxInputTokens: 253952,
+      maxOutputTokens: 8192,
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsStreaming: true,
+      supportsPromptCaching: true,
+      tokenCountingMode: "openai-compatible-estimate",
+    },
+  },
+  {
     providerFlavor: "openrouter",
     modelPattern: /^openai\/gpt-4\.1/i,
     capability: {
@@ -56,6 +70,17 @@ const REGISTRY_ENTRIES: RegistryEntry[] = [
   {
     providerFlavor: "qwen",
     modelPattern: /^qwen/i,
+    capability: {
+      contextWindowTokens: 131072,
+      maxInputTokens: 122880,
+      maxOutputTokens: 8192,
+      supportsTools: true,
+      supportsStreaming: true,
+      tokenCountingMode: "openai-compatible-estimate",
+    },
+  },
+  {
+    providerFlavor: "volcengine-ark",
     capability: {
       contextWindowTokens: 131072,
       maxInputTokens: 122880,
@@ -124,7 +149,9 @@ function inferProviderFlavor(profile: ModelProfile): ProviderFlavor | undefined 
   if (baseUrl.includes("vercel.com") && baseUrl.includes("gateway")) return "vercel-ai-gateway";
   if (baseUrl.includes("anthropic.com") || profile.provider === "anthropic") return "anthropic";
   if (baseUrl.includes("cybotforge.100credit.cn") || model === "minimax-m2-5") return "br-minimax";
+  if (baseUrl.includes("moonshot") || model.startsWith("kimi")) return "moonshot";
   if (baseUrl.includes("dashscope.aliyuncs.com") || model.startsWith("qwen")) return "qwen";
+  if (baseUrl.includes("volces.com") || baseUrl.includes("ark.cn-beijing")) return "volcengine-ark";
   if (baseUrl.includes("ollama") || model.startsWith("ollama")) return "ollama";
 
   if (profile.provider === "openai-compatible") return "generic-openai-compatible";

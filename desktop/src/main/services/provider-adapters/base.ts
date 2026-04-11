@@ -1,6 +1,14 @@
 import type { ModelProfile, SessionReasoningEffort } from "@shared/contracts";
 
-export type ProviderAdapterId = "br-minimax" | "openai-compatible";
+export type ProviderAdapterId =
+  | "openai-compatible"
+  | "openai-native"
+  | "anthropic-native"
+  | "qwen"
+  | "kimi"
+  | "volcengine-ark"
+  | "minimax"
+  | "br-minimax";
 
 export type ProviderAdapterTool = {
   type: "function";
@@ -105,4 +113,15 @@ export function buildOpenAiCompatibleBody(
 /** 默认响应归一化仅保留原始负载，供 Phase 1 传输层后续接入。 */
 export function normalizeAdapterResponse(payload: unknown): ProviderAdapterNormalizedResponse {
   return { raw: payload };
+}
+
+/** 基于现有适配器创建一个仅替换 id 的别名适配器，便于逐步把厂商接入统一 adapter 入口。 */
+export function aliasProviderAdapter(
+  id: ProviderAdapterId,
+  baseAdapter: ProviderAdapter,
+): ProviderAdapter {
+  return {
+    ...baseAdapter,
+    id,
+  };
 }

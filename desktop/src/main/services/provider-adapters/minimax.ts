@@ -17,6 +17,7 @@ const THINKING_BUDGET_MAP: Record<SessionReasoningEffort, number> = {
   low: 2048,
   medium: 8192,
   high: 32768,
+  xhigh: 65536,
 };
 
 /**

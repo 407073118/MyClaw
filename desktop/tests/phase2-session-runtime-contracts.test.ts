@@ -18,7 +18,7 @@ describe("Phase 2 session runtime contracts", () => {
     const intent: Phase2SessionRuntimeIntent = {
       reasoningMode: "auto",
       reasoningEnabled: true,
-      reasoningEffort: "high",
+      reasoningEffort: "xhigh",
       adapterHint: "br-minimax",
       replayPolicy: "assistant-turn-with-reasoning",
       toolStrategy: "auto",
@@ -30,7 +30,7 @@ describe("Phase 2 session runtime contracts", () => {
       adapterSelectionSource: "intent",
       reasoningMode: "auto",
       reasoningEnabled: true,
-      reasoningEffort: "high",
+      reasoningEffort: "xhigh",
       adapterHint: "br-minimax",
       replayPolicy: "assistant-turn-with-reasoning",
       toolStrategy: "auto",
@@ -46,7 +46,7 @@ describe("Phase 2 session runtime contracts", () => {
 
     expect(parsed.intent.reasoningEnabled).toBe(true);
     expect(parsed.intent.toolStrategy).toBe("auto");
-    expect(parsed.plan.reasoningEffort).toBe("high");
+    expect(parsed.plan.reasoningEffort).toBe("xhigh");
     expect(parsed.plan.degradationReason).toBeNull();
     expect(parsed.plan.planSource).toBe("intent");
   });
@@ -102,12 +102,14 @@ describe("Phase 2 session runtime contracts", () => {
       reasoningEffort: "medium",
       adapterHint: "auto",
       replayPolicy: "content-only",
+      workflowMode: "default",
     });
     expect(resolveSessionRuntimeIntent(legacyWithNullIntent)).toEqual<ResolvedSessionRuntimeIntent>({
       reasoningMode: "auto",
       reasoningEffort: "medium",
       adapterHint: "auto",
       replayPolicy: "content-only",
+      workflowMode: "default",
     });
   });
 
@@ -117,6 +119,7 @@ describe("Phase 2 session runtime contracts", () => {
       reasoningEffort: "medium",
       adapterHint: "auto",
       replayPolicy: "content-only",
+      workflowMode: "default",
     });
   });
 

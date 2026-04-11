@@ -1,7 +1,15 @@
 import { ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 
-import type { ModelCatalogItem, ModelProfile, ProviderFlavor } from "@shared/contracts";
+import type {
+  ModelCatalogItem,
+  ModelProfile,
+  ModelRouteProbeEntry,
+  ModelRouteProbeResult,
+  ProtocolTarget,
+  ProviderFlavor,
+} from "@shared/contracts";
+import { PROTOCOL_TARGET_RECOMMENDATION_ORDER } from "@shared/contracts";
 import {
   isBrMiniMaxProfile,
   type BrMiniMaxRuntimeDiagnostics,
@@ -23,6 +31,12 @@ import { normalizeOllamaCatalog } from "../services/provider-capability-probers/
 import { normalizeOpenAiCompatibleCatalog } from "../services/provider-capability-probers/openai-compatible";
 import { normalizeOpenRouterCatalog } from "../services/provider-capability-probers/openrouter";
 import { normalizeVercelGatewayCatalog } from "../services/provider-capability-probers/vercel-ai-gateway";
+import {
+  inferVendorFamily,
+} from "../services/model-runtime/vendor-runtime-policy-resolver";
+import {
+  getVendorPolicy,
+} from "../services/model-runtime/vendor-policy-registry";
 
 type CreateModelInput = Omit<ModelProfile, "id">;
 type UpdateModelInput = Partial<Omit<ModelProfile, "id">>;
@@ -118,6 +132,193 @@ function normalizeCatalogPayload(
   }
 
   return normalizeOpenAiCompatibleCatalog(payload, provider, providerFlavor);
+}
+
+/** 解析 Responses API 地址，避免把兼容接口尾缀错误拼接到 `/responses` 后面。 */
+function resolveResponsesApiUrl(profile: Pick<ModelProfile, "baseUrl">): string {
+  return profile.baseUrl
+    .replace(/\/(chat\/completions|messages|responses)$/i, "")
+    .replace(/\/(compatible-mode\/v1|v1)$/i, "")
+    .replace(/\/+$/, "") + "/v1/responses";
+}
+
+/** 根据当前配置决定本次需要探测哪些路线。 */
+function resolveRouteProbeCandidates(
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "model">,
+): ProtocolTarget[] {
+  if (profile.baseUrlMode === "manual" && profile.provider !== "anthropic") {
+    return ["openai-responses", "anthropic-messages", "openai-chat-compatible"];
+  }
+
+  const vendorFamily = inferVendorFamily({
+    ...profile,
+    vendorFamily: undefined,
+    protocolTarget: undefined,
+    deploymentProfile: undefined,
+  });
+
+  return [...getVendorPolicy(vendorFamily).recommendedProtocolsByUseCase.default];
+}
+
+/** 为探测结果补齐稳定的路线说明。 */
+function buildRouteProbeNotes(target: ProtocolTarget): string[] {
+  if (target === "openai-responses") {
+    return ["原生 Responses 事件流", "更适合 OpenAI GPT 路线"];
+  }
+  if (target === "anthropic-messages") {
+    return ["原生 Anthropic Messages / tool_use 协议", "更适合 Claude 路线"];
+  }
+  return ["兼容模式，可作为回退路线", "适合多数 OpenAI 兼容网关"];
+}
+
+/** 构造最小化探测请求体，保证每条路线都能独立验证。 */
+function buildRouteProbeRequestBody(
+  profile: Pick<ModelProfile, "model">,
+  protocolTarget: ProtocolTarget,
+  requestBody?: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const protectedKeys = protocolTarget === "openai-responses"
+    ? new Set(["model", "input", "instructions", "stream", "tools", "max_output_tokens"])
+    : new Set(["model", "messages", "stream", "max_tokens", "tools", "system"]);
+  const safeOverrides = Object.fromEntries(
+    Object.entries(requestBody ?? {}).filter(([key]) => !protectedKeys.has(key)),
+  );
+
+  if (protocolTarget === "openai-responses") {
+    return {
+      model: profile.model,
+      input: [{ role: "user", content: [{ type: "input_text", text: "ping" }] }],
+      stream: false,
+      max_output_tokens: 1,
+      ...safeOverrides,
+    };
+  }
+
+  if (protocolTarget === "anthropic-messages") {
+    return {
+      model: profile.model,
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 1,
+      stream: false,
+      ...safeOverrides,
+    };
+  }
+
+  return {
+    model: profile.model,
+    messages: [{ role: "user", content: "ping" }],
+    max_tokens: 1,
+    stream: false,
+    ...safeOverrides,
+  };
+}
+
+/** 为不同协议选择实际探测地址。 */
+function resolveRouteProbeUrl(
+  profile: ModelProfile,
+  protocolTarget: ProtocolTarget,
+): string {
+  if (protocolTarget === "openai-responses") {
+    return resolveResponsesApiUrl(profile);
+  }
+  return resolveModelEndpointUrl(profile);
+}
+
+/** 依据固定优先级从可用路线中选出推荐项。 */
+function resolveRecommendedProtocolTarget(availableRoutes: ProtocolTarget[]): ProtocolTarget | null {
+  for (const target of PROTOCOL_TARGET_RECOMMENDATION_ORDER) {
+    if (availableRoutes.includes(target)) {
+      return target;
+    }
+  }
+  return null;
+}
+
+/** 执行单条路线探测，并返回结构化结果，供配置页展示与保存兜底复用。 */
+async function probeSingleRoute(
+  profile: ModelProfile,
+  protocolTarget: ProtocolTarget,
+): Promise<ModelRouteProbeEntry> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch(resolveRouteProbeUrl(profile, protocolTarget), {
+      method: "POST",
+      headers: buildRequestHeaders(profile),
+      body: JSON.stringify(buildRouteProbeRequestBody(profile, protocolTarget, profile.requestBody as Record<string, unknown> | undefined)),
+      signal: controller.signal,
+    });
+    const latencyMs = Date.now() - startedAt;
+
+    if (response.ok) {
+      console.info("[model:probe-routes] 路线探测成功", {
+        protocolTarget,
+        latencyMs,
+        model: profile.model,
+      });
+      return {
+        protocolTarget,
+        ok: true,
+        latencyMs,
+        notes: buildRouteProbeNotes(protocolTarget),
+      };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return {
+        protocolTarget,
+        ok: false,
+        latencyMs,
+        reason: `认证失败 (HTTP ${response.status})`,
+        notes: buildRouteProbeNotes(protocolTarget),
+      };
+    }
+
+    if (response.status === 404 || response.status === 405) {
+      return {
+        protocolTarget,
+        ok: false,
+        latencyMs,
+        reason: `当前服务未提供该路线 (HTTP ${response.status})`,
+        notes: buildRouteProbeNotes(protocolTarget),
+      };
+    }
+
+    const isReachableValidationStatus = response.status === 400 || response.status === 422;
+    return {
+      protocolTarget,
+      ok: isReachableValidationStatus,
+      latencyMs,
+      reason: isReachableValidationStatus ? null : `探测失败 (HTTP ${response.status})`,
+      notes: [
+        ...buildRouteProbeNotes(protocolTarget),
+        ...(isReachableValidationStatus ? ["服务返回校验错误，但 endpoint 可达"] : []),
+      ],
+    };
+  } catch (error) {
+    const latencyMs = Date.now() - startedAt;
+    const message = error instanceof Error
+      ? error.name === "AbortError"
+        ? "请求超时 (8 秒)"
+        : error.message
+      : String(error);
+    console.warn("[model:probe-routes] 路线探测异常", {
+      protocolTarget,
+      model: profile.model,
+      error: message,
+    });
+    return {
+      protocolTarget,
+      ok: false,
+      latencyMs,
+      reason: message,
+      notes: buildRouteProbeNotes(protocolTarget),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -416,6 +617,47 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
       } finally {
         clearTimeout(timeout);
       }
+    },
+  );
+
+  // Probe supported model routes by raw config (no saved profile needed)
+  ipcMain.handle(
+    "model:probe-routes-by-config",
+    async (
+      _event,
+      input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
+    ): Promise<ModelRouteProbeResult> => {
+      const tempProfile: ModelProfile = {
+        id: "temp-route-probe",
+        name: "temp",
+        provider: input.provider,
+        providerFlavor: input.providerFlavor,
+        baseUrl: input.baseUrl,
+        baseUrlMode: input.baseUrlMode,
+        apiKey: input.apiKey,
+        model: input.model,
+        headers: input.headers,
+        requestBody: input.requestBody,
+      };
+      const candidates = resolveRouteProbeCandidates(tempProfile);
+      console.info("[model:probe-routes] 开始探测模型路线", {
+        model: tempProfile.model,
+        provider: tempProfile.provider,
+        providerFlavor: tempProfile.providerFlavor,
+        candidates,
+      });
+      const entries = await Promise.all(candidates.map((target) => probeSingleRoute(tempProfile, target)));
+      const availableProtocolTargets = entries
+        .filter((entry) => entry.ok)
+        .map((entry) => entry.protocolTarget);
+      const recommendedProtocolTarget = resolveRecommendedProtocolTarget(availableProtocolTargets);
+
+      return {
+        recommendedProtocolTarget,
+        availableProtocolTargets,
+        entries,
+        testedAt: new Date().toISOString(),
+      };
     },
   );
 

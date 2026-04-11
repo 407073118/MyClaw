@@ -37,6 +37,8 @@ describe("phase1 golden transcripts", () => {
       replayPolicy: "assistant-turn-with-reasoning",
       fallbackAdapterIds: ["openai-compatible"],
     });
+    expect(profile.vendorFamily).toBe("minimax");
+    expect(profile.deploymentProfile).toBe("br-private");
     expect(variants[0]).toMatchObject({
       reasoning_split: true,
       messages: [

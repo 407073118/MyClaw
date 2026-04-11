@@ -111,4 +111,27 @@ describe("phase1 openai-compatible adapter", () => {
       },
     });
   });
+
+  it("maps reasoning effort into an OpenAI-compatible reasoning patch", () => {
+    const adapter = getProviderAdapter("openai-compatible");
+    const profile = makeProfile({
+      vendorFamily: "kimi",
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEffort: "high" },
+      {
+        messages: adapter.materializeReplayMessages(
+          { profile, reasoningEffort: "high" },
+          { messages: [{ role: "user", content: "hello" }] },
+        ),
+      },
+    );
+
+    expect(variants[0]?.body).toMatchObject({
+      reasoning: {
+        effort: "high",
+      },
+    });
+  });
 });
