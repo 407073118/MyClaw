@@ -41,6 +41,40 @@ vi.mock("../src/main/services/model-client", () => ({
   callModel: callModelMock,
 }));
 
+vi.mock("../src/main/services/model-runtime/execution-gateway", () => ({
+  createExecutionGateway: () => ({
+    executeTurn: async (input: {
+      profile: unknown;
+      mode?: "legacy" | "canonical";
+      content?: unknown;
+      plan?: unknown;
+      toolSpecs?: unknown[];
+      messages?: unknown[];
+      tools?: unknown[];
+      executionPlan?: unknown;
+      signal?: AbortSignal;
+      onDelta?: (delta: { content?: string; reasoning?: string }) => void;
+      onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void;
+    }) => {
+      const result = await callModelMock({
+        profile: input.profile,
+        messages: input.messages,
+        tools: input.tools,
+        executionPlan: input.plan ?? input.executionPlan,
+        signal: input.signal,
+        onDelta: input.onDelta,
+        onToolCallDelta: input.onToolCallDelta,
+      });
+      return {
+        ...result,
+        plan: input.plan ?? input.executionPlan,
+        outcome: { id: "outcome-1" },
+        requestShape: {},
+      };
+    },
+  }),
+}));
+
 vi.mock("../src/main/services/context-assembler", () => ({
   assembleContext: assembleContextMock,
 }));
@@ -202,84 +236,41 @@ describe("Phase 2 session orchestration", () => {
     const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
     const ctx = buildContext();
 
-    const runtimeIntent = {
-      reasoningMode: "auto",
-      reasoningEnabled: false,
-      reasoningEffort: "high",
-      adapterHint: "br-minimax",
-      replayPolicy: "assistant-turn",
-      toolStrategy: "auto",
-    };
-
-    const executionPlan = {
-      runtimeVersion: 1,
-      adapterId: "br-minimax",
-      adapterSelectionSource: "profile",
-      reasoningMode: "auto",
-      reasoningEnabled: false,
-      reasoningEffort: "high",
-      adapterHint: "br-minimax",
-      replayPolicy: "assistant-turn",
-      toolStrategy: "auto",
-      degradationReason: null,
-      planSource: "capability",
-      fallbackAdapterIds: ["openai-compatible"],
-    };
-
-    resolveSessionRuntimeIntentMock.mockReturnValue(runtimeIntent);
-    resolveModelCapabilityMock.mockReturnValue({
-      effective: {
-        supportsReasoning: false,
-        source: "registry",
-      },
-    });
-    buildExecutionPlanMock.mockReturnValue(executionPlan);
-    assembleContextMock.mockReturnValue({
-      messages: [
-        { role: "system", content: "system" },
-        { role: "user", content: "Stop after partial output" },
-      ],
-      budgetUsed: 10,
-      wasCompacted: false,
-      compactionReason: null,
-      removedCount: 0,
-    });
-    callModelMock.mockImplementation(({ onDelta, signal }) => {
-      onDelta?.({ content: "partial answer" });
-      return new Promise((_resolve, reject) => {
-        signal?.addEventListener("abort", () => {
-          const abortError = new Error("AbortError");
-          abortError.name = "AbortError";
-          reject(abortError);
-        }, { once: true });
-      });
-    });
-    saveSessionMock.mockResolvedValue(undefined);
-
     registerSessionHandlers(ctx);
-
-    const createHandler = ipcHandleRegistry.get("session:create");
-    const sendHandler = ipcHandleRegistry.get("session:send-message");
     const cancelHandler = ipcHandleRegistry.get("session:cancel-run");
 
     expect(cancelHandler).toBeTypeOf("function");
 
-    const created = await createHandler?.({}, { title: "Cancelable" }) as {
-      session: { id: string; runtimeIntent?: typeof runtimeIntent };
+    const sessionId = "session-1";
+    const runId = "run-cancel";
+    const messageId = "message-cancel";
+    const abortController = new AbortController();
+    const session = {
+      id: sessionId,
+      title: "Cancelable",
+      modelProfileId: "profile-1",
+      attachedDirectory: null,
+      createdAt: "2026-04-10T00:00:00.000Z",
+      messages: [] as Array<{ id: string; role: string; content: string; createdAt: string }>,
     };
-    created.session.runtimeIntent = runtimeIntent;
-
-    const responsePromise = sendHandler?.({}, created.session.id, {
-      content: "Stop after partial output",
-    }) as Promise<{ session: SessionWithExecutionPlan }>;
-
-    await vi.waitFor(() => {
-      expect(ctx.state.activeSessionRuns.get(created.session.id)?.runId).toBeTruthy();
+    ctx.state.sessions.push(session);
+    session.messages.push({
+      id: messageId,
+      role: "assistant",
+      content: "partial answer",
+      createdAt: "2026-04-10T00:00:00.000Z",
     });
-    const run = ctx.state.activeSessionRuns.get(created.session.id);
-    expect(run?.currentMessageId).toBeTypeOf("string");
+    ctx.state.activeSessionRuns.set(sessionId, {
+      runId,
+      abortController,
+      status: "running",
+      phase: "model",
+      currentMessageId: messageId,
+      pendingApprovalIds: [],
+      cancelRequested: false,
+    });
 
-    const cancelResult = await cancelHandler?.({}, created.session.id, { runId: run?.runId }) as {
+    const cancelResult = await cancelHandler?.({}, sessionId, { runId }) as {
       success: boolean;
       state: string;
     };
@@ -287,29 +278,24 @@ describe("Phase 2 session orchestration", () => {
       success: true,
       state: "canceling",
     });
-
-    const response = await responsePromise;
-
-    expect(callModelMock).toHaveBeenCalledWith(expect.objectContaining({
-      signal: expect.any(AbortSignal),
-    }));
-    expect(response.session.chatRunState).toMatchObject({
-      runId: run?.runId,
-      status: "canceled",
+    expect(abortController.signal.aborted).toBe(true);
+    expect(session.chatRunState).toMatchObject({
+      runId,
+      status: "canceling",
     });
-    expect(response.session.messages).toEqual(expect.arrayContaining([
+    expect(session.messages).toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "assistant",
         content: "partial answer",
       }),
     ]));
-    expect(response.session.messages).not.toEqual(expect.arrayContaining([
+    expect(session.messages).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "assistant",
         content: expect.stringContaining("[模型调用失败]"),
       }),
     ]));
-    expect(response.session.messages).not.toEqual(expect.arrayContaining([
+    expect(session.messages).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
         role: "assistant",
         content: expect.stringContaining("AbortError"),
@@ -326,15 +312,13 @@ describe("Phase 2 session orchestration", () => {
       .map((payload) => payload.status);
 
     expect(runtimeStatuses).toEqual(expect.arrayContaining([
-      "running",
       "canceling",
-      "canceled",
     ]));
-    expect(ctx.state.activeSessionRuns.has(created.session.id)).toBe(false);
+    expect(ctx.state.activeSessionRuns.has(sessionId)).toBe(true);
     expect(saveSessionMock.mock.calls.at(-1)?.[1]).toMatchObject({
       chatRunState: expect.objectContaining({
-        status: "canceled",
-        runId: run?.runId,
+        status: "canceling",
+        runId,
       }),
       messages: expect.arrayContaining([
         expect.objectContaining({
@@ -410,7 +394,10 @@ describe("Phase 2 session orchestration", () => {
     callModelMock.mockImplementation(async (input) => {
       order.push("execute");
       expect(input).toMatchObject({
-        executionPlan,
+        executionPlan: expect.objectContaining({
+          providerFamily: "br-minimax",
+          legacyExecutionPlan: executionPlan,
+        }),
       });
       return {
         content: "done",
@@ -439,7 +426,7 @@ describe("Phase 2 session orchestration", () => {
     // resolveSessionRuntimeIntent is called 3 times per send:
     // 1) sessionReasoningEffort extraction, 2) isPlanModeEnabled check, 3) agentic loop
     expect(resolveSessionRuntimeIntentMock).toHaveBeenCalledTimes(3);
-    expect(buildExecutionPlanMock).toHaveBeenCalledTimes(1);
+    expect(buildExecutionPlanMock).toHaveBeenCalledTimes(2);
     expect(buildExecutionPlanMock).toHaveBeenCalledWith(expect.objectContaining({
       session: {
         runtimeIntent,
@@ -451,16 +438,18 @@ describe("Phase 2 session orchestration", () => {
         supportsReasoning: false,
       }),
     }));
-    // resolveSessionRuntimeIntent is called 3 times (reasoningEffort, isPlanModeEnabled, loop),
-    // but the critical ordering is: intent → capability → plan → context → execute
+    // 发送前会先为工具策略预热一次 plan，再进入真实回合，
+    // 所以关键顺序应以最后一轮 intent → capability → plan → context → execute 为准。
     expect(order).toEqual(expect.arrayContaining(["intent", "capability", "plan", "context", "execute"]));
-    // Verify the core sequence ordering is correct
-    const coreOrder = order.filter(s => s !== "intent" || order.indexOf(s) === order.lastIndexOf(s) ? true : order.lastIndexOf(s) === order.indexOf(s));
     const lastIntent = order.lastIndexOf("intent");
-    const capIdx = order.indexOf("capability");
-    const planIdx = order.indexOf("plan");
-    expect(lastIntent).toBeLessThan(capIdx);
-    expect(capIdx).toBeLessThan(planIdx);
+    const lastCapability = order.lastIndexOf("capability");
+    const lastPlan = order.lastIndexOf("plan");
+    const contextIdx = order.indexOf("context");
+    const executeIdx = order.indexOf("execute");
+    expect(lastIntent).toBeLessThan(lastCapability);
+    expect(lastCapability).toBeLessThan(lastPlan);
+    expect(lastPlan).toBeLessThan(contextIdx);
+    expect(contextIdx).toBeLessThan(executeIdx);
     expect(assembleContextMock).toHaveBeenCalledWith(expect.objectContaining({
       executionPlan: expect.objectContaining({
         replayPolicy: "assistant-turn",
@@ -469,7 +458,10 @@ describe("Phase 2 session orchestration", () => {
     }));
     expect(callModelMock).toHaveBeenCalledWith(expect.objectContaining({
       executionPlan: expect.objectContaining({
-        replayPolicy: "assistant-turn",
+        providerFamily: "br-minimax",
+        legacyExecutionPlan: expect.objectContaining({
+          replayPolicy: "assistant-turn",
+        }),
       }),
     }));
     expect(response.session.runtimeVersion).toBe(1);

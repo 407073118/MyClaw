@@ -9,6 +9,17 @@
 
 ---
 
+## 0. 2026-04-11 仓库真相校正
+
+这份设计稿仍然是后续增强的主设计方向，但经过 2026-04-11 对当前代码与测试的复核，需要先明确以下现状：
+
+- `vendor policy registry`、`vendor runtime policy resolver`、`turn execution plan`、`route probe`、`provider capability probers` 已经不是“待设计”，而是已落地并有测试保护。
+- `OpenAI Responses` 与 `Anthropic Messages` 已有真实 protocol driver，`BR MiniMax` 也已有专用 adapter / replay / probe。
+- 目前真正的主要缺口，不是“没有多厂商抽象”，而是“多数厂商的执行深度仍浅，且 vendor+protocol rollout 尚未真正进入执行主门控”。
+- `.planning/phases/10-*` 中引用的 `phase10-minimax-adapter.test.ts`、`phase10-message-replay.test.ts`、`phase10-model-settings.test.ts`、`phase9-provider-reasoning-mapper.test.ts` 当前仓库中并不存在，不能再作为现状证明。
+
+因此，后续开发应把本设计稿视为“增强目标说明”，而不是“从零开始搭骨架”的文档。
+
 ## 1. 背景与问题
 
 ### 1.1 当前代码已经有骨架，但支持深度不均衡

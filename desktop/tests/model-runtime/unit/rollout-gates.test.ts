@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   isProviderFamilyEnabled,
   listProviderFamilyRolloutGates,
+  resolveEffectiveExecutionRolloutGate,
   resolveProviderFamilyRolloutGate,
   resolveVendorProtocolRolloutGate,
 } from "../../../src/main/services/model-runtime/rollout-gates";
@@ -76,6 +77,23 @@ describe("rollout gates", () => {
     expect(resolveVendorProtocolRolloutGate("minimax", "anthropic-messages")).toMatchObject({
       enabled: false,
       state: "beta",
+    });
+  });
+
+  it("lets explicit vendor+protocol flags override the disabled family gate", () => {
+    expect(resolveEffectiveExecutionRolloutGate({
+      providerFamily: "qwen-dashscope",
+      vendorFamily: "qwen",
+      protocolTarget: "openai-responses",
+      providerFlags: {
+        "qwen-dashscope": false,
+      },
+      vendorProtocolFlags: {
+        "qwen:openai-responses": true,
+      },
+    })).toMatchObject({
+      enabled: true,
+      reason: "runtime-flag-override",
     });
   });
 });

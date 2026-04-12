@@ -1,12 +1,30 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import { formatTokenCount, formatCapabilitySource } from "../utils/context-ui-helpers";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
+import type { ProtocolTarget } from "@shared/contracts";
+
+function formatProtocolTargetLabel(target?: ProtocolTarget | null): string | null {
+  if (!target) return null;
+  if (target === "openai-responses") return "OpenAI Responses";
+  if (target === "anthropic-messages") return "Anthropic Messages";
+  return "OpenAI Compatible";
+}
+
+function formatProtocolSelectionSourceLabel(source?: "saved" | "probe" | "registry-default" | "fallback" | null): string | null {
+  if (!source) return null;
+  if (source === "saved") return "保存选择";
+  if (source === "probe") return "探测推荐";
+  if (source === "registry-default") return "注册表默认";
+  return "回退选择";
+}
 
 export default function ModelsPage() {
   const workspace = useWorkspaceStore();
   const models = workspace.models ?? [];
   const defaultModelProfileId = workspace.defaultModelProfileId;
+  const location = useLocation();
+  const notice = (location.state as { modelConfigNotice?: string } | null)?.modelConfigNotice ?? null;
 
   return (
     <main className="page-container">
@@ -24,6 +42,11 @@ export default function ModelsPage() {
       </header>
 
       <div className="models-content">
+        {notice && (
+          <section className="notice-banner">
+            {notice}
+          </section>
+        )}
         {models.length === 0 ? (
           <section className="card">
             <p>This is where you manage your model connections.</p>
@@ -53,6 +76,18 @@ export default function ModelsPage() {
                   {model.id === defaultModelProfileId && (
                     <span className="default-badge">default</span>
                   )}
+                  {formatProtocolTargetLabel(model.protocolTarget) && (
+                    <span className="route-badge">{formatProtocolTargetLabel(model.protocolTarget)}</span>
+                  )}
+                  {formatProtocolSelectionSourceLabel(model.protocolSelectionSource) && (
+                    <span className="route-source-badge">{formatProtocolSelectionSourceLabel(model.protocolSelectionSource)}</span>
+                  )}
+                  {(() => {
+                    const resolved = resolveModelCapability(model);
+                    return resolved.effective.source ? (
+                      <span className="source-badge">{formatCapabilitySource(resolved.effective.source)}</span>
+                    ) : null;
+                  })()}
                   <span className="provider-badge">{model.provider}</span>
                 </div>
               </Link>
@@ -112,6 +147,17 @@ export default function ModelsPage() {
           font-size: 14px;
           line-height: 1.5;
           margin: 0;
+        }
+
+        .notice-banner {
+          margin-bottom: 16px;
+          max-width: 860px;
+          padding: 12px 14px;
+          border-radius: var(--radius-md, 10px);
+          border: 1px solid #10a37f44;
+          background: #10a37f14;
+          color: #86efac;
+          font-size: 13px;
         }
 
         .models-list {
@@ -182,6 +228,33 @@ export default function ModelsPage() {
           border-radius: 999px;
           border: 1px solid var(--glass-border);
           color: var(--text-secondary, #a1a1aa);
+        }
+
+        .route-badge {
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid #10a37f44;
+          color: #34d399;
+          background: #10a37f12;
+        }
+
+        .route-source-badge {
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid #f59e0b44;
+          color: #fbbf24;
+          background: #f59e0b12;
+        }
+
+        .source-badge {
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid #60a5fa33;
+          color: #93c5fd;
+          background: #1d4ed812;
         }
 
         .ctx-badge {

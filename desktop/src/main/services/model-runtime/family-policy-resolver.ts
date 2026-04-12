@@ -61,7 +61,7 @@ export function inferProviderFamily(profile: FamilyPolicyResolutionInput["profil
   const baseUrl = profile.baseUrl.toLowerCase();
   const model = profile.model.toLowerCase();
 
-  if (flavor === "br-minimax" || flavor === "minimax-anthropic" || model.startsWith("minimax")) {
+  if (flavor === "br-minimax" || baseUrl.includes("cybotforge.100credit.cn")) {
     return "br-minimax";
   }
 

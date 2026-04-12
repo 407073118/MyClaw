@@ -1,6 +1,7 @@
 import type { ProtocolTarget, ProviderFamily, VendorFamily } from "@shared/contracts";
 
 export type ProviderRolloutFlags = Partial<Record<ProviderFamily, boolean>>;
+export type VendorProtocolRolloutFlags = Partial<Record<`${VendorFamily}:${ProtocolTarget}`, boolean>>;
 export type VendorProtocolRolloutState = "disabled" | "beta" | "stable";
 
 export type ProviderRolloutGate = {
@@ -58,7 +59,7 @@ const DEFAULT_ROLLOUT_GATES: Record<ProviderFamily, ProviderRolloutGate> = {
   },
 };
 
-const DEFAULT_VENDOR_PROTOCOL_ROLLOUT_GATES: Record<`${VendorFamily}:${ProtocolTarget}`, VendorProtocolRolloutGate> = {
+const DEFAULT_VENDOR_PROTOCOL_ROLLOUT_GATES: Partial<Record<`${VendorFamily}:${ProtocolTarget}`, VendorProtocolRolloutGate>> = {
   "openai:openai-responses": {
     vendorFamily: "openai",
     protocolTarget: "openai-responses",
@@ -243,9 +244,27 @@ export function listProviderFamilyRolloutGates(
 export function resolveVendorProtocolRolloutGate(
   vendorFamily: VendorFamily,
   protocolTarget: ProtocolTarget,
+  flags?: VendorProtocolRolloutFlags,
 ): VendorProtocolRolloutGate {
   const key = `${vendorFamily}:${protocolTarget}` as const;
   const gate = DEFAULT_VENDOR_PROTOCOL_ROLLOUT_GATES[key];
+
+  const override = flags?.[key];
+  if (override !== undefined) {
+    const baseGate = gate ?? {
+      vendorFamily,
+      protocolTarget,
+      state: override ? "beta" : "disabled",
+      enabled: false,
+      rolloutOrder: Number.MAX_SAFE_INTEGER,
+      reason: "unregistered-vendor-protocol",
+    };
+    return {
+      ...baseGate,
+      enabled: override,
+      reason: "runtime-flag-override",
+    };
+  }
 
   if (gate) {
     return gate;
@@ -258,5 +277,62 @@ export function resolveVendorProtocolRolloutGate(
     enabled: false,
     rolloutOrder: Number.MAX_SAFE_INTEGER,
     reason: "unregistered-vendor-protocol",
+  };
+}
+
+/** 解析本轮执行真正应使用的 rollout gate，优先看 vendor+protocol，其次兼容旧的 provider family gate。 */
+export function resolveEffectiveExecutionRolloutGate(input: {
+  providerFamily: ProviderFamily;
+  vendorFamily?: VendorFamily | null;
+  protocolTarget: ProtocolTarget;
+  providerFlags?: ProviderRolloutFlags;
+  vendorProtocolFlags?: VendorProtocolRolloutFlags;
+}): {
+  enabled: boolean;
+  rolloutOrder: number;
+  reason: string;
+} {
+  const providerGate = resolveProviderFamilyRolloutGate(input.providerFamily, input.providerFlags);
+  if (!input.vendorFamily) {
+    return providerGate;
+  }
+
+  const key = `${input.vendorFamily}:${input.protocolTarget}` as const;
+  const hasVendorOverride = input.vendorProtocolFlags
+    && Object.prototype.hasOwnProperty.call(input.vendorProtocolFlags, key);
+  const vendorGate = resolveVendorProtocolRolloutGate(
+    input.vendorFamily,
+    input.protocolTarget,
+    input.vendorProtocolFlags,
+  );
+
+  if (hasVendorOverride) {
+    return {
+      enabled: vendorGate.enabled,
+      rolloutOrder: vendorGate.rolloutOrder,
+      reason: vendorGate.reason,
+    };
+  }
+
+  if (vendorGate.enabled) {
+    return {
+      enabled: true,
+      rolloutOrder: vendorGate.rolloutOrder,
+      reason: vendorGate.reason,
+    };
+  }
+
+  if (providerGate.enabled) {
+    return {
+      enabled: true,
+      rolloutOrder: Math.min(providerGate.rolloutOrder, vendorGate.rolloutOrder),
+      reason: "provider-family-compat-override",
+    };
+  }
+
+  return {
+    enabled: false,
+    rolloutOrder: vendorGate.rolloutOrder,
+    reason: vendorGate.reason,
   };
 }

@@ -205,6 +205,7 @@ describe("Silicon person studio page", () => {
       target: { value: "auto_approve" },
     });
     fireEvent.click(screen.getByTestId("profile-tab-save"));
+    fireEvent.click(await screen.findByText("确认保存"));
 
     await waitFor(() => {
       expect(mocks.workspace.updateSiliconPerson).toHaveBeenCalledWith(

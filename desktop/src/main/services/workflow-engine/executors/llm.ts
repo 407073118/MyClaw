@@ -1,12 +1,16 @@
-import type { WorkflowLlmNode } from "@shared/contracts";
+import type { ExperienceProfileId, ProtocolTarget, ProviderFamily, WorkflowLlmNode } from "@shared/contracts";
 import type { NodeExecutor, NodeExecutionContext, NodeExecutionResult } from "../node-executor";
 
 export type ModelCaller = (options: {
   profile: unknown;
   messages: Array<{ role: string; content: string }>;
   tools: unknown[];
+  providerFamily?: ProviderFamily;
+  protocolTarget?: ProtocolTarget;
+  experienceProfileId?: ExperienceProfileId;
   onDelta?: (delta: { content?: string; reasoning?: string }) => void;
   signal?: AbortSignal;
+  workflowRunId?: string;
 }) => Promise<{ content: string; usage?: unknown }>;
 
 export type ModelProfileResolver = (id?: string) => unknown;
@@ -29,10 +33,13 @@ export class LlmNodeExecutor implements NodeExecutor {
     const profileId = (node as any).llm?.model ?? ctx.config.modelProfileId;
     const profile = this.profileResolver(profileId);
     let content = "";
-    await this.modelCaller({
+    const result = await this.modelCaller({
       profile,
       messages,
       tools: [],
+      providerFamily: node.llm.providerFamily,
+      protocolTarget: node.llm.protocolTarget,
+      experienceProfileId: node.llm.experienceProfileId,
       onDelta: (delta) => {
         if (delta.content) {
           content += delta.content;
@@ -45,13 +52,15 @@ export class LlmNodeExecutor implements NodeExecutor {
         }
       },
       signal: ctx.signal,
+      workflowRunId: ctx.runId,
     });
+    const resolvedContent = content.length > 0 ? content : result.content;
     const outputKey = node.llm.outputKey
       ?? (node.outputBindings ? Object.values(node.outputBindings)[0] : null)
       ?? "lastLlmOutput";
     return {
-      writes: [{ channelName: outputKey, value: content }],
-      outputs: { content },
+      writes: [{ channelName: outputKey, value: resolvedContent }],
+      outputs: { content: resolvedContent },
       durationMs: Date.now() - start,
     };
   }

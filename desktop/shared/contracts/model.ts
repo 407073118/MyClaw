@@ -250,6 +250,13 @@ export type ModelProfile = {
   model: string;
   headers?: Record<string, string>;
   requestBody?: Record<string, JsonValue>;
+  defaultReasoningEffort?: "low" | "medium" | "high" | "xhigh";
+  contextWindowOverride?: number;
+  compactTriggerTokens?: number;
+  responsesApiConfig?: {
+    disableResponseStorage?: boolean;
+    useServerState?: boolean;
+  };
   contextWindow?: number; // legacy field kept for backward compatibility
   discoveredCapabilities?: ModelCapability | null;
   capabilityOverrides?: Partial<ModelCapability>;

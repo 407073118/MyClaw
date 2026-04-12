@@ -251,6 +251,11 @@ export type TurnFallbackEvent = {
   reason: string;
 };
 
+export type TurnActualExecutionPath =
+  | "legacy-shim"
+  | "canonical-driver"
+  | "canonical-rollout-fallback";
+
 export type TurnOutcomeUsage = {
   promptTokens: number;
   completionTokens: number;
@@ -269,6 +274,7 @@ export type TurnTelemetryEvent = {
   contextPolicyId: string;
   reliabilityPolicyId: string;
   providerFamily: ProviderFamily;
+  vendorFamily?: VendorFamily;
   protocolTarget: ProtocolTarget;
   requestVariantId: string | null;
   retryCount: number;
@@ -276,6 +282,7 @@ export type TurnTelemetryEvent = {
   latencyMs: number;
   toolCompileMode: string;
   replayMode: string;
+  actualExecutionPath?: TurnActualExecutionPath;
   fallbackEvents: TurnFallbackEvent[];
   createdAt: string;
 };
@@ -285,6 +292,7 @@ export type TurnOutcome = {
   sessionId?: string | null;
   workflowRunId?: string | null;
   providerFamily: ProviderFamily;
+  vendorFamily?: VendorFamily;
   protocolTarget: ProtocolTarget;
   modelProfileId: string;
   experienceProfileId: ExperienceProfileId;
@@ -304,6 +312,8 @@ export type TurnOutcome = {
   finishReason?: string | null;
   latencyMs: number;
   usage?: TurnOutcomeUsage;
+  responseId?: string | null;
+  actualExecutionPath?: TurnActualExecutionPath;
   fallbackEvents?: TurnFallbackEvent[];
   toolCallCount?: number;
   toolSuccessCount?: number;
@@ -314,6 +324,17 @@ export type TurnOutcome = {
 
 export type ProviderFamilyScorecard = {
   providerFamily: ProviderFamily;
+  completionRate: number;
+  toolSuccessRate: number;
+  fallbackRate: number;
+  p95Latency: number;
+  contextStabilityRate: number;
+  sampleSize: number;
+};
+
+export type VendorProtocolScorecard = {
+  vendorFamily: VendorFamily | string;
+  protocolTarget: ProtocolTarget;
   completionRate: number;
   toolSuccessRate: number;
   fallbackRate: number;

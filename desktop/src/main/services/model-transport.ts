@@ -22,6 +22,12 @@ export type ExecuteRequestVariantsResult = {
   variant: TransportRequestVariant;
   variantIndex: number;
   attempt: number;
+  retryCount: number;
+  fallbackEvents: Array<{
+    fromVariant: string;
+    toVariant: string;
+    reason: string;
+  }>;
 };
 
 /** 传输层默认按 3 次重试配置工作，与当前 model-client 行为保持一致。 */
@@ -146,6 +152,7 @@ export async function executeRequestVariants(
   let lastError: Error | null = null;
 
   try {
+    const fallbackEvents: ExecuteRequestVariantsResult["fallbackEvents"] = [];
     for (let variantIndex = 0; variantIndex < requestVariants.length; variantIndex++) {
       const variant = requestVariants[variantIndex]!;
 
@@ -162,6 +169,14 @@ export async function executeRequestVariants(
             const shouldFallback = response.status === 400 && variantIndex < requestVariants.length - 1;
             if (shouldFallback) {
               lastError = await createHttpError(response);
+              const nextVariant = requestVariants[variantIndex + 1];
+              if (nextVariant) {
+                fallbackEvents.push({
+                  fromVariant: variant.id,
+                  toVariant: nextVariant.id,
+                  reason: variant.fallbackReason ?? "http-400",
+                });
+              }
               break;
             }
 
@@ -179,6 +194,8 @@ export async function executeRequestVariants(
             variant,
             variantIndex,
             attempt,
+            retryCount: attempt,
+            fallbackEvents,
           };
         } catch (err) {
           if (err instanceof Error && err.name === "AbortError") {

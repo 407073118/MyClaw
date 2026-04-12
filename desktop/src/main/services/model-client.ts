@@ -6,6 +6,7 @@
 import type {
   ExecutionPlan,
   ModelProfile,
+  ProtocolTarget,
   SessionReplayPolicy,
 } from "@shared/contracts";
 import { isBrMiniMaxProfile } from "@shared/br-minimax";
@@ -223,15 +224,40 @@ function appendIfMissing(base: string, suffix: string): string {
 /**
  * 构建完整的 chat completions（或 Anthropic messages）接口地址。
  */
-export function resolveModelEndpointUrl(profile: ModelProfile): string {
-  const root = resolveApiRoot(profile);
-  const flavor = resolveProviderFlavor(profile);
+export function resolveModelEndpointUrl(
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "model">,
+  protocolTarget?: ProtocolTarget,
+): string {
+  return resolveProtocolEndpointUrl(
+    profile,
+    protocolTarget ?? (profile.provider === "anthropic" || profile.providerFlavor === "anthropic"
+      ? "anthropic-messages"
+      : "openai-chat-compatible"),
+  );
+}
 
-  if (flavor === "anthropic") {
-    return appendIfMissing(root, "/messages");
+/** 按协议目标解析真正的接口地址，避免“协议选对了但 URL 还停留在旧路径”。 */
+export function resolveProtocolEndpointUrl(
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "model">,
+  protocolTarget: ProtocolTarget,
+): string {
+  const normalized = normalizeBaseUrl(profile.baseUrl);
+  const cleaned = stripKnownEndpointSuffixes(normalized);
+
+  if (protocolTarget === "openai-chat-compatible") {
+    const root = resolveApiRoot(profile as ModelProfile);
+    return appendIfMissing(root, "/chat/completions");
   }
 
-  return appendIfMissing(root, "/chat/completions");
+  const protocolRoot = profile.baseUrlMode === "provider-root"
+    ? appendIfMissing(cleaned, "/v1")
+    : cleaned;
+
+  if (protocolTarget === "anthropic-messages") {
+    return appendIfMissing(protocolRoot, "/messages");
+  }
+
+  return appendIfMissing(protocolRoot, "/responses");
 }
 
 // ---------------------------------------------------------------------------
@@ -239,14 +265,33 @@ export function resolveModelEndpointUrl(profile: ModelProfile): string {
 // ---------------------------------------------------------------------------
 
 /** 根据 provider 类型构造统一请求头，供聊天、探测与目录接口复用。 */
-export function buildRequestHeaders(profile: ModelProfile): Record<string, string> {
-  const flavor = resolveProviderFlavor(profile);
+export function buildRequestHeaders(
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "apiKey" | "model" | "headers">,
+  protocolTarget?: ProtocolTarget,
+): Record<string, string> {
+  return buildProtocolRequestHeaders(
+    profile,
+    protocolTarget ?? (profile.provider === "anthropic" || profile.providerFlavor === "anthropic"
+      ? "anthropic-messages"
+      : "openai-chat-compatible"),
+  );
+}
+
+/** 按协议目标构造请求头，允许兼容 Anthropic 路由时继续使用 Bearer 认证。 */
+export function buildProtocolRequestHeaders(
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "apiKey" | "model" | "headers">,
+  protocolTarget: ProtocolTarget,
+): Record<string, string> {
+  const flavor = resolveProviderFlavor(profile as ModelProfile);
 
   const base: Record<string, string> = {
     "content-type": "application/json",
   };
 
-  if (flavor === "anthropic") {
+  const usesAnthropicNativeHeaders = protocolTarget === "anthropic-messages"
+    && (profile.provider === "anthropic" || flavor === "anthropic");
+
+  if (usesAnthropicNativeHeaders) {
     base["x-api-key"] = profile.apiKey;
     base["anthropic-version"] = "2023-06-01";
   } else {
@@ -417,7 +462,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   const isEventStream = contentType.includes("text/event-stream");
 
-  if (isEventStream || response.body) {
+  if (isEventStream) {
     const result = await consumeSseStream(response, onDelta, onToolCallDelta);
     return {
       content: result.content,
@@ -438,18 +483,14 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   // 非流式 JSON 响应（例如 stream: false 的连通性测试）
   const rawBody = await response.text();
   const parsed = tryParseJson(rawBody);
-  const content = extractText(
-    parsed &&
-      typeof parsed === "object" &&
-      Array.isArray((parsed as { choices?: unknown }).choices)
-      ? ((parsed as { choices: Array<{ message?: { content?: unknown } }> }).choices[0]?.message?.content)
-      : null,
-  ) ?? "";
+  const normalized = adapter.normalizeResponse(parsed);
 
   return {
-    content,
-    toolCalls: [],
-    finishReason: null,
+    content: normalized.content ?? "",
+    ...(normalized.reasoning ? { reasoning: normalized.reasoning } : {}),
+    toolCalls: normalized.toolCalls ?? [],
+    finishReason: normalized.finishReason ?? null,
+    ...(normalized.usage ? { usage: normalized.usage } : {}),
     transport: {
       requestVariantId: transportResult.variant.id,
       fallbackReason: transportResult.variant.fallbackReason ?? null,

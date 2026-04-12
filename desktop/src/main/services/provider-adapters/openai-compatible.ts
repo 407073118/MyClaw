@@ -1,8 +1,8 @@
 import type { ProviderAdapter, ProviderAdapterMessage } from "./base";
 import {
   buildOpenAiCompatibleBody,
-  cloneReplayMessages,
   createRequestVariant,
+  mapAssistantReasoningToReplayField,
   normalizeAdapterResponse,
 } from "./base";
 
@@ -15,14 +15,7 @@ export const openAiCompatibleAdapter: ProviderAdapter = {
   id: "openai-compatible",
 
   materializeReplayMessages(_context, input) {
-    return cloneReplayMessages(input.messages).map((msg) => {
-      // 仅处理 assistant 消息中携带 reasoning 的情况
-      if (msg.role !== "assistant" || !("reasoning" in msg)) return msg;
-      // 将内部 reasoning 字段转为 OpenAI 兼容 API 期望的 reasoning_content
-      const { reasoning, ...rest } = msg;
-      (rest as Record<string, unknown>)["reasoning_content"] = reasoning ?? "";
-      return rest as ProviderAdapterMessage;
-    });
+    return mapAssistantReasoningToReplayField(input.messages, "reasoning_content") as ProviderAdapterMessage[];
   },
 
   prepareRequest(context, input) {

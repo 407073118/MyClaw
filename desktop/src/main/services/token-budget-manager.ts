@@ -68,6 +68,9 @@ function minNonNull(...values: Array<number | undefined | null>): number | undef
 export function buildBudgetSnapshot(
   capability: ModelCapability,
   policy?: ContextBudgetPolicy,
+  profileOverrides?: {
+    compactTriggerTokens?: number;
+  },
 ): BudgetSnapshot {
   const p: Required<ContextBudgetPolicy> = {
     ...DEFAULT_CONTEXT_BUDGET_POLICY,
@@ -103,7 +106,9 @@ export function buildBudgetSnapshot(
   const safeInputBudget = Math.max(0, effectiveMaxInput - totalReserve);
 
   // 计算压缩触发阈值
-  const compactTriggerTokens = Math.floor(safeInputBudget * p.compactTriggerRatio);
+  const compactTriggerTokens = profileOverrides?.compactTriggerTokens && profileOverrides.compactTriggerTokens > 0
+    ? profileOverrides.compactTriggerTokens
+    : Math.floor(safeInputBudget * p.compactTriggerRatio);
 
   return {
     effectiveContextWindow,

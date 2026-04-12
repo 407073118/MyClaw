@@ -33,7 +33,8 @@ export function buildAnthropicMessagesRequestBody(input: Parameters<NonNullable<
     .filter((message) => message.role === "system")
     .map((message) => String(message.content ?? ""))
     .join("\n\n");
-  const reasoningEffort = input.plan.legacyExecutionPlan.reasoningEffort as "low" | "medium" | "high" | "xhigh" | undefined;
+  const reasoningEffort = (input.plan.legacyExecutionPlan as { reasoningEffort?: "low" | "medium" | "high" | "xhigh" } | null)?.reasoningEffort
+    ?? input.profile.defaultReasoningEffort;
   return {
     model: input.profile.model,
     system,
@@ -93,13 +94,28 @@ function applyAnthropicEvent(
     const block = payload.content_block && typeof payload.content_block === "object"
       ? payload.content_block as Record<string, unknown>
       : null;
+    if (block?.type === "text" && typeof block.text === "string" && block.text) {
+      state.contentParts.push(block.text);
+      onDelta?.({ content: block.text });
+      return;
+    }
+    if ((block?.type === "thinking" || block?.type === "reasoning")
+      && typeof (block.thinking ?? block.text) === "string"
+      && String(block.thinking ?? block.text)) {
+      const reasoning = String(block.thinking ?? block.text);
+      state.reasoningParts.push(reasoning);
+      onDelta?.({ reasoning });
+      return;
+    }
     if (!block || block.type !== "tool_use") {
       return;
     }
 
     const existingInput = block.input && typeof block.input === "object"
-      ? JSON.stringify(block.input)
-      : "{}";
+      ? (Object.keys(block.input as Record<string, unknown>).length > 0
+          ? JSON.stringify(block.input)
+          : "")
+      : "";
     state.toolCallsByIndex.set(index, {
       id: typeof block.id === "string" ? block.id : `toolcall-${index}`,
       name: typeof block.name === "string" ? block.name : "",
@@ -138,6 +154,36 @@ function applyAnthropicEvent(
         name: toolCall.name,
         argumentsDelta: delta.partial_json,
       });
+    }
+    return;
+  }
+
+  if (event === "content_block_stop") {
+    const index = Number(payload.index ?? 0);
+    const block = payload.content_block && typeof payload.content_block === "object"
+      ? payload.content_block as Record<string, unknown>
+      : null;
+    if (block?.type === "text" && typeof block.text === "string" && block.text) {
+      state.contentParts.push(block.text);
+      onDelta?.({ content: block.text });
+      return;
+    }
+    if ((block?.type === "thinking" || block?.type === "reasoning")
+      && typeof (block.thinking ?? block.text) === "string"
+      && String(block.thinking ?? block.text)) {
+      const reasoning = String(block.thinking ?? block.text);
+      state.reasoningParts.push(reasoning);
+      onDelta?.({ reasoning });
+      return;
+    }
+    if (block?.type === "tool_use") {
+      const existing = state.toolCallsByIndex.get(index);
+      if (!existing) {
+        return;
+      }
+      if (block.input && typeof block.input === "object" && !Array.isArray(block.input)) {
+        existing.argumentsJson = JSON.stringify(block.input);
+      }
     }
     return;
   }
@@ -297,8 +343,8 @@ export const anthropicMessagesDriver: ProtocolDriver = {
 
     const requestBody = buildAnthropicMessagesRequestBody(input);
     const transportResult = await executeRequestVariants({
-      url: resolveModelEndpointUrl(input.profile),
-      headers: buildRequestHeaders(input.profile),
+      url: resolveModelEndpointUrl(input.profile, "anthropic-messages"),
+      headers: buildRequestHeaders(input.profile, "anthropic-messages"),
       requestVariants: [{ id: "anthropic-messages", body: requestBody }],
       signal: input.signal,
     });

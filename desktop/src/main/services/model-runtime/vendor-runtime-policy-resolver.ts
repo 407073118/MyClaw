@@ -29,6 +29,7 @@ export type ResolveVendorRuntimePolicyInput = {
     | "providerFamily"
     | "vendorFamily"
     | "protocolTarget"
+    | "savedProtocolPreferences"
     | "baseUrl"
     | "model"
     | "deploymentProfile"
@@ -128,6 +129,7 @@ function resolveDeploymentProfile(
 /** 解析最终选择的协议，默认保留当前运行时行为；少数新厂商可直接吃 registry 默认。 */
 function resolveSelectedProtocolTarget(input: {
   explicitProtocolTarget: ProtocolTarget | null;
+  savedProtocolPreferences?: ProtocolTarget[] | null;
   legacySelectedProtocolTarget: ProtocolTarget;
   recommendedProtocolTarget: ProtocolTarget;
   supportedProtocolTargets: ProtocolTarget[];
@@ -150,6 +152,23 @@ function resolveSelectedProtocolTarget(input: {
       selectedProtocolTarget: input.recommendedProtocolTarget,
       protocolSelectionSource: "fallback",
       protocolSelectionReason: "explicit-protocol-unsupported",
+    };
+  }
+
+  if (input.savedProtocolPreferences && input.savedProtocolPreferences.length > 0) {
+    const matchedPreference = input.savedProtocolPreferences.find((target) => input.supportedProtocolTargets.includes(target));
+    if (matchedPreference) {
+      return {
+        selectedProtocolTarget: matchedPreference,
+        protocolSelectionSource: "saved",
+        protocolSelectionReason: "saved-protocol-preference",
+      };
+    }
+
+    return {
+      selectedProtocolTarget: input.recommendedProtocolTarget,
+      protocolSelectionSource: "fallback",
+      protocolSelectionReason: "saved-protocol-unsupported",
     };
   }
 
@@ -182,6 +201,7 @@ export function resolveVendorRuntimePolicy(
   const legacySelectedProtocolTarget = resolveProtocolTarget(input.profile, providerFamily);
   const selection = resolveSelectedProtocolTarget({
     explicitProtocolTarget,
+    savedProtocolPreferences: input.profile.savedProtocolPreferences ?? null,
     legacySelectedProtocolTarget,
     recommendedProtocolTarget,
     supportedProtocolTargets,

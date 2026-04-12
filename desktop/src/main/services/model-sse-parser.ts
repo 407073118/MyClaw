@@ -144,9 +144,28 @@ function applySseChunk(
     }
   }
 
+  const rawLegacyFunctionCall =
+    delta["function_call"] && typeof delta["function_call"] === "object"
+      ? (delta["function_call"] as Record<string, unknown>)
+      : null;
+  if (rawLegacyFunctionCall) {
+    const acc = ensureToolCallAccumulator(state.toolCallsByIndex, 0);
+    if (typeof rawLegacyFunctionCall["name"] === "string" && rawLegacyFunctionCall["name"].trim()) {
+      acc.name = rawLegacyFunctionCall["name"].trim();
+    }
+    if (typeof rawLegacyFunctionCall["arguments"] === "string") {
+      acc.argumentsJson += rawLegacyFunctionCall["arguments"];
+      onToolCallDelta?.({
+        toolCallId: acc.id,
+        name: acc.name,
+        argumentsDelta: rawLegacyFunctionCall["arguments"],
+      });
+    }
+  }
+
   if (firstChoice && typeof firstChoice["finish_reason"] === "string") {
     const finishReason = firstChoice["finish_reason"].trim();
-    if (finishReason) state.finishReason = finishReason;
+    if (finishReason) state.finishReason = finishReason === "function_call" ? "tool_calls" : finishReason;
   }
 
   const rawUsage = (payload as Record<string, unknown>)["usage"];

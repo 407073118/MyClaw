@@ -11,7 +11,7 @@ import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { buildCanonicalTurnContent } from "../services/model-runtime/canonical-turn-content";
 import { createExecutionGateway } from "../services/model-runtime/execution-gateway";
 import { composePromptSections } from "../services/model-runtime/prompt-composer";
-import { updateTurnOutcome } from "../services/model-runtime/turn-outcome-store";
+import { loadTurnOutcome, updateTurnOutcome } from "../services/model-runtime/turn-outcome-store";
 import { hydrateCanonicalToolRegistryFromLegacyTools } from "../services/model-runtime/tool-registry";
 import { resolveTurnExecutionPlan } from "../services/model-runtime/turn-execution-plan-resolver";
 import { buildExecutionPlan } from "../services/reasoning-runtime";
@@ -99,6 +99,35 @@ function upsertWorkflowRun(ctx: RuntimeContext, run: WorkflowRunSummary): Workfl
     ctx.state.workflowRuns.push(run);
   }
   return run;
+}
+
+/** 为 workflow LLM 节点解析 Responses server-state 所需的 previous_response_id。 */
+function resolvePreviousResponseIdForWorkflowTurn(
+  ctx: RuntimeContext,
+  workflowRunId: string | null | undefined,
+  profile: ModelProfile,
+  protocolTarget: string,
+): string | null {
+  if (protocolTarget !== "openai-responses" || !profile.responsesApiConfig?.useServerState || !workflowRunId) {
+    return null;
+  }
+
+  const existingRun = ctx.state.workflowRuns.find((run) => run.id === workflowRunId);
+  if (!existingRun?.lastTurnOutcomeId) {
+    return null;
+  }
+
+  const lastOutcome = loadTurnOutcome(ctx.runtime.paths, existingRun.lastTurnOutcomeId);
+  if (!lastOutcome?.responseId) {
+    return null;
+  }
+
+  console.info("[workflow] 已为 Responses 原生执行恢复 previous_response_id。", {
+    workflowRunId,
+    lastTurnOutcomeId: existingRun.lastTurnOutcomeId,
+    previousResponseId: lastOutcome.responseId,
+  });
+  return lastOutcome.responseId;
 }
 
 /**
@@ -314,6 +343,12 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
       content: canonicalContent,
       toolSpecs: canonicalToolSpecs,
       plan: turnExecutionPlan,
+      previousResponseId: resolvePreviousResponseIdForWorkflowTurn(
+        ctx,
+        opts.workflowRunId,
+        profile,
+        turnExecutionPlan.protocolTarget,
+      ),
       onDelta: opts.onDelta,
       signal: opts.signal,
       workflowRunId: opts.workflowRunId,

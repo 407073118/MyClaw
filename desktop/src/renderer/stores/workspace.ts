@@ -11,6 +11,7 @@ import type {
   McpServerConfig,
   ModelCatalogItem,
   ModelProfile,
+  ModelRouteProbeResult,
   PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
@@ -274,6 +275,7 @@ type WorkspaceState = {
   }>;
   fetchModelCatalog: (input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">) => Promise<ModelCatalogItem[]>;
   fetchAvailableModelIds: (input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">) => Promise<string[]>;
+  probeModelRoutes: (input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">) => Promise<ModelRouteProbeResult>;
   createPublishDraft: (data: any) => Promise<any>;
   loadBuiltinTools: () => Promise<ResolvedBuiltinTool[]>;
   loadMcpTools: () => Promise<ResolvedMcpTool[]>;
@@ -1340,6 +1342,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   async fetchAvailableModelIds(input) {
     const result = await window.myClawAPI.fetchAvailableModelIds(input);
     return result.modelIds;
+  },
+
+  async probeModelRoutes(input) {
+    return window.myClawAPI.probeModelRoutesByConfig(input);
   },
 
   async createPublishDraft(data) {

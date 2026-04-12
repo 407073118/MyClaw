@@ -11,6 +11,7 @@ type ResponsesToolCallAccumulator = {
 };
 
 type ResponsesStreamState = {
+  responseId: string | null;
   contentParts: string[];
   reasoningParts: string[];
   toolCalls: Map<string, ResponsesToolCallAccumulator>;
@@ -118,6 +119,10 @@ export function buildOpenAiResponsesRequestBody(
   messages: Array<{ role: string; content: unknown }>,
   tools: unknown[],
   reasoningEffort?: "low" | "medium" | "high" | "xhigh",
+  options?: {
+    disableResponseStorage?: boolean;
+    previousResponseId?: string | null;
+  },
 ): Record<string, unknown> {
   const { instructions, input } = buildResponsesInput(messages);
   return {
@@ -126,6 +131,8 @@ export function buildOpenAiResponsesRequestBody(
     tools: normalizeResponsesTools(tools),
     stream: true,
     ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
+    ...(options?.disableResponseStorage ? { store: false } : {}),
+    ...(options?.previousResponseId ? { previous_response_id: options.previousResponseId } : {}),
     ...(instructions ? { instructions } : {}),
   };
 }
@@ -163,11 +170,25 @@ function applyResponsesEvent(
 ): void {
   const payload = data && typeof data === "object" ? data as Record<string, unknown> : {};
 
+  if (event === "response.created" && typeof payload.id === "string" && payload.id.trim()) {
+    state.responseId = payload.id.trim();
+    return;
+  }
+
   if (event === "response.output_text.delta" || event === "response.content_part.delta") {
     const delta = typeof payload.delta === "string" ? payload.delta : "";
     if (delta) {
       state.contentParts.push(delta);
       onDelta?.({ content: delta });
+    }
+    return;
+  }
+
+  if (event === "response.content_part.done") {
+    const text = typeof payload.text === "string" ? payload.text : "";
+    if (text) {
+      state.contentParts.push(text);
+      onDelta?.({ content: text });
     }
     return;
   }
@@ -181,11 +202,22 @@ function applyResponsesEvent(
     return;
   }
 
+  if (event === "response.reasoning_summary_part.done") {
+    const text = typeof payload.text === "string" ? payload.text : "";
+    if (text) {
+      state.reasoningParts.push(text);
+      onDelta?.({ reasoning: text });
+    }
+    return;
+  }
+
   if (event === "response.output_item.added" && payload.type === "function_call") {
     const callId = typeof payload.call_id === "string"
       ? payload.call_id
       : typeof payload.id === "string"
         ? payload.id
+        : typeof payload.item_id === "string"
+          ? payload.item_id
         : "";
     if (!callId) {
       return;
@@ -226,7 +258,11 @@ function applyResponsesEvent(
   }
 
   if (event === "response.output_item.done" && payload.type === "function_call") {
-    const callId = typeof payload.call_id === "string" ? payload.call_id : state.activeToolCallId;
+    const callId = typeof payload.call_id === "string"
+      ? payload.call_id
+      : typeof payload.item_id === "string"
+        ? payload.item_id
+        : state.activeToolCallId;
     if (!callId) {
       return;
     }
@@ -278,6 +314,7 @@ async function consumeResponsesStream(
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void,
 ): Promise<ProtocolExecutionOutput> {
   const state: ResponsesStreamState = {
+    responseId: null,
     contentParts: [],
     reasoningParts: [],
     toolCalls: new Map(),
@@ -360,6 +397,7 @@ async function consumeResponsesStream(
     toolCalls: materializeToolCalls(state.toolCalls),
     finishReason: state.finishReason ?? "stop",
     usage: state.usage,
+    responseId: state.responseId,
     requestVariantId: null,
     fallbackReason: null,
     retryCount: 0,
@@ -370,16 +408,18 @@ async function consumeResponsesStream(
 /** OpenAI native 驱动：rollout 开启时直连 `/v1/responses`，关闭时回退到 legacy shim。 */
 export const openAiResponsesDriver: ProtocolDriver = {
   protocolTarget: "openai-responses",
-  buildRequestBody(input: {
-    profile: { model: string };
-    content: unknown;
-    toolBundle: { tools: unknown[] };
-  }) {
+  buildRequestBody(input: Parameters<NonNullable<ProtocolDriver["buildRequestBody"]>>[0]) {
+    const reasoningEffort = (input.plan.legacyExecutionPlan as { reasoningEffort?: "low" | "medium" | "high" | "xhigh" } | null)?.reasoningEffort
+      ?? input.profile.defaultReasoningEffort;
     return buildOpenAiResponsesRequestBody(
       input.profile.model,
       buildCanonicalRequestMessages(input.content as any) as Array<{ role: string; content: unknown }>,
       input.toolBundle.tools,
-      input.plan.legacyExecutionPlan.reasoningEffort as "low" | "medium" | "high" | "xhigh" | undefined,
+      reasoningEffort,
+      {
+        disableResponseStorage: input.profile.responsesApiConfig?.disableResponseStorage,
+        previousResponseId: input.profile.responsesApiConfig?.useServerState ? input.previousResponseId ?? null : null,
+      },
     );
   },
 
@@ -405,6 +445,7 @@ export const openAiResponsesDriver: ProtocolDriver = {
         toolCalls: result.toolCalls,
         finishReason: result.finishReason,
         usage: result.usage,
+        responseId: null,
         requestVariantId: transportMetadata.requestVariantId,
         fallbackReason: result.transport?.fallbackReason
           ?? rolloutFallbackEvents[0].reason
@@ -418,7 +459,12 @@ export const openAiResponsesDriver: ProtocolDriver = {
       input.profile.model,
       buildCanonicalRequestMessages(input.content) as Array<{ role: string; content: unknown }>,
       input.toolBundle.tools,
-      input.plan.legacyExecutionPlan.reasoningEffort as "low" | "medium" | "high" | "xhigh" | undefined,
+      (input.plan.legacyExecutionPlan as { reasoningEffort?: "low" | "medium" | "high" | "xhigh" } | null)?.reasoningEffort
+        ?? input.profile.defaultReasoningEffort,
+      {
+        disableResponseStorage: input.profile.responsesApiConfig?.disableResponseStorage,
+        previousResponseId: input.profile.responsesApiConfig?.useServerState ? input.previousResponseId ?? null : null,
+      },
     );
     const transportResult = await executeRequestVariants({
       url: resolveResponsesApiUrl(input.profile),
@@ -438,6 +484,7 @@ export const openAiResponsesDriver: ProtocolDriver = {
       toolCalls: parsed.toolCalls,
       finishReason: parsed.finishReason,
       usage: parsed.usage,
+      responseId: parsed.responseId,
       requestVariantId: transportResult.variant.id,
       fallbackReason: transportResult.variant.fallbackReason ?? null,
       retryCount: transportResult.retryCount,

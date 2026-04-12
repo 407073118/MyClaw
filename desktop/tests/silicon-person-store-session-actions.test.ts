@@ -367,7 +367,7 @@ describe("workspace silicon person session actions", () => {
 
     expect(markSiliconPersonSessionRead).toHaveBeenCalledWith("sp-1", "session-2");
     expect(readSession.id).toBe("session-2");
-    expect(useWorkspaceStore.getState().currentSession?.id).toBe("session-1");
+    expect(useWorkspaceStore.getState().activeSessionId).toBe("session-1");
     expect(useWorkspaceStore.getState().siliconPersons[0]?.sessions.find((item) => item.id === "session-2")).toMatchObject({
       unreadCount: 0,
       hasUnread: false,

@@ -139,6 +139,9 @@ describe("execution gateway", () => {
       baseUrl: "https://api.openai.com/v1",
       apiKey: "key",
       model: "gpt-4.1",
+      responsesApiConfig: {
+        useServerState: true,
+      },
     };
     const executionPlan: ExecutionPlan = {
       runtimeVersion: SESSION_RUNTIME_VERSION,
@@ -269,6 +272,9 @@ describe("execution gateway", () => {
       baseUrl: "https://api.openai.com/v1",
       apiKey: "key",
       model: "gpt-4.1",
+      responsesApiConfig: {
+        useServerState: true,
+      },
     };
     const executionPlan: ExecutionPlan = {
       runtimeVersion: SESSION_RUNTIME_VERSION,
@@ -282,6 +288,7 @@ describe("execution gateway", () => {
     const result = await gateway.executeTurn({
       mode: "canonical",
       profile,
+      previousResponseId: "resp_prev_123",
       executionPlan,
       messages: [{ role: "user", content: "hello" }],
       tools: [],
@@ -293,6 +300,10 @@ describe("execution gateway", () => {
     expect(result.requestVariantId).toBe("openai-responses");
     expect(result.fallbackReason).toBeNull();
     expect(result.fallbackEvents).toEqual([]);
+    expect(result.requestShape).toMatchObject({
+      previous_response_id: "resp_prev_123",
+    });
+    expect(result.outcome.responseId).toBe("resp_123");
     expect(result.outcome.requestVariantId).toBe("openai-responses");
     expect(result.outcome.fallbackReason).toBeNull();
     expect(result.outcome.fallbackEvents).toEqual([]);

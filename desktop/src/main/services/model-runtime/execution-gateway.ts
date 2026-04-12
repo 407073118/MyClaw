@@ -5,6 +5,7 @@ import type {
   CanonicalTurnContent,
   ExecutionPlan,
   ModelProfile,
+  TurnActualExecutionPath,
   TurnExecutionPlan,
   TurnFallbackEvent,
   TurnOutcome,
@@ -17,8 +18,8 @@ import {
   canonicalTurnContentToLegacyMessages,
 } from "./canonical-turn-content";
 import { resolveProtocolDriver, type ProtocolExecutionOutput } from "./protocols";
-import type { ProviderRolloutFlags } from "./rollout-gates";
-import { resolveProviderFamilyRolloutGate } from "./rollout-gates";
+import type { ProviderRolloutFlags, VendorProtocolRolloutFlags } from "./rollout-gates";
+import { resolveEffectiveExecutionRolloutGate } from "./rollout-gates";
 import { buildTurnTelemetryEvent } from "./telemetry";
 import { createToolMiddleware, type CompiledToolBundle, type ToolMiddleware } from "./tool-middleware";
 import {
@@ -35,6 +36,7 @@ export type ExecutionGatewayInput = {
   executionPlan?: TurnExecutionPlan | ExecutionPlan | null;
   modelProfileId?: string;
   content?: CanonicalTurnContent | null;
+  previousResponseId?: string | null;
   messages?: ModelChatMessage[];
   tools?: Array<{ type: "function"; function: { name: string; description: string; parameters: Record<string, unknown> } }>;
   toolSpecs?: CanonicalToolSpec[];
@@ -50,7 +52,7 @@ export type ExecutionGatewayResult = ProtocolExecutionOutput & {
   plan: TurnExecutionPlan;
   providerFamily: TurnExecutionPlan["providerFamily"];
   protocolTarget: TurnExecutionPlan["protocolTarget"];
-  actualExecutionPath: "legacy-shim" | "canonical-driver" | "canonical-rollout-fallback";
+  actualExecutionPath: TurnActualExecutionPath;
   toolBundle: CompiledToolBundle;
   latencyMs: number;
   outcome: TurnOutcome;
@@ -61,6 +63,7 @@ export type ExecutionGatewayResult = ProtocolExecutionOutput & {
 export type ExecutionGatewayDeps = {
   paths?: MyClawPaths;
   rolloutFlags?: ProviderRolloutFlags;
+  vendorProtocolFlags?: VendorProtocolRolloutFlags;
   toolMiddleware?: ToolMiddleware;
 };
 
@@ -82,6 +85,7 @@ function normalizeModelCallResult(result: ModelCallResult): ProtocolExecutionOut
     toolCalls: result.toolCalls,
     finishReason: result.finishReason,
     usage: result.usage,
+    responseId: null,
     requestVariantId: result.transport?.requestVariantId ?? "primary",
     fallbackReason: result.transport?.fallbackReason ?? null,
     retryCount: result.transport?.retryCount ?? 0,
@@ -146,12 +150,14 @@ function buildOutcome(input: {
   startedAt: string;
   finishedAt: string;
   fallbackEvents: TurnFallbackEvent[];
+  actualExecutionPath: TurnActualExecutionPath;
 }): TurnOutcome {
   const outcome: TurnOutcome = {
     id: input.outcomeId,
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
     ...(input.workflowRunId ? { workflowRunId: input.workflowRunId } : {}),
     providerFamily: input.plan.providerFamily,
+    vendorFamily: input.plan.vendorFamily,
     protocolTarget: input.plan.protocolTarget,
     modelProfileId: input.profile.id,
     experienceProfileId: input.plan.experienceProfileId,
@@ -172,6 +178,8 @@ function buildOutcome(input: {
     finishReason: input.result.finishReason ?? null,
     latencyMs: input.latencyMs,
     usage: input.result.usage,
+    responseId: input.result.responseId ?? null,
+    actualExecutionPath: input.actualExecutionPath,
     toolCallCount: input.result.toolCalls.length,
     toolSuccessCount: 0,
     contextStability: (input.result.fallbackEvents?.length ?? 0) === 0 && !input.result.fallbackReason,
@@ -210,13 +218,20 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
       const canonicalContent = buildCanonicalInput(input, plan);
       const legacyMessages = input.messages ?? canonicalTurnContentToLegacyMessages(canonicalContent);
       const toolBundle = buildToolBundle(input, plan, toolMiddleware);
-      const rolloutGate = resolveProviderFamilyRolloutGate(plan.providerFamily, deps.rolloutFlags);
+      const rolloutGate = resolveEffectiveExecutionRolloutGate({
+        providerFamily: plan.providerFamily,
+        vendorFamily: plan.vendorFamily ?? null,
+        protocolTarget: plan.protocolTarget,
+        providerFlags: deps.rolloutFlags,
+        vendorProtocolFlags: deps.vendorProtocolFlags,
+      });
       const protocolDriver = resolveProtocolDriver(plan.protocolTarget);
       const protocolInput = {
         profile: input.profile,
         plan,
         content: canonicalContent,
         toolBundle,
+        previousResponseId: input.previousResponseId ?? null,
         signal: input.signal,
         onDelta: input.onDelta,
         onToolCallDelta: input.onToolCallDelta,
@@ -261,6 +276,7 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
         startedAt,
         finishedAt,
         fallbackEvents,
+        actualExecutionPath,
       });
 
       if (deps.paths) {

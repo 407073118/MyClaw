@@ -136,6 +136,10 @@ const myClawAPI = {
   ): Promise<{ success: boolean; ok: boolean; latencyMs?: number; error?: string }> =>
     ipcRenderer.invoke("model:test-by-config", input),
 
+  probeModelRoutesByConfig: (
+    input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
+  ) => ipcRenderer.invoke("model:probe-routes-by-config", input),
+
   fetchModelCatalog: (
     input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
   ) =>

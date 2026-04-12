@@ -9,6 +9,7 @@ import type {
   McpServerConfig,
   ModelCatalogItem,
   ModelProfile,
+  ModelRouteProbeResult,
   PersonalPromptProfile,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
@@ -223,6 +224,9 @@ declare global {
       testModelByConfig: (
         input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
       ) => Promise<{ success: boolean; ok: boolean; latencyMs?: number; error?: string }>;
+      probeModelRoutesByConfig: (
+        input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
+      ) => Promise<ModelRouteProbeResult>;
       fetchModelCatalog: (
         input: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "apiKey" | "model" | "headers" | "requestBody">,
       ) => Promise<{ modelIds: ModelCatalogItem[] }>;

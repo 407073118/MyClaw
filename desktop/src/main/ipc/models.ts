@@ -22,7 +22,7 @@ import {
   deleteModelProfileFile,
   saveSettings,
 } from "../services/state-persistence";
-import { buildRequestHeaders, resolveModelEndpointUrl } from "../services/model-client";
+import { buildProtocolRequestHeaders, buildRequestHeaders, resolveModelEndpointUrl, resolveProtocolEndpointUrl } from "../services/model-client";
 import { probeBrMiniMaxRuntime } from "../services/br-minimax-runtime";
 import { coerceManagedProfileWrite } from "../services/managed-model-profile";
 import { normalizeAnthropicCatalog } from "../services/provider-capability-probers/anthropic";
@@ -221,6 +221,9 @@ function resolveRouteProbeUrl(
   if (protocolTarget === "openai-responses") {
     return resolveResponsesApiUrl(profile);
   }
+  if (protocolTarget === "anthropic-messages") {
+    return resolveProtocolEndpointUrl(profile, protocolTarget);
+  }
   return resolveModelEndpointUrl(profile);
 }
 
@@ -244,12 +247,12 @@ async function probeSingleRoute(
   const startedAt = Date.now();
 
   try {
-    const response = await fetch(resolveRouteProbeUrl(profile, protocolTarget), {
-      method: "POST",
-      headers: buildRequestHeaders(profile),
-      body: JSON.stringify(buildRouteProbeRequestBody(profile, protocolTarget, profile.requestBody as Record<string, unknown> | undefined)),
-      signal: controller.signal,
-    });
+      const response = await fetch(resolveRouteProbeUrl(profile, protocolTarget), {
+        method: "POST",
+        headers: buildProtocolRequestHeaders(profile, protocolTarget),
+        body: JSON.stringify(buildRouteProbeRequestBody(profile, protocolTarget, profile.requestBody as Record<string, unknown> | undefined)),
+        signal: controller.signal,
+      });
     const latencyMs = Date.now() - startedAt;
 
     if (response.ok) {

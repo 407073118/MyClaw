@@ -13,6 +13,8 @@ export const EXPECTED_BUILTIN_TOOL_NAMES = [
   "git_commit",
   "http_fetch",
   "web_search",
+  "ppt_themes",
+  "ppt_generate",
   "task_create",
   "task_list",
   "task_get",

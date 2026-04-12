@@ -25,6 +25,7 @@ export type ResolveTurnExecutionPlanInput = {
     | "providerFamily"
     | "vendorFamily"
     | "protocolTarget"
+    | "savedProtocolPreferences"
     | "experienceProfileId"
     | "baseUrl"
     | "model"

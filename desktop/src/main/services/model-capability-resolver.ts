@@ -47,6 +47,23 @@ function hasManualOverride(value: Partial<ModelCapability> | null | undefined): 
   return Object.keys(value).length > 0;
 }
 
+/** 从 profile 级快捷字段构造 capability override，供原生模型增强路径复用。 */
+function buildProfileCapabilityOverride(profile: ModelProfile): Partial<ModelCapability> | null {
+  if (!profile.contextWindowOverride || profile.contextWindowOverride <= 0) {
+    return null;
+  }
+
+  const contextWindowTokens = profile.contextWindowOverride;
+  const maxOutputTokens = profile.capabilityOverrides?.maxOutputTokens
+    ?? profile.discoveredCapabilities?.maxOutputTokens
+    ?? 4096;
+
+  return {
+    contextWindowTokens,
+    maxInputTokens: Math.max(1, contextWindowTokens - maxOutputTokens),
+  };
+}
+
 /**
  * 解析模型能力优先级：
  * 手动覆盖 > 已发现能力 > registry > legacy contextWindow > 默认兜底。
@@ -65,7 +82,11 @@ export function resolveModelCapability(
     ? options.discoveredCapability ?? null
     : profile.discoveredCapabilities ?? null;
   const legacy = buildLegacyCapability(profile);
-  const manualOverride = profile.capabilityOverrides ?? null;
+  const profileOverride = buildProfileCapabilityOverride(profile);
+  const manualOverride = {
+    ...(profileOverride ?? {}),
+    ...(profile.capabilityOverrides ?? {}),
+  };
   const hasManual = hasManualOverride(manualOverride);
 
   let source: ModelCapability["source"] = "default";
@@ -90,4 +111,3 @@ export function resolveModelCapability(
     manualOverride: hasManual ? manualOverride : null,
   };
 }
-

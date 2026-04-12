@@ -4,6 +4,7 @@ import type {
   ProviderFlavor,
   ProviderKind,
 } from "@shared/contracts";
+import openAiModels from "./openai-models.json";
 
 type CapabilityTemplate = Omit<ModelCapability, "source">;
 
@@ -12,6 +13,15 @@ type RegistryEntry = {
   providerFlavor?: ProviderFlavor;
   modelPattern?: RegExp;
   capability: CapabilityTemplate;
+};
+
+type OpenAiCapabilityCatalog = {
+  models: Record<string, CapabilityTemplate>;
+  families: Array<{
+    pattern: string;
+    capability: CapabilityTemplate;
+  }>;
+  defaults: CapabilityTemplate;
 };
 
 const REGISTRY_ENTRIES: RegistryEntry[] = [
@@ -136,6 +146,8 @@ const REGISTRY_ENTRIES: RegistryEntry[] = [
   },
 ];
 
+const OPENAI_CAPABILITY_CATALOG = openAiModels as OpenAiCapabilityCatalog;
+
 /**
  * 根据 profile 猜测 providerFlavor，优先使用显式配置。
  */
@@ -159,11 +171,40 @@ function inferProviderFlavor(profile: ModelProfile): ProviderFlavor | undefined 
   return undefined;
 }
 
+/** 读取内置 OpenAI 模型能力目录，优先精确匹配，再回退到 family 规则。 */
+function resolveBundledOpenAiCapability(modelId: string): CapabilityTemplate {
+  const exact = OPENAI_CAPABILITY_CATALOG.models[modelId];
+  if (exact) {
+    return {
+      ...OPENAI_CAPABILITY_CATALOG.defaults,
+      ...exact,
+    };
+  }
+
+  for (const family of OPENAI_CAPABILITY_CATALOG.families) {
+    if (new RegExp(family.pattern, "i").test(modelId)) {
+      return {
+        ...OPENAI_CAPABILITY_CATALOG.defaults,
+        ...family.capability,
+      };
+    }
+  }
+
+  return OPENAI_CAPABILITY_CATALOG.defaults;
+}
+
 /**
  * 从静态 registry 中查找模型能力，命中后统一标记 source=registry。
  */
 export function findRegistryCapability(profile: ModelProfile): ModelCapability | null {
   const flavor = inferProviderFlavor(profile);
+
+  if (flavor === "openai") {
+    return {
+      ...resolveBundledOpenAiCapability(profile.model),
+      source: "registry",
+    };
+  }
 
   for (const entry of REGISTRY_ENTRIES) {
     if (entry.providerFlavor && flavor !== entry.providerFlavor) continue;

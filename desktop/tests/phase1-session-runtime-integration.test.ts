@@ -286,7 +286,7 @@ describe("phase1 session runtime integration", () => {
     // resolveSessionRuntimeIntent is called 3 times per send:
     // 1) sessionReasoningEffort extraction, 2) isPlanModeEnabled check, 3) agentic loop
     expect(resolveSessionRuntimeIntentMock).toHaveBeenCalledTimes(3);
-    expect(buildExecutionPlanMock).toHaveBeenCalledTimes(1);
+    expect(buildExecutionPlanMock).toHaveBeenCalledTimes(2);
     expect(assembleContextMock).toHaveBeenCalledWith(expect.objectContaining({
       executionPlan,
     }));

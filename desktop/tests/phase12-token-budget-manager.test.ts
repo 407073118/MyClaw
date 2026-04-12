@@ -154,6 +154,16 @@ describe("buildBudgetSnapshot", () => {
     expect(snapshot.policy.enableLongTermMemory).toBe(false);
   });
 
+  it("lets profile-level compactTriggerTokens override ratio-derived thresholds", () => {
+    const snapshot = buildBudgetSnapshot(
+      baseCapability,
+      DEFAULT_CONTEXT_BUDGET_POLICY,
+      { compactTriggerTokens: 9000 },
+    );
+
+    expect(snapshot.compactTriggerTokens).toBe(9000);
+  });
+
   it("ensures safeInputBudget is never negative", () => {
     const tinyCapability: ModelCapability = {
       contextWindowTokens: 1024,

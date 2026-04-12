@@ -22,6 +22,7 @@ export type WorkflowRunSummary = {
   finishedAt?: string;
   totalSteps?: number;
   error?: string;
+  lastTurnOutcomeId?: string;
 };
 
 export type WorkflowCheckpointSummary = {

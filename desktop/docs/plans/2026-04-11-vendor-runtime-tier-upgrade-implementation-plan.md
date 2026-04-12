@@ -10,6 +10,21 @@
 
 ---
 
+## 0. 2026-04-11 Reality Check
+
+这份实施计划是有效的历史推进草案，但当前仓库状态已经不是“全部未开始”：
+
+- Task 1 到 Task 4 的大部分基础骨架已经落地。
+- Task 7 中的 route probe、route detail、route badge 主链也已经落地，并且已有测试覆盖。
+- 当前真正没有完成的是：
+  - `vendor + protocol` 级 gate 真正接入执行主链
+  - 多数 vendor adapter 从 alias 升级为真实 vendor-aware adapter
+  - `Kimi / 公网 MiniMax / Ark` 的 transport 语义补完
+  - `OpenAI / Anthropic` 原生执行增强项
+  - scorecard / rollout readiness 的真实回填
+
+另外，旧 `.planning/phase10` 文档中提到的 `phase10-message-replay.test.ts`、`phase10-minimax-adapter.test.ts`、`phase10-model-settings.test.ts`、`phase9-provider-reasoning-mapper.test.ts` 当前仓库均不存在，后续执行时应以现有 `desktop/tests/model-runtime/**`、route probe、badge、provider-capability-prober 套件为准。
+
 ### Task 1: Add vendor runtime contracts and registry scaffolding
 
 **Files:**

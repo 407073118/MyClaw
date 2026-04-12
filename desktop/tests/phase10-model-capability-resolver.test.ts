@@ -100,6 +100,20 @@ describe("resolveModelCapability", () => {
     expect(resolved.effective.maxInputTokens).toBe(122880);
     expect(resolved.effective.maxOutputTokens).toBe(4096);
   });
+
+  it("lets contextWindowOverride behave like a profile-level manual capability override", () => {
+    const profile = buildProfile({
+      providerFlavor: "openai",
+      model: "gpt-5.4",
+      contextWindowOverride: 262144,
+    });
+
+    const resolved = resolveModelCapability(profile);
+
+    expect(resolved.effective.source).toBe("manual-override");
+    expect(resolved.effective.contextWindowTokens).toBe(262144);
+    expect((resolved.effective.maxInputTokens ?? 0) <= 262144).toBe(true);
+  });
 });
 
 describe("findRegistryCapability", () => {

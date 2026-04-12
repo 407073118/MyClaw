@@ -1,7 +1,10 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "@/stores/workspace";
+import type { ProtocolTarget } from "@shared/contracts";
 import { readBrMiniMaxRuntimeDiagnostics } from "@shared/br-minimax";
+import { resolveModelCapability } from "../../main/services/model-capability-resolver";
+import { formatCapabilitySource } from "../utils/context-ui-helpers";
 
 type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
 
@@ -29,16 +32,33 @@ function getProviderLabel(profile: any): string {
   return profile.provider ?? "Other";
 }
 
+function formatProtocolTargetLabel(target?: ProtocolTarget | null): string | null {
+  if (!target) return null;
+  if (target === "openai-responses") return "OpenAI Responses";
+  if (target === "anthropic-messages") return "Anthropic Messages";
+  return "OpenAI Compatible";
+}
+
+function formatProtocolSelectionSourceLabel(source?: "saved" | "probe" | "registry-default" | "fallback" | null): string | null {
+  if (!source) return null;
+  if (source === "saved") return "保存选择";
+  if (source === "probe") return "探测推荐";
+  if (source === "registry-default") return "注册表默认";
+  return "回退选择";
+}
+
 const TABS = ["模型", "通用", "审批"] as const;
 type TabName = typeof TABS[number];
 
 /** 渲染个人设置页，管理模型、通用选项与审批策略。 */
 export default function SettingsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const workspace = useWorkspaceStore();
   const defaultApprovalPolicy = createDefaultApprovalPolicy();
+  const locationState = location.state as { activeTab?: TabName; modelConfigNotice?: string } | null;
 
-  const [activeTab, setActiveTab] = useState<TabName>("模型");
+  const [activeTab, setActiveTab] = useState<TabName>(locationState?.activeTab ?? "模型");
   const [modelConnectivityStatus, setModelConnectivityStatus] = useState<Record<string, string>>({});
   const [modelConnectivityLoading, setModelConnectivityLoading] = useState<Record<string, boolean>>({});
 
@@ -68,6 +88,7 @@ export default function SettingsPage() {
   const myClawRootPath = workspace.myClawRootPath ?? "未设置";
   const skillsRootPath = workspace.skillsRootPath ?? "未设置";
   const sessionsRootPath = workspace.sessionsRootPath ?? "未设置";
+  const modelConfigNotice = locationState?.modelConfigNotice ?? null;
   const appUpdate = workspace.appUpdate ?? {
     enabled: false,
     stage: "disabled",
@@ -185,6 +206,11 @@ export default function SettingsPage() {
       {/* 模型页签 */}
       {activeTab === "模型" && (
         <article className="card no-padding">
+          {modelConfigNotice && (
+            <div className="settings-notice-banner">
+              {modelConfigNotice}
+            </div>
+          )}
           <div className="section-header-row">
             <div className="header-content">
               <p className="eyebrow">模型列表</p>
@@ -230,6 +256,15 @@ export default function SettingsPage() {
                   <div className="model-info">
                     <div className="model-name-row">
                       <span className="provider-tag">{getProviderLabel(profile)}</span>
+                      {formatProtocolTargetLabel(profile.protocolTarget) && (
+                        <span className="route-tag">{formatProtocolTargetLabel(profile.protocolTarget)}</span>
+                      )}
+                      {formatProtocolSelectionSourceLabel(profile.protocolSelectionSource) && (
+                        <span className="route-source-tag">{formatProtocolSelectionSourceLabel(profile.protocolSelectionSource)}</span>
+                      )}
+                      <span className="route-source-tag capability-source-tag">
+                        {formatCapabilitySource(resolveModelCapability(profile).effective.source)}
+                      </span>
                       <strong>{profile.name}</strong>
                     </div>
                     <p className="model-id"><span>ID:</span> {profile.model}</p>
@@ -403,6 +438,7 @@ export default function SettingsPage() {
         .secondary:hover:not(:disabled) { background: var(--bg-card); border-color: var(--text-muted); }
         .primary:disabled, .secondary:disabled { opacity: 0.5; cursor: not-allowed; }
         .section-header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding: 32px 32px 0; }
+        .settings-notice-banner { margin: 24px 32px 0; padding: 12px 14px; border-radius: 10px; border: 1px solid #10a37f44; background: #10a37f14; color: #86efac; font-size: 13px; }
         .header-content h3 { font-size: 24px; margin: 0 0 8px; }
         .description { color: var(--text-muted); max-width: 600px; }
         .add-btn { display: flex; align-items: center; gap: 8px; padding: 12px 20px; }
@@ -422,6 +458,9 @@ export default function SettingsPage() {
         .model-info { display: flex; flex-direction: column; gap: 12px; }
         .model-name-row { display: flex; align-items: center; gap: 10px; }
         .provider-tag { font-size: 10px; font-weight: 700; padding: 2px 8px; background: var(--bg-base); border: 1px solid var(--glass-border); border-radius: 4px; color: var(--text-muted); text-transform: uppercase; }
+        .route-tag { font-size: 10px; font-weight: 700; padding: 2px 8px; background: rgba(16,163,127,0.12); border: 1px solid rgba(16,163,127,0.28); border-radius: 999px; color: #34d399; }
+        .route-source-tag { font-size: 10px; font-weight: 700; padding: 2px 8px; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.28); border-radius: 999px; color: #fbbf24; }
+        .capability-source-tag { background: rgba(59,130,246,0.12); border-color: rgba(96,165,250,0.28); color: #93c5fd; }
         .model-info strong { font-size: 16px; color: var(--text-primary); }
         .model-info p { font-size: 13px; margin: 0; display: flex; gap: 8px; }
         .model-info p span { color: var(--text-muted); width: 32px; font-weight: 500; }

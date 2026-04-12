@@ -22,7 +22,7 @@ import { createExecutionGateway } from "../services/model-runtime/execution-gate
 import { composePromptSections } from "../services/model-runtime/prompt-composer";
 import { buildCanonicalToolRegistry } from "../services/model-runtime/tool-registry";
 import { resolveTurnExecutionPlan } from "../services/model-runtime/turn-execution-plan-resolver";
-import { updateTurnOutcome } from "../services/model-runtime/turn-outcome-store";
+import { loadTurnOutcome, updateTurnOutcome } from "../services/model-runtime/turn-outcome-store";
 import { syncSiliconPersonExecutionResult } from "../services/silicon-person-session";
 import { getOrCreateWorkspace } from "../services/silicon-person-workspace";
 import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
@@ -620,6 +620,33 @@ async function persistSessionTurnOutcomeMetrics(
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+/** 解析 OpenAI Responses server-state 所需的 previous_response_id。 */
+function resolvePreviousResponseIdForSessionTurn(
+  ctx: RuntimeContext,
+  session: ChatSession,
+  profile: ModelProfile,
+  protocolTarget: "openai-responses" | string,
+): string | null {
+  if (protocolTarget !== "openai-responses" || !profile.responsesApiConfig?.useServerState) {
+    return null;
+  }
+  if (!session.lastTurnOutcomeId) {
+    return null;
+  }
+
+  const lastOutcome = loadTurnOutcome(ctx.runtime.paths, session.lastTurnOutcomeId);
+  if (!lastOutcome?.responseId) {
+    return null;
+  }
+
+  console.info("[session:runtime] 已为 Responses 原生执行恢复 previous_response_id。", {
+    sessionId: session.id,
+    lastTurnOutcomeId: session.lastTurnOutcomeId,
+    previousResponseId: lastOutcome.responseId,
+  });
+  return lastOutcome.responseId;
 }
 
 /**
@@ -1967,6 +1994,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           content: plannerContent,
           toolSpecs: [],
           plan: turnExecutionPlan,
+          previousResponseId: resolvePreviousResponseIdForSessionTurn(
+            ctx,
+            session,
+            modelProfile,
+            turnExecutionPlan.protocolTarget,
+          ),
           sessionId,
           onDelta: (delta: { content?: string; reasoning?: string }) => {
             appendStreamDraft(streamedDrafts, currentMessageId, delta);
@@ -2197,6 +2230,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             content: canonicalContent,
             toolSpecs: canonicalToolSpecs,
             plan: turnExecutionPlan,
+            previousResponseId: resolvePreviousResponseIdForSessionTurn(
+              ctx,
+              session,
+              modelProfile,
+              turnExecutionPlan.protocolTarget,
+            ),
             sessionId,
             onDelta: (delta: { content?: string; reasoning?: string }) => {
               appendStreamDraft(streamedDrafts, currentMessageId, delta);

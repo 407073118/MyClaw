@@ -1,0 +1,86 @@
+{
+  "models": {
+    "gpt-5.4": {
+      "contextWindowTokens": 1000000,
+      "maxInputTokens": 950000,
+      "maxOutputTokens": 32768,
+      "supportsTools": true,
+      "supportsReasoning": true,
+      "supportsStreaming": true,
+      "supportsPromptCaching": true,
+      "supportsVision": true,
+      "tokenCountingMode": "provider-native"
+    },
+    "gpt-4.1": {
+      "contextWindowTokens": 1047576,
+      "maxInputTokens": 1014800,
+      "maxOutputTokens": 32768,
+      "supportsTools": true,
+      "supportsStreaming": true,
+      "supportsPromptCaching": true,
+      "supportsVision": true,
+      "tokenCountingMode": "provider-native"
+    },
+    "o3": {
+      "contextWindowTokens": 200000,
+      "maxInputTokens": 180000,
+      "maxOutputTokens": 100000,
+      "supportsTools": true,
+      "supportsReasoning": true,
+      "supportsStreaming": true,
+      "supportsVision": true,
+      "tokenCountingMode": "provider-native"
+    }
+  },
+  "families": [
+    {
+      "pattern": "^gpt-5",
+      "capability": {
+        "contextWindowTokens": 1000000,
+        "maxInputTokens": 950000,
+        "maxOutputTokens": 32768,
+        "supportsTools": true,
+        "supportsReasoning": true,
+        "supportsStreaming": true,
+        "supportsPromptCaching": true,
+        "supportsVision": true,
+        "tokenCountingMode": "provider-native"
+      }
+    },
+    {
+      "pattern": "^gpt-4\\.1",
+      "capability": {
+        "contextWindowTokens": 1047576,
+        "maxInputTokens": 1014800,
+        "maxOutputTokens": 32768,
+        "supportsTools": true,
+        "supportsStreaming": true,
+        "supportsPromptCaching": true,
+        "supportsVision": true,
+        "tokenCountingMode": "provider-native"
+      }
+    },
+    {
+      "pattern": "^o\\d",
+      "capability": {
+        "contextWindowTokens": 200000,
+        "maxInputTokens": 180000,
+        "maxOutputTokens": 100000,
+        "supportsTools": true,
+        "supportsReasoning": true,
+        "supportsStreaming": true,
+        "supportsVision": true,
+        "tokenCountingMode": "provider-native"
+      }
+    }
+  ],
+  "defaults": {
+    "contextWindowTokens": 128000,
+    "maxInputTokens": 120000,
+    "maxOutputTokens": 16384,
+    "supportsTools": true,
+    "supportsStreaming": true,
+    "supportsVision": true,
+    "tokenCountingMode": "provider-native"
+  }
+}

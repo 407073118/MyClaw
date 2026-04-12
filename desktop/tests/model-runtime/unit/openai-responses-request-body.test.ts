@@ -18,4 +18,34 @@ describe("openai responses request body", () => {
       },
     });
   });
+
+  it("can disable response storage for privacy-sensitive profiles", () => {
+    const body = buildOpenAiResponsesRequestBody(
+      "gpt-5.4",
+      [{ role: "user", content: "hello" }],
+      [],
+      "medium",
+      { disableResponseStorage: true },
+    );
+
+    expect(body).toMatchObject({
+      model: "gpt-5.4",
+      store: false,
+    });
+  });
+
+  it("can continue a server-side response chain with previous_response_id", () => {
+    const body = buildOpenAiResponsesRequestBody(
+      "gpt-5.4",
+      [{ role: "user", content: "hello" }],
+      [],
+      "medium",
+      { previousResponseId: "resp_prev_123" },
+    );
+
+    expect(body).toMatchObject({
+      model: "gpt-5.4",
+      previous_response_id: "resp_prev_123",
+    });
+  });
 });

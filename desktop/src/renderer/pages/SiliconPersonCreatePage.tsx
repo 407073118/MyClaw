@@ -3,10 +3,27 @@ import { useNavigate } from "react-router-dom";
 import type { SiliconPersonApprovalMode } from "@shared/contracts";
 import { useWorkspaceStore } from "../stores/workspace";
 
-type CreateStep = "identity" | "capabilities";
+/** 从“身份与人格”中提取一段稳定摘要，兼容现有列表页和工作台概览。 */
+function deriveDescriptionFromSoul(input: string, fallbackName: string): string {
+  const normalized = input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ");
+
+  if (!normalized) {
+    return `${fallbackName} 的初始人格设定`;
+  }
+
+  return normalized.length > 72 ? `${normalized.slice(0, 72).trim()}...` : normalized;
+}
 
 export default function SiliconPersonCreatePage() {
   const workspace = useWorkspaceStore();
+  const siliconPersons = useWorkspaceStore((state) => state.siliconPersons);
+  const models = useWorkspaceStore((state) => state.models);
+  const defaultModelProfileId = useWorkspaceStore((state) => state.defaultModelProfileId);
+  const loadSiliconPersons = useWorkspaceStore((state) => state.loadSiliconPersons);
   const navigate = useNavigate();
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState("");
@@ -14,74 +31,76 @@ export default function SiliconPersonCreatePage() {
   // 从已有员工复制
   const [templateSourceId, setTemplateSourceId] = useState("");
 
-  // Step 1: 身份
+  // 基础资料
   const [name, setName] = useState("");
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
+  const [soul, setSoul] = useState("");
 
-  // Step 2: 能力绑定
+  // 执行配置
   const [approvalMode, setApprovalMode] = useState<SiliconPersonApprovalMode>("inherit");
-  const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<string[]>([]);
-  const [inheritModel, setInheritModel] = useState(false);
-  const [currentStep, setCurrentStep] = useState<CreateStep>("identity");
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high">("medium");
 
-  const workflows = useMemo(() => workspace.workflows ?? [], [workspace.workflows]);
+  const personList = useMemo(() => siliconPersons ?? [], [siliconPersons]);
+  const modelList = useMemo(() => models ?? [], [models]);
+
+  const canCreate = Boolean(name.trim() && soul.trim());
 
   useEffect(() => {
-    if (workflows.length > 0) return;
-    workspace.loadWorkflows?.().catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (personList.length === 0) {
+      loadSiliconPersons?.().catch(() => {});
+    }
+  }, [personList.length, loadSiliconPersons]);
 
-  /** 从已有员工复制身份字段到创建表单。 */
+  /** 从已有员工复制创建时仍然需要的字段。 */
   function handleTemplateChange(siliconPersonId: string) {
     setTemplateSourceId(siliconPersonId);
     if (!siliconPersonId) return;
-    const source = workspace.siliconPersons.find((item) => item.id === siliconPersonId);
+    const source = personList.find((item) => item.id === siliconPersonId);
     if (!source) return;
     setName(`${source.name}(副本)`);
-    setTitle(source.title);
-    setDescription(source.description);
+    setSoul(source.soul ?? "");
+    setApprovalMode(source.approvalMode ?? "inherit");
+    setSelectedModelId(source.modelProfileId ?? "");
+    setReasoningEffort(source.reasoningEffort ?? "medium");
   }
 
-  function handleNextStep(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim() || !description.trim()) {
-      setCreateError("名称和职责描述不能为空。");
-      return;
-    }
-    setCreateError("");
-    setCurrentStep("capabilities");
-  }
-
-  function handleBackToIdentity() {
-    setCurrentStep("identity");
-    setCreateError("");
-  }
-
+  /** 提交创建请求，并在创建后补写模型、审批与推理配置。 */
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    if (!name.trim() || !soul.trim()) {
+      setCreateError("名称和身份与人格不能为空。");
+      return;
+    }
+
     setCreateError("");
     setIsCreating(true);
+
     try {
-      const currentModel = workspace.models.find((m) => m.id === workspace.defaultModelProfileId);
-      const modelBindingSnapshot = inheritModel && currentModel ? {
-        modelProfileId: currentModel.id,
-        modelName: currentModel.name,
-        frozenAt: new Date().toISOString(),
-      } : null;
+      const trimmedName = name.trim();
+      const trimmedSoul = soul.trim();
       const created = await workspace.createSiliconPerson({
-        name: name.trim(),
-        title: (title.trim() || name.trim()),
-        description: description.trim(),
-        modelBindingSnapshot,
+        name: trimmedName,
+        title: trimmedName,
+        description: deriveDescriptionFromSoul(trimmedSoul, trimmedName),
+        soul: trimmedSoul,
       });
-      // 创建后立即更新能力配置
-      if (created?.id && (approvalMode !== "inherit" || selectedWorkflowIds.length > 0)) {
+
+      // 创建接口当前只负责基础资料，扩展策略字段在创建后补写。
+      if (
+        created?.id &&
+        (
+          approvalMode !== "inherit" ||
+          Boolean(selectedModelId) ||
+          reasoningEffort !== "medium"
+        )
+      ) {
         await workspace.updateSiliconPerson(created.id, {
           approvalMode,
-          workflowIds: selectedWorkflowIds,
+          modelProfileId: selectedModelId || undefined,
+          reasoningEffort,
         });
       }
+
       navigate("/employees");
     } catch (error) {
       setCreateError(error instanceof Error ? error.message : "创建硅基员工失败。");
@@ -90,57 +109,71 @@ export default function SiliconPersonCreatePage() {
     }
   }
 
-  function toggleWorkflow(workflowId: string) {
-    setSelectedWorkflowIds((prev) =>
-      prev.includes(workflowId) ? prev.filter((id) => id !== workflowId) : [...prev, workflowId],
-    );
-  }
-
   return (
     <main data-testid="silicon-person-create-view" className="page-container" style={{ height: "100%", overflowY: "auto" }}>
-      <header className="spc-page-header">
-        <button className="glass-action-btn" onClick={() => navigate("/employees")}>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M19 12H5M12 19l-7-7 7-7" />
-          </svg>
-          返回
-        </button>
-        <div className="header-text" style={{ marginTop: 16 }}>
-          <span className="eyebrow">New Silicon Person</span>
+      <header className="page-header">
+        <div className="header-text">
+          <span className="eyebrow">Silicon Person</span>
           <h2 className="page-title">新建硅基员工</h2>
+          <p className="page-subtitle">只保留必要输入，创建后直接进入工作区。</p>
+        </div>
+
+        <div className="header-actions">
+          <button type="button" className="glass-action-btn spc-back-btn" onClick={() => navigate("/employees")}>
+            取消
+          </button>
+          <button
+            className="btn-premium accent spc-submit-btn"
+            type="submit"
+            form="silicon-person-create-form"
+            disabled={!canCreate || isCreating}
+          >
+            {isCreating ? "正在创建..." : "创建"}
+          </button>
         </div>
       </header>
 
-      <section className="glass-card glass-card--flat spc-form-card">
-        {/* 步骤指示器 */}
-        <div className="spc-step-indicator">
-          <span className={`spc-step-dot${currentStep === "identity" ? " active" : " done"}`}>1</span>
-          <span className="spc-step-line" />
-          <span className={`spc-step-dot${currentStep === "capabilities" ? " active" : ""}`}>2</span>
-        </div>
-        <p className="spc-step-label">
-          {currentStep === "identity" ? "第 1 步：创建身份" : "第 2 步：绑定能力"}
-        </p>
+      {createError && <p className="spc-error">{createError}</p>}
 
-        {currentStep === "identity" ? (
-          <form data-testid="silicon-person-create-form" className="spc-form" onSubmit={handleNextStep}>
-            {workspace.siliconPersons.length > 0 && (
-              <label className="spc-field">
-                <span>从已有员工复制</span>
-                <select
-                  value={templateSourceId}
-                  onChange={(e) => handleTemplateChange(e.target.value)}
-                  data-testid="silicon-person-template-select"
-                >
-                  <option value="">不复制，从空白创建</option>
-                  {workspace.siliconPersons.map((sp) => (
-                    <option key={sp.id} value={sp.id}>
-                      {sp.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
+      <form
+        id="silicon-person-create-form"
+        data-testid="silicon-person-create-form"
+        className="spc-form"
+        onSubmit={handleCreate}
+      >
+        {personList.length > 0 && (
+          <section className="spc-copy-strip" aria-label="复制已有员工配置">
+            <div className="spc-copy-strip-copy">
+              <span className="spc-pane-title">快速开始</span>
+              <p>可以先复制一个已有员工，再替换名字和人格提示词。</p>
+            </div>
+            <label className="spc-field spc-field--compact spc-copy-select">
+              <span>从已有员工复制</span>
+              <select
+                value={templateSourceId}
+                onChange={(e) => handleTemplateChange(e.target.value)}
+                data-testid="silicon-person-template-select"
+              >
+                <option value="">不复制，从空白创建</option>
+                {personList.map((sp) => (
+                  <option key={sp.id} value={sp.id}>
+                    {sp.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+        )}
+
+        <div className="spc-layout">
+          <section className="spc-editor-pane">
+            <div className="spc-pane-head">
+              <div>
+                <span className="spc-pane-title">身份设定</span>
+                <p className="spc-pane-description">名称用于列表识别，身份与人格决定它的默认协作方式。</p>
+              </div>
+            </div>
+
             <label className="spc-field">
               <span>名称</span>
               <input
@@ -148,42 +181,48 @@ export default function SiliconPersonCreatePage() {
                 onChange={(e) => setName(e.target.value)}
                 data-testid="silicon-person-create-name"
                 type="text"
-                placeholder="Ada"
+                placeholder="例如：Ada"
+                autoFocus
               />
             </label>
-            <label className="spc-field">
-              <span>职位头衔</span>
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                data-testid="silicon-person-create-title"
-                type="text"
-                placeholder="研究搭档"
-              />
-            </label>
-            <label className="spc-field">
-              <span>职责描述</span>
+
+            <label className="spc-field spc-field--grow">
+              <span>身份与人格</span>
               <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                data-testid="silicon-person-create-description"
-                rows={3}
-                placeholder="负责承接主聊天分发，并在私域空间内持续推进任务。"
+                value={soul}
+                onChange={(e) => setSoul(e.target.value)}
+                data-testid="silicon-person-create-soul"
+                rows={10}
+                placeholder="定义这个硅基员工的角色身份、行为风格与个性特征。"
               />
             </label>
-            {createError && <p className="spc-error">{createError}</p>}
-            <button className="btn-premium accent" type="submit" style={{ alignSelf: "stretch", justifyContent: "center" }}>
-              下一步：绑定能力
-            </button>
-          </form>
-        ) : (
-          <form className="spc-form" data-testid="silicon-person-capabilities-form" onSubmit={handleCreate}>
-            <div className="spc-identity-preview">
-              <strong>{name}</strong>
-              <span>{title || name}</span>
+          </section>
+
+          <aside className="spc-config-pane">
+            <div className="spc-pane-head">
+              <div>
+                <span className="spc-pane-title">执行策略</span>
+                <p className="spc-pane-description">这些设置只定义默认行为，后续仍可在工作区继续调整。</p>
+              </div>
             </div>
 
-            <label className="spc-field">
+            <label className="spc-field spc-field--compact">
+              <span>使用模型</span>
+              <select
+                value={selectedModelId}
+                onChange={(e) => setSelectedModelId(e.target.value)}
+                data-testid="silicon-person-create-model"
+              >
+                <option value="">跟随全局默认{defaultModelProfileId ? "（当前默认）" : ""}</option>
+                {modelList.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="spc-field spc-field--compact">
               <span>审批模式</span>
               <select
                 value={approvalMode}
@@ -196,209 +235,257 @@ export default function SiliconPersonCreatePage() {
               </select>
             </label>
 
-            {workflows.length > 0 && (
-              <fieldset className="spc-workflow-picker">
-                <legend>绑定工作流（可选）</legend>
-                {workflows.map((workflow) => (
-                  <label key={workflow.id} className="spc-workflow-option">
-                    <input
-                      type="checkbox"
-                      checked={selectedWorkflowIds.includes(workflow.id)}
-                      onChange={() => toggleWorkflow(workflow.id)}
-                    />
-                    <span>{workflow.name}</span>
-                  </label>
+            <label className="spc-field spc-field--compact">
+              <span>推理等级</span>
+              <div className="spc-effort-col" data-testid="silicon-person-create-reasoning-effort">
+                {([
+                  ["low", "快速"],
+                  ["medium", "思考"],
+                  ["high", "深度"],
+                ] as const).map(([level, label]) => (
+                  <button
+                    key={level}
+                    type="button"
+                    className={`spc-effort-btn${reasoningEffort === level ? " active" : ""}`}
+                    onClick={() => setReasoningEffort(level)}
+                  >
+                    {label}
+                  </button>
                 ))}
-              </fieldset>
-            )}
-
-            <label className="spc-model-toggle" data-testid="silicon-person-inherit-model">
-              <input
-                type="checkbox"
-                checked={inheritModel}
-                onChange={(e) => setInheritModel(e.target.checked)}
-              />
-              <span>集成当前模型配置</span>
-              <p className="spc-toggle-hint">快照当前默认模型，创建后不随全局配置变化</p>
+              </div>
             </label>
-
-            {createError && <p className="spc-error">{createError}</p>}
-            <div className="spc-step-actions">
-              <button type="button" className="glass-action-btn" onClick={handleBackToIdentity} style={{ height: 36, padding: "0 18px" }}>
-                上一步
-              </button>
-              <button className="btn-premium accent" type="submit" disabled={isCreating} style={{ flex: 1, justifyContent: "center" }}>
-                {isCreating ? "创建中..." : "创建硅基员工"}
-              </button>
-            </div>
-          </form>
-        )}
-      </section>
+          </aside>
+        </div>
+      </form>
 
       <style>{`
-        .spc-page-header {
-          margin-bottom: -8px;
-        }
-
-        .spc-form-card {
-          max-width: 520px;
-          padding: 28px;
-        }
-
-        .spc-step-indicator {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-bottom: 8px;
-        }
-
-        .spc-step-dot {
-          width: 24px;
-          height: 24px;
-          border-radius: 50%;
-          border: 2px solid var(--glass-border);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 12px;
-          font-weight: 700;
-          color: var(--text-muted);
-          transition: all 0.2s;
-        }
-
-        .spc-step-dot.active {
-          border-color: var(--accent-cyan);
-          color: var(--accent-cyan);
-          background: rgba(16, 163, 127, 0.1);
-        }
-
-        .spc-step-dot.done {
-          border-color: var(--status-green);
-          color: var(--status-green);
-          background: rgba(34, 197, 94, 0.1);
-        }
-
-        .spc-step-line {
-          flex: 1;
-          height: 2px;
-          background: var(--glass-border);
-        }
-
-        .spc-step-label {
+        .spc-back-btn {
+          height: 38px;
+          padding: 0 16px;
           font-size: 13px;
-          color: var(--text-secondary);
-          margin: 0 0 16px;
+        }
+
+        .spc-submit-btn {
+          min-width: 132px;
+          height: 40px;
+          font-weight: 600;
         }
 
         .spc-form {
           display: flex;
           flex-direction: column;
-          gap: 14px;
+          gap: 18px;
+          width: 100%;
+          min-height: calc(100vh - 258px);
         }
 
-        .spc-identity-preview {
+        .spc-layout {
+          display: grid;
+          grid-template-columns: minmax(0, 1.5fr) minmax(300px, 0.78fr);
+          gap: 18px;
+          width: 100%;
+          min-height: 0;
+        }
+
+        .spc-copy-strip {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+          gap: 18px;
+          align-items: end;
+          padding: 16px 18px;
+          border-radius: 16px;
+          background:
+            linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+          border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .spc-copy-strip-copy {
+          min-width: 0;
+        }
+
+        .spc-copy-strip-copy p {
+          margin: 8px 0 0;
+          color: var(--text-muted);
+          font-size: 13px;
+          line-height: 1.55;
+        }
+
+        .spc-copy-select {
+          margin-left: auto;
+          width: 100%;
+        }
+
+        .spc-editor-pane,
+        .spc-config-pane {
+          min-width: 0;
+          min-height: 0;
+          padding: 20px 22px 22px;
+          border-radius: 18px;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .spc-editor-pane {
           display: flex;
           flex-direction: column;
-          gap: 2px;
-          padding: 10px 12px;
-          border: 1px solid var(--glass-border);
-          border-radius: var(--radius-md);
-          background: var(--bg-base);
+          gap: 16px;
+          background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
         }
 
-        .spc-identity-preview strong {
+        .spc-config-pane {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          background:
+            linear-gradient(180deg, rgba(16, 163, 127, 0.055), rgba(255, 255, 255, 0.015));
+        }
+
+        .spc-pane-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding-bottom: 12px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .spc-pane-title {
           color: var(--text-primary);
-          font-size: 14px;
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
         }
 
-        .spc-identity-preview span {
+        .spc-pane-description {
+          margin: 8px 0 0;
           color: var(--text-muted);
-          font-size: 12px;
+          font-size: 13px;
+          line-height: 1.55;
         }
 
         .spc-field {
           display: flex;
           flex-direction: column;
-          gap: 8px;
+          gap: 10px;
+          min-width: 0;
+        }
+
+        .spc-field--full {
+          grid-column: 1 / -1;
+        }
+
+        .spc-field--grow {
+          flex: 1;
+          min-height: 0;
+        }
+
+        .spc-field--compact {
+          gap: 6px;
+        }
+
+        .spc-field > span {
           color: var(--text-secondary);
-          font-size: 13px;
+          font-size: 12px;
+          font-weight: 600;
+          letter-spacing: 0.01em;
         }
 
-        .spc-field input, .spc-field textarea, .spc-field select {
+        .spc-field input,
+        .spc-field textarea,
+        .spc-field select {
           width: 100%;
-          border: 1px solid var(--glass-border);
-          border-radius: var(--radius-md);
-          background: var(--bg-base);
+          padding: 12px 14px;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          background: rgba(6, 8, 10, 0.26);
           color: var(--text-primary);
-          padding: 10px 12px;
           font: inherit;
-          transition: border-color 0.2s, box-shadow 0.2s;
+          transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
         }
 
-        .spc-field input:focus, .spc-field textarea:focus, .spc-field select:focus {
+        .spc-field input:focus,
+        .spc-field textarea:focus,
+        .spc-field select:focus {
           border-color: var(--accent-cyan);
-          box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
+          background: rgba(8, 12, 14, 0.34);
+          box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.09);
           outline: none;
         }
 
-        .spc-workflow-picker {
-          border: 1px solid var(--glass-border);
-          border-radius: var(--radius-md);
-          padding: 12px;
-          margin: 0;
+        .spc-field textarea {
+          flex: 1;
+          min-height: 332px;
+          resize: vertical;
+          line-height: 1.7;
         }
 
-        .spc-workflow-picker legend {
-          font-size: 13px;
+        .spc-effort-col {
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+
+        .spc-effort-btn {
+          min-height: 40px;
+          padding: 0 14px;
+          border-radius: 12px;
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: rgba(255, 255, 255, 0.02);
           color: var(--text-secondary);
-          padding: 0 4px;
-        }
-
-        .spc-workflow-option {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          padding: 6px 0;
-          color: var(--text-primary);
-          font-size: 14px;
+          font-size: 13px;
+          font-weight: 600;
           cursor: pointer;
+          transition: all 0.2s ease;
+          text-align: left;
         }
 
-        .spc-workflow-option input[type="checkbox"] {
-          accent-color: var(--accent-cyan);
-        }
-
-        .spc-model-toggle {
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          gap: 8px;
+        .spc-effort-btn:hover {
+          border-color: var(--glass-border-hover);
           color: var(--text-primary);
-          font-size: 14px;
-          cursor: pointer;
         }
 
-        .spc-model-toggle input[type="checkbox"] {
-          accent-color: var(--accent-cyan);
-        }
-
-        .spc-toggle-hint {
-          width: 100%;
-          margin: 0;
-          color: var(--text-muted);
-          font-size: 12px;
-          line-height: 1.5;
-        }
-
-        .spc-step-actions {
-          display: flex;
-          gap: 8px;
+        .spc-effort-btn.active {
+          border-color: rgba(16, 163, 127, 0.32);
+          background: rgba(16, 163, 127, 0.08);
+          color: var(--accent-cyan);
         }
 
         .spc-error {
           margin: 0;
           color: var(--status-red);
           font-size: 13px;
+        }
+
+        @media (max-width: 760px) {
+          .spc-copy-strip {
+            grid-template-columns: 1fr;
+            gap: 14px;
+          }
+
+          .spc-layout {
+            grid-template-columns: 1fr;
+            gap: 14px;
+          }
+
+          .spc-config-pane {
+            padding-top: 20px;
+          }
+
+          .header-actions {
+            width: 100%;
+          }
+
+          .header-actions > * {
+            flex: 1;
+          }
+
+          .spc-form {
+            min-height: auto;
+          }
+
+          .spc-field textarea {
+            min-height: 220px;
+          }
         }
       `}</style>
     </main>

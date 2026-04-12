@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
-import type { ModelProfile, ProviderKind } from "@shared/contracts";
+import type { JsonValue, ModelCatalogItem, ModelProfile, ModelRouteProbeResult, ProtocolTarget, ProviderKind } from "@shared/contracts";
 import {
   BR_MINIMAX_BASE_URL,
   BR_MINIMAX_DEFAULT_NAME,
@@ -35,6 +35,13 @@ const providerPresets: ProviderPreset[] = [
   { id: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com", baseUrlMode: "provider-root", provider: "anthropic" },
   { id: "custom", label: "Custom", baseUrl: "", baseUrlMode: "manual", provider: "openai-compatible" },
 ];
+
+/** 将协议路线转成人类可读标签，供推荐与详情面板复用。 */
+function formatProtocolTargetLabel(target: ProtocolTarget): string {
+  if (target === "openai-responses") return "OpenAI Responses";
+  if (target === "anthropic-messages") return "Anthropic Messages";
+  return "OpenAI Compatible";
+}
 
 /** 根据模型配置推断应该命中的供应商预设。 */
 function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "baseUrl" | "model">): string {
@@ -73,12 +80,21 @@ export default function ModelDetailPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [modelCatalogError, setModelCatalogError] = useState("");
+  const [catalogItems, setCatalogItems] = useState<ModelCatalogItem[]>([]);
   const [availableModelIds, setAvailableModelIds] = useState<string[]>([]);
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs?: number; error?: string } | null>(null);
+  const [routeProbeResult, setRouteProbeResult] = useState<ModelRouteProbeResult | null>(null);
+  const [selectedRoute, setSelectedRoute] = useState<ProtocolTarget | null>(null);
+  const [routeSelectionSource, setRouteSelectionSource] = useState<"manual" | "probe-recommended" | "saved" | "auto-probe-on-save" | null>(null);
+  const [isProbingRoutes, setIsProbingRoutes] = useState(false);
+  const [routeProbeError, setRouteProbeError] = useState("");
+  const [routeStatusMessage, setRouteStatusMessage] = useState("");
+  const [showRouteDetails, setShowRouteDetails] = useState(false);
 
   const managedBrMiniMax = selectedPresetId === "br-minimax";
   const brMiniMaxDiagnostics = readBrMiniMaxRuntimeDiagnostics(profile);
+  const requiresModelBeforeProbe = !managedBrMiniMax && !profile.model.trim();
   const baseUrlPlaceholder = profile.baseUrlMode === "provider-root"
     ? BR_MINIMAX_BASE_URL
     : "https://gateway.example.com/v1";
@@ -98,8 +114,12 @@ export default function ModelDetailPage() {
         ...prev,
         provider: preset.provider,
         providerFlavor: preset.providerFlavor,
+        vendorFamily: undefined,
+        deploymentProfile: undefined,
         baseUrl: preset.baseUrl,
         baseUrlMode: preset.baseUrlMode,
+        discoveredCapabilities: null,
+        budgetPolicy: preset.id === "br-minimax" ? prev.budgetPolicy : undefined,
         ...(preset.id === "br-minimax"
           ? createBrMiniMaxProfile({ apiKey: prev.apiKey.trim() })
           : { model: "", ...(isNew ? { name: `New ${preset.label} Config` } : {}) }),
@@ -111,8 +131,30 @@ export default function ModelDetailPage() {
         setHeadersText("");
         setRequestBodyText("");
       }
+      setCatalogItems([]);
       setAvailableModelIds([]);
       setModelCatalogError("");
+      setRouteProbeResult(null);
+      setSelectedRoute(null);
+      setRouteSelectionSource(null);
+      setRouteProbeError("");
+      setRouteStatusMessage("");
+      setShowRouteDetails(false);
+    }
+  }
+
+  /** 当关键连接字段变化时，使现有路线探测与选择结果失效，避免旧结果污染新配置。 */
+  function invalidateRouteState() {
+    const hadRouteState = !!routeProbeResult || !!selectedRoute || !!routeSelectionSource;
+    setRouteProbeResult(null);
+    setSelectedRoute(null);
+    setRouteSelectionSource(null);
+    setRouteProbeError("");
+    setShowRouteDetails(false);
+    if (hadRouteState) {
+      setRouteStatusMessage("模型配置已变更，请重新执行路线探测。");
+    } else {
+      setRouteStatusMessage("");
     }
   }
 
@@ -125,16 +167,19 @@ export default function ModelDetailPage() {
         setRequestBodyText(existing.requestBody ? JSON.stringify(existing.requestBody, null, 2) : "");
         const presetId = resolveProviderPresetId(existing);
         setSelectedPresetId(presetId);
+        setSelectedRoute(existing.protocolTarget ?? null);
+        setRouteSelectionSource(existing.protocolTarget ? "saved" : null);
       } else {
         navigate("/settings");
       }
     } else {
       applyPreset("br-minimax");
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isNew, profileId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 把下拉中选中的模型 ID 回填到表单。 */
   function applySelectedModelId(event: React.ChangeEvent<HTMLSelectElement>) {
+    invalidateRouteState();
     setProfile((prev) => ({ ...prev, model: event.target.value }));
   }
 
@@ -157,28 +202,173 @@ export default function ModelDetailPage() {
     }
   }
 
+  /** 解析当前表单中的可编辑负载，统一供探测、联通测试和保存逻辑复用。 */
+  function parseEditablePayload(): {
+    parsedHeaders: Record<string, string>;
+    parsedBody: Record<string, JsonValue>;
+  } | null {
+    try {
+      return {
+        parsedHeaders: headersText.trim() ? JSON.parse(headersText) : {},
+        parsedBody: requestBodyText.trim() ? JSON.parse(requestBodyText) as Record<string, JsonValue> : {},
+      };
+    } catch {
+      setError("JSON 格式不正确，请检阅 Headers 或 RequestBody 字段。");
+      return null;
+    }
+  }
+
+  /** 组装路线探测所需的即时配置。 */
+  function buildProbeInput(parsedHeaders: Record<string, string>, parsedBody: Record<string, JsonValue>) {
+    return {
+      provider: profile.provider,
+      providerFlavor: profile.providerFlavor,
+      baseUrl: profile.baseUrl.trim(),
+      baseUrlMode: profile.baseUrlMode,
+      apiKey: profile.apiKey.trim(),
+      model: managedBrMiniMax ? BR_MINIMAX_MODEL : profile.model.trim(),
+      headers: parsedHeaders,
+      requestBody: managedBrMiniMax ? BR_MINIMAX_REQUEST_BODY : parsedBody,
+    };
+  }
+
+  /** 从当前 catalog 结果中提取已选模型的能力字段，写回 profile 供后续页面复用。 */
+  function resolveSelectedCatalogCapability(modelId: string): ModelProfile["discoveredCapabilities"] {
+    const selectedItem = catalogItems.find((item) => item.id === modelId);
+    if (!selectedItem) {
+      return profile.discoveredCapabilities ?? null;
+    }
+
+    return {
+      contextWindowTokens: selectedItem.contextWindowTokens,
+      maxInputTokens: selectedItem.maxInputTokens,
+      maxOutputTokens: selectedItem.maxOutputTokens,
+      supportsTools: selectedItem.supportsTools,
+      supportsStreaming: selectedItem.supportsStreaming,
+      source: selectedItem.source ?? "provider-catalog",
+    };
+  }
+
+  /** 将页面内部的路线来源状态映射为持久化的合同字段。 */
+  function resolvePersistedProtocolSelectionSource(
+    source: typeof routeSelectionSource,
+  ): ModelProfile["protocolSelectionSource"] {
+    if (source === "manual" || source === "saved") {
+      return "saved";
+    }
+    if (source === "probe-recommended" || source === "auto-probe-on-save") {
+      return "probe";
+    }
+    return "registry-default";
+  }
+
+  /** 手动触发路线探测，并把推荐路线同步到本地 UI 状态。 */
+  async function probeRoutes(options?: { silent?: boolean }): Promise<ModelRouteProbeResult | null> {
+    const parsed = managedBrMiniMax
+      ? { parsedHeaders: {}, parsedBody: BR_MINIMAX_REQUEST_BODY as Record<string, JsonValue> }
+      : parseEditablePayload();
+    if (!parsed) {
+      return null;
+    }
+
+    const modelId = managedBrMiniMax ? BR_MINIMAX_MODEL : profile.model.trim();
+    if (!modelId) {
+      setRouteProbeError("请先选择模型，再进行路线探测。");
+      return null;
+    }
+
+    setRouteProbeError("");
+    if (!options?.silent) {
+      setRouteStatusMessage("");
+    }
+    setIsProbingRoutes(true);
+
+    try {
+      const result = await workspace.probeModelRoutes(buildProbeInput(parsed.parsedHeaders, parsed.parsedBody));
+      setRouteProbeResult(result);
+      setShowRouteDetails(false);
+
+      const keepsExplicitSelection = !!selectedRoute
+        && (routeSelectionSource === "manual" || routeSelectionSource === "saved")
+        && result.availableProtocolTargets.includes(selectedRoute);
+
+      if (keepsExplicitSelection) {
+        setSelectedRoute(selectedRoute);
+      } else if (result.recommendedProtocolTarget && routeSelectionSource !== "manual") {
+        setSelectedRoute(result.recommendedProtocolTarget);
+        setRouteSelectionSource("probe-recommended");
+      } else if (selectedRoute && !result.availableProtocolTargets.includes(selectedRoute)) {
+        setSelectedRoute(result.recommendedProtocolTarget);
+        setRouteSelectionSource(result.recommendedProtocolTarget ? "probe-recommended" : null);
+      }
+
+      if (result.availableProtocolTargets.length === 0) {
+        setRouteProbeError("未探测到当前模型可用的执行路线，请检查接口、鉴权或服务兼容性。");
+      } else if (!options?.silent && result.recommendedProtocolTarget) {
+        setRouteStatusMessage(`已完成路线探测，推荐路线：${formatProtocolTargetLabel(result.recommendedProtocolTarget)}`);
+      }
+
+      console.info("[model-detail] 路线探测完成", {
+        model: modelId,
+        recommendedProtocolTarget: result.recommendedProtocolTarget,
+        availableProtocolTargets: result.availableProtocolTargets,
+      });
+      return result;
+    } catch (e: unknown) {
+      const message = (e as Error)?.message ?? "路线探测失败";
+      setRouteProbeError(message);
+      console.warn("[model-detail] 路线探测失败", {
+        model: modelId,
+        error: message,
+      });
+      return null;
+    } finally {
+      setIsProbingRoutes(false);
+    }
+  }
+
+  /** 响应用户手动切换路线，把它标记为当前模型的默认选择。 */
+  function handleRouteSelectionChange(event: React.ChangeEvent<HTMLSelectElement>) {
+    const nextRoute = event.target.value as ProtocolTarget;
+    setSelectedRoute(nextRoute);
+    setRouteSelectionSource("manual");
+    setRouteStatusMessage(`已设置默认路线：${formatProtocolTargetLabel(nextRoute)}`);
+  }
+
   /** 新建或更新模型配置，并在创建后设为默认模型。 */
   async function upsertProfile() {
     setError("");
-    let parsedHeaders = {};
-    let parsedBody = {};
-
-    if (!managedBrMiniMax) {
-      try {
-        if (headersText.trim()) parsedHeaders = JSON.parse(headersText);
-        if (requestBodyText.trim()) parsedBody = JSON.parse(requestBodyText);
-      } catch {
-        setError("JSON 格式不正确，请检阅 Headers 或 RequestBody 字段。");
-        return;
-      }
+    const parsed = managedBrMiniMax
+      ? { parsedHeaders: {}, parsedBody: BR_MINIMAX_REQUEST_BODY as Record<string, JsonValue> }
+      : parseEditablePayload();
+    if (!parsed) {
+      return;
     }
 
     setIsBusy(true);
     try {
+      let finalProtocolTarget = selectedRoute;
+      let persistedSelectionSource = resolvePersistedProtocolSelectionSource(routeSelectionSource);
+      if (!finalProtocolTarget) {
+        const probeResult = await probeRoutes({ silent: true });
+        finalProtocolTarget = probeResult?.recommendedProtocolTarget ?? null;
+        if (!finalProtocolTarget) {
+          setError("当前模型尚未探测到可用路线，无法保存配置。");
+          return;
+        }
+        setSelectedRoute(finalProtocolTarget);
+        setRouteSelectionSource("auto-probe-on-save");
+        persistedSelectionSource = "probe";
+        setRouteStatusMessage(`已完成路线探测，已为当前模型设置最佳路线：${formatProtocolTargetLabel(finalProtocolTarget)}`);
+      }
+
       const data: ModelProfile = managedBrMiniMax
         ? {
             ...profile,
             ...createBrMiniMaxProfile({ apiKey: profile.apiKey.trim() }),
+            savedProtocolPreferences: finalProtocolTarget ? [finalProtocolTarget] : undefined,
+            protocolSelectionSource: persistedSelectionSource,
+            protocolTarget: finalProtocolTarget ?? undefined,
           }
         : {
             ...profile,
@@ -187,8 +377,12 @@ export default function ModelDetailPage() {
             baseUrlMode: profile.baseUrlMode,
             apiKey: profile.apiKey.trim(),
             model: profile.model.trim(),
-            headers: parsedHeaders,
-            requestBody: parsedBody,
+            headers: parsed.parsedHeaders,
+            requestBody: parsed.parsedBody,
+            discoveredCapabilities: resolveSelectedCatalogCapability(profile.model.trim()),
+            savedProtocolPreferences: finalProtocolTarget ? [finalProtocolTarget] : undefined,
+            protocolSelectionSource: persistedSelectionSource,
+            protocolTarget: finalProtocolTarget ?? undefined,
           };
 
       if (isNew) {
@@ -197,7 +391,12 @@ export default function ModelDetailPage() {
       } else {
         await workspace.updateModelProfile(profile.id, data);
       }
-      navigate("/settings");
+      navigate("/settings", {
+        state: {
+          modelConfigNotice: `已保存模型配置，默认路线：${formatProtocolTargetLabel(finalProtocolTarget)}`,
+          activeTab: "模型",
+        },
+      });
     } catch (e: unknown) {
       setError((e as Error).message);
     } finally {
@@ -208,23 +407,29 @@ export default function ModelDetailPage() {
   /** 基于当前表单配置拉取模型目录，并将首个结果回填到模型输入框。 */
   async function loadModelCatalog() {
     if (managedBrMiniMax) return;
+    const parsed = parseEditablePayload();
+    if (!parsed) {
+      return;
+    }
     setModelCatalogError("");
+    setCatalogItems([]);
     setAvailableModelIds([]);
     setIsFetchingModels(true);
 
     try {
-      const parsedHeaders = headersText.trim() ? JSON.parse(headersText) : {};
-      const parsedBody = requestBodyText.trim() ? JSON.parse(requestBodyText) : {};
-      const modelIds = await workspace.fetchAvailableModelIds({
+      const items = await workspace.fetchModelCatalog({
         provider: profile.provider,
+        providerFlavor: profile.providerFlavor,
         baseUrl: profile.baseUrl.trim(),
         baseUrlMode: profile.baseUrlMode,
         apiKey: profile.apiKey.trim(),
         model: profile.model.trim(),
-        headers: parsedHeaders,
-        requestBody: parsedBody,
+        headers: parsed.parsedHeaders,
+        requestBody: parsed.parsedBody,
       });
+      const modelIds = items.map((item) => item.id);
 
+      setCatalogItems(items);
       setAvailableModelIds(modelIds);
       if (!profile.model && modelIds.length > 0) {
         setProfile((prev) => ({ ...prev, model: modelIds[0]! }));
@@ -241,11 +446,15 @@ export default function ModelDetailPage() {
 
   /** 基于当前表单配置测试服务联通性。 */
   async function testConnectivity() {
+    const parsed = managedBrMiniMax
+      ? { parsedHeaders: {}, parsedBody: BR_MINIMAX_REQUEST_BODY as Record<string, JsonValue> }
+      : parseEditablePayload();
+    if (!parsed) {
+      return;
+    }
     setTestResult(null);
     setIsTesting(true);
     try {
-      const parsedHeaders = headersText.trim() ? JSON.parse(headersText) : {};
-      const parsedBody = requestBodyText.trim() ? JSON.parse(requestBodyText) : {};
       const result = await window.myClawAPI.testModelByConfig({
         provider: profile.provider,
         providerFlavor: profile.providerFlavor,
@@ -253,8 +462,8 @@ export default function ModelDetailPage() {
         baseUrlMode: profile.baseUrlMode,
         apiKey: profile.apiKey.trim(),
         model: managedBrMiniMax ? BR_MINIMAX_MODEL : profile.model.trim(),
-        headers: parsedHeaders,
-        requestBody: managedBrMiniMax ? BR_MINIMAX_REQUEST_BODY : parsedBody,
+        headers: parsed.parsedHeaders,
+        requestBody: managedBrMiniMax ? BR_MINIMAX_REQUEST_BODY : parsed.parsedBody,
       });
       setTestResult(result);
     } catch (e: unknown) {
@@ -385,7 +594,10 @@ export default function ModelDetailPage() {
                 <span className="label">模型 ID</span>
                 <input
                   value={profile.model}
-                  onChange={(e) => setProfile((prev) => ({ ...prev, model: e.target.value }))}
+                  onChange={(e) => {
+                    invalidateRouteState();
+                    setProfile((prev) => ({ ...prev, model: e.target.value }));
+                  }}
                   data-testid="model-id-input"
                   placeholder="gpt-4o, claude-3-5-sonnet..."
                 />
@@ -418,13 +630,36 @@ export default function ModelDetailPage() {
                     </div>
                   </div>
                 )}
+                {catalogItems.length > 0 && (
+                  <div className="catalog-preview-list">
+                    {catalogItems.slice(0, 3).map((item) => (
+                      <div key={item.id} className="catalog-preview-card">
+                        <div className="catalog-preview-title-row">
+                          <strong>{item.name || item.id}</strong>
+                          {item.contextWindowTokens && (
+                            <span className="catalog-preview-badge">{formatTokenCount(item.contextWindowTokens)}</span>
+                          )}
+                        </div>
+                        <div className="catalog-preview-meta">{item.id}</div>
+                        <div className="catalog-preview-tags">
+                          {item.supportsTools && <span className="catalog-tag">工具调用</span>}
+                          {item.supportsStreaming && <span className="catalog-tag">流式输出</span>}
+                          {item.protocolTarget && <span className="catalog-tag">{formatProtocolTargetLabel(item.protocolTarget)}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </label>
               )}
               <label className="field">
                 <span className="label">接口地址 (Base URL)</span>
                 <input
                   value={profile.baseUrl}
-                  onChange={(e) => setProfile((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                  onChange={(e) => {
+                    invalidateRouteState();
+                    setProfile((prev) => ({ ...prev, baseUrl: e.target.value }));
+                  }}
                   data-testid="model-base-url-input"
                   placeholder={baseUrlPlaceholder}
                   readOnly={managedBrMiniMax}
@@ -443,7 +678,10 @@ export default function ModelDetailPage() {
                   <input
                     type={showPassword ? "text" : "password"}
                     value={profile.apiKey}
-                    onChange={(e) => setProfile((prev) => ({ ...prev, apiKey: e.target.value }))}
+                    onChange={(e) => {
+                      invalidateRouteState();
+                      setProfile((prev) => ({ ...prev, apiKey: e.target.value }));
+                    }}
                     data-testid="model-api-key-input"
                     placeholder="sk-..."
                   />
@@ -498,7 +736,21 @@ export default function ModelDetailPage() {
                   >
                     {managedBrMiniMax ? "托管类型无需拉取" : isFetchingModels ? "加载中..." : "获取模型列表"}
                   </button>
+                  <button
+                    type="button"
+                    className="secondary-action-btn"
+                    data-testid="model-probe-routes"
+                    disabled={isProbingRoutes || (!managedBrMiniMax && !profile.model.trim())}
+                    onClick={() => {
+                      void probeRoutes();
+                    }}
+                  >
+                    {isProbingRoutes ? "探测中..." : "探测路线"}
+                  </button>
                 </div>
+                {requiresModelBeforeProbe && (
+                  <div className="field-hint">请先选择模型，再进行路线探测。</div>
+                )}
                 {testResult && (
                   <div className={`field-hint ${testResult.ok ? "success-hint" : "error-hint"}`}>
                     {testResult.ok
@@ -508,6 +760,114 @@ export default function ModelDetailPage() {
                 )}
                 {modelCatalogError && (
                   <div className="field-hint error-hint">{modelCatalogError}</div>
+                )}
+                {routeStatusMessage && (
+                  <div className="field-hint success-hint">{routeStatusMessage}</div>
+                )}
+                {routeProbeError && (
+                  <div className="field-hint error-hint">{routeProbeError}</div>
+                )}
+                {(routeProbeResult || selectedRoute) && (
+                  <div className="route-diagnostics-card">
+                    <div className="route-diagnostics-header">
+                      <div className="route-diagnostics-copy">
+                        <span className="route-diagnostics-label">执行路线</span>
+                        {(routeSelectionSource === "saved" || routeSelectionSource === "manual") && selectedRoute && (
+                          <span className="route-recommendation">
+                            当前已保存路线：{formatProtocolTargetLabel(selectedRoute)}
+                          </span>
+                        )}
+                        {routeProbeResult?.recommendedProtocolTarget && (
+                          <span className="route-recommendation">
+                            推荐路线：{formatProtocolTargetLabel(routeProbeResult.recommendedProtocolTarget)}
+                          </span>
+                        )}
+                        {!routeProbeResult?.recommendedProtocolTarget && selectedRoute && routeSelectionSource !== "saved" && routeSelectionSource !== "manual" && (
+                          <span className="route-recommendation">
+                            当前已保存路线：{formatProtocolTargetLabel(selectedRoute)}
+                          </span>
+                        )}
+                      </div>
+                      {routeProbeResult && (
+                        <button
+                          type="button"
+                          className="route-detail-btn"
+                          aria-label="查看路线详情"
+                          aria-expanded={showRouteDetails}
+                          aria-controls="route-details-panel"
+                          onClick={() => setShowRouteDetails((prev) => !prev)}
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14">
+                            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" strokeWidth="2" />
+                            <line x1="12" y1="10" x2="12" y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            <line x1="12" y1="7" x2="12.01" y2="7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                    <label className="field">
+                      <span className="label">执行路线</span>
+                      <div className="select-wrapper">
+                        <select
+                          aria-label="执行路线"
+                          value={selectedRoute ?? ""}
+                          onChange={handleRouteSelectionChange}
+                        >
+                          {(routeProbeResult?.availableProtocolTargets ?? (selectedRoute ? [selectedRoute] : []))
+                            .map((route) => (
+                              <option key={route} value={route}>
+                                {formatProtocolTargetLabel(route)}
+                              </option>
+                            ))}
+                        </select>
+                        <div className="select-arrow">
+                          <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              d="M6 9l6 6 6-6"
+                            />
+                          </svg>
+                        </div>
+                      </div>
+                      {!routeProbeResult && selectedRoute && (
+                        <div className="field-hint">如需切换到其他路线，请先重新执行路线探测。</div>
+                      )}
+                    </label>
+                    {routeProbeResult && showRouteDetails && (
+                      <div id="route-details-panel" className="route-details-panel">
+                        {routeProbeResult.entries.map((entry) => (
+                          <div key={entry.protocolTarget} className="route-detail-row">
+                            <div className="route-detail-main">
+                              <div className="route-detail-title-line">
+                                <span className="route-detail-title">{formatProtocolTargetLabel(entry.protocolTarget)}</span>
+                                <span className={`route-status-pill ${entry.ok ? "status-ok" : "status-fail"}`}>
+                                  {entry.ok ? "可用" : "不可用"}
+                                </span>
+                                {routeProbeResult.recommendedProtocolTarget === entry.protocolTarget && entry.ok && (
+                                  <span className="route-status-pill status-recommended">推荐</span>
+                                )}
+                              </div>
+                              {entry.notes?.map((note) => (
+                                <div key={`${entry.protocolTarget}-${note}`} className="route-detail-note">
+                                  {note}
+                                </div>
+                              ))}
+                              {entry.reason && (
+                                <div className="route-detail-error">{entry.reason}</div>
+                              )}
+                            </div>
+                            <div className="route-detail-latency">
+                              {entry.latencyMs != null ? `${entry.latencyMs}ms` : "—"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
               </label>
             </div>
@@ -568,7 +928,10 @@ export default function ModelDetailPage() {
                   <span className="label">自定义 Headers</span>
                   <textarea
                     value={headersText}
-                    onChange={(e) => setHeadersText(e.target.value)}
+                    onChange={(e) => {
+                      invalidateRouteState();
+                      setHeadersText(e.target.value);
+                    }}
                     placeholder='{"x-custom-header": "value"}'
                   />
                   <div className="field-hint">附加到每个 HTTP 请求头的 JSON 对象。</div>
@@ -579,7 +942,10 @@ export default function ModelDetailPage() {
                   <span className="label">额外请求体 (RequestBody)</span>
                   <textarea
                     value={requestBodyText}
-                    onChange={(e) => setRequestBodyText(e.target.value)}
+                    onChange={(e) => {
+                      invalidateRouteState();
+                      setRequestBodyText(e.target.value);
+                    }}
                     placeholder='{"temperature": 0.7}'
                   />
                   <div className="field-hint">合并到模型请求 payload 中的 JSON 参数。</div>
@@ -906,6 +1272,57 @@ export default function ModelDetailPage() {
 
         .field-inline { margin-top: 10px; display: flex; gap: 8px; align-items: center; }
 
+        .catalog-preview-list {
+          margin-top: 12px;
+          display: grid;
+          gap: 10px;
+        }
+
+        .catalog-preview-card {
+          padding: 12px;
+          border-radius: 12px;
+          border: 1px solid #2a2a31;
+          background: rgba(255, 255, 255, 0.03);
+        }
+
+        .catalog-preview-title-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+        }
+
+        .catalog-preview-meta {
+          margin-top: 4px;
+          font-size: 12px;
+          color: #71717a;
+          font-family: monospace;
+        }
+
+        .catalog-preview-badge {
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid #3b82f633;
+          color: #60a5fa;
+          font-family: monospace;
+        }
+
+        .catalog-preview-tags {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-top: 8px;
+        }
+
+        .catalog-tag {
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid #303038;
+          color: #a1a1aa;
+        }
+
         .secondary-action-btn {
           height: 36px;
           padding: 0 14px;
@@ -923,6 +1340,141 @@ export default function ModelDetailPage() {
         .success-hint { color: #86efac; }
 
         .flex-fill { flex: 1; }
+
+        .route-diagnostics-card {
+          margin-top: 12px;
+          padding: 14px;
+          border-radius: 10px;
+          border: 1px solid #2f2f35;
+          background: #141418;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .route-diagnostics-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+
+        .route-diagnostics-copy {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .route-diagnostics-label {
+          font-size: 11px;
+          color: #71717a;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          font-weight: 700;
+        }
+
+        .route-recommendation {
+          font-size: 13px;
+          color: #d4d4d8;
+        }
+
+        .route-detail-btn {
+          width: 28px;
+          height: 28px;
+          border-radius: 8px;
+          border: 1px solid #303038;
+          background: #1b1b1f;
+          color: #d4d4d8;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+        }
+
+        .route-detail-btn:hover {
+          border-color: #3f3f46;
+          background: #202026;
+        }
+
+        .route-details-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          padding-top: 4px;
+        }
+
+        .route-detail-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 10px 12px;
+          border-radius: 8px;
+          border: 1px solid #26262b;
+          background: #101014;
+        }
+
+        .route-detail-main {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          min-width: 0;
+        }
+
+        .route-detail-title-line {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .route-detail-title {
+          font-size: 13px;
+          font-weight: 600;
+          color: #f4f4f5;
+        }
+
+        .route-status-pill {
+          font-size: 11px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          border: 1px solid #303038;
+          color: #a1a1aa;
+        }
+
+        .route-status-pill.status-ok {
+          border-color: #22c55e33;
+          color: #4ade80;
+          background: #22c55e12;
+        }
+
+        .route-status-pill.status-fail {
+          border-color: #ef444433;
+          color: #fca5a5;
+          background: #ef444412;
+        }
+
+        .route-status-pill.status-recommended {
+          border-color: #10a37f55;
+          color: #34d399;
+          background: #10a37f12;
+        }
+
+        .route-detail-note {
+          font-size: 12px;
+          color: #a1a1aa;
+        }
+
+        .route-detail-error {
+          font-size: 12px;
+          color: #fca5a5;
+        }
+
+        .route-detail-latency {
+          font-size: 12px;
+          font-family: monospace;
+          color: #71717a;
+          flex-shrink: 0;
+        }
 
         .dot-icon.green { background: #22c55e; }
 

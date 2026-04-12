@@ -33,7 +33,7 @@ describe("turn execution plan resolver", () => {
     [buildProfile({ provider: "anthropic", providerFlavor: "anthropic", model: "claude-3-7-sonnet" }), "anthropic-native", "anthropic", "anthropic-messages", "anthropic-messages"],
     [buildProfile({ providerFlavor: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-max" }), "qwen-dashscope", "qwen", "openai-chat-compatible", "openai-responses"],
     [buildProfile({ providerFlavor: "br-minimax", baseUrl: "https://api.minimax.chat/v1", model: "minimax-m2-5" }), "br-minimax", "minimax", "openai-chat-compatible", "anthropic-messages"],
-    [buildProfile({ providerFlavor: "minimax-anthropic", baseUrl: "https://api.minimax.chat/v1", model: "minimax-m2-5" }), "br-minimax", "minimax", "openai-chat-compatible", "anthropic-messages"],
+    [buildProfile({ providerFlavor: "minimax-anthropic", baseUrl: "https://api.minimax.chat/v1", model: "minimax-m2-5" }), "generic-openai-compatible", "minimax", "openai-chat-compatible", "anthropic-messages"],
     [buildProfile({ providerFlavor: "volcengine-ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }), "volcengine-ark", "volcengine-ark", "openai-chat-compatible", "openai-responses"],
     [buildProfile({ providerFlavor: "generic-openai-compatible" }), "generic-openai-compatible", "generic-openai-compatible", "openai-chat-compatible", "openai-chat-compatible"],
   ])("maps %s to %s / %s / %s / %s", (profile, providerFamily, vendorFamily, protocolTarget, recommendedProtocolTarget) => {

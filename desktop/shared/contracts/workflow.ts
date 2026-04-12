@@ -1,3 +1,5 @@
+import type { ExperienceProfileId, ProtocolTarget, ProviderFamily } from "./model";
+
 export const WorkflowPackageSource = {
   Personal: "personal",
   Enterprise: "enterprise",
@@ -204,6 +206,10 @@ export type WorkflowLlmNode = WorkflowNodeBase & {
   kind: "llm";
   llm: WorkflowNodeOutputBinding & {
     prompt: string;
+    model?: string;
+    experienceProfileId?: ExperienceProfileId;
+    providerFamily?: ProviderFamily;
+    protocolTarget?: ProtocolTarget;
   };
 };
 

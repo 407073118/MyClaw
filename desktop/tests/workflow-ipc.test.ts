@@ -8,6 +8,9 @@ vi.mock("electron", () => ({
   ipcMain: {
     handle: handleMock,
   },
+  BrowserWindow: {
+    getAllWindows: () => [],
+  },
 }));
 
 vi.mock("../src/main/services/state-persistence", () => ({
@@ -151,11 +154,39 @@ describe("workflow IPC handlers", () => {
     const ctx = {
       state: {
         workflowRuns,
-        workflowDefinitions: {} as Record<string, unknown>,
+        workflowDefinitions: {
+          "workflow-1": {
+            id: "workflow-1",
+            name: "Visible Workflow",
+            description: "workflow",
+            status: "draft",
+            source: "personal",
+            version: 1,
+            nodeCount: 2,
+            edgeCount: 1,
+            libraryRootId: "",
+            updatedAt: "2026-04-06T00:00:00.000Z",
+            entryNodeId: "start",
+            nodes: [
+              { id: "start", kind: "start", label: "Start" },
+              { id: "end", kind: "end", label: "End" },
+            ],
+            edges: [
+              { id: "edge-1", fromNodeId: "start", toNodeId: "end", kind: "normal" },
+            ],
+            stateSchema: [],
+          },
+        } as Record<string, unknown>,
         getWorkflows: () => workflows,
+        getDefaultModelProfileId: () => "profile-1",
+        activeWorkflowRuns: new Map(),
       },
       runtime: {
         paths: { myClawDir: "/tmp/myclaw" },
+        myClawRootPath: "/tmp/myclaw",
+      },
+      services: {
+        mcpManager: null,
       },
     } as any;
 
@@ -167,15 +198,21 @@ describe("workflow IPC handlers", () => {
     const resumeRunHandler = findHandler("workflow:resume-run");
 
     const listedRuns = await listRunsHandler(null) as Array<{ id: string; workflowId: string; status: string }>;
-    expect(listedRuns).toEqual(workflowRuns);
+    expect(listedRuns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        workflowId: "workflow-1",
+      }),
+    ]));
 
     const startedPayload = await startRunHandler(null, { workflowId: "workflow-1" }) as {
-      run: { workflowId: string; status: string; currentNodeIds: string[] };
-      items: Array<{ workflowId: string }>;
+      runId: string;
     };
-    expect(startedPayload.run.workflowId).toBe("workflow-1");
-    expect(startedPayload.run.status).toBe("running");
+    expect(startedPayload.runId).toBeTruthy();
     expect(ctx.state.workflowRuns).toHaveLength(2);
+    expect(ctx.state.workflowRuns.at(-1)).toMatchObject({
+      workflowId: "workflow-1",
+      status: "running",
+    });
     expect(saveWorkflowRunMock).toHaveBeenCalled();
 
     const resumedPayload = await resumeRunHandler(null, "run-1") as {

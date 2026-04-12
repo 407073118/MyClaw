@@ -21,7 +21,7 @@ export type OpenAIFunctionTool = {
   };
 };
 
-function inferBuiltinToolSchemaGroup(functionName: string): string {
+function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git" | "http" | "web" | "ppt" | "task" | "browser" | null {
   if (functionName.startsWith("fs_")) return "fs";
   if (functionName.startsWith("exec_")) return "exec";
   if (functionName.startsWith("git_")) return "git";
@@ -30,7 +30,7 @@ function inferBuiltinToolSchemaGroup(functionName: string): string {
   if (functionName.startsWith("ppt_")) return "ppt";
   if (functionName.startsWith("task_")) return "task";
   if (functionName.startsWith("browser_")) return "browser";
-  return "other";
+  return null;
 }
 
 /**
@@ -667,6 +667,9 @@ export function buildToolSchemas(
   const filteredStaticTools = staticTools.filter((tool) => {
     const toolName = tool.function.name;
     const toolGroup = inferBuiltinToolSchemaGroup(toolName);
+    if (!toolGroup) {
+      return false;
+    }
     if (!allowedBuiltinGroups.has(toolGroup)) {
       return false;
     }

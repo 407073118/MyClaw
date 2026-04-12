@@ -9,7 +9,7 @@ created: 2026-04-04
 
 # Phase 10 — Validation Strategy
 
-> Per-phase validation contract for MiniMax-first adapter execution.
+> 历史阶段验证草案。2026-04-11 复核后，本文中部分测试文件名已与当前仓库脱节，不能再直接作为执行命令清单。
 
 ---
 
@@ -19,8 +19,8 @@ created: 2026-04-04
 |----------|-------|
 | **Framework** | Vitest 3.2.4 |
 | **Config file** | `desktop/vitest.config.ts` |
-| **Quick run command** | `pnpm --dir desktop exec vitest run tests/phase10-model-capability-resolver.test.ts tests/phase10-minimax-adapter.test.ts tests/phase10-message-replay.test.ts` |
-| **Full suite command** | `pnpm --dir desktop exec vitest run tests/phase9-provider-reasoning-mapper.test.ts tests/phase10-model-capability-resolver.test.ts tests/phase10-minimax-adapter.test.ts tests/phase10-message-replay.test.ts tests/phase10-model-settings.test.ts` |
+| **Quick run command** | `pnpm --dir desktop exec vitest run tests/phase10-model-capability-resolver.test.ts tests/br-minimax-model-client.test.ts tests/phase1-golden-transcripts.test.ts` |
+| **Full suite command** | `pnpm --dir desktop exec vitest run tests/model-route-probe-ipc.test.ts tests/model-detail-route-probe.test.ts tests/models-page-route-badge.test.ts tests/settings-page-route-badge.test.ts tests/phase11-provider-capability-probers.test.ts tests/model-runtime/integration/br-minimax-family.test.ts tests/model-runtime/integration/execution-gateway.test.ts` |
 | **Estimated runtime** | ~25 seconds |
 
 ---
@@ -35,6 +35,8 @@ created: 2026-04-04
 ---
 
 ## Per-Task Verification Map
+
+> 注意：下表中的 `phase10-minimax-adapter.test.ts`、`phase10-message-replay.test.ts`、`phase10-model-settings.test.ts`、`phase9-provider-reasoning-mapper.test.ts` 目前并不在当前仓库中。保留该表仅用于说明当时的验证意图，不应继续直接执行这些命令。
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
@@ -51,10 +53,10 @@ created: 2026-04-04
 
 ## Wave 0 Requirements
 
-- [ ] `desktop/tests/phase10-minimax-adapter.test.ts` — 覆盖 adapter 选择、兼容模式、增强模式、请求 patch 和降级原因
-- [ ] `desktop/tests/phase10-message-replay.test.ts` — 覆盖完整 assistant turn 规范化与 tool/reasoning replay
-- [ ] `desktop/tests/phase10-model-settings.test.ts` — 覆盖 MiniMax preset、provider flavor、catalog normalization、旧 baseUrl/root 兼容
-- [ ] `desktop/tests/phase10-model-capability-resolver.test.ts` — 扩展为覆盖 MiniMax capability profile
+- [ ] 用当前存在的 `desktop/tests/phase10-model-capability-resolver.test.ts`、`desktop/tests/br-minimax-model-client.test.ts`、`desktop/tests/phase1-golden-transcripts.test.ts` 覆盖 MiniMax capability / client / transcript 主链
+- [ ] 用 `desktop/tests/model-route-probe-ipc.test.ts`、`desktop/tests/model-detail-route-probe.test.ts`、`desktop/tests/models-page-route-badge.test.ts`、`desktop/tests/settings-page-route-badge.test.ts` 覆盖设置页、route probe、badge 与 catalog 侧验证
+- [ ] 用 `desktop/tests/model-runtime/integration/br-minimax-family.test.ts`、`desktop/tests/model-runtime/integration/execution-gateway.test.ts` 覆盖执行计划与运行时集成
+- [ ] `desktop/tests/phase11-provider-capability-probers.test.ts` 作为 catalog normalization 的现实替代验证
 
 *If none: "Existing infrastructure covers all phase requirements."*
 
@@ -80,3 +82,17 @@ created: 2026-04-04
 - [ ] `nyquist_compliant: true` set in frontmatter
 
 **Approval:** pending
+
+## 2026-04-11 当前替代验证入口
+
+- `desktop/tests/phase10-model-capability-resolver.test.ts`
+- `desktop/tests/br-minimax-managed-write.test.ts`
+- `desktop/tests/br-minimax-model-client.test.ts`
+- `desktop/tests/phase1-golden-transcripts.test.ts`
+- `desktop/tests/model-route-probe-ipc.test.ts`
+- `desktop/tests/model-detail-route-probe.test.ts`
+- `desktop/tests/models-page-route-badge.test.ts`
+- `desktop/tests/settings-page-route-badge.test.ts`
+- `desktop/tests/phase11-provider-capability-probers.test.ts`
+- `desktop/tests/model-runtime/integration/br-minimax-family.test.ts`
+- `desktop/tests/model-runtime/integration/execution-gateway.test.ts`

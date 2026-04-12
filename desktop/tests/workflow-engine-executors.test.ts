@@ -1,9 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { StartNodeExecutor } from "../src/main/services/workflow-engine/executors/start";
 import { EndNodeExecutor } from "../src/main/services/workflow-engine/executors/end";
 import { ConditionNodeExecutor } from "../src/main/services/workflow-engine/executors/condition";
+import { LlmNodeExecutor } from "../src/main/services/workflow-engine/executors/llm";
 import { WorkflowEventEmitter } from "../src/main/services/workflow-engine/event-emitter";
-import type { WorkflowConditionNode } from "@shared/contracts";
+import type { WorkflowConditionNode, WorkflowLlmNode } from "@shared/contracts";
 
 function makeCtx(node: any, state: Record<string, unknown> = {}) {
   return {
@@ -64,5 +65,52 @@ describe("ConditionNodeExecutor", () => {
     const exec = new ConditionNodeExecutor();
     const result = await exec.execute(makeCtx(node, { data: "something" }));
     expect(result.writes).toEqual([{ channelName: "__route__", value: "n-yes" }]);
+  });
+});
+
+describe("LlmNodeExecutor", () => {
+  it("passes workflow llm experience overrides through to the model caller", async () => {
+    const modelCaller = vi.fn(async () => ({ content: "done" }));
+    const exec = new LlmNodeExecutor(modelCaller, () => ({ id: "profile-1" }));
+    const node: WorkflowLlmNode = {
+      id: "llm-1",
+      kind: "llm",
+      label: "Think",
+      llm: {
+        prompt: "hello {{topic}}",
+        providerFamily: "anthropic-native",
+        protocolTarget: "anthropic-messages",
+        experienceProfileId: "claude-best",
+      },
+    };
+
+    await exec.execute(makeCtx(node, { topic: "world" }));
+
+    expect(modelCaller).toHaveBeenCalledWith(expect.objectContaining({
+      profile: { id: "profile-1" },
+      messages: [{ role: "user", content: "hello world" }],
+      providerFamily: "anthropic-native",
+      protocolTarget: "anthropic-messages",
+      experienceProfileId: "claude-best",
+      workflowRunId: "test-run",
+    }));
+  });
+
+  it("uses the final model content when no streaming deltas are emitted", async () => {
+    const modelCaller = vi.fn(async () => ({ content: "final reply" }));
+    const exec = new LlmNodeExecutor(modelCaller, () => ({ id: "profile-1" }));
+    const node: WorkflowLlmNode = {
+      id: "llm-2",
+      kind: "llm",
+      label: "Summarize",
+      llm: {
+        prompt: "summarize {{topic}}",
+      },
+    };
+
+    const result = await exec.execute(makeCtx(node, { topic: "status" }));
+
+    expect(result.writes).toEqual([{ channelName: "lastLlmOutput", value: "final reply" }]);
+    expect(result.outputs).toEqual({ content: "final reply" });
   });
 });

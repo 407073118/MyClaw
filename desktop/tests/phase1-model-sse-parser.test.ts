@@ -41,4 +41,21 @@ describe("phase1 model sse parser", () => {
     }]);
     expect(result.finishReason).toBe("tool_calls");
   });
+
+  it("supports legacy function_call deltas on compatible SSE streams", async () => {
+    const result = await consumeSseStream(buildSseResponse([
+      'data: {"choices":[{"delta":{"function_call":{"name":"search","arguments":"{\\"q\\":\\"" }}}]}',
+      'data: {"choices":[{"delta":{"function_call":{"arguments":"legacy\\"}"}},"finish_reason":"function_call"}]}',
+      "data: [DONE]",
+      "",
+    ]));
+
+    expect(result.toolCalls).toEqual([{
+      id: expect.stringMatching(/^toolcall-/),
+      name: "search",
+      argumentsJson: "{\"q\":\"legacy\"}",
+      input: { q: "legacy" },
+    }]);
+    expect(result.finishReason).toBe("tool_calls");
+  });
 });
