@@ -74,7 +74,7 @@ function SiliconRailAvatar({
 // Silicon Rail 主组件
 // ---------------------------------------------------------------------------
 
-/** 右侧竖向头像栏，展示硅基员工状态。点击进入工作空间页面，自动消除未读。 */
+/** 右侧竖向头像栏，展示硅基员工状态。点击后切换到共享主聊天容器中的目标对象。 */
 export default function SiliconRail() {
   const workspace = useWorkspaceStore();
   const navigate = useNavigate();
@@ -82,9 +82,15 @@ export default function SiliconRail() {
 
   if (siliconPersons.length === 0) return null;
 
-  /** 点击头像：导航到工作空间页面。 */
+  /** 点击头像：切换当前硅基员工并进入共享主聊天页面。 */
   function handleAvatarClick(person: SiliconPerson) {
-    navigate(`/employees/${person.id}`);
+    const workspaceRoute = "/";
+    console.info("[silicon-rail] 点击硅基员工头像，切换共享聊天对象", {
+      siliconPersonId: person.id,
+      route: workspaceRoute,
+    });
+    workspace.setActiveSiliconPersonId(person.id);
+    navigate(workspaceRoute);
   }
 
   return (

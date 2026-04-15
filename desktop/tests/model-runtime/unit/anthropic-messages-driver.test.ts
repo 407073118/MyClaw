@@ -133,6 +133,36 @@ describe("anthropic messages driver", () => {
     });
   });
 
+  it("maps Moonshot anthropic reasoning effort into thinking budgets on the first-class kimi route", () => {
+    const request = buildAnthropicMessagesRequestBody({
+      profile: {
+        id: "profile-1",
+        name: "Kimi",
+        provider: "openai-compatible",
+        providerFlavor: "moonshot",
+        baseUrl: "https://api.moonshot.cn/v1",
+        apiKey: "key",
+        model: "kimi-k2-0905-preview",
+      },
+      plan: {
+        providerFamily: "moonshot-native",
+        legacyExecutionPlan: {
+          reasoningEffort: "high",
+        },
+      },
+      content,
+      toolBundle: { target: "moonshot-native", compileMode: "openai-compatible-relaxed", tools: [] },
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    } as never);
+
+    expect(request).toMatchObject({
+      thinking: {
+        type: "enabled",
+        budget_tokens: 32768,
+      },
+    });
+  });
+
   it("falls back to profile.defaultReasoningEffort when the execution plan leaves reasoning effort empty", () => {
     const request = buildAnthropicMessagesRequestBody({
       profile: {
@@ -185,6 +215,37 @@ describe("anthropic messages driver", () => {
     expect(result.fallbackReason).toBeNull();
     expect(result.fallbackEvents).toEqual([]);
     expect(result.content).toBe("hello");
+    expect(result.capabilityEvents).toEqual([]);
+    expect(result.citations).toEqual([]);
+  });
+
+  it("preserves Qwen vendor identity in the anthropic-compatible canonical route", async () => {
+    const profile = makeProfile({
+      provider: "openai-compatible",
+      providerFlavor: "qwen",
+      providerFamily: "qwen-native",
+      vendorFamily: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-max",
+    });
+
+    const result = await anthropicMessagesDriver.execute({
+      profile,
+      plan: buildTurnExecutionPlan({
+        profile,
+        legacyExecutionPlan: makeLegacyExecutionPlan(),
+      }),
+      content,
+      toolBundle: new ToolMiddleware().compile([], "qwen-native"),
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    });
+
+    expect(result.requestVariantId).toBe("anthropic-messages-qwen");
+    expect(executeRequestVariantsMock).toHaveBeenCalledWith(expect.objectContaining({
+      requestVariants: [
+        expect.objectContaining({ id: "anthropic-messages-qwen" }),
+      ],
+    }));
   });
 
   it("parses thinking deltas and tool_use blocks from messages events", async () => {

@@ -91,23 +91,13 @@ Requirements for milestone v1.0: Core Agentic Loop. Each maps to roadmap phases.
 
 Deferred to future milestone. Tracked but not in current roadmap.
 
+说明：COMPACT / TOKEN / INFRA 已在 v1.1 完成并从当前待办中移除；以下仅保留仍未完成的需求。
+
 ### AGENT -- 子代理
 
 - **AGENT-01**: 模型可以 spawn 子代理处理复杂子任务
 - **AGENT-02**: 子代理有独立的消息上下文和 token 预算
 - **AGENT-03**: 支持前台（等待结果）和后台（异步通知）模式
-
-### COMPACT -- 智能对话压缩
-
-- **COMPACT-01**: 基于 token 计数而非消息数量进行 compact
-- **COMPACT-02**: 调用模型生成对话摘要替代简单的占位符
-- **COMPACT-03**: 根据模型 context window 大小动态调整阈值
-
-### TOKEN-UI -- Token 消耗可视化
-
-- **TOKEN-UI-01**: 每条消息显示 token 消耗
-- **TOKEN-UI-02**: 会话级别 token 总计
-- **TOKEN-UI-03**: 按模型计费估算
 
 ### CLOUD -- 云端市场
 
@@ -128,13 +118,6 @@ Deferred to future milestone. Tracked but not in current roadmap.
 - **MEMORY-01**: 跨会话持久记忆存储
 - **MEMORY-02**: 自动从对话中提取关键信息保存
 - **MEMORY-03**: 新会话自动加载相关记忆作为上下文
-
-### INFRA -- 基础设施
-
-- **INFRA-01**: API 调用失败自动重试（指数退避）
-- **INFRA-02**: 结构化日志系统（替代 console.log）
-- **INFRA-03**: 渲染进程全局 ErrorBoundary
-- **INFRA-04**: 单元测试覆盖（executor, model-client, tool-schemas）
 
 ## Out of Scope
 

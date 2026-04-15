@@ -38,67 +38,123 @@ export type ResolveVendorRuntimePolicyInput = {
   requestedProtocolTarget?: ProtocolTarget | null;
 };
 
-/** 根据 profile/baseUrl/model 推断厂商 family，作为多协议策略矩阵的归属键。 */
-export function inferVendorFamily(
+/** 优先根据显式厂商信号解析 vendor family，避免模型名前缀覆盖更强配置。 */
+function resolveExplicitVendorFamily(
   profile: ResolveVendorRuntimePolicyInput["profile"],
-): VendorFamily {
-  if (profile.vendorFamily) {
-    return profile.vendorFamily;
-  }
-
+): VendorFamily | null {
+  const explicitVendorFamily = profile.vendorFamily;
+  const explicitProviderFamily = profile.providerFamily;
   const flavor = (profile.providerFlavor ?? "").toLowerCase();
   const provider = profile.provider.toLowerCase();
   const baseUrl = profile.baseUrl.toLowerCase();
-  const model = profile.model.toLowerCase();
 
-  if (flavor === "openai" || (provider === "openai-compatible" && baseUrl.includes("api.openai.com"))) {
-    return "openai";
+  if (
+    flavor === "br-minimax"
+    || flavor === "minimax-anthropic"
+    || explicitVendorFamily === "minimax"
+    || explicitProviderFamily === "br-minimax"
+    || baseUrl.includes("minimax")
+    || baseUrl.includes("minimaxi")
+    || baseUrl.includes("cybotforge.100credit.cn")
+  ) {
+    return "minimax";
   }
 
   if (
-    flavor === "anthropic"
-    || provider === "anthropic"
-    || baseUrl.includes("anthropic.com")
-    || model.startsWith("claude")
+    flavor === "volcengine-ark"
+    || explicitVendorFamily === "volcengine-ark"
+    || explicitProviderFamily === "volcengine-ark"
+    || baseUrl.includes("ark.cn-beijing.volces.com")
+    || baseUrl.includes("volces.com")
   ) {
-    return "anthropic";
+    return "volcengine-ark";
   }
 
   if (
     flavor === "qwen"
+    || explicitVendorFamily === "qwen"
+    || explicitProviderFamily === "qwen-native"
+    || explicitProviderFamily === "qwen-dashscope"
     || baseUrl.includes("dashscope.aliyuncs.com")
     || baseUrl.includes("coding.dashscope")
-    || model.startsWith("qwen")
   ) {
     return "qwen";
   }
 
   if (
     flavor === "moonshot"
+    || explicitVendorFamily === "kimi"
+    || explicitProviderFamily === "moonshot-native"
     || baseUrl.includes("moonshot")
     || baseUrl.includes("platform.kimi")
-    || model.startsWith("kimi")
-    || model.startsWith("k2")
   ) {
     return "kimi";
   }
 
-  if (flavor === "volcengine-ark" || baseUrl.includes("ark.cn-beijing.volces.com") || baseUrl.includes("volces.com")) {
-    return "volcengine-ark";
+  if (
+    flavor === "anthropic"
+    || explicitVendorFamily === "anthropic"
+    || explicitProviderFamily === "anthropic-native"
+    || provider === "anthropic"
+    || baseUrl.includes("anthropic.com")
+  ) {
+    return "anthropic";
   }
 
   if (
-    flavor === "br-minimax"
-    || flavor === "minimax-anthropic"
-    || baseUrl.includes("minimax")
-    || baseUrl.includes("minimaxi")
-    || model.startsWith("minimax")
+    flavor === "deepseek"
+    || explicitVendorFamily === "deepseek"
+    || explicitProviderFamily === "deepseek"
+    || baseUrl.includes("api.deepseek.com")
   ) {
-    return "minimax";
+    return "deepseek";
   }
 
-  if (provider === "local-gateway") {
+  if (
+    flavor === "openai"
+    || explicitVendorFamily === "openai"
+    || explicitProviderFamily === "openai-native"
+    || (provider === "openai-compatible" && baseUrl.includes("api.openai.com"))
+  ) {
+    return "openai";
+  }
+
+  if (provider === "local-gateway" || explicitVendorFamily === "generic-local-gateway") {
     return "generic-local-gateway";
+  }
+
+  return explicitVendorFamily ?? null;
+}
+
+/** 根据 profile/baseUrl/model 推断厂商 family，作为多协议策略矩阵的归属键。 */
+export function inferVendorFamily(
+  profile: ResolveVendorRuntimePolicyInput["profile"],
+): VendorFamily {
+  const explicitVendorFamily = resolveExplicitVendorFamily(profile);
+  if (explicitVendorFamily) {
+    return explicitVendorFamily;
+  }
+
+  const model = profile.model.toLowerCase();
+
+  if (model.startsWith("claude")) {
+    return "anthropic";
+  }
+
+  if (model.startsWith("qwen")) {
+    return "qwen";
+  }
+
+  if (model.startsWith("kimi") || model.startsWith("k2")) {
+    return "kimi";
+  }
+
+  if (model.startsWith("deepseek")) {
+    return "deepseek";
+  }
+
+  if (model.startsWith("minimax")) {
+    return "minimax";
   }
 
   return "generic-openai-compatible";
@@ -195,6 +251,25 @@ export function resolveVendorRuntimePolicy(
   const vendorFamily = inferVendorFamily(input.profile);
   const vendorPolicy = getVendorPolicy(vendorFamily);
   const supportedProtocolTargets = [...vendorPolicy.supportedProtocols];
+
+  // 通用/自定义厂商的 registry 仅声明 openai-chat-compatible 作为保守默认，
+  // 但用户通过路线探测发现的其它可用协议应当在执行时同样被承认。
+  const isGenericVendor = vendorFamily === "generic-openai-compatible" || vendorFamily === "generic-local-gateway";
+  if (isGenericVendor) {
+    if (input.profile.protocolTarget && !supportedProtocolTargets.includes(input.profile.protocolTarget)) {
+      supportedProtocolTargets.push(input.profile.protocolTarget);
+    }
+    if (input.profile.savedProtocolPreferences) {
+      for (const pref of input.profile.savedProtocolPreferences) {
+        if (!supportedProtocolTargets.includes(pref)) {
+          supportedProtocolTargets.push(pref);
+        }
+      }
+    }
+    if (input.requestedProtocolTarget && !supportedProtocolTargets.includes(input.requestedProtocolTarget)) {
+      supportedProtocolTargets.push(input.requestedProtocolTarget);
+    }
+  }
   const recommendedProtocolTarget = vendorPolicy.recommendedProtocolsByUseCase.default[0]
     ?? resolveProtocolTarget(input.profile, providerFamily);
   const explicitProtocolTarget = input.requestedProtocolTarget ?? input.profile.protocolTarget ?? null;

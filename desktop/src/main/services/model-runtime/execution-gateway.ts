@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  BackgroundTaskHandle,
+  CapabilityExecutionRoute,
   CanonicalToolSpec,
   CanonicalTurnContent,
   ExecutionPlan,
@@ -11,6 +13,7 @@ import type {
   TurnOutcome,
 } from "@shared/contracts";
 import type { MyClawPaths } from "../directory-service";
+import type { ArtifactManager } from "../artifact-manager";
 import type { ChatMessage as ModelChatMessage, ModelCallResult } from "../model-client";
 
 import {
@@ -21,6 +24,7 @@ import { resolveProtocolDriver, type ProtocolExecutionOutput } from "./protocols
 import type { ProviderRolloutFlags, VendorProtocolRolloutFlags } from "./rollout-gates";
 import { resolveEffectiveExecutionRolloutGate } from "./rollout-gates";
 import { buildTurnTelemetryEvent } from "./telemetry";
+import { filterRegistryForMoonshotFormula, isMoonshotFormulaToolStackActive } from "./moonshot-formula-tools";
 import { createToolMiddleware, type CompiledToolBundle, type ToolMiddleware } from "./tool-middleware";
 import {
   buildCanonicalToolRegistry,
@@ -28,6 +32,7 @@ import {
 } from "./tool-registry";
 import { resolveTurnExecutionPlan } from "./turn-execution-plan-resolver";
 import { saveTurnOutcome } from "./turn-outcome-store";
+import type { ComputerActionHarness } from "./computer-action-harness";
 
 export type ExecutionGatewayInput = {
   mode?: "legacy" | "canonical";
@@ -52,6 +57,7 @@ export type ExecutionGatewayResult = ProtocolExecutionOutput & {
   plan: TurnExecutionPlan;
   providerFamily: TurnExecutionPlan["providerFamily"];
   protocolTarget: TurnExecutionPlan["protocolTarget"];
+  capabilityRoutes: NonNullable<TurnExecutionPlan["capabilityRoutes"]>;
   actualExecutionPath: TurnActualExecutionPath;
   toolBundle: CompiledToolBundle;
   latencyMs: number;
@@ -62,9 +68,11 @@ export type ExecutionGatewayResult = ProtocolExecutionOutput & {
 
 export type ExecutionGatewayDeps = {
   paths?: MyClawPaths;
+  artifactManager?: ArtifactManager;
   rolloutFlags?: ProviderRolloutFlags;
   vendorProtocolFlags?: VendorProtocolRolloutFlags;
   toolMiddleware?: ToolMiddleware;
+  computerHarness?: ComputerActionHarness;
 };
 
 function isTurnExecutionPlan(plan: TurnExecutionPlan | ExecutionPlan): plan is TurnExecutionPlan {
@@ -90,6 +98,9 @@ function normalizeModelCallResult(result: ModelCallResult): ProtocolExecutionOut
     fallbackReason: result.transport?.fallbackReason ?? null,
     retryCount: result.transport?.retryCount ?? 0,
     fallbackEvents: result.transport?.fallbackEvents ?? [],
+    citations: [],
+    capabilityEvents: [],
+    backgroundTask: null,
   };
 }
 
@@ -123,17 +134,67 @@ function buildCanonicalInput(input: ExecutionGatewayInput, plan: TurnExecutionPl
   });
 }
 
+/** 当厂商原生 search 可用时，过滤掉会与 built-in tool 重名的本地回退工具。 */
+function filterRegistryForCapabilityRoutes(
+  registry: CanonicalToolSpec[],
+  capabilityRoutes: CapabilityExecutionRoute[] | undefined,
+): CanonicalToolSpec[] {
+  const nativeSearchEnabled = capabilityRoutes?.some((route) =>
+    route.capabilityId === "search"
+    && route.routeType === "vendor-native"
+    && route.nativeToolName === "web_search",
+  ) ?? false;
+
+  const deduplicatedRegistry = nativeSearchEnabled
+    ? registry.filter((tool) => tool.name !== "web_search")
+    : registry;
+
+  if (isMoonshotFormulaToolStackActive(capabilityRoutes)) {
+    return filterRegistryForMoonshotFormula(deduplicatedRegistry, capabilityRoutes);
+  }
+
+  return deduplicatedRegistry;
+}
+
+function resolveToolStackSource(capabilityRoutes: CapabilityExecutionRoute[] | undefined): TurnOutcome["toolStackSource"] {
+  const toolStackSources = new Set(
+    (capabilityRoutes ?? [])
+      .map((route) => route.toolStackSource)
+      .filter((value): value is NonNullable<TurnOutcome["toolStackSource"]> => !!value && value !== "none"),
+  );
+
+  if (toolStackSources.has("vendor-native") && toolStackSources.has("managed-local")) {
+    return "hybrid";
+  }
+  if (toolStackSources.has("vendor-native")) {
+    return "vendor-native";
+  }
+  if (toolStackSources.has("managed-local")) {
+    return "managed-local";
+  }
+  return "none";
+}
+
+function resolveActiveNativeToolStackId(
+  plan: TurnExecutionPlan,
+  capabilityRoutes: CapabilityExecutionRoute[] | undefined,
+): string | null {
+  return capabilityRoutes?.find((route) => route.nativeToolStackId)?.nativeToolStackId
+    ?? plan.nativeToolStackId
+    ?? null;
+}
+
 function buildToolBundle(
   input: ExecutionGatewayInput,
   plan: TurnExecutionPlan,
   toolMiddleware: ToolMiddleware,
 ): CompiledToolBundle {
-  const registry = input.toolSpecs
+  const registry = filterRegistryForCapabilityRoutes(input.toolSpecs
     ?? (input.tools
       ? hydrateCanonicalToolRegistryFromLegacyTools(input.tools as any)
       : input.workingDir
         ? buildCanonicalToolRegistry(input.workingDir, undefined, undefined, plan.toolPolicyId)
-        : []);
+        : []), plan.capabilityRoutes);
 
   return toolMiddleware.compile(registry, plan.toolCompileTarget);
 }
@@ -172,6 +233,11 @@ function buildOutcome(input: {
     retryCount: input.result.retryCount,
     toolCompileMode: input.toolBundle.compileMode,
     replayMode: input.plan.replayMode,
+    reasoningEnabled: input.plan.reasoningEnabled,
+    thinkingControlKind: input.plan.thinkingControlKind,
+    toolChoiceConstraint: input.plan.toolChoiceConstraint,
+    nativeToolStackId: resolveActiveNativeToolStackId(input.plan, input.plan.capabilityRoutes),
+    toolStackSource: resolveToolStackSource(input.plan.capabilityRoutes),
     startedAt: input.startedAt,
     finishedAt: input.finishedAt,
     success: input.result.finishReason !== "error",
@@ -183,6 +249,11 @@ function buildOutcome(input: {
     toolCallCount: input.result.toolCalls.length,
     toolSuccessCount: 0,
     contextStability: (input.result.fallbackEvents?.length ?? 0) === 0 && !input.result.fallbackReason,
+    citations: input.result.citations ?? [],
+    capabilityEvents: input.result.capabilityEvents ?? [],
+    computerCalls: input.result.computerCalls ?? [],
+    backgroundTask: input.result.backgroundTask ?? null,
+    telemetryTags: input.plan.telemetryTags,
   };
 
   outcome.telemetry = buildTurnTelemetryEvent({
@@ -235,6 +306,8 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
         signal: input.signal,
         onDelta: input.onDelta,
         onToolCallDelta: input.onToolCallDelta,
+        sessionId: input.sessionId ?? null,
+        workflowRunId: input.workflowRunId ?? null,
         rolloutGate,
       };
       const actualExecutionPath = input.mode === "legacy"
@@ -243,7 +316,7 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
           ? "canonical-rollout-fallback"
           : "canonical-driver";
       const requestShape = protocolDriver.buildRequestBody ? protocolDriver.buildRequestBody(protocolInput) : {};
-      const result = input.mode === "canonical"
+      let result = input.mode === "canonical"
         ? await protocolDriver.execute(protocolInput)
         : applyLegacyProtocolMetadata(plan, normalizeModelCallResult(await (async () => {
             const { callModel } = await import("../model-client");
@@ -260,6 +333,46 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
               onToolCallDelta: input.onToolCallDelta,
             });
           })()));
+
+      if (input.mode === "canonical" && deps.computerHarness && plan.protocolTarget === "openai-responses") {
+        const aggregatedComputerCalls = [...(result.computerCalls ?? [])];
+        const aggregatedCapabilityEvents = [...(result.capabilityEvents ?? [])];
+        const aggregatedCitations = [...(result.citations ?? [])];
+        const aggregatedFallbackEvents = [...(result.fallbackEvents ?? [])];
+        let aggregatedRetryCount = result.retryCount;
+
+        while ((result.computerCalls?.length ?? 0) > 0 && result.responseId) {
+          const harnessOutput = await deps.computerHarness.executeCalls({
+            sessionId: input.sessionId ?? null,
+            workflowRunId: input.workflowRunId ?? null,
+            responseId: result.responseId,
+            computerCalls: result.computerCalls ?? [],
+            signal: input.signal,
+          });
+          aggregatedCapabilityEvents.push(...harnessOutput.capabilityEvents);
+          const continuation = await protocolDriver.execute({
+            ...protocolInput,
+            previousResponseId: result.responseId,
+            responseInputItems: harnessOutput.responseInputItems,
+          });
+          aggregatedRetryCount += continuation.retryCount;
+          aggregatedFallbackEvents.push(...(continuation.fallbackEvents ?? []));
+          aggregatedCitations.push(...(continuation.citations ?? []));
+          aggregatedCapabilityEvents.push(...(continuation.capabilityEvents ?? []));
+          aggregatedComputerCalls.push(...(continuation.computerCalls ?? []));
+          result = continuation;
+        }
+
+        result = {
+          ...result,
+          retryCount: aggregatedRetryCount,
+          fallbackEvents: aggregatedFallbackEvents,
+          citations: aggregatedCitations,
+          capabilityEvents: aggregatedCapabilityEvents,
+          computerCalls: aggregatedComputerCalls,
+        };
+      }
+
       const latencyMs = Date.now() - startTime;
       const finishedAt = new Date().toISOString();
       const fallbackEvents = mergeFallbackEvents([], result);
@@ -280,7 +393,7 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
       });
 
       if (deps.paths) {
-        await saveTurnOutcome(deps.paths, outcome);
+        await saveTurnOutcome(deps.paths, outcome, deps.artifactManager);
       }
 
       return {
@@ -288,6 +401,7 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
         plan,
         providerFamily: plan.providerFamily,
         protocolTarget: plan.protocolTarget,
+        capabilityRoutes: plan.capabilityRoutes ?? [],
         actualExecutionPath,
         toolBundle,
         latencyMs,

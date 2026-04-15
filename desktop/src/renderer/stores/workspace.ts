@@ -1,10 +1,13 @@
 import { create } from "zustand";
 
 import type {
+  ArtifactRecord,
+  ArtifactScopeRef,
   ApprovalDecision,
   ApprovalMode,
   ApprovalPolicy,
   ApprovalRequest,
+  BackgroundTaskHandle,
   BuiltinToolApprovalMode,
   ChatSession,
   McpServer,
@@ -102,6 +105,16 @@ type CancelSessionRunInput = {
   reason?: string;
 };
 
+type BackgroundTaskSnapshot = {
+  sessionId: string;
+  outcomeId: string;
+  task: BackgroundTaskHandle | null;
+  status: string;
+  outputText: string;
+};
+
+type ArtifactScopeMap = Record<string, ArtifactRecord[]>;
+
 // ---------------------------------------------------------------------------
 // Workspace state shape
 // ---------------------------------------------------------------------------
@@ -113,6 +126,9 @@ type WorkspaceState = {
   myClawRootPath: string | null;
   skillsRootPath: string | null;
   sessionsRootPath: string | null;
+  workspaceRootPath: string | null;
+  artifactsRootPath: string | null;
+  cacheRootPath: string | null;
   requiresInitialSetup: boolean;
   defaultModelProfileId: string | null;
   activeSessionId: string | null;
@@ -124,7 +140,7 @@ type WorkspaceState = {
   skills: SkillDefinition[];
   skillDetails: Record<string, unknown>;
   siliconPersons: SiliconPerson[];
-  /** 当前 @投递目标硅基员工 ID，发送一条消息后自动清除。 */
+  /** 当前被选中的硅基员工聊天对象 ID；为空时表示主聊天对象。 */
   activeSiliconPersonId: string | null;
   workflows: WorkflowDefinitionSummary[];
   workflowSummaries: Record<string, WorkflowDefinitionSummary>;
@@ -151,20 +167,29 @@ type WorkspaceState = {
 
   // Derived (recalculated after set())
   currentSession: ChatSession | null;
+  backgroundTaskSnapshot: BackgroundTaskSnapshot | null;
+  artifactsByScope: ArtifactScopeMap;
+  recentArtifacts: ArtifactRecord[];
 
   // 动作
   loadBootstrap: () => Promise<void>;
   selectSession: (sessionId: string) => void;
   createSession: () => Promise<ChatSession>;
   deleteSession: (sessionId: string) => Promise<unknown>;
-  sendMessage: (content: string, options?: {
-    onMessageStream?: (snapshot: unknown) => void;
-  }) => Promise<void>;
+  sendMessage: (content: string) => Promise<void>;
   cancelSessionRun: (input?: CancelSessionRunInput) => Promise<void>;
+  pollBackgroundTask: () => Promise<BackgroundTaskSnapshot | null>;
+  cancelBackgroundTask: () => Promise<BackgroundTaskSnapshot | null>;
   updateSessionRuntimeIntent: (intent: Record<string, unknown>) => Promise<void>;
   approvePlan: () => Promise<void>;
   revisePlan: (feedback: string) => Promise<void>;
   cancelPlanMode: () => Promise<void>;
+  loadArtifactsByScope: (scope: ArtifactScopeRef) => Promise<ArtifactRecord[]>;
+  loadRecentArtifacts: (input?: { limit?: number }) => Promise<ArtifactRecord[]>;
+  markArtifactFinal: (artifactId: string, scope?: ArtifactScopeRef) => Promise<ArtifactRecord>;
+  openArtifact: (artifactId: string) => Promise<void>;
+  revealArtifact: (artifactId: string) => Promise<void>;
+  applyArtifactEvent: (event: Record<string, unknown>) => void;
 
   createModelProfile: (input: Omit<ModelProfile, "id">) => Promise<ModelProfile>;
   updateModelProfile: (profileId: string, input: Omit<ModelProfile, "id">) => Promise<ModelProfile>;
@@ -231,16 +256,19 @@ type WorkspaceState = {
   loadSiliconPersonById: (siliconPersonId: string) => Promise<SiliconPerson>;
   createSiliconPerson: (input: { name: string; title?: string; description: string; [key: string]: unknown }) => Promise<SiliconPerson>;
   updateSiliconPerson: (siliconPersonId: string, input: Partial<SiliconPerson>) => Promise<SiliconPerson>;
+  deleteSiliconPerson: (siliconPersonId: string) => Promise<SiliconPerson[]>;
   createSiliconPersonSession: (siliconPersonId: string, input?: { title?: string }) => Promise<ChatSession>;
   switchSiliconPersonSession: (siliconPersonId: string, sessionId: string) => Promise<ChatSession>;
   /** fire-and-forget：入队后立即返回，不阻塞 UI。 */
   sendSiliconPersonMessage: (siliconPersonId: string, content: string) => Promise<void>;
+  /** 将指定硅基员工会话标记为已读，只同步未读状态，不改变 currentSession。 */
+  markSiliconPersonSessionRead: (siliconPersonId: string, sessionId: string) => Promise<ChatSession>;
   startSiliconPersonWorkflowRun: (siliconPersonId: string, workflowId: string) => Promise<{
     siliconPerson: SiliconPerson;
     session: ChatSession;
     runId: string | null;
   }>;
-  /** 切换 Rail 选中的硅基员工（切换或取消选中）。 */
+  /** 切换当前共享聊天容器中的硅基员工聊天对象（切换或取消选中）。 */
   setActiveSiliconPersonId: (id: string | null) => void;
 
   // Workflows
@@ -345,6 +373,33 @@ function mergeSiliconPersonSessionPayload(
   return { siliconPersons, sessions, workflowRuns: state.workflowRuns };
 }
 
+/** 灏?scope 杞垚绋冲畾鐨勫瓧绗︿覆 key锛屼究浜?store 鎸夌粍缂撳瓨宸ヤ綔鏂囦欢銆?*/
+function artifactScopeKey(scope: ArtifactScopeRef): string {
+  return `${scope.scopeKind}:${scope.scopeId}`;
+}
+
+/** 鍚戞枃浠跺垪琛ㄤ腑鍚堝苟鏈€鏂扮殑 artifact 璁板綍锛屽苟鎸夋洿鏂版椂闂撮檷搴忔帓搴忋€?*/
+function mergeArtifactRecord(list: ArtifactRecord[], artifact: ArtifactRecord): ArtifactRecord[] {
+  const next = list.filter((item) => item.id !== artifact.id);
+  next.unshift(artifact);
+  return next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+/** 浠?session stream 浜嬩欢涓彁鍙?artifact payload锛屽吋瀹?payload 鍖呰９涓庢壆骞崇粨鏋勩€?*/
+function readArtifactEventPayload(event: Record<string, unknown>): ArtifactRecord | null {
+  const candidate = event.payload && typeof event.payload === "object"
+    ? event.payload as Record<string, unknown>
+    : event;
+  if (typeof candidate.artifact !== "object" || candidate.artifact === null) {
+    return null;
+  }
+  const artifact = candidate.artifact as Record<string, unknown>;
+  if (typeof artifact.id !== "string" || typeof artifact.relativePath !== "string") {
+    return null;
+  }
+  return artifact as ArtifactRecord;
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -404,6 +459,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   myClawRootPath: null,
   skillsRootPath: null,
   sessionsRootPath: null,
+  workspaceRootPath: null,
+  artifactsRootPath: null,
+  cacheRootPath: null,
   requiresInitialSetup: true,
   defaultModelProfileId: null,
   activeSessionId: null,
@@ -444,6 +502,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   },
 
   currentSession: null,
+  backgroundTaskSnapshot: null,
+  artifactsByScope: {},
+  recentArtifacts: [],
 
   // -------------------------------------------------------------------------
   // Bootstrap
@@ -466,6 +527,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         myClawRootPath: payload.myClawRootPath ?? null,
         skillsRootPath: payload.skillsRootPath ?? null,
         sessionsRootPath: payload.sessionsRootPath ?? null,
+        workspaceRootPath: payload.workspaceRootPath ?? null,
+        artifactsRootPath: payload.artifactsRootPath ?? null,
+        cacheRootPath: payload.cacheRootPath ?? null,
         requiresInitialSetup:
           typeof payload.requiresInitialSetup === "boolean"
             ? payload.requiresInitialSetup
@@ -565,7 +629,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   // Messaging
   // -------------------------------------------------------------------------
 
-  async sendMessage(content, options = {}) {
+  async sendMessage(content) {
     let { currentSession } = get();
     if (!currentSession || !content.trim()) {
       return;
@@ -590,13 +654,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       return { sessions };
     });
 
-    const payload = await window.myClawAPI.sendMessage(
-      currentSession.id,
-      trimmed,
-      options.onMessageStream
-        ? { onSnapshot: options.onMessageStream }
-        : undefined,
-    );
+    const payload = await window.myClawAPI.sendMessage(currentSession.id, trimmed);
 
     if (payload?.session) {
       set((s) => {
@@ -635,6 +693,52 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         approvalRequests: payload.approvalRequests ?? s.approvalRequests,
       };
     });
+  },
+
+  /** 轮询当前会话的后台任务，并把主进程回写后的 session 快照同步回 store。 */
+  async pollBackgroundTask() {
+    const { currentSession } = get();
+    if (!currentSession?.backgroundTask) return null;
+    const payload = await window.myClawAPI.pollBackgroundTask(currentSession.id);
+    if (!payload?.session) return null;
+    set({ backgroundTaskSnapshot: {
+      sessionId: currentSession.id,
+      outcomeId: payload.outcomeId,
+      task: payload.task,
+      status: payload.status,
+      outputText: payload.outputText,
+    } });
+    get().applySessionUpdate(payload.session);
+    return {
+      sessionId: currentSession.id,
+      outcomeId: payload.outcomeId,
+      task: payload.task,
+      status: payload.status,
+      outputText: payload.outputText,
+    };
+  },
+
+  /** 取消当前会话的后台任务，并立即同步最新 session 状态。 */
+  async cancelBackgroundTask() {
+    const { currentSession } = get();
+    if (!currentSession?.backgroundTask) return null;
+    const payload = await window.myClawAPI.cancelBackgroundTask(currentSession.id);
+    if (!payload?.session) return null;
+    set({ backgroundTaskSnapshot: {
+      sessionId: currentSession.id,
+      outcomeId: payload.outcomeId,
+      task: payload.task,
+      status: payload.status,
+      outputText: payload.outputText,
+    } });
+    get().applySessionUpdate(payload.session);
+    return {
+      sessionId: currentSession.id,
+      outcomeId: payload.outcomeId,
+      task: payload.task,
+      status: payload.status,
+      outputText: payload.outputText,
+    };
   },
 
   async updateSessionRuntimeIntent(intent) {
@@ -693,6 +797,88 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         sessions[index] = session;
       }
       return { sessions };
+    });
+  },
+
+  /** 鎸夊綋鍓?scope 鍔犺浇宸ヤ綔鏂囦欢鍒楄〃锛屽悓姝ュ啓鍏?store 缂撳瓨銆?*/
+  async loadArtifactsByScope(scope) {
+    const artifacts = await window.myClawAPI.listArtifactsByScope(scope);
+    const key = artifactScopeKey(scope);
+    set((state) => ({
+      artifactsByScope: {
+        ...state.artifactsByScope,
+        [key]: artifacts,
+      },
+    }));
+    return artifacts;
+  },
+
+  /** 鍔犺浇鍏ㄥ眬鏈€杩戜骇鍑虹殑宸ヤ綔鏂囦欢锛屼緵 Files 宸ヤ綔鍙颁笌蹇嵎鍏ュ彛鍏变韩銆?*/
+  async loadRecentArtifacts(input) {
+    const artifacts = await window.myClawAPI.listRecentArtifacts(input ?? {});
+    set({ recentArtifacts: artifacts });
+    return artifacts;
+  },
+
+  /** 灏嗘寚瀹?artifact 鎻愬崌涓烘渶缁堜氦浠橈紝骞跺洖鍐欏埌鏈湴缂撳瓨銆?*/
+  async markArtifactFinal(artifactId, scope) {
+    const artifact = await window.myClawAPI.markArtifactFinal(artifactId, scope);
+    set((state) => {
+      const nextScopes = Object.fromEntries(
+        Object.entries(state.artifactsByScope).map(([key, list]) => [
+          key,
+          list.some((item) => item.id === artifact.id) ? mergeArtifactRecord(list, artifact) : list,
+        ]),
+      );
+      return {
+        artifactsByScope: nextScopes,
+        recentArtifacts: mergeArtifactRecord(state.recentArtifacts, artifact),
+      };
+    });
+    return artifact;
+  },
+
+  /** 鎵撳紑鎸囧畾鏂囦欢锛屽苟璁╂湰鍦扮紦瀛樼殑璁块棶鏃堕棿鍚屾鏇存柊銆?*/
+  async openArtifact(artifactId) {
+    await window.myClawAPI.openArtifact(artifactId);
+    const artifact = get().recentArtifacts.find((item) => item.id === artifactId)
+      ?? Object.values(get().artifactsByScope).flat().find((item) => item.id === artifactId)
+      ?? null;
+    if (!artifact) {
+      return;
+    }
+    get().applyArtifactEvent({
+      type: "artifact.updated",
+      artifact: {
+        ...artifact,
+        lastOpenedAt: new Date().toISOString(),
+        openCount: (artifact.openCount ?? 0) + 1,
+      },
+    });
+  },
+
+  /** 鍦ㄧ郴缁熸枃浠剁鐞嗗櫒涓畾浣嶅埌鎸囧畾鏂囦欢锛屼笉鏀瑰啓鏈湴鐘舵€併€?*/
+  async revealArtifact(artifactId) {
+    await window.myClawAPI.revealArtifact(artifactId);
+  },
+
+  /** 娑堣垂涓诲線姹夋祦鎺ㄩ€佺殑 artifact 浜嬩欢锛屾渶灏忔洿鏂?store 缂撳瓨銆?*/
+  applyArtifactEvent(event) {
+    const artifact = readArtifactEventPayload(event);
+    if (!artifact) {
+      return;
+    }
+    set((state) => {
+      const nextScopes = Object.fromEntries(
+        Object.entries(state.artifactsByScope).map(([key, list]) => [
+          key,
+          list.some((item) => item.id === artifact.id) ? mergeArtifactRecord(list, artifact) : list,
+        ]),
+      );
+      return {
+        artifactsByScope: nextScopes,
+        recentArtifacts: mergeArtifactRecord(state.recentArtifacts, artifact),
+      };
     });
   },
 
@@ -1019,6 +1205,16 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       return { siliconPersons };
     });
     return payload.siliconPerson;
+  },
+
+  async deleteSiliconPerson(siliconPersonId) {
+    const payload = await window.myClawAPI.deleteSiliconPerson(siliconPersonId);
+    set((s) => ({
+      siliconPersons: payload.items,
+      sessions: s.sessions.filter((session) => session.siliconPersonId !== siliconPersonId),
+      activeSiliconPersonId: s.activeSiliconPersonId === siliconPersonId ? null : s.activeSiliconPersonId,
+    }));
+    return payload.items;
   },
 
   /** 手动新建硅基员工会话，并把主线程返回的 currentSession 同步回本地。 */

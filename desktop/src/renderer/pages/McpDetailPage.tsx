@@ -9,13 +9,14 @@ import { ToolRiskCategory } from "@shared/contracts";
 interface McpServerFormProps {
   initialValue: McpServerConfig | null;
   isCreate: boolean;
+  submitting: boolean;
   submitLabel: string;
   onSubmit: (config: McpServerConfig) => void;
   onCancel: () => void;
 }
 
 /** 渲染 MCP 服务表单，并兼容 stdio/http 两种传输方式。 */
-function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel }: McpServerFormProps) {
+function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubmit, onCancel }: McpServerFormProps) {
   const [transport, setTransport] = useState<"stdio" | "http">(
     initialValue?.transport ?? "stdio",
   );
@@ -103,7 +104,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
             value={id}
             onChange={(e) => setId(e.target.value)}
             placeholder="my-server"
-            disabled={!isCreate}
+            disabled={!isCreate || submitting}
           />
         </label>
 
@@ -114,12 +115,13 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="My MCP Server"
+            disabled={submitting}
           />
         </label>
 
         <label className="field">
           <span>传输方式</span>
-          <select value={transport} onChange={(e) => setTransport(e.target.value as "stdio" | "http")}>
+          <select value={transport} onChange={(e) => setTransport(e.target.value as "stdio" | "http")} disabled={submitting}>
             <option value="stdio">STDIO</option>
             <option value="http">HTTP</option>
           </select>
@@ -127,7 +129,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
 
         <label className="field">
           <span>来源</span>
-          <select value={source} onChange={(e) => setSource(e.target.value as McpSource)}>
+          <select value={source} onChange={(e) => setSource(e.target.value as McpSource)} disabled={submitting}>
             <option value="manual">manual</option>
             <option value="claude">claude</option>
             <option value="codex">codex</option>
@@ -141,6 +143,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
           type="checkbox"
           checked={enabled}
           onChange={(e) => setEnabled(e.target.checked)}
+          disabled={submitting}
         />
         <span>启用该服务</span>
       </label>
@@ -154,6 +157,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
               value={command}
               onChange={(e) => setCommand(e.target.value)}
               placeholder="node server.js"
+              disabled={submitting}
             />
           </label>
           <label className="field full-width">
@@ -163,6 +167,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
               value={argsText}
               onChange={(e) => setArgsText(e.target.value)}
               placeholder="--port 8080"
+              disabled={submitting}
             />
           </label>
           <label className="field">
@@ -172,6 +177,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
               value={cwd}
               onChange={(e) => setCwd(e.target.value)}
               placeholder="/path/to/server"
+              disabled={submitting}
             />
           </label>
           <label className="field">
@@ -181,6 +187,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
               value={envText}
               onChange={(e) => setEnvText(e.target.value)}
               placeholder='{"API_KEY": "xxx"}'
+              disabled={submitting}
             />
           </label>
         </div>
@@ -193,6 +200,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="https://example.com/mcp"
+              disabled={submitting}
             />
           </label>
           <label className="field full-width">
@@ -202,6 +210,7 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
               value={headersText}
               onChange={(e) => setHeadersText(e.target.value)}
               placeholder='{"Authorization": "Bearer xxx"}'
+              disabled={submitting}
             />
           </label>
         </div>
@@ -210,10 +219,10 @@ function McpServerForm({ initialValue, isCreate, submitLabel, onSubmit, onCancel
       {formError && <p className="form-error">{formError}</p>}
 
       <div className="form-actions">
-        <button type="button" className="secondary-button" onClick={onCancel}>
+        <button type="button" className="secondary-button" onClick={onCancel} disabled={submitting}>
           取消
         </button>
-        <button type="submit" className="primary-button">
+        <button type="submit" className="primary-button" disabled={submitting}>
           {submitLabel}
         </button>
       </div>
@@ -323,6 +332,7 @@ export default function McpDetailPage() {
 
   const [isEditing, setIsEditing] = useState(isCreate);
   const [saveError, setSaveError] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   const prevPath = useRef(location.pathname);
@@ -466,7 +476,10 @@ export default function McpDetailPage() {
   }
 
   async function handleSave(config: McpServerConfig) {
+    if (isSaving) return;
     console.info("[mcp-detail] 保存 MCP 服务", { serverId: config.id, isCreate, transport: config.transport });
+    setIsSaving(true);
+    setSaveError("");
     try {
       if (isCreate) {
         const created = await workspace.createMcpServer(config);
@@ -485,6 +498,8 @@ export default function McpDetailPage() {
       const msg = error instanceof Error ? error.message : "保存 MCP 服务失败。";
       setSaveError(msg);
       console.error("[mcp-detail] 保存 MCP 服务失败", { serverId: config.id, detail: msg });
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -559,7 +574,8 @@ export default function McpDetailPage() {
           <McpServerForm
             initialValue={formValue}
             isCreate={isCreate}
-            submitLabel={isCreate ? "创建服务" : "保存修改"}
+            submitting={isSaving}
+            submitLabel={isSaving ? "保存中..." : (isCreate ? "创建服务" : "保存修改")}
             onSubmit={handleSave}
             onCancel={handleCancelEdit}
           />

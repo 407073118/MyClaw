@@ -21,10 +21,34 @@ const mocks = vi.hoisted(() => {
       {
         id: "model-1",
         name: "GPT-5.4",
+        provider: "openai-compatible",
+        providerFlavor: "qwen",
+        vendorFamily: "qwen",
+        providerFamily: "qwen-native",
+        baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model: "qwen-max",
+        protocolTarget: "openai-responses",
+        discoveredCapabilities: {
+          supportsReasoning: true,
+          thinkingControlKind: "budget",
+          nativeToolStackId: "qwen-native",
+          source: "provider-catalog",
+        },
       },
       {
         id: "model-2",
         name: "Claude Sonnet",
+        provider: "anthropic",
+        providerFlavor: "anthropic",
+        baseUrl: "https://api.anthropic.com/v1",
+        model: "claude-3-7-sonnet",
+        protocolTarget: "anthropic-messages",
+        discoveredCapabilities: {
+          supportsReasoning: true,
+          thinkingControlKind: "effort",
+          nativeToolStackId: "anthropic-native",
+          source: "provider-catalog",
+        },
       },
     ],
     defaultModelProfileId: "model-1",
@@ -82,6 +106,7 @@ describe("SiliconPersonCreatePage", () => {
     expect(screen.getByTestId("silicon-person-create-approval-mode")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-create-soul")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-create-reasoning-effort")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "极深" })).toBeTruthy();
     expect(screen.queryByTestId("silicon-person-create-title")).toBeNull();
     expect(screen.queryByTestId("silicon-person-create-description")).toBeNull();
     expect(mocks.workspace.loadSiliconPersons).toHaveBeenCalled();
@@ -158,5 +183,52 @@ describe("SiliconPersonCreatePage", () => {
         }),
       );
     });
+  });
+
+  it("allows creating a silicon person with the xhigh reasoning preset", async () => {
+    const { default: SiliconPersonCreatePage } = await import("../src/renderer/pages/SiliconPersonCreatePage");
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        undefined,
+        React.createElement(SiliconPersonCreatePage),
+      ),
+    );
+
+    fireEvent.change(screen.getByTestId("silicon-person-create-name"), {
+      target: { value: "Ada" },
+    });
+    fireEvent.change(screen.getByTestId("silicon-person-create-soul"), {
+      target: { value: "长于复杂规划，能承担更深层推理任务。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "极深" }));
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(mocks.workspace.updateSiliconPerson).toHaveBeenCalledWith(
+        "sp-new",
+        expect.objectContaining({ reasoningEffort: "xhigh" }),
+      );
+    });
+  });
+
+  it("shows the selected model runtime diagnostics in the create sidebar", async () => {
+    const { default: SiliconPersonCreatePage } = await import("../src/renderer/pages/SiliconPersonCreatePage");
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        undefined,
+        React.createElement(SiliconPersonCreatePage),
+      ),
+    );
+
+    const status = screen.getByTestId("silicon-person-create-model-status");
+    expect(status.textContent).toContain("Qwen");
+    expect(status.textContent).toContain("qwen-max");
+    expect(status.textContent).toContain("OpenAI Responses");
+    expect(status.textContent).toContain("Thinking Budget");
+    expect(status.textContent).toContain("qwen-native");
   });
 });

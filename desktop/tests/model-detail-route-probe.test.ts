@@ -282,6 +282,122 @@ describe("ModelDetailPage route probe", () => {
     );
   });
 
+  it("loads and persists structured native file search settings for OpenAI profiles", async () => {
+    mocks.workspace.models = [buildProfile({
+      responsesApiConfig: {
+        fileSearch: {
+          vectorStoreIds: ["vs_existing_1", "vs_existing_2"],
+          maxNumResults: 12,
+          includeSearchResults: true,
+        },
+      },
+    })];
+    renderModelDetail("/settings/models/profile-1");
+
+    const enableCheckbox = screen.getByTestId("native-file-search-enabled") as HTMLInputElement;
+    const vectorStoreInput = screen.getByTestId("native-file-search-vector-stores") as HTMLInputElement;
+    const maxResultsInput = screen.getByTestId("native-file-search-max-results") as HTMLInputElement;
+    const includeResultsCheckbox = screen.getByTestId("native-file-search-include-results") as HTMLInputElement;
+
+    expect(enableCheckbox.checked).toBe(true);
+    expect(vectorStoreInput.value).toBe("vs_existing_1, vs_existing_2");
+    expect(maxResultsInput.value).toBe("12");
+    expect(includeResultsCheckbox.checked).toBe(true);
+
+    fireEvent.change(vectorStoreInput, {
+      target: { value: "vs_handbook_1, vs_handbook_2" },
+    });
+    fireEvent.change(maxResultsInput, {
+      target: { value: "6" },
+    });
+    fireEvent.click(includeResultsCheckbox);
+    fireEvent.click(screen.getByTestId("model-save-profile"));
+
+    await waitFor(() =>
+      expect(mocks.workspace.updateModelProfile).toHaveBeenCalledWith(
+        "profile-1",
+        expect.objectContaining({
+          responsesApiConfig: expect.objectContaining({
+            fileSearch: {
+              vectorStoreIds: ["vs_handbook_1", "vs_handbook_2"],
+              maxNumResults: 6,
+              includeSearchResults: false,
+            },
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("loads and persists advanced model tuning settings", async () => {
+    mocks.workspace.models = [buildProfile({
+      defaultReasoningEffort: "xhigh",
+      contextWindowOverride: 1000000,
+      compactTriggerTokens: 900000,
+      capabilityOverrides: {
+        maxOutputTokens: 32768,
+      },
+      responsesApiConfig: {
+        disableResponseStorage: true,
+        useServerState: true,
+        backgroundMode: "always",
+        backgroundPollIntervalMs: 4500,
+      },
+    })];
+    renderModelDetail("/settings/models/profile-1");
+
+    expect((screen.getByTestId("model-default-reasoning-effort") as HTMLSelectElement).value).toBe("xhigh");
+    expect((screen.getByTestId("model-context-window-override") as HTMLInputElement).value).toBe("1000000");
+    expect((screen.getByTestId("model-max-output-tokens-override") as HTMLInputElement).value).toBe("32768");
+    expect((screen.getByTestId("model-compact-trigger-tokens") as HTMLInputElement).value).toBe("900000");
+    expect((screen.getByTestId("model-disable-response-storage") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId("model-use-server-state") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByTestId("model-background-mode") as HTMLSelectElement).value).toBe("always");
+    expect((screen.getByTestId("model-background-poll-interval") as HTMLInputElement).value).toBe("4500");
+
+    fireEvent.change(screen.getByTestId("model-default-reasoning-effort"), {
+      target: { value: "high" },
+    });
+    fireEvent.change(screen.getByTestId("model-context-window-override"), {
+      target: { value: "750000" },
+    });
+    fireEvent.change(screen.getByTestId("model-max-output-tokens-override"), {
+      target: { value: "16000" },
+    });
+    fireEvent.change(screen.getByTestId("model-compact-trigger-tokens"), {
+      target: { value: "700000" },
+    });
+    fireEvent.click(screen.getByTestId("model-disable-response-storage"));
+    fireEvent.click(screen.getByTestId("model-use-server-state"));
+    fireEvent.change(screen.getByTestId("model-background-mode"), {
+      target: { value: "auto" },
+    });
+    fireEvent.change(screen.getByTestId("model-background-poll-interval"), {
+      target: { value: "6000" },
+    });
+    fireEvent.click(screen.getByTestId("model-save-profile"));
+
+    await waitFor(() =>
+      expect(mocks.workspace.updateModelProfile).toHaveBeenCalledWith(
+        "profile-1",
+        expect.objectContaining({
+          defaultReasoningEffort: "high",
+          contextWindowOverride: 750000,
+          compactTriggerTokens: 700000,
+          capabilityOverrides: expect.objectContaining({
+            maxOutputTokens: 16000,
+          }),
+          responsesApiConfig: expect.objectContaining({
+            disableResponseStorage: false,
+            useServerState: false,
+            backgroundMode: "auto",
+            backgroundPollIntervalMs: 6000,
+          }),
+        }),
+      ),
+    );
+  });
+
   it("shows saved route copy before re-probing an existing profile", () => {
     mocks.workspace.models = [buildProfile({
       protocolTarget: "openai-chat-compatible",
@@ -305,7 +421,7 @@ describe("ModelDetailPage route probe", () => {
         expect.objectContaining({
           protocolTarget: "openai-responses",
           protocolSelectionSource: "probe",
-          savedProtocolPreferences: ["openai-responses"],
+          savedProtocolPreferences: ["openai-responses", "openai-chat-compatible"],
         }),
       ),
     );
@@ -341,7 +457,7 @@ describe("ModelDetailPage route probe", () => {
           model: "gpt-4.1",
           protocolTarget: "openai-responses",
           protocolSelectionSource: "probe",
-          savedProtocolPreferences: ["openai-responses"],
+          savedProtocolPreferences: ["openai-responses", "openai-chat-compatible"],
         }),
       ),
     );
@@ -397,7 +513,7 @@ describe("ModelDetailPage route probe", () => {
         expect.objectContaining({
           protocolTarget: "openai-chat-compatible",
           protocolSelectionSource: "saved",
-          savedProtocolPreferences: ["openai-chat-compatible"],
+          savedProtocolPreferences: ["openai-chat-compatible", "openai-responses"],
         }),
       ),
     );

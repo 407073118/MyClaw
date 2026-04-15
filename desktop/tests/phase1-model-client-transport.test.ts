@@ -52,6 +52,74 @@ describe("phase1 model client transport", () => {
     expect(fallbackBody).not.toHaveProperty("reasoning_split");
   });
 
+  it("uses Qwen-native thinking fields and strips them from the compatibility fallback", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("unknown field enable_thinking", { status: 400 }))
+      .mockResolvedValueOnce(buildSseResponse([
+        'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+        "",
+      ].join("\n")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await callModel({
+      profile: {
+        id: "qwen-profile",
+        name: "Qwen",
+        provider: "openai-compatible",
+        providerFlavor: "qwen",
+        baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        apiKey: "qwen-test-key",
+        model: "qwen-max",
+        requestBody: {
+          enable_search: true,
+          search_options: {
+            forced: true,
+          },
+          enable_code_interpreter: true,
+        },
+      },
+      messages: [{ role: "user", content: "hello" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "lookup_weather",
+          description: "Lookup weather",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      executionPlan: {
+        adapterId: "qwen",
+        replayPolicy: "assistant-turn-with-reasoning",
+        reasoningEffort: "xhigh",
+      },
+    });
+
+    expect(result.content).toBe("done");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const primaryBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    const fallbackBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<string, unknown>;
+
+    expect(primaryBody).toMatchObject({
+      enable_thinking: true,
+      thinking_budget: 16384,
+      enable_search: true,
+      search_options: {
+        forced: true,
+      },
+      enable_code_interpreter: true,
+    });
+    expect(primaryBody).not.toHaveProperty("reasoning");
+    expect(primaryBody).not.toHaveProperty("tool_choice");
+    expect(fallbackBody).toHaveProperty("tool_choice", "auto");
+    expect(fallbackBody).not.toHaveProperty("enable_thinking");
+    expect(fallbackBody).not.toHaveProperty("thinking_budget");
+    expect(fallbackBody).not.toHaveProperty("enable_search");
+    expect(fallbackBody).not.toHaveProperty("search_options");
+    expect(fallbackBody).not.toHaveProperty("enable_code_interpreter");
+  });
+
   it("normalizes non-SSE OpenAI-compatible JSON responses through the adapter", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
       choices: [

@@ -41,19 +41,19 @@ const PROMPT_POLICY_LINES: Record<string, string[]> = {
     "Prefer explicit task framing and clear tool delegation summaries.",
   ],
   "qwen.responses.default": [
-    "Prefer explicit tool intent before execution.",
+    "Prefer explicit tool intent and Responses-native continuation before execution.",
   ],
   "qwen.messages.default": [
-    "Use short, structured instructions and preserve message continuity explicitly.",
+    "Use short, structured instructions and restate continuity explicitly on the messages route.",
   ],
   "qwen.compat.default": [
-    "Keep prompts compact and compatible-safe for DashScope-style transports.",
+    "Keep prompts compact and compatible-safe when the request falls back to DashScope-compatible chat.",
   ],
   "kimi.messages.default": [
-    "Favor Claude Code style continuity and concise tool-oriented planning.",
+    "Favor Claude Code style continuity while keeping Moonshot-native thinking assumptions explicit.",
   ],
   "kimi.compat.default": [
-    "Preserve reasoning breadcrumbs using compatible replay semantics.",
+    "Preserve reasoning_content replay semantics and avoid forced tool choice during Kimi thinking turns.",
   ],
   "ark.responses.default": [
     "Prefer coding-agent phrasing with explicit next actions and strong output structure.",
@@ -70,6 +70,9 @@ const PROMPT_POLICY_LINES: Record<string, string[]> = {
   "minimax.compat.default": [
     "Use fallback-friendly wording and preserve compatible thinking hints.",
   ],
+  "deepseek.compat.default": [
+    "DeepSeek-R1 的推理为 always-on，不需要 effort 参数；保持兼容安全的提示风格。",
+  ],
   "generic.compat.default": [
     "Keep prompts transport-safe and avoid provider-specific assumptions.",
   ],
@@ -82,6 +85,7 @@ const TOOL_POLICY_BLOCKED_BUILTINS: Record<string, string[]> = {
   "kimi.tools.conservative": ["browser_evaluate", "git_commit", "ppt_generate"],
   "ark.tools.coding": ["browser_evaluate", "ppt_generate"],
   "minimax.tools.compat": ["browser_evaluate", "exec_command", "git_commit", "ppt_generate"],
+  "deepseek.tools.full": [],
   "generic.tools.default": [],
 };
 
@@ -92,6 +96,7 @@ const TOOL_POLICY_ALLOWED_BUILTIN_GROUPS: Record<string, BuiltinToolSchemaGroup[
   "kimi.tools.conservative": ["fs", "exec", "git", "http", "web", "task", "browser"],
   "ark.tools.coding": ["fs", "exec", "git", "http", "web", "task", "browser"],
   "minimax.tools.compat": ["fs", "git", "http", "web", "task", "browser"],
+  "deepseek.tools.full": ["fs", "exec", "git", "http", "web", "ppt", "task", "browser"],
   "generic.tools.default": ["fs", "exec", "git", "http", "web", "ppt", "task", "browser"],
 };
 
@@ -103,16 +108,19 @@ const TOOL_POLICY_SUMMARY_LINES: Record<string, string[]> = {
     "Keep the full tool surface available with detailed descriptions.",
   ],
   "qwen.tools.conservative": [
-    "Hide high-risk shell and browser script tools unless explicitly needed.",
+    "Hide high-risk shell and browser script tools unless explicitly needed, and let Qwen native search/extractor cover the overlapping paths first.",
   ],
   "kimi.tools.conservative": [
-    "Prefer read/write and browser navigation tools over destructive git operations.",
+    "Prefer read/write and browser navigation tools over destructive git operations, and only rely on Formula-native tools on the Moonshot chat route.",
   ],
   "ark.tools.coding": [
     "Favor coding and file tools over presentation or browser script tools.",
   ],
   "minimax.tools.compat": [
     "Keep the tool surface fallback-friendly for compatibility mode.",
+  ],
+  "deepseek.tools.full": [
+    "Expose the full builtin tool surface for DeepSeek models.",
   ],
   "generic.tools.default": [
     "Use the default builtin tool surface.",
@@ -130,19 +138,19 @@ const REASONING_PROFILE_LINES: Record<string, string[]> = {
     "Use Anthropic thinking budgets for deeper reasoning turns.",
   ],
   "qwen.reasoning.responses": [
-    "Prefer medium/high effort for multi-step code and analysis turns.",
+    "Map effort into Qwen enable_thinking/thinking_budget and avoid forced tool_choice while thinking is enabled.",
   ],
   "qwen.reasoning.messages": [
-    "Favor structured, message-based reasoning when the Anthropic route is selected.",
+    "Favor structured reasoning summaries when routing Qwen through the Anthropic-compatible messages path.",
   ],
   "qwen.reasoning.compat": [
-    "Use compatibility-safe reasoning patches and replay breadcrumbs.",
+    "Use compatibility-safe replay breadcrumbs when native Qwen thinking is unavailable.",
   ],
   "kimi.reasoning.messages": [
-    "Prefer Claude Code style reasoning continuity on the Anthropic route.",
+    "Prefer Claude Code style reasoning continuity on the Anthropic route without assuming Formula native tools are active.",
   ],
   "kimi.reasoning.compat": [
-    "Preserve reasoning_content compatibility without forcing native assumptions.",
+    "Use Moonshot thinking={enabled|disabled} semantics on chat-compatible routes and preserve reasoning_content replay.",
   ],
   "ark.reasoning.responses": [
     "Prefer native Responses reasoning when Ark supports it.",
@@ -161,6 +169,9 @@ const REASONING_PROFILE_LINES: Record<string, string[]> = {
   ],
   "minimax.reasoning.compat": [
     "Use compatibility-safe reasoning patches when native replay is unavailable.",
+  ],
+  "deepseek.reasoning.native": [
+    "DeepSeek-R1 内置推理为 always-on；effort 级别不影响推理行为。",
   ],
   "generic.reasoning.compat": [
     "Use the default compatibility reasoning strategy.",
@@ -227,17 +238,18 @@ const VENDOR_POLICY_REGISTRY: Record<VendorFamily, VendorPolicy> = {
   },
   qwen: {
     vendorFamily: "qwen",
-    supportedProtocols: ["openai-chat-compatible", "openai-responses", "anthropic-messages"],
-    legacyProviderFamilies: ["qwen-dashscope"],
+    supportedProtocols: ["openai-responses", "openai-chat-compatible", "anthropic-messages"],
+    legacyProviderFamilies: ["qwen-dashscope", "qwen-native"],
     recommendedProtocolsByUseCase: {
-      default: ["openai-responses", "anthropic-messages", "openai-chat-compatible"],
-      coding: ["anthropic-messages", "openai-responses", "openai-chat-compatible"],
-      review: ["openai-responses", "anthropic-messages", "openai-chat-compatible"],
+      default: ["openai-responses", "openai-chat-compatible", "anthropic-messages"],
+      coding: ["openai-responses", "openai-chat-compatible", "anthropic-messages"],
+      review: ["openai-responses", "openai-chat-compatible", "anthropic-messages"],
     },
     defaultExperienceProfileId: "qwen-best",
     familyOverlayLines: [
-      "Assume compatible transport and conservative tool compilation.",
-      "Do not rely on server-side continuity across turns.",
+      "Prefer Qwen-native Responses features first, including continuation and vendor-native search/extractor tools.",
+      "When thinking is enabled, do not force tool_choice and do not rely on server-side continuity outside the current turn.",
+      "When several independent read-only tools are needed, emit them together in the same turn instead of serializing them.",
     ],
     promptPolicyIdByProtocol: {
       "openai-responses": "qwen.responses.default",
@@ -256,11 +268,13 @@ const VENDOR_POLICY_REGISTRY: Record<VendorFamily, VendorPolicy> = {
     },
     toolCompileModesByProviderFamily: {
       "qwen-dashscope": "openai-compatible-conservative",
+      "qwen-native": "openai-compatible-conservative",
     },
   },
   kimi: {
     vendorFamily: "kimi",
     supportedProtocols: ["anthropic-messages", "openai-chat-compatible"],
+    legacyProviderFamilies: ["moonshot-native"],
     recommendedProtocolsByUseCase: {
       default: ["anthropic-messages", "openai-chat-compatible"],
       coding: ["anthropic-messages", "openai-chat-compatible"],
@@ -268,8 +282,8 @@ const VENDOR_POLICY_REGISTRY: Record<VendorFamily, VendorPolicy> = {
     },
     defaultExperienceProfileId: "balanced",
     familyOverlayLines: [
-      "Prefer Claude Code friendly continuity when available.",
-      "Keep compatible replay hints explicit for long coding sessions.",
+      "Prefer Moonshot anthropic-agent continuity for coding and keep the anthropic messages route as the first-class path.",
+      "Preserve reasoning_content replay across turns, keep tool_choice within auto/none during Kimi thinking turns, and batch independent read-only tool calls together.",
     ],
     promptPolicyIdByProtocol: {
       "anthropic-messages": "kimi.messages.default",
@@ -282,6 +296,9 @@ const VENDOR_POLICY_REGISTRY: Record<VendorFamily, VendorPolicy> = {
     reasoningProfileIdByProtocol: {
       "anthropic-messages": "kimi.reasoning.messages",
       "openai-chat-compatible": "kimi.reasoning.compat",
+    },
+    toolCompileModesByProviderFamily: {
+      "moonshot-native": "openai-compatible-relaxed",
     },
   },
   "volcengine-ark": {
@@ -351,6 +368,33 @@ const VENDOR_POLICY_REGISTRY: Record<VendorFamily, VendorPolicy> = {
     },
     deploymentProfiles: ["br-private"],
   },
+  deepseek: {
+    vendorFamily: "deepseek",
+    supportedProtocols: ["openai-chat-compatible"],
+    legacyProviderFamilies: ["deepseek"],
+    recommendedProtocolsByUseCase: {
+      default: ["openai-chat-compatible"],
+      coding: ["openai-chat-compatible"],
+      review: ["openai-chat-compatible"],
+    },
+    defaultExperienceProfileId: "balanced",
+    familyOverlayLines: [
+      "DeepSeek-R1 系列内置推理能力（always-on），不需要通过 effort 控制。",
+      "使用 reasoning_content 字段回传思考过程。",
+    ],
+    promptPolicyIdByProtocol: {
+      "openai-chat-compatible": "deepseek.compat.default",
+    },
+    toolPolicyIdByProtocol: {
+      "openai-chat-compatible": "deepseek.tools.full",
+    },
+    reasoningProfileIdByProtocol: {
+      "openai-chat-compatible": "deepseek.reasoning.native",
+    },
+    toolCompileModesByProviderFamily: {
+      "deepseek": "openai-compatible-relaxed",
+    },
+  },
   "generic-openai-compatible": {
     vendorFamily: "generic-openai-compatible",
     supportedProtocols: ["openai-chat-compatible"],
@@ -367,12 +411,18 @@ const VENDOR_POLICY_REGISTRY: Record<VendorFamily, VendorPolicy> = {
     ],
     promptPolicyIdByProtocol: {
       "openai-chat-compatible": "generic.compat.default",
+      "anthropic-messages": "anthropic.messages.default",
+      "openai-responses": "openai.responses.default",
     },
     toolPolicyIdByProtocol: {
       "openai-chat-compatible": "generic.tools.default",
+      "anthropic-messages": "generic.tools.default",
+      "openai-responses": "generic.tools.default",
     },
     reasoningProfileIdByProtocol: {
       "openai-chat-compatible": "generic.reasoning.compat",
+      "anthropic-messages": "generic.reasoning.compat",
+      "openai-responses": "generic.reasoning.compat",
     },
     toolCompileModesByProviderFamily: {
       "generic-openai-compatible": "openai-compatible-relaxed",
@@ -393,12 +443,18 @@ const VENDOR_POLICY_REGISTRY: Record<VendorFamily, VendorPolicy> = {
     ],
     promptPolicyIdByProtocol: {
       "openai-chat-compatible": "generic.compat.default",
+      "anthropic-messages": "anthropic.messages.default",
+      "openai-responses": "openai.responses.default",
     },
     toolPolicyIdByProtocol: {
       "openai-chat-compatible": "generic.tools.default",
+      "anthropic-messages": "generic.tools.default",
+      "openai-responses": "generic.tools.default",
     },
     reasoningProfileIdByProtocol: {
       "openai-chat-compatible": "generic.reasoning.compat",
+      "anthropic-messages": "generic.reasoning.compat",
+      "openai-responses": "generic.reasoning.compat",
     },
   },
 };

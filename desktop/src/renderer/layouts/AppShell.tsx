@@ -45,6 +45,12 @@ const IconSkills = () => (
   </svg>
 );
 
+const IconFiles = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20">
+    <path fill="currentColor" d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z" />
+  </svg>
+);
+
 const IconEmployees = () => (
   <svg viewBox="0 0 24 24" width="20" height="20">
     <path
@@ -126,6 +132,7 @@ const navItems: NavItem[] = [
   { to: "/skills", label: "Skills", icon: IconSkills, testId: "nav-skills" },
   { to: "/employees", label: "硅基员工", icon: IconEmployees, testId: "nav-employees" },
   { to: "/workflows", label: "Workflows", icon: IconWorkflows, testId: "nav-workflows" },
+  { to: "/files", label: "Files", icon: IconFiles, testId: "nav-files" },
   // { to: "/publish-drafts", label: "Publish", icon: IconPublish, testId: "nav-publish-drafts" },
 ];
 

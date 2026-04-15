@@ -38,6 +38,26 @@ describe("vendor runtime policy resolver", () => {
     expect(policy.selectedProtocolTarget).toBe("anthropic-messages");
   });
 
+  it("respects explicitly saved compatible routes for Kimi", () => {
+    const policy = resolveVendorRuntimePolicy({
+      profile: makeProfile({
+        providerFlavor: "moonshot",
+        baseUrl: "https://api.moonshot.cn/v1",
+        model: "kimi-k2-0905-preview",
+        protocolTarget: "openai-chat-compatible",
+        savedProtocolPreferences: ["openai-chat-compatible", "anthropic-messages"],
+      }),
+      legacyExecutionPlan: makeLegacyExecutionPlan(),
+    });
+
+    expect(policy.supportedProtocolTargets).toEqual(expect.arrayContaining([
+      "anthropic-messages",
+      "openai-chat-compatible",
+    ]));
+    expect(policy.selectedProtocolTarget).toBe("openai-chat-compatible");
+    expect(policy.protocolSelectionSource).toBe("saved");
+  });
+
   it("respects saved protocol preferences when no explicit protocolTarget is set", () => {
     const policy = resolveVendorRuntimePolicy({
       profile: makeProfile({
@@ -88,6 +108,22 @@ describe("vendor runtime policy resolver", () => {
       "anthropic-messages",
       "openai-chat-compatible",
     ]);
+  });
+
+  it("prefers explicit Ark vendor signals over kimi-like model prefixes", () => {
+    const policy = resolveVendorRuntimePolicy({
+      profile: makeProfile({
+        providerFlavor: "volcengine-ark",
+        baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+        model: "kimi-k2.5",
+        protocolTarget: "openai-responses",
+        savedProtocolPreferences: ["openai-responses", "openai-chat-compatible"],
+      }),
+      legacyExecutionPlan: makeLegacyExecutionPlan(),
+    });
+
+    expect(policy.vendorFamily).toBe("volcengine-ark");
+    expect(policy.selectedProtocolTarget).toBe("openai-responses");
   });
 
   it("keeps BR MiniMax as a MiniMax deployment profile", () => {

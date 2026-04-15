@@ -44,6 +44,9 @@ export type BootstrapPayload = {
   myClawRootPath: string;
   skillsRootPath: string;
   sessionsRootPath: string;
+  workspaceRootPath: string;
+  artifactsRootPath: string;
+  cacheRootPath: string;
   requiresInitialSetup: boolean;
   updates: AppUpdateSnapshot;
 };
@@ -71,6 +74,9 @@ export function registerBootstrapHandlers(ctx: RuntimeContext): void {
       myClawRootPath: ctx.runtime.myClawRootPath,
       skillsRootPath: ctx.runtime.skillsRootPath,
       sessionsRootPath: ctx.runtime.sessionsRootPath,
+      workspaceRootPath: ctx.runtime.workspaceRootPath,
+      artifactsRootPath: ctx.runtime.artifactsRootPath,
+      cacheRootPath: ctx.runtime.cacheRootPath,
       requiresInitialSetup: !hasConfiguredModel(ctx.state.models),
       updates: ctx.services.appUpdater.getSnapshot(),
     };

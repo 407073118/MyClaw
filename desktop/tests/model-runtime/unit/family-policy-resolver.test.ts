@@ -37,4 +37,36 @@ describe("family policy resolver", () => {
     expect(policy.toolPolicyId).toBe("openai.tools.full");
     expect(policy.reasoningProfileId).toBe("openai.reasoning.native");
   });
+
+  it("promotes qwen flavor to qwen-native while preserving the routed protocol target", () => {
+    const policy = resolveFamilyPolicy({
+      profile: {
+        ...profile,
+        providerFlavor: "qwen",
+        baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model: "qwen-max",
+        protocolTarget: "openai-responses",
+      },
+      legacyExecutionPlan,
+    });
+
+    expect(policy.providerFamily).toBe("qwen-native");
+    expect(policy.protocolTarget).toBe("openai-responses");
+  });
+
+  it("promotes moonshot flavor to moonshot-native while preserving the routed protocol target", () => {
+    const policy = resolveFamilyPolicy({
+      profile: {
+        ...profile,
+        providerFlavor: "moonshot",
+        baseUrl: "https://api.moonshot.cn/v1",
+        model: "kimi-k2.5",
+        protocolTarget: "anthropic-messages",
+      },
+      legacyExecutionPlan,
+    });
+
+    expect(policy.providerFamily).toBe("moonshot-native");
+    expect(policy.protocolTarget).toBe("anthropic-messages");
+  });
 });

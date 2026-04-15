@@ -140,4 +140,105 @@ describe("SettingsPage route badge", () => {
     expect(screen.queryByText("Anthropic Messages")).toBeNull();
     expect(screen.queryByText("OpenAI Compatible")).toBeNull();
   });
+
+  it("renders the model list as a single-column stack with separated title and tags", async () => {
+    mocks.workspace.models = [
+      {
+        id: "profile-1",
+        name: "OpenAI Profile",
+        provider: "openai-compatible",
+        providerFlavor: "openai",
+        vendorFamily: "openai",
+        baseUrl: "https://api.openai.com",
+        apiKey: "test-key",
+        model: "gpt-4.1",
+        protocolTarget: "openai-responses",
+        protocolSelectionSource: "saved",
+        discoveredCapabilities: {
+          contextWindowTokens: 1047576,
+          maxInputTokens: 1014800,
+          maxOutputTokens: 32768,
+          supportsTools: true,
+          supportsStreaming: true,
+          source: "provider-catalog",
+        },
+      },
+      {
+        id: "profile-2",
+        name: "Reasoning Profile",
+        provider: "openai-compatible",
+        providerFlavor: "openai",
+        vendorFamily: "openai",
+        baseUrl: "https://api.example.com",
+        apiKey: "test-key",
+        model: "o4-mini",
+        protocolTarget: "openai-responses",
+        protocolSelectionSource: "probe",
+        discoveredCapabilities: {
+          contextWindowTokens: 200000,
+          maxInputTokens: 120000,
+          maxOutputTokens: 32768,
+          supportsTools: true,
+          supportsStreaming: true,
+          source: "provider-catalog",
+        },
+      },
+    ];
+    const { default: SettingsPage } = await import("../src/renderer/pages/SettingsPage");
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        undefined,
+        React.createElement(SettingsPage),
+      ),
+    );
+
+    const list = screen.getByTestId("model-cards-container");
+    expect(list.className).toContain("single-column");
+
+    const titleRows = screen.getAllByTestId("model-name-title");
+    expect(titleRows).toHaveLength(2);
+    expect(screen.getAllByTestId("model-name-tags")).toHaveLength(2);
+  });
+
+  it("renders Qwen as a first-class vendor tag inside model cards", async () => {
+    mocks.workspace.models = [
+      {
+        id: "profile-qwen",
+        name: "Qwen Profile",
+        provider: "openai-compatible",
+        providerFlavor: "qwen",
+        vendorFamily: "qwen",
+        providerFamily: "qwen-native",
+        baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        apiKey: "test-key",
+        model: "qwen-max",
+        protocolTarget: "openai-responses",
+        protocolSelectionSource: "saved",
+        discoveredCapabilities: {
+          contextWindowTokens: 131072,
+          maxInputTokens: 120000,
+          maxOutputTokens: 8192,
+          supportsTools: true,
+          supportsStreaming: true,
+          thinkingControlKind: "budget",
+          source: "provider-catalog",
+        },
+      },
+    ];
+    const { default: SettingsPage } = await import("../src/renderer/pages/SettingsPage");
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        undefined,
+        React.createElement(SettingsPage),
+      ),
+    );
+
+    expect(screen.getByText("Qwen")).toBeTruthy();
+    expect(screen.getByText("OpenAI Responses")).toBeTruthy();
+    expect(screen.queryByText("openai-compatible")).toBeNull();
+  });
 });

@@ -3,6 +3,7 @@ import { ArrowUp, Square } from "lucide-react";
 import { marked } from "marked";
 import { PlanStatePanel } from "../components/plan-state-panel";
 import { PlanSidePanel } from "../components/PlanSidePanel";
+import WorkFilesPanel from "../components/WorkFilesPanel";
 import { useDialogA11y } from "../hooks/useDialogA11y";
 import { useWorkspaceStore } from "../stores/workspace";
 import type {
@@ -10,6 +11,7 @@ import type {
   A2UiPayload,
   A2UiFormField,
   ApprovalDecision,
+  ArtifactScopeRef,
   ChatMessage,
   ChatRunPhase,
   ChatRunRuntimeStatusPayload,
@@ -17,7 +19,7 @@ import type {
   ChatSession,
   ExecutionIntent,
 } from "@shared/contracts";
-import { ToolRiskCategory } from "@shared/contracts";
+import { ToolRiskCategory, resolveSiliconPersonCurrentSessionId } from "@shared/contracts";
 
 // 配置 `marked`，统一启用 GFM 和换行转 `<br>`。
 marked.setOptions({ gfm: true, breaks: true });
@@ -322,21 +324,23 @@ export default function ChatPage() {
   const [toolTimings, setToolTimings] = useState<Map<string, number>>(new Map());
   const [currentRound, setCurrentRound] = useState(0);
   const [taskPanelDismissed, setTaskPanelDismissed] = useState(false);
+  const [showWorkFiles, setShowWorkFiles] = useState(false);
   const [showContextWarning, setShowContextWarning] = useState(false);
   const prevTaskCountRef = React.useRef(0);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
-
-  // @ 投递硅基员工（store-backed，SiliconRail 和 @ 菜单共享）
   const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
   const [mentionMenuIndex, setMentionMenuIndex] = useState(0);
-  const targetSiliconPersonId = workspace.activeSiliconPersonId;
-  const setTargetSiliconPersonId = workspace.setActiveSiliconPersonId;
+  const [mentionTargetSiliconPersonId, setMentionTargetSiliconPersonId] = useState<string | null>(null);
   const [dispatchTraces, setDispatchTraces] = useState<Array<{ id: string; personName: string; personId: string; content: string; timestamp: string }>>([]);
 
   const siliconPersons = workspace.siliconPersons ?? [];
-  const targetSiliconPerson = targetSiliconPersonId
-    ? siliconPersons.find((sp) => sp.id === targetSiliconPersonId) ?? null
+  const activeSiliconPersonId = workspace.activeSiliconPersonId;
+  const selectedSiliconPerson = activeSiliconPersonId
+    ? siliconPersons.find((sp) => sp.id === activeSiliconPersonId) ?? null
+    : null;
+  const mentionTargetSiliconPerson = mentionTargetSiliconPersonId
+    ? siliconPersons.find((sp) => sp.id === mentionTargetSiliconPersonId) ?? null
     : null;
 
   const filteredMentions = useMemo(() => {
@@ -347,13 +351,59 @@ export default function ChatPage() {
     );
   }, [mentionMenuOpen, mentionFilter, siliconPersons]);
 
-  // ── Session 解析 ──────────────────────────────────────────────────────────
-  const session = workspace.currentSession;
+  // ── Session 解析：共享页面承载主聊天与硅基员工聊天，两者使用同一套 UI，但 session 隔离 ──
+  const selectedSiliconSessionId = useMemo(() => {
+    if (!selectedSiliconPerson) return null;
+    return resolveSiliconPersonCurrentSessionId({
+      currentSessionId: selectedSiliconPerson.currentSessionId,
+      sessions: selectedSiliconPerson.sessions,
+    });
+  }, [selectedSiliconPerson]);
 
-  /** 只展示主聊天 session（非硅基员工私域 session）。 */
+  const selectedSiliconSession = useMemo(() => {
+    if (!selectedSiliconPerson || !selectedSiliconSessionId) return null;
+    return workspace.sessions.find(
+      (item) => item.id === selectedSiliconSessionId && item.siliconPersonId === selectedSiliconPerson.id,
+    ) ?? null;
+  }, [selectedSiliconPerson, selectedSiliconSessionId, workspace.sessions]);
+
+  const isSiliconPersonView = Boolean(selectedSiliconPerson);
+  const session = isSiliconPersonView ? selectedSiliconSession : workspace.currentSession;
+
+  const selectedSiliconSessionSummary = useMemo(() => {
+    if (!selectedSiliconPerson || !session?.id) return null;
+    return selectedSiliconPerson.sessions.find((item) => item.id === session.id) ?? null;
+  }, [selectedSiliconPerson, session?.id]);
+
+  const workFilesScope = useMemo<ArtifactScopeRef | null>(() => {
+    if (!session?.id) return null;
+    return { scopeKind: "session", scopeId: session.id };
+  }, [session?.id]);
+
+  /** 统一会话列表来源：主聊天看主 session，硅基员工聊天看该员工自己的私域 session。 */
   const displaySessions = useMemo(() => {
-    return workspace.sessions.filter((s) => !s.siliconPersonId);
-  }, [workspace.sessions]);
+    if (!selectedSiliconPerson) {
+      return workspace.sessions.filter((item) => !item.siliconPersonId);
+    }
+
+    const sessionMap = new Map(
+      workspace.sessions
+        .filter((item) => item.siliconPersonId === selectedSiliconPerson.id)
+        .map((item) => [item.id, item] as const),
+    );
+
+    const orderedSessions = selectedSiliconPerson.sessions
+      .map((summary) => sessionMap.get(summary.id))
+      .filter((item): item is ChatSession => Boolean(item));
+
+    for (const item of sessionMap.values()) {
+      if (!orderedSessions.some((sessionItem) => sessionItem.id === item.id)) {
+        orderedSessions.push(item);
+      }
+    }
+
+    return orderedSessions;
+  }, [selectedSiliconPerson, workspace.sessions]);
 
   const sessionRuntimeIntent = session?.runtimeIntent as Record<string, unknown> | undefined;
   const planModeState = (session as (ChatSession & {
@@ -363,6 +413,53 @@ export default function ChatPage() {
     || sessionRuntimeIntent?.planModeEnabled === true;
   const isRunBusy = activeRunState !== null;
   const isRunCanceling = activeRunState?.status === "canceling";
+  const activeViewSessionIdRef = useRef<string | null>(session?.id ?? null);
+  const activeViewSiliconPersonIdRef = useRef<string | null>(selectedSiliconPerson?.id ?? null);
+
+  activeViewSessionIdRef.current = session?.id ?? null;
+  activeViewSiliconPersonIdRef.current = selectedSiliconPerson?.id ?? null;
+
+  /** 切换到新的聊天对象时清空本地 @ 投递目标，避免“进入聊天”被误显示成“待投递给某人”。 */
+  useEffect(() => {
+    setMentionTargetSiliconPersonId(null);
+  }, [activeSiliconPersonId]);
+
+  /** 进入硅基员工聊天页后先刷新一次员工摘要，保证 currentSession 摘要与未读状态同步。 */
+  useEffect(() => {
+    if (!activeSiliconPersonId) return;
+    console.info("[chat-page] 进入硅基员工聊天视图，刷新员工摘要", {
+      siliconPersonId: activeSiliconPersonId,
+    });
+    void workspace.loadSiliconPersonById(activeSiliconPersonId).catch((error) => {
+      console.error("[chat-page] 刷新硅基员工摘要失败", {
+        siliconPersonId: activeSiliconPersonId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [activeSiliconPersonId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** 查看硅基员工当前会话时立即消费未读，保持侧边栏和页内状态一致。 */
+  useEffect(() => {
+    if (!selectedSiliconPerson?.id || !selectedSiliconSessionSummary?.id) return;
+    if (!selectedSiliconSessionSummary.hasUnread && selectedSiliconSessionSummary.unreadCount <= 0) return;
+
+    console.info("[chat-page] 标记硅基员工当前会话已读", {
+      siliconPersonId: selectedSiliconPerson.id,
+      sessionId: selectedSiliconSessionSummary.id,
+    });
+    void workspace.markSiliconPersonSessionRead(selectedSiliconPerson.id, selectedSiliconSessionSummary.id).catch((error) => {
+      console.error("[chat-page] 标记硅基员工会话已读失败", {
+        siliconPersonId: selectedSiliconPerson.id,
+        sessionId: selectedSiliconSessionSummary.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [
+    selectedSiliconPerson?.id,
+    selectedSiliconSessionSummary?.id,
+    selectedSiliconSessionSummary?.hasUnread,
+    selectedSiliconSessionSummary?.unreadCount,
+  ]);
 
   useEffect(() => {
     setActiveRunState((current) => {
@@ -584,6 +681,76 @@ export default function ChatPage() {
   const scrollToBottomRef = useRef(scrollToBottom);
   scrollToBottomRef.current = scrollToBottom;
 
+  /** 针对当前展示中的会话更新运行时意图；硅基员工模式下要显式写回该私域 session。 */
+  async function updateDisplayedSessionRuntimeIntent(intent: Record<string, unknown>) {
+    if (!session?.id) return;
+    if (!selectedSiliconPerson) {
+      await workspace.updateSessionRuntimeIntent(intent);
+      return;
+    }
+
+    console.info("[chat-page] 更新硅基员工会话运行时意图", {
+      siliconPersonId: selectedSiliconPerson.id,
+      sessionId: session.id,
+      intent,
+    });
+    const payload = await window.myClawAPI.updateSessionRuntimeIntent(session.id, intent);
+    workspace.applySessionUpdate(payload.session);
+  }
+
+  /** 针对当前展示中的会话取消运行；硅基员工模式下不能误打到主聊天 currentSession。 */
+  async function cancelDisplayedSessionRun(input: { runId?: string; messageId?: string; reason?: string }) {
+    if (!session?.id) return;
+    if (!selectedSiliconPerson) {
+      await workspace.cancelSessionRun(input);
+      return;
+    }
+
+    console.info("[chat-page] 取消硅基员工会话运行", {
+      siliconPersonId: selectedSiliconPerson.id,
+      sessionId: session.id,
+      runId: input.runId ?? null,
+      messageId: input.messageId ?? null,
+      reason: input.reason ?? null,
+    });
+    const payload = await window.myClawAPI.cancelSessionRun(session.id, input);
+    if (payload?.session) {
+      workspace.applySessionUpdate(payload.session);
+    }
+  }
+
+  /** 针对当前展示中的会话批准计划；硅基员工模式下需要直连该私域 session。 */
+  async function approveDisplayedSessionPlan() {
+    if (!session?.id) return;
+    if (!selectedSiliconPerson) {
+      await workspace.approvePlan();
+      return;
+    }
+
+    console.info("[chat-page] 批准硅基员工会话计划", {
+      siliconPersonId: selectedSiliconPerson.id,
+      sessionId: session.id,
+    });
+    const payload = await window.myClawAPI.approvePlan(session.id);
+    workspace.applySessionUpdate(payload.session);
+  }
+
+  /** 针对当前展示中的会话取消计划模式；避免硅基员工页面误改主聊天状态。 */
+  async function cancelDisplayedSessionPlanMode() {
+    if (!session?.id) return;
+    if (!selectedSiliconPerson) {
+      await workspace.cancelPlanMode();
+      return;
+    }
+
+    console.info("[chat-page] 取消硅基员工会话 Plan Mode", {
+      siliconPersonId: selectedSiliconPerson.id,
+      sessionId: session.id,
+    });
+    const payload = await window.myClawAPI.cancelPlanMode(session.id);
+    workspace.applySessionUpdate(payload.session);
+  }
+
   // 订阅主进程转发的 `session:stream` 事件，接收实时流式消息与工具状态。
   useEffect(() => {
     const unsubscribe = window.myClawAPI.onSessionStream((event) => {
@@ -611,7 +778,7 @@ export default function ChatPage() {
 
       // 判断事件 sessionId 是否属于当前活跃视图。
       const isActiveViewSession = (sid: string): boolean => {
-        return sid === ws.currentSession?.id;
+        return sid === activeViewSessionIdRef.current;
       };
 
       if (type !== "approval.requested" && !eventSessionId) return;
@@ -641,6 +808,18 @@ export default function ChatPage() {
         scrollToBottomRef.current("smooth");
       } else if (type === "session.updated" && updatedSession) {
         ws.applySessionUpdate(updatedSession);
+        if (
+          updatedSession.siliconPersonId
+          && updatedSession.siliconPersonId === activeViewSiliconPersonIdRef.current
+        ) {
+          void ws.loadSiliconPersonById(updatedSession.siliconPersonId).catch((error) => {
+            console.error("[chat-page] 刷新硅基员工摘要失败", {
+              siliconPersonId: updatedSession.siliconPersonId,
+              sessionId: updatedSession.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+        }
         if (isActiveViewSession(updatedSession.id)) {
           setActiveRunState((current) => {
             const next = readSessionRunState(updatedSession);
@@ -704,7 +883,7 @@ export default function ChatPage() {
           return next;
         });
       } else if (type === "context.limit_warning" && eventSessionId) {
-        if (eventSessionId === ws.currentSession?.id) {
+        if (eventSessionId === activeViewSessionIdRef.current) {
           setShowContextWarning(true);
         }
       } else if (type === "approval.requested") {
@@ -752,12 +931,33 @@ export default function ChatPage() {
   async function createSession() {
     setCreatingSession(true);
     try {
-      await workspace.createSession();
+      if (selectedSiliconPerson) {
+        console.info("[chat-page] 为硅基员工新建会话", {
+          siliconPersonId: selectedSiliconPerson.id,
+        });
+        await workspace.createSiliconPersonSession(selectedSiliconPerson.id);
+      } else {
+        await workspace.createSession();
+      }
     } catch (error) {
       reportChatError(error);
     } finally {
       setCreatingSession(false);
     }
+  }
+
+  /** 切换当前下拉列表中的会话；硅基员工模式下切的是该员工的 currentSession。 */
+  async function handleSelectDisplaySession(sessionId: string) {
+    if (selectedSiliconPerson) {
+      console.info("[chat-page] 切换硅基员工当前会话", {
+        siliconPersonId: selectedSiliconPerson.id,
+        sessionId,
+      });
+      await workspace.switchSiliconPersonSession(selectedSiliconPerson.id, sessionId);
+      return;
+    }
+
+    workspace.selectSession(sessionId);
   }
 
   /** 判断指定会话是否正处于删除中状态。 */
@@ -797,16 +997,16 @@ export default function ChatPage() {
 
   /** 把输入内容发送给运行时，统一处理发送态和异常展示。 */
   async function sendMessageToRuntime(draft: string): Promise<boolean> {
-    // 如果有 @ 投递目标，fire-and-forget 投递到硅基员工队列（不阻塞主聊天）
-    if (targetSiliconPersonId) {
+    // 显式 @ 目标始终代表“指令下发”，和当前正在查看哪个聊天对象无关。
+    if (mentionTargetSiliconPersonId) {
       try {
-        const person = siliconPersons.find((sp) => sp.id === targetSiliconPersonId);
-        await workspace.sendSiliconPersonMessage(targetSiliconPersonId, draft);
+        const person = siliconPersons.find((sp) => sp.id === mentionTargetSiliconPersonId);
+        await workspace.sendSiliconPersonMessage(mentionTargetSiliconPersonId, draft);
         if (person) {
           setDispatchTraces((prev) => [
             ...prev,
             {
-              id: `${Date.now()}-${targetSiliconPersonId}`,
+              id: `${Date.now()}-${mentionTargetSiliconPersonId}`,
               personName: person.name,
               personId: person.id,
               content: draft,
@@ -814,7 +1014,23 @@ export default function ChatPage() {
             },
           ]);
         }
-        setTargetSiliconPersonId(null);
+        setMentionTargetSiliconPersonId(null);
+        return true;
+      } catch (error) {
+        reportChatError(error);
+        return false;
+      }
+    }
+
+    // 直接处于硅基员工聊天页时，发送默认进入该员工自己的 currentSession。
+    if (selectedSiliconPerson) {
+      try {
+        console.info("[chat-page] 向当前硅基员工会话发送消息", {
+          siliconPersonId: selectedSiliconPerson.id,
+          sessionId: session?.id ?? null,
+          contentLength: draft.length,
+        });
+        await workspace.sendSiliconPersonMessage(selectedSiliconPerson.id, draft);
         return true;
       } catch (error) {
         reportChatError(error);
@@ -845,7 +1061,7 @@ export default function ChatPage() {
   }
 
   /** 提交当前输入框内容。 */
-  /** 璇锋眰涓柇褰撳墠杩愯涓殑鑱婂ぉ鍥炲悎锛屼繚鐣欏凡缁忔祦鍑虹殑鍗婃埅鍥炵瓟銆?*/
+  /** 请求中断当前正在运行的聊天回合，并保留已经流出的半截回答。 */
   async function handleStopRun() {
     if (!session || !activeRunState) return;
     setActiveRunState((current) => {
@@ -857,7 +1073,7 @@ export default function ChatPage() {
       };
     });
     try {
-      await workspace.cancelSessionRun({
+      await cancelDisplayedSessionRun({
         runId: activeRunState.runId ?? undefined,
         messageId: activeRunState.messageId,
         reason: "user_stop",
@@ -906,7 +1122,7 @@ export default function ChatPage() {
 
   /** 选择 @ 菜单中的硅基员工。 */
   function selectMentionItem(person: (typeof siliconPersons)[number]) {
-    setTargetSiliconPersonId(person.id);
+    setMentionTargetSiliconPersonId(person.id);
     setMentionMenuOpen(false);
     setMentionFilter("");
     // 把 @xxx 替换成干净的输入——去掉 @ 前缀部分
@@ -984,7 +1200,7 @@ export default function ChatPage() {
       const localDraft = composerDraft;
       const hasLocalDraft = composerDraft.length > 0;
       const executionPrompt = composerDraft.trim() || "请开始执行当前计划。";
-      await workspace.approvePlan();
+      await approveDisplayedSessionPlan();
       const sent = await sendMessageToRuntime(executionPrompt);
       if (sent && hasLocalDraft) {
         setComposerDraft("");
@@ -1014,7 +1230,7 @@ export default function ChatPage() {
   /** 放弃当前计划模式并恢复普通对话流程。 */
   async function handlePlanCancel() {
     try {
-      await workspace.cancelPlanMode();
+      await cancelDisplayedSessionPlanMode();
     } catch (error) {
       reportChatError(error);
     }
@@ -1137,7 +1353,7 @@ export default function ChatPage() {
                           data-testid={`session-item-${item.id}`}
                           className={`session-item${item.id === session?.id ? " active" : ""}`}
                           onClick={() => {
-                            workspace.selectSession(item.id);
+                            void handleSelectDisplaySession(item.id);
                           }}
                         >
                           <div className="session-info">
@@ -1169,13 +1385,28 @@ export default function ChatPage() {
           </div>
           <div className="header-right">
             <button
+              type="button"
+              data-testid="work-files-toggle"
+              className={`chat-header-action-btn${showWorkFiles ? " chat-header-action-btn--active" : ""}`}
+              aria-expanded={showWorkFiles ? "true" : "false"}
+              aria-controls="chat-work-files-drawer"
+              disabled={!workFilesScope}
+              onClick={() => setShowWorkFiles((current) => !current)}
+              title={showWorkFiles ? "关闭文件面板" : "展开文件面板"}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 7.5A2.5 2.5 0 0 1 6.5 5H10l1.6 2h5.9A2.5 2.5 0 0 1 20 9.5v7A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-9z" />
+              </svg>
+              <span>{showWorkFiles ? "关闭文件" : "展开文件"}</span>
+            </button>
+            <button
               data-testid="new-chat-button"
               className="chat-header-action-btn chat-header-action-btn--primary"
               disabled={creatingSession}
               onClick={() => void createSession()}
               title="新建对话"
             >
-              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
               <span>新对话</span>
@@ -1184,253 +1415,264 @@ export default function ChatPage() {
         </header>
 
         {/* 时间线区域 */}
-        <section className="timeline-panel" ref={timelinePanelRef as React.RefObject<HTMLElement>}>
-          <div className="timeline">
+        <div className={`chat-timeline-container${showWorkFiles ? " chat-timeline-container--with-sidebar" : ""}`}>
+          <section className="timeline-panel" ref={timelinePanelRef as React.RefObject<HTMLElement>}>
+            <div className="timeline">
 
-            {/* 上下文压缩警告 */}
-            {showContextWarning && (
-              <div className="context-limit-warning">
-                <div className="context-limit-warning-content">
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span>当前对话较长，上下文已多次压缩，回答质量可能下降。建议新建对话继续工作。</span>
-                  <div className="context-limit-warning-actions">
-                    <button
-                      className="btn-new-chat"
-                      onClick={async () => {
-                        setShowContextWarning(false);
-                        const ws = useWorkspaceStore.getState();
-                        await ws.createSession();
-                      }}
-                    >
-                      新建对话
-                    </button>
-                    <button className="btn-dismiss" onClick={() => setShowContextWarning(false)}>
-                      继续当前对话
-                    </button>
+              {/* 上下文压缩警告 */}
+              {showContextWarning && (
+                <div className="context-limit-warning">
+                  <div className="context-limit-warning-content">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>当前对话较长，上下文已多次压缩，回答质量可能下降。建议新建对话继续工作。</span>
+                    <div className="context-limit-warning-actions">
+                      <button
+                        className="btn-new-chat"
+                        onClick={async () => {
+                          setShowContextWarning(false);
+                          await createSession();
+                        }}
+                      >
+                        新建对话
+                      </button>
+                      <button className="btn-dismiss" onClick={() => setShowContextWarning(false)}>
+                        继续当前对话
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {groupedMessages.map((message, index) => {
-              if (!message.isTechnicalGroup) {
-                // 普通消息卡片。
-                return (
-                  <div key={message.id} className={`message-row role-${message.role}`}>
-                    <div className="message-avatar">
-                      {message.role === "user" ? (
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
-                          <circle cx="12" cy="7" r="4" />
-                        </svg>
-                      ) : message.role === "assistant" ? (
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
-                        </svg>
-                      ) : (
+              {groupedMessages.map((message, index) => {
+                if (!message.isTechnicalGroup) {
+                  // 普通消息卡片。
+                  return (
+                    <div key={message.id} className={`message-row role-${message.role}`}>
+                      <div className="message-avatar">
+                        {message.role === "user" ? (
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" />
+                            <circle cx="12" cy="7" r="4" />
+                          </svg>
+                        ) : message.role === "assistant" ? (
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" />
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+                          </svg>
+                        )}
+                      </div>
+                      <div className="message-body">
+                        <div className="message-header">{roleLabel(message.role)}</div>
+
+                        {message.role === "assistant" && message.renderedReasoningHtml && (
+                          <details data-testid={`reasoning-${message.id}`} className="message-details">
+                            <summary className="details-summary">
+                              <div className="summary-inner">
+                                <span className="pulse-dot active"></span>
+                                <strong>思考过程</strong>
+                              </div>
+                            </summary>
+                            <div
+                              className="details-content reasoning-content"
+                              dangerouslySetInnerHTML={{ __html: message.renderedReasoningHtml }}
+                            />
+                          </details>
+                        )}
+
+                        {message.content && (
+                          <div
+                            className="message-content"
+                            dangerouslySetInnerHTML={{ __html: message.renderedHtml }}
+                          />
+                        )}
+
+                        {message.role === "assistant" && message.usage && (
+                          <span className="token-usage-badge" title={`输入: ${message.usage.promptTokens} | 输出: ${message.usage.completionTokens}`}>
+                            {message.usage.totalTokens} tokens
+                          </span>
+                        )}
+
+                        {message.uiSubmitResult && (
+                          <article className="form-submission-summary">
+                            <div className="summary-header">
+                              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="M22 4L12 14.01l-3-3" />
+                              </svg>
+                              <span>已提交表单</span>
+                            </div>
+                            <div className="summary-body">
+                              {message.uiSubmitResult.pairs.split("; ").map((pair: string, idx: number) => (
+                                <div key={idx} className="summary-pair">
+                                  <span className="pair-key">{pair.split("=")[0]}:</span>
+                                  <span className="pair-val">{pair.split("=")[1]}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </article>
+                        )}
+
+                        {shouldRenderInlineA2UiForm(message.ui) && renderUiFields(message)}
+                      </div>
+                    </div>
+                  );
+                } else {
+                  // 技术链分组，用于折叠展示工具调用过程。
+                  return (
+                    <div key={message.id} className="message-row role-tool">
+                      <div className="message-avatar">
                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
                         </svg>
-                      )}
-                    </div>
-                    <div className="message-body">
-                      <div className="message-header">{roleLabel(message.role)}</div>
-
-                      {message.role === "assistant" && message.renderedReasoningHtml && (
-                        <details data-testid={`reasoning-${message.id}`} className="message-details">
-                          <summary className="details-summary">
-                            <div className="summary-inner">
-                              <span className="pulse-dot active"></span>
-                              <strong>思考过程</strong>
-                            </div>
-                          </summary>
-                          <div
-                            className="details-content reasoning-content"
-                            dangerouslySetInnerHTML={{ __html: message.renderedReasoningHtml }}
-                          />
-                        </details>
-                      )}
-
-                      {message.content && (
-                        <div
-                          className="message-content"
-                          dangerouslySetInnerHTML={{ __html: message.renderedHtml }}
-                        />
-                      )}
-
-                      {message.role === "assistant" && message.usage && (
-                        <span className="token-usage-badge" title={`输入: ${message.usage.promptTokens} | 输出: ${message.usage.completionTokens}`}>
-                          {message.usage.totalTokens} tokens
-                        </span>
-                      )}
-
-                      {message.uiSubmitResult && (
-                        <article className="form-submission-summary">
-                          <div className="summary-header">
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><path d="M22 4L12 14.01l-3-3" />
+                      </div>
+                      <div
+                        className="message-body"
+                        data-testid={`execution-chain-group-${message.items[0]?.id ?? message.id}`}
+                      >
+                        <details className="tool-chain-details" open={isLastTechnicalGroup(index)}>
+                          <summary className="tool-chain-summary">
+                            <svg className="tool-chain-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polyline points="6 9 12 15 18 9" />
                             </svg>
-                            <span>已提交表单</span>
-                          </div>
-                          <div className="summary-body">
-                            {message.uiSubmitResult.pairs.split("; ").map((pair: string, idx: number) => (
-                              <div key={idx} className="summary-pair">
-                                <span className="pair-key">{pair.split("=")[0]}:</span>
-                                <span className="pair-val">{pair.split("=")[1]}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </article>
-                      )}
+                            {activeTools.size > 0 && isLastTechnicalGroup(index) && (
+                              <span className="tool-spinner"></span>
+                            )}
+                            <span className="tool-chain-title">{toolChainTitle(message.items)}</span>
+                            <span className="tool-chain-count">{message.items.length} 步</span>
+                            {currentRound > 0 && isLastTechnicalGroup(index) && (
+                              <span className="tool-chain-round">轮次 {currentRound}</span>
+                            )}
+                          </summary>
+                          <ol className="execution-chain-list">
+                            {message.items.map((item: ChatMessage) => {
+                              const tcId = item.tool_call_id;
+                              const timing = tcId ? toolTimings.get(tcId) : undefined;
+                              const isActive = tcId ? activeTools.has(tcId) : false;
 
-                      {shouldRenderInlineA2UiForm(message.ui) && renderUiFields(message)}
-                    </div>
-                  </div>
-                );
-              } else {
-                // 技术链分组，用于折叠展示工具调用过程。
-                return (
-                  <div key={message.id} className="message-row role-tool">
-                    <div className="message-avatar">
-                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
-                      </svg>
-                    </div>
-                    <div
-                      className="message-body"
-                      data-testid={`execution-chain-group-${message.items[0]?.id ?? message.id}`}
-                    >
-                      <details className="tool-chain-details" open={isLastTechnicalGroup(index)}>
-                        <summary className="tool-chain-summary">
-                          <svg className="tool-chain-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polyline points="6 9 12 15 18 9" />
-                          </svg>
-                          {activeTools.size > 0 && isLastTechnicalGroup(index) && (
-                            <span className="tool-spinner"></span>
-                          )}
-                          <span className="tool-chain-title">{toolChainTitle(message.items)}</span>
-                          <span className="tool-chain-count">{message.items.length} 步</span>
-                          {currentRound > 0 && isLastTechnicalGroup(index) && (
-                            <span className="tool-chain-round">轮次 {currentRound}</span>
-                          )}
-                        </summary>
-                        <ol className="execution-chain-list">
-                          {message.items.map((item: ChatMessage) => {
-                            const tcId = item.tool_call_id;
-                            const timing = tcId ? toolTimings.get(tcId) : undefined;
-                            const isActive = tcId ? activeTools.has(tcId) : false;
-
-                            return (
-                              <li
-                                key={item.id}
-                                data-testid={`execution-chain-step-${item.id}`}
-                                className={`execution-chain-step execution-chain-step--${item.role}${isActive ? " is-active" : ""}`}
-                              >
-                                {isActive && <span className="tool-step-spinner"></span>}
-                                <span className="execution-chain-badge">{executionChainBadge(item)}</span>
+                              return (
+                                <li
+                                  key={item.id}
+                                  data-testid={`execution-chain-step-${item.id}`}
+                                  className={`execution-chain-step execution-chain-step--${item.role}${isActive ? " is-active" : ""}`}
+                                >
+                                  {isActive && <span className="tool-step-spinner"></span>}
+                                  <span className="execution-chain-badge">{executionChainBadge(item)}</span>
+                                  <div className="execution-chain-main">
+                                    {item.role === "assistant" && Array.isArray((item as any).tool_calls) && (item as any).tool_calls.length > 0 ? (
+                                      <details className="execution-chain-output">
+                                        <summary className="execution-chain-output-summary">
+                                          {executionChainSummary(item)}
+                                        </summary>
+                                        <div className="execution-chain-output-body tool-args-preview">
+                                          {((item as any).tool_calls as Array<{ function: { name: string; arguments: string } }>).map((tc, i) => (
+                                            <div key={i} className="tool-call-args">
+                                              <div className="tool-call-name">{tc.function.name}</div>
+                                              <pre className="tool-args-json">{formatToolArgs(tc.function.arguments)}</pre>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </details>
+                                    ) : item.role === "tool" ? (
+                                      <details className="execution-chain-output">
+                                        <summary className="execution-chain-output-summary">
+                                          {executionChainSummary(item)}
+                                          {timing !== undefined && (
+                                            <span className="tool-timing">{timing}ms</span>
+                                          )}
+                                        </summary>
+                                        <div className="execution-chain-output-body">
+                                          <ToolLogContent messageId={item.id} content={typeof item.content === "string" ? item.content : (item.content as any[])?.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n") || ""} />
+                                        </div>
+                                      </details>
+                                    ) : (
+                                      <span className="execution-chain-text">{executionChainSummary(item)}</span>
+                                    )}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                            {/* 展示仍在执行、尚未产出结果的工具。 */}
+                            {isLastTechnicalGroup(index) && Array.from(activeTools.entries()).map(([tcId, info]) => (
+                              <li key={`active-${tcId}`} className="execution-chain-step execution-chain-step--active is-active">
+                                <span className="tool-step-spinner"></span>
+                                <span className="execution-chain-badge">执行中</span>
                                 <div className="execution-chain-main">
-                                  {item.role === "assistant" && Array.isArray((item as any).tool_calls) && (item as any).tool_calls.length > 0 ? (
-                                    <details className="execution-chain-output">
-                                      <summary className="execution-chain-output-summary">
-                                        {executionChainSummary(item)}
-                                      </summary>
-                                      <div className="execution-chain-output-body tool-args-preview">
-                                        {((item as any).tool_calls as Array<{ function: { name: string; arguments: string } }>).map((tc, i) => (
-                                          <div key={i} className="tool-call-args">
-                                            <div className="tool-call-name">{tc.function.name}</div>
-                                            <pre className="tool-args-json">{formatToolArgs(tc.function.arguments)}</pre>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </details>
-                                  ) : item.role === "tool" ? (
-                                    <details className="execution-chain-output">
-                                      <summary className="execution-chain-output-summary">
-                                        {executionChainSummary(item)}
-                                        {timing !== undefined && (
-                                          <span className="tool-timing">{timing}ms</span>
-                                        )}
-                                      </summary>
-                                      <div className="execution-chain-output-body">
-                                        <ToolLogContent messageId={item.id} content={typeof item.content === "string" ? item.content : (item.content as any[])?.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n") || ""} />
-                                      </div>
-                                    </details>
-                                  ) : (
-                                    <span className="execution-chain-text">{executionChainSummary(item)}</span>
-                                  )}
+                                  <span className="execution-chain-text">{info.toolName?.replace(/_/g, ".") ?? info.toolId}</span>
                                 </div>
                               </li>
-                            );
-                          })}
-                          {/* 展示仍在执行、尚未产出结果的工具。 */}
-                          {isLastTechnicalGroup(index) && Array.from(activeTools.entries()).map(([tcId, info]) => (
-                            <li key={`active-${tcId}`} className="execution-chain-step execution-chain-step--active is-active">
-                              <span className="tool-step-spinner"></span>
-                              <span className="execution-chain-badge">执行中</span>
-                              <div className="execution-chain-main">
-                                <span className="execution-chain-text">{info.toolName?.replace(/_/g, ".") ?? info.toolId}</span>
-                              </div>
-                            </li>
-                          ))}
-                        </ol>
-                      </details>
+                            ))}
+                          </ol>
+                        </details>
+                      </div>
+                    </div>
+                  );
+                }
+              })}
+
+              {/* 等待模型响应中 */}
+              {isAwaitingModelResponse && (
+                <div className="message-row role-assistant">
+                  <div className="message-avatar pending-avatar">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+                    </svg>
+                  </div>
+                  <div className="message-body">
+                    <div className="message-header">助手</div>
+                    <div className="typing-dots">
+                      <span></span><span></span><span></span>
                     </div>
                   </div>
-                );
-              }
-            })}
-
-            {/* 等待模型响应中 */}
-            {isAwaitingModelResponse && (
-              <div className="message-row role-assistant">
-                <div className="message-avatar pending-avatar">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
-                  </svg>
                 </div>
-                <div className="message-body">
-                  <div className="message-header">助手</div>
-                  <div className="typing-dots">
-                    <span></span><span></span><span></span>
+              )}
+
+              {/* 审批请求列表 */}
+              {sessionApprovalRequests.map((approval: any) => (
+                <div key={approval.id} className="message-row role-system">
+                  <div className="message-avatar">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#eab308" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div className="message-body">
+                    <div className="message-header">需要审批</div>
+                    <article className="approval-card" data-testid={`approval-card-${approval.id}`}>
+                      <h3>是否允许执行 {approval.label}？</h3>
+                      <p>{approval.detail}</p>
+                      {isResolvingApproval(approval.id) ? (
+                        <div className="approval-loading">
+                          <div className="typing-dots"><span></span><span></span><span></span></div>
+                          <span>正在提交审批并继续执行...</span>
+                        </div>
+                      ) : (
+                        <div className="approval-actions">
+                          <button data-testid="approval-action-deny" className="secondary" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
+                          <button data-testid="approval-action-allow-once" className="secondary" onClick={() => void handleApproval(approval.id, "allow-once")}>允许一次</button>
+                          <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>允许本次运行</button>
+                          <button data-testid="approval-action-always-allow-tool" className="primary" onClick={() => void handleApproval(approval.id, "always-allow-tool")}>始终允许此工具</button>
+                        </div>
+                      )}
+                    </article>
                   </div>
                 </div>
-              </div>
-            )}
+              ))}
+            </div>
+          </section>
 
-            {/* 审批请求列表 */}
-            {sessionApprovalRequests.map((approval: any) => (
-              <div key={approval.id} className="message-row role-system">
-                <div className="message-avatar">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#eab308" strokeWidth="2">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                </div>
-                <div className="message-body">
-                  <div className="message-header">需要审批</div>
-                  <article className="approval-card" data-testid={`approval-card-${approval.id}`}>
-                    <h3>是否允许执行 {approval.label}？</h3>
-                    <p>{approval.detail}</p>
-                    {isResolvingApproval(approval.id) ? (
-                      <div className="approval-loading">
-                        <div className="typing-dots"><span></span><span></span><span></span></div>
-                        <span>正在提交审批并继续执行...</span>
-                      </div>
-                    ) : (
-                      <div className="approval-actions">
-                        <button data-testid="approval-action-deny" className="secondary" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
-                        <button data-testid="approval-action-allow-once" className="secondary" onClick={() => void handleApproval(approval.id, "allow-once")}>允许一次</button>
-                        <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>允许本次运行</button>
-                        <button data-testid="approval-action-always-allow-tool" className="primary" onClick={() => void handleApproval(approval.id, "always-allow-tool")}>始终允许此工具</button>
-                      </div>
-                    )}
-                  </article>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+          {showWorkFiles && (
+            <aside id="chat-work-files-drawer" className="chat-work-files-drawer">
+              <WorkFilesPanel
+                scope={workFilesScope}
+                title="Session Files"
+                description="Managed outputs and deliverables for the current session."
+              />
+            </aside>
+          )}
+        </div>
 
         {/* 计划面板 - Codex 风格，紧贴输入框上方 */}
         {!taskPanelDismissed && (
@@ -1460,14 +1702,14 @@ export default function ChatPage() {
         <footer className="composer-panel">
           <div className="composer-container">
             {/* @ mention 目标指示器 */}
-            {targetSiliconPerson && (
+            {mentionTargetSiliconPerson && (
               <div data-testid="mention-target-indicator" className="mention-target-indicator">
                 <span className="mention-target-label">投递给</span>
-                <span className="mention-target-name">@{targetSiliconPerson.name}</span>
+                <span className="mention-target-name">@{mentionTargetSiliconPerson.name}</span>
                 <button
                   type="button"
                   className="mention-target-clear"
-                  onClick={() => setTargetSiliconPersonId(null)}
+                  onClick={() => setMentionTargetSiliconPersonId(null)}
                   title="取消投递"
                 >
                   &times;
@@ -1481,7 +1723,11 @@ export default function ChatPage() {
                 {filteredMentions.map((person, idx) => (
                   <div
                     key={person.id}
-                    ref={idx === mentionMenuIndex ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+                    ref={idx === mentionMenuIndex ? (el) => {
+                      if (el && typeof el.scrollIntoView === "function") {
+                        el.scrollIntoView({ block: "nearest" });
+                      }
+                    } : undefined}
                     className={`slash-menu-item${idx === mentionMenuIndex ? " active" : ""}`}
                     onMouseDown={(e) => { e.preventDefault(); selectMentionItem(person); }}
                     onMouseEnter={() => setMentionMenuIndex(idx)}
@@ -1503,7 +1749,11 @@ export default function ChatPage() {
                     <React.Fragment key={item.id}>
                       {prev && prev.category !== item.category && <div className="slash-divider" />}
                       <div
-                        ref={idx === slashIdx ? (el) => el?.scrollIntoView({ block: "nearest" }) : undefined}
+                        ref={idx === slashIdx ? (el) => {
+                          if (el && typeof el.scrollIntoView === "function") {
+                            el.scrollIntoView({ block: "nearest" });
+                          }
+                        } : undefined}
                         className={`slash-menu-item${idx === slashIdx ? " active" : ""}`}
                         onMouseDown={(e) => { e.preventDefault(); selectSlashItem(item); }}
                         onMouseEnter={() => setSlashMenuIndex(idx)}
@@ -1555,7 +1805,7 @@ export default function ChatPage() {
                         <button
                           key={level}
                           className={`effort-btn${(session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort === level || (!((session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort) && level === "medium") ? " active" : ""}`}
-                          onClick={() => void workspace.updateSessionRuntimeIntent({ reasoningEffort: level })}
+                          onClick={() => void updateDisplayedSessionRuntimeIntent({ reasoningEffort: level })}
                           title={level === "low" ? "快速回答" : level === "medium" ? "默认思考" : "深度推理"}
                         >
                           {level === "low" ? "快速" : level === "medium" ? "思考" : "深度"}
@@ -1566,7 +1816,7 @@ export default function ChatPage() {
                       type="button"
                       data-testid="plan-mode-toggle"
                       className={`effort-btn${planModeEnabled ? " active" : ""}`}
-                      onClick={() => void workspace.updateSessionRuntimeIntent({
+                      onClick={() => void updateDisplayedSessionRuntimeIntent({
                         workflowMode: planModeEnabled ? "default" : "plan",
                         planModeEnabled: !planModeEnabled,
                       })}
@@ -1658,11 +1908,18 @@ export default function ChatPage() {
 
         /* ── 头部操作按钮 ── */
         .header-right { display: flex; align-items: center; gap: 6px; }
-        .chat-header-action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--glass-border); border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: all 0.15s; text-decoration: none; white-space: nowrap; line-height: 1; }
+        .chat-header-action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; height: 28px; box-sizing: border-box; border: 1px solid var(--glass-border); border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; text-decoration: none; white-space: nowrap; line-height: 1; }
         .chat-header-action-btn:hover:not(:disabled) { border-color: var(--glass-border-hover); color: var(--text-primary); background: rgba(255,255,255,0.04); }
         .chat-header-action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
         .chat-header-action-btn--primary { border-color: var(--accent-cyan); color: var(--accent-cyan); background: rgba(16,163,127,0.06); }
         .chat-header-action-btn--primary:hover:not(:disabled) { background: rgba(16,163,127,0.12); border-color: var(--accent-cyan); color: var(--accent-cyan); }
+        .chat-header-action-btn--active { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.3); color: #60a5fa; }
+
+        /* ── 时间线容器 (支持文件侧边栏) ── */
+        .chat-timeline-container { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+        .chat-timeline-container--with-sidebar .timeline-panel { border-right: 1px solid var(--glass-border); }
+        .chat-work-files-drawer { width: 340px; min-width: 320px; background: color-mix(in srgb, var(--bg-card) 94%, transparent); display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; position: relative; z-index: 5; }
+        @media (max-width: 1200px) { .chat-work-files-drawer { width: 300px; min-width: 280px; } }
         .session-list-dropdown { flex: 1; overflow-y: auto; padding: 8px; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
         .session-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: all 0.2s ease; }
         .session-item:hover { background: var(--glass-reflection); }

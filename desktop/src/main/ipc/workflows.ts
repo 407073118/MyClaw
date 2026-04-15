@@ -8,6 +8,7 @@ import type { RuntimeContext } from "../services/runtime-context";
 import { saveSession, saveWorkflow, saveWorkflowRun, deleteWorkflowFile } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
+import { buildArtifactContextBlock } from "../services/artifact-context-builder";
 import { buildCanonicalTurnContent } from "../services/model-runtime/canonical-turn-content";
 import { createExecutionGateway } from "../services/model-runtime/execution-gateway";
 import { composePromptSections } from "../services/model-runtime/prompt-composer";
@@ -143,12 +144,17 @@ async function persistWorkflowTurnOutcomeMetrics(
   },
 ): Promise<void> {
   try {
-    await updateTurnOutcome(ctx.runtime.paths, {
+    const nextOutcome = {
       ...outcome,
       toolCallCount: metrics.toolCallCount,
       toolSuccessCount: metrics.toolSuccessCount,
       contextStability: (outcome.contextStability !== false) && metrics.contextStability,
-    });
+    };
+    if (ctx.services.artifactManager) {
+      await updateTurnOutcome(ctx.runtime.paths, nextOutcome, ctx.services.artifactManager);
+    } else {
+      await updateTurnOutcome(ctx.runtime.paths, nextOutcome);
+    }
   } catch (error) {
     console.warn("[workflow] 回写 turn outcome 指标失败", {
       outcomeId: outcome.id,
@@ -259,7 +265,10 @@ function syncSiliconPersonWorkflowTasks(
  */
 function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
   const registry = new NodeExecutorRegistry();
-  const executionGateway = createExecutionGateway({ paths: ctx.runtime.paths });
+  const executionGateway = createExecutionGateway({
+    paths: ctx.runtime.paths,
+    artifactManager: ctx.services.artifactManager,
+  });
 
   // ── Start / End ──
   registry.register(new StartNodeExecutor());
@@ -319,6 +328,10 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
       reasoningProfileId: turnExecutionPlan.reasoningProfileId,
       skills: ctx.state.skills,
       personalPromptProfile: ctx.state.getPersonalPromptProfile(),
+      artifactContextBlock: buildArtifactContextBlock({
+        artifactRegistry: ctx.services.artifactRegistry,
+        workflowRunId: opts.workflowRunId ?? null,
+      }),
       mcpTools: ctx.services.mcpManager?.getAllTools() ?? [],
     });
     const canonicalContent = buildCanonicalTurnContent({

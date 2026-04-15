@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { ApprovalDecision, ApprovalRequest, McpServer, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
+import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, McpServer, ModelProfile, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
+import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
+import WorkFilesPanel from "../components/WorkFilesPanel";
 import { useWorkspaceStore } from "../stores/workspace";
+import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
+import { resolveReasoningControlSpec } from "../utils/reasoning-controls";
 
 /** 把消息内容转成可直接展示的文本，兼容字符串和富结构内容。 */
 function textOf(content: unknown): string {
@@ -116,7 +120,17 @@ export default function SiliconPersonWorkspacePage() {
   const currentSession = currentSessionSummary
     ? sessionMap.get(currentSessionSummary.id) ?? null
     : null;
+  const workFilesScope = useMemo<ArtifactScopeRef | null>(() => {
+    if (currentSessionSummary?.id) {
+      return { scopeKind: "session", scopeId: currentSessionSummary.id };
+    }
+    if (siliconPersonId) {
+      return { scopeKind: "siliconPerson", scopeId: siliconPersonId };
+    }
+    return null;
+  }, [currentSessionSummary?.id, siliconPersonId]);
   const currentSessionTasks = currentSession?.tasks ?? [];
+  const currentSessionMessages = currentSession?.messages ?? [];
   const currentSessionApprovalRequests = useMemo(
     () => workspace.approvalRequests.filter((request) => request.sessionId === currentSessionSummary?.id),
     [workspace.approvalRequests, currentSessionSummary?.id, viewVersion],
@@ -129,8 +143,9 @@ export default function SiliconPersonWorkspacePage() {
   const [sessionError, setSessionError] = useState("");
   const [approvalError, setApprovalError] = useState("");
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
-  const [activeStudioTab, setActiveStudioTab] = useState<"profile" | "tasks" | "capabilities">("profile");
+  const [activeStudioTab, setActiveStudioTab] = useState<"chat" | "profile" | "tasks" | "capabilities">("chat");
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  const [draftMessage, setDraftMessage] = useState("");
 
   // 草稿状态，与当前硅基员工实体保持同构。
   const [draftName, setDraftName] = useState("");
@@ -144,7 +159,8 @@ export default function SiliconPersonWorkspacePage() {
   const [personPaths, setPersonPaths] = useState<{ personDir: string; skillsDir: string; sessionsDir: string }>({ personDir: "", skillsDir: "", sessionsDir: "" });
   const [draftSoul, setDraftSoul] = useState("");
   const [draftModelProfileId, setDraftModelProfileId] = useState("");
-  const [draftReasoningEffort, setDraftReasoningEffort] = useState<"low" | "medium" | "high">("medium");
+  const [draftReasoningEnabled, setDraftReasoningEnabled] = useState(true);
+  const [draftReasoningEffort, setDraftReasoningEffort] = useState<"low" | "medium" | "high" | "xhigh">("medium");
   const workflowSummaryMap = workspace.workflowSummaries ?? {};
   const workflowRunMap = workspace.workflowRuns ?? {};
   const boundWorkflows = useMemo(
@@ -165,6 +181,18 @@ export default function SiliconPersonWorkspacePage() {
         .filter((run) => draftWorkflowIds.includes(run.workflowId)),
     [draftWorkflowIds, workflowRunMap],
   );
+  const activeModelProfile = useMemo<ModelProfile | null>(
+    () => workspace.models.find((model) => model.id === (draftModelProfileId || workspace.defaultModelProfileId || "")) ?? null,
+    [draftModelProfileId, workspace.defaultModelProfileId, workspace.models],
+  );
+  const reasoningControlSpec = useMemo(
+    () => resolveReasoningControlSpec(activeModelProfile),
+    [activeModelProfile],
+  );
+  const runtimeModelStatusItems = useMemo(
+    () => buildModelRuntimeStatusItems(activeModelProfile),
+    [activeModelProfile],
+  );
 
   // 员工详情变化后，把最新数据同步到本地草稿。
   useEffect(() => {
@@ -175,6 +203,7 @@ export default function SiliconPersonWorkspacePage() {
     setDraftWorkflowIds([...siliconPerson.workflowIds]);
     setDraftSoul(siliconPerson.soul ?? "");
     setDraftModelProfileId(siliconPerson.modelProfileId ?? "");
+    setDraftReasoningEnabled(siliconPerson.reasoningEnabled ?? true);
     setDraftReasoningEffort(siliconPerson.reasoningEffort ?? "medium");
   }, [siliconPerson?.id, siliconPerson?.updatedAt, siliconPerson?.approvalMode]);
 
@@ -390,6 +419,7 @@ export default function SiliconPersonWorkspacePage() {
         workflowIds: [...draftWorkflowIds],
         soul: draftSoul.trim() || undefined,
         modelProfileId: draftModelProfileId || undefined,
+        reasoningEnabled: draftReasoningEnabled,
         reasoningEffort: draftReasoningEffort,
       });
       setViewVersion((value) => value + 1);
@@ -451,6 +481,30 @@ export default function SiliconPersonWorkspacePage() {
 
 
   /** 处理当前会话里的审批请求，按钮只负责把决定转给 workspace。 */
+  /** 向当前硅基员工的 currentSession 继续发送消息，保持私域会话连续性。 */
+  async function handleSendMessage() {
+    if (!siliconPersonId) return;
+    const content = draftMessage.trim();
+    if (!content) return;
+
+    setSessionError("");
+    setIsSending(true);
+    try {
+      console.info("[silicon-person-studio] 请求向当前会话继续发送消息", {
+        siliconPersonId,
+        sessionId: currentSessionSummary?.id ?? null,
+        contentLength: content.length,
+      });
+      await workspace.sendSiliconPersonMessage(siliconPersonId, content);
+      setDraftMessage("");
+      setViewVersion((value) => value + 1);
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : "发送硅基员工消息失败。");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   async function handleResolveApproval(approvalId: string, decision: ApprovalDecision) {
     if (!approvalId) return;
 
@@ -528,6 +582,7 @@ export default function SiliconPersonWorkspacePage() {
       {/* ── Tabs ── */}
       <nav className="ws-tabs" data-testid="studio-tab-bar">
         {([
+          ["chat", "聊天"],
           ["profile", "资料"],
           ["capabilities", "能力"],
           ["tasks", "任务"],
@@ -536,7 +591,17 @@ export default function SiliconPersonWorkspacePage() {
             key={key}
             type="button"
             className={`ws-tab${activeStudioTab === key ? " active" : ""}`}
-            data-testid={key === "profile" ? "studio-tab-profile" : undefined}
+            data-testid={
+              key === "chat"
+                ? "studio-tab-chat"
+                : key === "profile"
+                  ? "studio-tab-profile"
+                  : key === "capabilities"
+                    ? "studio-tab-capabilities"
+                    : key === "tasks"
+                      ? "studio-tab-tasks"
+                      : undefined
+            }
             onClick={() => setActiveStudioTab(key)}
           >
             {label}
@@ -545,6 +610,144 @@ export default function SiliconPersonWorkspacePage() {
       </nav>
 
       <section className="ws-body">
+        {siliconPerson && (
+          <section
+            className="ws-col"
+            style={{ display: activeStudioTab === "chat" ? undefined : "none" }}
+          >
+            <article className="ws-card ws-chat-card">
+              <div className="ws-chat-header">
+                <h3>聊天</h3>
+                <p className="ws-card-desc">进入该硅基员工自己的私域会话，查看历史消息并继续追问。</p>
+              </div>
+
+              <div className="ws-session-bar">
+                <div className="ws-session-pills">
+                  {siliconPerson.sessions.map((session) => (
+                    <button
+                      key={session.id}
+                      type="button"
+                      className={`ws-session-pill${currentSessionSummary?.id === session.id ? " active" : ""}`}
+                      data-testid={`silicon-person-session-pill-${session.id}`}
+                      onClick={() => void handleSwitchSession(session.id)}
+                    >
+                      <span>{session.title || "未命名会话"}</span>
+                      {session.needsApproval && <span className="ws-session-badge warn">!</span>}
+                      {session.unreadCount > 0 && !session.needsApproval && (
+                        <span className="ws-session-badge">{session.unreadCount > 9 ? "9+" : session.unreadCount}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="ws-btn-ghost"
+                  data-testid="silicon-person-create-session"
+                  onClick={() => void handleCreateSession()}
+                  disabled={isCreatingSession}
+                >
+                  {isCreatingSession ? "新建中..." : "新建会话"}
+                </button>
+              </div>
+
+              {sessionError && <p className="ws-error">{sessionError}</p>}
+              {!currentSessionSummary && (
+                <div className="ws-empty-state">
+                  <p>当前还没有可用会话，先新建一个会话开始协作。</p>
+                </div>
+              )}
+
+              {currentSessionSummary && (
+                <>
+                  <div className="ws-section">
+                    <h4>当前会话</h4>
+                    <div className="ws-meta-row">
+                      <span className="glass-pill glass-pill--muted">{currentSessionSummary.title || "未命名会话"}</span>
+                      <span className="glass-pill glass-pill--muted">{currentSessionMessages.length} 条消息</span>
+                      {currentSessionSummary.hasUnread && (
+                        <span className="glass-pill glass-pill--accent">{currentSessionSummary.unreadCount} 未读</span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="ws-section">
+                    <h4>历史消息</h4>
+                    {currentSessionMessages.length > 0 ? (
+                      <div className="ws-message-list" data-testid="silicon-person-message-list">
+                        {currentSessionMessages.map((message) => (
+                          <div key={message.id} className={`ws-msg ws-msg--${message.role}`}>
+                            <span className="ws-msg-role">{roleLabel(message.role)}</span>
+                            <div className="ws-msg-body">
+                              <p>{textOf(message.content) || "暂不支持展示的消息内容"}</p>
+                              {typeof message.createdAt === "string" && (
+                                <span className="ws-msg-time">{message.createdAt}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="ws-empty-state">
+                        <p>当前会话还没有历史消息，直接发一条消息开始协作。</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {currentSessionApprovalRequests.length > 0 && (
+                    <div className="ws-section ws-section--approval">
+                      <h4>待审批</h4>
+                      <div className="ws-item-list">
+                        {currentSessionApprovalRequests.map((request) => (
+                          <div key={request.id} className="ws-approval-item">
+                            <div className="ws-approval-info">
+                              <strong>{request.label || "审批请求"}</strong>
+                              <p>{request.detail || "当前会话有一条待处理审批请求。"}</p>
+                            </div>
+                            <div className="ws-approval-actions">
+                              <button type="button" className="ws-btn-approve" onClick={() => void handleResolveApproval(request.id, "allow-once")}>批准</button>
+                              <button type="button" className="ws-btn-deny" onClick={() => void handleResolveApproval(request.id, "deny")}>拒绝</button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {approvalError && <p className="ws-error">{approvalError}</p>}
+
+                  <div className="ws-composer">
+                    <textarea
+                      data-testid="silicon-person-composer-input"
+                      value={draftMessage}
+                      onChange={(event) => setDraftMessage(event.target.value)}
+                      placeholder="继续向这个硅基员工追问，消息会写入它自己的 currentSession。"
+                      rows={4}
+                    />
+                    <button
+                      type="button"
+                      className="ws-btn-send"
+                      data-testid="silicon-person-composer-send"
+                      onClick={() => void handleSendMessage()}
+                      disabled={isSending || draftMessage.trim().length === 0}
+                    >
+                      {isSending ? "发送中..." : "发送"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </article>
+            <article className="ws-card">
+              <WorkFilesPanel
+                scope={workFilesScope}
+                mode="page"
+                allowGlobalJump
+                title="Current Work Files"
+                description="Drafts, results, and deliverables captured from the current employee session."
+                emptyHint="No managed files for the current employee session yet."
+              />
+            </article>
+          </section>
+        )}
         {/* ═══════════ 资料 Tab ═══════════ */}
         {activeStudioTab === "profile" && siliconPerson && (
           <section className="ws-col ws-profile-col">
@@ -600,21 +803,28 @@ export default function SiliconPersonWorkspacePage() {
                       ))}
                     </select>
                   </label>
-                  <label className="ws-field">
-                    <span>推理等级</span>
-                    <div className="ws-effort-selector">
-                      {(["low", "medium", "high"] as const).map((level) => (
-                        <button
-                          key={level}
-                          type="button"
-                          className={`ws-effort-btn${draftReasoningEffort === level ? " active" : ""}`}
-                          onClick={() => setDraftReasoningEffort(level)}
-                        >
-                          {level === "low" ? "快速" : level === "medium" ? "思考" : "深度"}
-                        </button>
-                      ))}
+                  {runtimeModelStatusItems.length > 0 && (
+                    <div className="ws-field ws-field--full">
+                      <span>运行诊断</span>
+                      <div className="ws-model-status" data-testid="silicon-person-workspace-model-status">
+                        {runtimeModelStatusItems.map((item) => (
+                          <span key={item.key} className={`ws-model-status-pill ws-model-status-pill--${item.tone}`}>
+                            {item.label}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </label>
+                  )}
+                  <div className="ws-field">
+                    <span>推理等级</span>
+                    <ReasoningPresetPanel
+                      spec={reasoningControlSpec}
+                      enabled={draftReasoningEnabled}
+                      effort={draftReasoningEffort}
+                      onEnabledChange={setDraftReasoningEnabled}
+                      onEffortChange={setDraftReasoningEffort}
+                    />
+                  </div>
                   <label className="ws-field">
                     <span>审批模式</span>
                     <select value={draftApprovalMode} onChange={(e) => setDraftApprovalMode(e.target.value as SiliconPersonApprovalMode)} data-testid="profile-tab-approval-mode">
@@ -942,60 +1152,60 @@ export default function SiliconPersonWorkspacePage() {
         .ws-btn-send:disabled { opacity: 0.55; cursor: not-allowed; }
 
         /* ── Profile ── */
-        .ws-profile-col { max-width: 100%; }
-        .ws-profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .ws-profile-col { max-width: 900px; margin: 0 auto; width: 100%; }
+        .ws-profile-grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
 
         /* ── Form Card ── */
-        .ws-form-card { display: flex; flex-direction: column; gap: 14px; }
-        .ws-form-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-        .ws-field { display: flex; flex-direction: column; gap: 6px; }
-        .ws-field span { font-size: 0.78rem; font-weight: 700; color: var(--text-muted); }
+        .ws-form-card { display: flex; flex-direction: column; gap: 18px; }
+        .ws-form-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .ws-model-status { display: flex; flex-wrap: wrap; gap: 8px; }
+        .ws-model-status-pill { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: var(--text-secondary); font-size: 12px; line-height: 1; white-space: nowrap; }
+        .ws-model-status-pill--vendor, .ws-model-status-pill--protocol { color: var(--accent-strong); border-color: rgba(16,163,127,0.24); background: rgba(16,163,127,0.08); }
+        .ws-field { display: flex; flex-direction: column; gap: 8px; }
+        .ws-field span { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); }
         .ws-field--full { grid-column: 1 / -1; }
-        .ws-field input, .ws-field textarea, .ws-field select { width: 100%; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); padding: 9px 12px; font: inherit; font-size: 13px; transition: border-color 0.2s, box-shadow 0.2s; box-sizing: border-box; }
-        .ws-field input:focus, .ws-field textarea:focus, .ws-field select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.14); outline: none; }
-        .ws-field select { appearance: none; -webkit-appearance: none; padding-right: 36px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; background-size: 14px; }
-        .ws-field select:hover { border-color: var(--glass-border-hover); }
+        .ws-field input, .ws-field textarea, .ws-field select { width: 100%; border: 1px solid var(--glass-border); border-radius: 8px; background: rgba(0,0,0,0.15); color: var(--text-primary); padding: 10px 14px; font: inherit; font-size: 13px; transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); box-sizing: border-box; }
+        .ws-field input:hover, .ws-field textarea:hover, .ws-field select:hover { border-color: rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); }
+        .ws-field input:focus, .ws-field textarea:focus, .ws-field select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.15), inset 0 1px 2px rgba(0,0,0,0.2); outline: none; background: rgba(0,0,0,0.3); }
+        .ws-field select { appearance: none; -webkit-appearance: none; padding-right: 36px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; }
         .ws-field select option { background: var(--bg-card); color: var(--text-primary); padding: 8px 12px; }
-        .ws-path-display { width: 100%; padding: 9px 12px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; cursor: text; box-sizing: border-box; }
-        /* ws-btn-primary removed — uses global .btn-premium.accent */
-
-        /* ── Effort Selector ── */
-        .ws-effort-selector { display: flex; gap: 6px; }
-        .ws-effort-btn { padding: 7px 16px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; }
-        .ws-effort-btn:hover { border-color: var(--glass-border-hover); color: var(--text-primary); }
-        .ws-effort-btn.active { background: rgba(16,163,127,0.1); border-color: var(--accent-cyan); color: var(--accent-cyan); }
-
+        .ws-path-display { width: 100%; padding: 10px 14px; border: 1px dashed var(--glass-border); border-radius: 8px; background: rgba(0,0,0,0.1); color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; cursor: text; box-sizing: border-box; }
+        
         /* ── Readonly Stats ── */
-        .ws-readonly-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; margin-top: 12px; }
-        .ws-stat-cell { padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--glass-border); background: var(--bg-base); display: flex; flex-direction: column; gap: 4px; }
-        .ws-stat-label { font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
-        .ws-stat-value { font-size: 0.82rem; font-weight: 700; color: var(--text-primary); word-break: break-all; }
-        .ws-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.75rem; }
+        .ws-readonly-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 14px; }
+        .ws-stat-cell { padding: 14px 16px; border-radius: 10px; border: 1px solid var(--glass-border); background: linear-gradient(145deg, rgba(255,255,255,0.03), transparent); display: flex; flex-direction: column; gap: 6px; }
+        .ws-stat-label { font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .ws-stat-value { font-size: 0.85rem; font-weight: 600; color: #e6edf3; word-break: break-all; }
+        .ws-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; }
         .ws-text-muted { color: var(--text-muted); }
 
         /* ── Capabilities ── */
-        .ws-cap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+        .ws-cap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
         .ws-bind-row { display: flex; gap: 8px; align-items: center; }
-        .ws-bind-select { padding: 6px 12px; padding-right: 32px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font: inherit; font-size: 0.82rem; appearance: none; -webkit-appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; background-size: 12px; transition: border-color 0.2s, box-shadow 0.2s; }
-        .ws-bind-select:hover { border-color: var(--glass-border-hover); }
+        .ws-bind-select { padding: 8px 14px; padding-right: 36px; border: 1px solid var(--glass-border); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); font: inherit; font-size: 0.82rem; appearance: none; -webkit-appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; transition: border-color 0.2s, box-shadow 0.2s; }
+        .ws-bind-select:hover { border-color: var(--glass-border-hover); background: rgba(255,255,255,0.02); }
         .ws-bind-select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.14); outline: none; }
         .ws-bind-select option { background: var(--bg-card); color: var(--text-primary); }
-        .ws-wf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
-        .ws-wf-card { padding: 14px; border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--bg-base); display: flex; align-items: center; justify-content: space-between; gap: 12px; transition: border-color 0.2s; }
-        .ws-wf-card:hover { border-color: var(--glass-border-hover); }
-        .ws-wf-card-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-        .ws-wf-card-info strong { font-size: 0.85rem; color: var(--text-primary); }
-        .ws-wf-card-info span { font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ws-wf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+        .ws-wf-card { padding: 18px; border: 1px solid var(--glass-border); border-radius: var(--radius-xl); background: linear-gradient(145deg, var(--bg-base), rgba(0,0,0,0.2)); display: flex; align-items: center; justify-content: space-between; gap: 16px; transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .ws-wf-card:hover { border-color: var(--glass-border-hover); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+        .ws-wf-card-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+        .ws-wf-card-info strong { font-size: 0.9rem; font-weight: 600; color: #e6edf3; }
+        .ws-wf-card-info span { font-size: 0.72rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         /* ── Binding Grid (Skills / MCP) ── */
-        .ws-binding-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin-top: 12px; }
-        .ws-binding-card { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--bg-base); cursor: pointer; transition: all 0.15s; }
-        .ws-binding-card:hover { border-color: var(--glass-border-hover); }
-        .ws-binding-card.bound { border-color: var(--accent-cyan); background: rgba(16,163,127,0.06); }
-        .ws-binding-card input[type="checkbox"] { accent-color: var(--accent-cyan); flex-shrink: 0; }
-        .ws-binding-card-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-        .ws-binding-card-info strong { font-size: 0.82rem; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .ws-binding-card-info span { font-size: 0.68rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ws-binding-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 16px; }
+        .ws-binding-card { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border: 1px solid var(--glass-border); border-radius: var(--radius-xl); background: linear-gradient(145deg, var(--bg-base), rgba(0,0,0,0.2)); cursor: default; transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .ws-binding-card:hover { border-color: rgba(255,255,255,0.15); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
+        .ws-binding-card.bound { border-color: rgba(16,163,127,0.3); background: linear-gradient(145deg, rgba(16,163,127,0.08), rgba(16,163,127,0.02)); box-shadow: 0 0 0 1px rgba(16,163,127,0.1), 0 4px 12px rgba(0,0,0,0.1); }
+        .ws-binding-card.bound:hover { border-color: rgba(16,163,127,0.5); box-shadow: 0 0 0 1px rgba(16,163,127,0.2), 0 8px 24px rgba(0,0,0,0.2); }
+        .ws-binding-card input[type="checkbox"] { accent-color: var(--accent-cyan); flex-shrink: 0; width: 16px; height: 16px; }
+        .ws-binding-card-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+        .ws-binding-card-info strong { font-size: 0.9rem; font-weight: 600; color: #e6edf3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ws-binding-card-info span { font-size: 0.72rem; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .ws-binding-card::before { content: ''; display: block; width: 4px; height: 100%; background: var(--accent-cyan); position: absolute; left: 0; top: 0; border-radius: 4px 0 0 4px; opacity: 0; transition: opacity 0.2s; }
+        .ws-binding-card.bound::before { opacity: 1; }
+        .ws-binding-card { position: relative; overflow: hidden; }
 
         /* ── Shared ── */
         .ws-error { margin: 0; color: var(--status-red); font-size: 0.82rem; }

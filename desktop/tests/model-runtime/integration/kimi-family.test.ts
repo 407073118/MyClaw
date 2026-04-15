@@ -15,7 +15,7 @@ describe("kimi family", () => {
     });
 
     expect(plan.vendorFamily).toBe("kimi");
-    expect(plan.providerFamily).toBe("generic-openai-compatible");
+    expect(plan.providerFamily).toBe("moonshot-native");
     expect(plan.recommendedProtocolTarget).toBe("anthropic-messages");
     expect(plan.protocolTarget).toBe("anthropic-messages");
     expect(plan.supportedProtocolTargets).toEqual(expect.arrayContaining([

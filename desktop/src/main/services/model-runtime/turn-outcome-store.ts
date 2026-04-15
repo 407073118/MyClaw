@@ -4,6 +4,7 @@ import { appendFile, mkdir, rename, rm, writeFile } from "node:fs/promises";
 
 import type { TurnOutcome } from "@shared/contracts";
 import type { MyClawPaths } from "../directory-service";
+import type { ArtifactManager } from "../artifact-manager";
 
 function resolveTurnOutcomesDir(paths: MyClawPaths): string {
   return join(paths.myClawDir, "turn-outcomes");
@@ -14,6 +15,63 @@ export const resolveTurnOutcomeDir = resolveTurnOutcomesDir;
 
 function resolveTurnTelemetryFile(paths: MyClawPaths): string {
   return join(paths.myClawDir, "turn-telemetry.jsonl");
+}
+
+async function syncTurnOutcomeArtifact(
+  paths: MyClawPaths,
+  outcome: TurnOutcome,
+  artifactManager?: ArtifactManager | null,
+): Promise<void> {
+  if (!artifactManager) return;
+
+  const artifactId = `turn-outcome-${outcome.id}`;
+  const scope = outcome.workflowRunId
+    ? { scopeKind: "workflowRun" as const, scopeId: outcome.workflowRunId }
+    : outcome.sessionId
+      ? { scopeKind: "session" as const, scopeId: outcome.sessionId }
+      : { scopeKind: "turnOutcome" as const, scopeId: outcome.id };
+  const links = [
+    { scope: { scopeKind: "turnOutcome" as const, scopeId: outcome.id }, relation: "reference" as const, isPrimary: false },
+    ...(outcome.sessionId
+      ? [{ scope: { scopeKind: "session" as const, scopeId: outcome.sessionId }, relation: "secondary_output" as const, isPrimary: !outcome.workflowRunId }]
+      : []),
+    ...(outcome.workflowRunId
+      ? [{ scope: { scopeKind: "workflowRun" as const, scopeId: outcome.workflowRunId }, relation: "secondary_output" as const, isPrimary: true }]
+      : []),
+  ];
+
+  if (!artifactManager.registry.getArtifactById(artifactId)) {
+    artifactManager.planArtifact({
+      artifactId,
+      title: `Turn Outcome ${outcome.id}`,
+      kind: "log",
+      mimeType: "application/json",
+      storageClass: "cache",
+      fileName: `${outcome.id}.json`,
+      scope,
+      links,
+      metadata: {
+        turnOutcomeId: outcome.id,
+        sessionId: outcome.sessionId ?? null,
+        workflowRunId: outcome.workflowRunId ?? null,
+      },
+    });
+  }
+
+  artifactManager.completeArtifact({
+    artifactId,
+    absolutePath: resolveTurnOutcomeFile(paths, outcome.id),
+    lifecycle: "ready",
+    status: "ready",
+    metadata: {
+      turnOutcomeId: outcome.id,
+      sessionId: outcome.sessionId ?? null,
+      workflowRunId: outcome.workflowRunId ?? null,
+      success: outcome.success,
+      providerFamily: outcome.providerFamily,
+      protocolTarget: outcome.protocolTarget,
+    },
+  });
 }
 
 async function atomicWriteJson(filePath: string, payload: unknown): Promise<void> {
@@ -35,6 +93,7 @@ export function createTurnOutcomeId(): string {
 export async function saveTurnOutcome(
   paths: MyClawPaths,
   outcome: TurnOutcome,
+  artifactManager?: ArtifactManager | null,
 ): Promise<TurnOutcome> {
   const dir = resolveTurnOutcomesDir(paths);
   await mkdir(dir, { recursive: true });
@@ -46,6 +105,7 @@ export async function saveTurnOutcome(
       "utf-8",
     );
   }
+  await syncTurnOutcomeArtifact(paths, outcome, artifactManager);
   return outcome;
 }
 
@@ -56,10 +116,12 @@ export async function saveTurnOutcome(
 export async function updateTurnOutcome(
   paths: MyClawPaths,
   outcome: TurnOutcome,
+  artifactManager?: ArtifactManager | null,
 ): Promise<TurnOutcome> {
   const dir = resolveTurnOutcomesDir(paths);
   await mkdir(dir, { recursive: true });
   await atomicWriteJson(resolveTurnOutcomeFile(paths, outcome.id), outcome);
+  await syncTurnOutcomeArtifact(paths, outcome, artifactManager);
   return outcome;
 }
 
@@ -118,13 +180,13 @@ export async function deleteTurnOutcome(paths: MyClawPaths, id: string): Promise
 }
 
 /** 创建 store facade，便于 gateway 注入使用。 */
-export function createTurnOutcomeStore(paths: MyClawPaths) {
+export function createTurnOutcomeStore(paths: MyClawPaths, artifactManager?: ArtifactManager | null) {
   return {
     async save(outcome: TurnOutcome): Promise<TurnOutcome> {
-      return saveTurnOutcome(paths, outcome);
+      return saveTurnOutcome(paths, outcome, artifactManager);
     },
     async update(outcome: TurnOutcome): Promise<TurnOutcome> {
-      return updateTurnOutcome(paths, outcome);
+      return updateTurnOutcome(paths, outcome, artifactManager);
     },
     async list(filter?: { sessionId?: string; workflowRunId?: string }): Promise<TurnOutcome[]> {
       return listTurnOutcomes(paths, filter);

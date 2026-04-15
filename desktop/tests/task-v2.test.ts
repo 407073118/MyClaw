@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createTask, listTasks, getTask, updateTask } from "../src/main/services/task-store";
+import { createTask, listTasks, getTask, updateTask, clearCompletedTasks } from "../src/main/services/task-store";
 import type { TaskCreateInput, TaskUpdateInput } from "../src/main/services/task-store";
 import type { Task } from "../shared/contracts/task";
 
@@ -43,6 +43,21 @@ describe("Task V2 CRUD (task-store)", () => {
     expect(tasks[1]!.subject).toBe("B");
   });
 
+  it("deduplicates unfinished logical tasks even when numbering prefixes differ", () => {
+    const existing: Task[] = [
+      { id: "t1", subject: "1. Read foo.ts", description: "Read foo.ts before editing", status: "pending", blocks: [], blockedBy: [] },
+    ];
+
+    const result = createTask(existing, {
+      subject: "Read foo.ts",
+      description: "Read foo.ts before editing",
+    });
+
+    expect(result.tasks).toHaveLength(1);
+    expect(result.created.id).toBe("t1");
+    expect(result.created.subject).toBe("1. Read foo.ts");
+  });
+
   it("evicts completed tasks when exceeding max limit", () => {
     // Fill up to 200
     let tasks: Task[] = [];
@@ -77,6 +92,21 @@ describe("Task V2 CRUD (task-store)", () => {
     expect(result).toEqual(tasks);
   });
 
+  it("coalesces duplicate logical tasks and keeps the furthest progress", () => {
+    const tasks: Task[] = [
+      { id: "a", subject: "1. Run tests", description: "Run the desktop test suite", status: "pending", blocks: [], blockedBy: [] },
+      { id: "b", subject: "Run tests", description: "Run the desktop test suite", status: "completed", blocks: [], blockedBy: [] },
+    ];
+
+    const result = listTasks(tasks);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      id: "a",
+      status: "completed",
+      subject: "1. Run tests",
+    });
+  });
+
   // -------------------------------------------------------------------------
   // getTask
   // -------------------------------------------------------------------------
@@ -90,6 +120,18 @@ describe("Task V2 CRUD (task-store)", () => {
 
   it("returns null for unknown ID", () => {
     expect(getTask([], "nope")).toBeNull();
+  });
+
+  it("resolves duplicate task aliases when querying by ID", () => {
+    const tasks: Task[] = [
+      { id: "a", subject: "Review PR", description: "Review the active pull request", status: "pending", blocks: [], blockedBy: [] },
+      { id: "b", subject: "Review PR", description: "Review the active pull request", status: "completed", blocks: [], blockedBy: [] },
+    ];
+
+    expect(getTask(tasks, "b")).toMatchObject({
+      id: "a",
+      status: "completed",
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -126,6 +168,29 @@ describe("Task V2 CRUD (task-store)", () => {
     ];
     const result = updateTask(tasks, "t1", { metadata: { b: 99, c: 3 } });
     expect(result.updated.metadata).toEqual({ a: 1, b: 99, c: 3 });
+  });
+
+  it("updates the canonical task when the caller passes a duplicate alias ID", () => {
+    const tasks: Task[] = [
+      { id: "t1", subject: "Run lint", description: "Run lint before submit", status: "pending", blocks: [], blockedBy: [] },
+      { id: "t2", subject: "Run lint", description: "Run lint before submit", status: "pending", blocks: [], blockedBy: [] },
+    ];
+
+    const result = updateTask(tasks, "t2", { status: "completed" });
+    expect(result.tasks).toHaveLength(1);
+    expect(result.updated.id).toBe("t1");
+    expect(result.updated.status).toBe("completed");
+  });
+
+  it("clears coalesced completed tasks so duplicate leftovers do not keep progress stuck", () => {
+    const tasks: Task[] = [
+      { id: "t1", subject: "Summarize findings", description: "Summarize findings for the user", status: "completed", blocks: [], blockedBy: [] },
+      { id: "t2", subject: "Summarize findings", description: "Summarize findings for the user", status: "pending", blocks: [], blockedBy: [] },
+    ];
+
+    const result = clearCompletedTasks(tasks);
+    expect(result.tasks).toEqual([]);
+    expect(result.cleared).toBe(1);
   });
 
   // -------------------------------------------------------------------------

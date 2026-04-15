@@ -8,6 +8,14 @@ describe("volcengine ark family", () => {
     expect(inferProviderFamily(makeProfile({ providerFlavor: "volcengine-ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }))).toBe("volcengine-ark");
   });
 
+  it("keeps ark taxonomy even when the model name looks like kimi", () => {
+    expect(inferProviderFamily(makeProfile({
+      providerFlavor: "volcengine-ark",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      model: "kimi-k2.5",
+    }))).toBe("volcengine-ark");
+  });
+
   it("keeps ark on compatible protocol with ark-specific tool policy", () => {
     const policy = resolveFamilyPolicy({
       profile: makeProfile({

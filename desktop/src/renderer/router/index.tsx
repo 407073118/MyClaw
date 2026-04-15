@@ -1,8 +1,9 @@
-import React from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import React, { useEffect } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 
 import AppShell from "../layouts/AppShell";
 import { useAuthStore } from "../stores/auth";
+import { useWorkspaceStore } from "../stores/workspace";
 
 // Electron 桌面端直接静态导入页面，避免本地文件场景下的额外懒加载闪烁。
 import SetupPage from "../pages/SetupPage";
@@ -12,6 +13,7 @@ import HubPage from "../pages/HubPage";
 import ToolsPage from "../pages/ToolsPage";
 import McpPage from "../pages/McpPage";
 import McpDetailPage from "../pages/McpDetailPage";
+import FilesWorkspacePage from "../pages/FilesWorkspacePage";
 import SkillsPage from "../pages/SkillsPage";
 import SkillDetailPage from "../pages/SkillDetailPage";
 import SiliconPersonEntryPage from "../pages/SiliconPersonEntryPage";
@@ -43,6 +45,27 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+/** 兼容旧硅基员工聊天链接：选中聊天对象后回到共享主聊天容器。 */
+function SiliconPersonChatRedirectPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const setActiveSiliconPersonId = useWorkspaceStore((state) => state.setActiveSiliconPersonId);
+
+  useEffect(() => {
+    if (!id) {
+      void navigate("/employees", { replace: true });
+      return;
+    }
+    console.info("[router] 兼容旧硅基员工聊天路由，切换共享聊天对象", {
+      siliconPersonId: id,
+    });
+    setActiveSiliconPersonId(id);
+    void navigate("/", { replace: true });
+  }, [id, navigate, setActiveSiliconPersonId]);
+
+  return null;
+}
+
 /** 注册渲染层全部路由。 */
 export function AppRoutes() {
   return (
@@ -64,6 +87,7 @@ export function AppRoutes() {
         <Route index element={<ChatPage />} />
         <Route path="/hub" element={<HubPage />} />
         <Route path="/tools" element={<ToolsPage />} />
+        <Route path="/files" element={<FilesWorkspacePage />} />
         <Route path="/mcp" element={<McpPage />} />
         <Route path="/mcp/new" element={<McpDetailPage />} />
         <Route path="/mcp/:id" element={<McpDetailPage />} />
@@ -71,7 +95,8 @@ export function AppRoutes() {
         <Route path="/skills/:id" element={<SkillDetailPage />} />
         <Route path="/employees" element={<SiliconPersonEntryPage />} />
         <Route path="/employees/new" element={<SiliconPersonCreatePage />} />
-        <Route path="/employees/:id" element={<SiliconPersonWorkspacePage />} />
+        <Route path="/employees/:id" element={<SiliconPersonChatRedirectPage />} />
+        <Route path="/employees/:id/studio" element={<SiliconPersonWorkspacePage />} />
         <Route path="/workflows" element={<WorkflowsPage />} />
         <Route path="/workflows/:id" element={<WorkflowStudioPage />} />
         <Route path="/publish-drafts" element={<PublishDraftPage />} />

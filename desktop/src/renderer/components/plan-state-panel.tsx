@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import type { Task } from "@shared/contracts";
+import { buildTaskDisplayItems } from "@shared/task-logical";
 
 type PlanStatePanelProps = {
   tasks?: Task[];
@@ -7,9 +8,9 @@ type PlanStatePanelProps = {
 };
 
 const TASK_V2_STATUS_ICONS: Record<string, string> = {
-  pending: "○",
-  in_progress: "◐",
-  completed: "●",
+  pending: "o",
+  in_progress: "~",
+  completed: "+",
 };
 
 const TASK_V2_STYLES = `
@@ -33,6 +34,7 @@ const TASK_V2_STYLES = `
   .task-v2-body { padding: 0 14px 12px; max-height: 240px; overflow-y: auto; }
   .task-v2-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
   .task-v2-task { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; border-radius: var(--radius-md); font-size: 13px; }
+  .task-v2-task-order { flex-shrink: 0; min-width: 22px; color: var(--text-muted); font-variant-numeric: tabular-nums; line-height: 20px; }
   .task-v2-task-icon { flex-shrink: 0; width: 18px; text-align: center; font-size: 12px; line-height: 20px; }
   .task-v2-task-icon[data-status="pending"] { color: var(--text-muted); }
   .task-v2-task-icon[data-status="in_progress"] { color: var(--accent-cyan); }
@@ -42,19 +44,19 @@ const TASK_V2_STYLES = `
   .task-v2-task-status { flex-shrink: 0; margin-left: auto; font-size: 11px; color: var(--text-muted); }
 `;
 
-/** Task V2 进度面板 — 紧贴输入框上方的紧凑可折叠栏（仅用于普通对话的任务追踪）。 */
+/** 展示会话级任务进度，并对重复逻辑任务做归并显示。 */
 export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
   const detailsRef = useRef<HTMLDetailsElement>(null);
-  const prevCountRef = useRef(tasks?.length ?? 0);
+  const items = buildTaskDisplayItems(tasks ?? []);
+  const prevCountRef = useRef(items.length);
   const [autoCollapsed, setAutoCollapsed] = useState(false);
 
-  const items = tasks ?? [];
   const total = items.length;
-  const completed = items.filter((t) => t.status === "completed").length;
+  const completed = items.filter((item) => item.task.status === "completed").length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-  const activeTask = items.find((t) => t.status === "in_progress");
+  const activeTask = items.find((item) => item.task.status === "in_progress")?.task;
 
-  // 自动展开：任务数量增加时
+  /** 有新逻辑任务加入时自动展开，确保用户能看到新的执行顺序。 */
   useEffect(() => {
     if (items.length > prevCountRef.current && detailsRef.current) {
       detailsRef.current.open = true;
@@ -63,7 +65,7 @@ export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
     prevCountRef.current = items.length;
   }, [items.length]);
 
-  // 自动折叠：全部完成后 5s
+  /** 全部完成后自动折叠，避免面板持续占据聊天输入上方空间。 */
   useEffect(() => {
     if (total > 0 && completed === total && !autoCollapsed) {
       const timer = setTimeout(() => {
@@ -74,6 +76,7 @@ export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
       }, 5000);
       return () => clearTimeout(timer);
     }
+    return undefined;
   }, [total, completed, autoCollapsed]);
 
   if (total === 0) return null;
@@ -96,7 +99,16 @@ export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
             </div>
 
             {activeTask && (
-              <span style={{ fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: "var(--text-secondary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  maxWidth: 200,
+                }}
+              >
                 {activeTask.activeForm ?? activeTask.subject}
               </span>
             )}
@@ -111,26 +123,30 @@ export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
                   onDismiss();
                 }}
               >
-                ×
+                x
               </button>
             )}
           </summary>
 
           <div className="task-v2-body">
             <ol className="task-v2-list">
-              {items.map((task) => (
-                <li key={task.id} className="task-v2-task" data-testid={`task-v2-${task.id}`}>
-                  <span className="task-v2-task-icon" data-status={task.status}>
-                    {TASK_V2_STATUS_ICONS[task.status] ?? "○"}
-                  </span>
-                  <span className="task-v2-task-title" data-status={task.status}>
-                    {task.subject}
-                  </span>
-                  {task.status === "in_progress" && (
-                    <span className="task-v2-task-status">进行中</span>
-                  )}
-                </li>
-              ))}
+              {items.map((item) => {
+                const task = item.task;
+                return (
+                  <li key={task.id} className="task-v2-task" data-testid={`task-v2-${task.id}`}>
+                    <span className="task-v2-task-order">{item.sequence}.</span>
+                    <span className="task-v2-task-icon" data-status={task.status}>
+                      {TASK_V2_STATUS_ICONS[task.status] ?? "o"}
+                    </span>
+                    <span className="task-v2-task-title" data-status={task.status}>
+                      {task.subject}
+                    </span>
+                    {task.status === "in_progress" && (
+                      <span className="task-v2-task-status">进行中</span>
+                    )}
+                  </li>
+                );
+              })}
             </ol>
           </div>
         </details>

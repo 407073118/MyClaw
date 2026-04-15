@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -33,10 +33,31 @@ export default function SiliconPersonEntryPage() {
   const workspace = useWorkspaceStore();
   const navigate = useNavigate();
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   useEffect(() => {
     if (workspace.siliconPersons.length > 0) return;
-    workspace.loadSiliconPersons().catch(() => {});
+    workspace.loadSiliconPersons().catch((err) => {
+      console.error("[SiliconPersonEntryPage] 加载硅基员工列表失败", err);
+      setLoadError(err instanceof Error ? err.message : "加载失败");
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** 点击卡片后切换共享聊天对象，并进入主聊天容器。 */
+  function handleOpenChat(personId: string) {
+    console.info("[SiliconPersonEntryPage] 切换硅基员工聊天对象", {
+      siliconPersonId: personId,
+    });
+    workspace.setActiveSiliconPersonId(personId);
+    navigate("/");
+  }
+
+  /** 打开硅基员工配置工作台，不影响当前共享聊天对象。 */
+  function handleOpenStudio(personId: string) {
+    console.info("[SiliconPersonEntryPage] 打开硅基员工配置工作台", {
+      siliconPersonId: personId,
+    });
+    navigate(`/employees/${personId}/studio`);
+  }
 
   return (
     <main data-testid="silicon-person-entry-view" className="page-container" style={{ height: "100%", overflowY: "auto" }}>
@@ -44,8 +65,13 @@ export default function SiliconPersonEntryPage() {
         <div className="header-text">
           <span className="eyebrow">Silicon Person</span>
           <h2 className="page-title">硅基员工</h2>
-          <p className="page-subtitle">管理你的硅基员工，点击卡片进入工作空间。</p>
+          <p className="page-subtitle">管理你的硅基员工，点击卡片进入共享聊天对话。</p>
         </div>
+        {loadError && (
+          <p style={{ color: "var(--status-error)", fontSize: "13px", margin: "8px 0 0" }}>
+            加载失败：{loadError}
+          </p>
+        )}
         <div className="header-actions">
           <button
             className="btn-premium accent"
@@ -79,9 +105,8 @@ export default function SiliconPersonEntryPage() {
       ) : (
         <div className="glass-grid glass-grid--sm">
           {workspace.siliconPersons.map((person) => (
-            <Link
+            <article
               key={person.id}
-              to={`/employees/${person.id}`}
               className="glass-card glass-card--accent sp-card-link"
               data-testid={`silicon-person-card-${person.id}`}
             >
@@ -115,23 +140,37 @@ export default function SiliconPersonEntryPage() {
               </div>
 
               <div className="glass-card__footer">
-                <span className="sp-foot-sessions">
-                  {person.sessions.length} 个会话
-                </span>
-                {person.hasUnread && (
-                  <span className="sp-unread-badge">{person.unreadCount}</span>
-                )}
-                {person.needsApproval && (
-                  <span className="sp-approval-badge">!</span>
-                )}
-                <span
-                  className="sp-open-link"
-                  data-testid={`silicon-person-open-${person.id}`}
-                >
-                  打开工作空间 &rarr;
-                </span>
+                <div className="sp-card-footer-meta">
+                  <span className="sp-foot-sessions">
+                    {person.sessions.length} 个会话
+                  </span>
+                  {person.hasUnread && (
+                    <span className="sp-unread-badge">{person.unreadCount}</span>
+                  )}
+                  {person.needsApproval && (
+                    <span className="sp-approval-badge">!</span>
+                  )}
+                </div>
+                <div className="sp-card-actions">
+                  <button
+                    type="button"
+                    className="sp-card-action sp-card-action--primary"
+                    data-testid={`silicon-person-open-${person.id}`}
+                    onClick={() => handleOpenChat(person.id)}
+                  >
+                    进入对话
+                  </button>
+                  <button
+                    type="button"
+                    className="sp-card-action"
+                    data-testid={`silicon-person-manage-${person.id}`}
+                    onClick={() => handleOpenStudio(person.id)}
+                  >
+                    打开配置
+                  </button>
+                </div>
               </div>
-            </Link>
+            </article>
           ))}
         </div>
       )}
@@ -182,11 +221,10 @@ export default function SiliconPersonEntryPage() {
 
         /* ── Card Link ── */
         .sp-card-link {
-          text-decoration: none;
           color: var(--text-primary);
-          cursor: pointer;
           display: flex;
           flex-direction: column;
+          width: 100%;
         }
 
         /* ── Card Inner ── */
@@ -313,17 +351,55 @@ export default function SiliconPersonEntryPage() {
           justify-content: center;
         }
 
-        .sp-open-link {
-          margin-left: auto;
-          color: var(--text-muted);
-          font-size: 11px;
-          font-weight: 600;
-          transition: color 0.2s;
+        .sp-card-footer-meta {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
         }
 
-        .sp-card-link:hover .sp-open-link {
-          color: var(--accent-cyan);
+        .sp-card-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-left: auto;
         }
+
+        .sp-card-action {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          min-width: 76px;
+          height: 30px;
+          padding: 0 12px;
+          border-radius: 999px;
+          border: 1px solid var(--glass-border);
+          background: transparent;
+          color: var(--text-secondary);
+          font-size: 11px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s ease;
+        }
+
+        .sp-card-action:hover {
+          border-color: var(--glass-border-hover);
+          color: var(--text-primary);
+          background: rgba(255,255,255,0.04);
+        }
+
+        .sp-card-action--primary {
+          color: var(--accent-cyan);
+          border-color: rgba(16,163,127,0.24);
+          background: rgba(16,163,127,0.08);
+        }
+
+        .sp-card-action--primary:hover {
+          color: var(--accent-cyan);
+          border-color: rgba(16,163,127,0.38);
+          background: rgba(16,163,127,0.14);
+        }
+
       `}</style>
     </main>
   );

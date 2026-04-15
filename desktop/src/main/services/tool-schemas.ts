@@ -382,7 +382,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_create",
-        description: "Create a task as part of your execution plan. When you receive a user request, decompose it into tasks BEFORE starting work. Each task represents one logical step you will execute. Provide subject (imperative: 'Run tests') and activeForm (present continuous: 'Running tests').",
+        description: "Create a task as part of your execution plan. When you receive a user request, decompose it into tasks BEFORE starting work. Each task represents one logical step you will execute. Provide subject (imperative: 'Run tests') and activeForm (present continuous: 'Running tests'). Tasks are automatically chained in creation order — each new task is blocked by the previous one, enforcing sequential execution. To create a task with no dependency (e.g., parallel work), pass blockedBy as an empty array.",
         parameters: {
           type: "object",
           properties: {
@@ -390,6 +390,7 @@ export function buildToolSchemas(
             description: { type: "string", description: "Detailed description of the task requirements" },
             activeForm: { type: "string", description: "Present continuous form shown during execution (e.g., 'Fixing authentication bug')" },
             status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "Initial status. Defaults to 'pending'." },
+            blockedBy: { type: "array", items: { type: "string" }, description: "Task IDs that must complete before this task can start. Omit to auto-chain to previous task; pass [] for no dependencies." },
           },
           required: ["subject", "description"],
         },
@@ -424,7 +425,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_update",
-        description: "Update a task's status or details. Set 'in_progress' before you start working on a task, 'completed' immediately after you finish. Only ONE task should be in_progress at a time — others are automatically demoted to pending.",
+        description: "Update a task's status or details. Set 'in_progress' before you start working on a task, 'completed' immediately after you finish. Only ONE task should be in_progress at a time — others are automatically demoted to pending. IMPORTANT: Setting status to 'in_progress' will FAIL if the task has unfinished blockers (blockedBy). You must complete blocking tasks first, in order.",
         parameters: {
           type: "object",
           properties: {

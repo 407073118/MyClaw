@@ -125,12 +125,19 @@ describe("vendor adapter behavior", () => {
     });
   });
 
-  it("keeps qwen on conservative compatible patches with a clean fallback variant", () => {
+  it("uses Qwen-native thinking fields, tool constraints, and clean fallback sanitization", () => {
     const adapter = getProviderAdapter("qwen");
     const profile = makeProfile({
       providerFlavor: "qwen",
       baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       model: "qwen-max",
+      requestBody: {
+        enable_search: true,
+        search_options: {
+          forced: true,
+        },
+        enable_code_interpreter: true,
+      },
     });
 
     const variants = adapter.prepareRequest(
@@ -138,24 +145,116 @@ describe("vendor adapter behavior", () => {
       {
         messages: adapter.materializeReplayMessages(
           { profile, reasoningEffort: "high" },
-          { messages: [{ role: "user", content: "hello" }] },
+          {
+            messages: [{ role: "user", content: "hello" }],
+            tools: [{
+              type: "function",
+              function: {
+                name: "lookup_weather",
+                description: "Lookup weather",
+                parameters: { type: "object", properties: {} },
+              },
+            }],
+          },
         ),
+        tools: [{
+          type: "function",
+          function: {
+            name: "lookup_weather",
+            description: "Lookup weather",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
       },
     );
 
     expect(variants).toHaveLength(2);
     expect(variants[0]?.body).toMatchObject({
-      reasoning: {
-        effort: "medium",
+      enable_thinking: true,
+      thinking_budget: 8192,
+      enable_search: true,
+      search_options: {
+        forced: true,
       },
-      parallel_tool_calls: false,
+      enable_code_interpreter: true,
     });
+    expect(variants[0]?.body).not.toHaveProperty("reasoning");
+    expect(variants[0]?.body).not.toHaveProperty("tool_choice");
     expect(variants[1]).toMatchObject({
       id: "compatibility-fallback",
       fallbackReason: "qwen_vendor_patch_unsupported",
     });
-    expect(variants[1]?.body).not.toHaveProperty("reasoning");
-    expect(variants[1]?.body).not.toHaveProperty("parallel_tool_calls");
+    expect(variants[1]?.body).toMatchObject({
+      tool_choice: "auto",
+    });
+    expect(variants[1]?.body).not.toHaveProperty("enable_thinking");
+    expect(variants[1]?.body).not.toHaveProperty("thinking_budget");
+    expect(variants[1]?.body).not.toHaveProperty("enable_search");
+    expect(variants[1]?.body).not.toHaveProperty("search_options");
+    expect(variants[1]?.body).not.toHaveProperty("enable_code_interpreter");
+  });
+
+  it("disables Qwen thinking controls for unsupported coder models", () => {
+    const adapter = getProviderAdapter("qwen");
+    const profile = makeProfile({
+      providerFlavor: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen3-coder-plus",
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEffort: "xhigh" },
+      {
+        messages: adapter.materializeReplayMessages(
+          { profile, reasoningEffort: "xhigh" },
+          { messages: [{ role: "user", content: "hello" }] },
+        ),
+      },
+    );
+
+    expect(variants[0]?.body).not.toHaveProperty("enable_thinking");
+    expect(variants[0]?.body).not.toHaveProperty("thinking_budget");
+  });
+
+  it("keeps preserve_thinking only for the Qwen chat models that officially support it", () => {
+    const supportedProfile = makeProfile({
+      providerFlavor: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen3.6-plus",
+      requestBody: {
+        preserve_thinking: true,
+      },
+    });
+
+    const supportedVariants = getProviderAdapter("qwen").prepareRequest(
+      { profile: supportedProfile, reasoningEffort: "medium" },
+      {
+        messages: [{ role: "user", content: "hello" }],
+      },
+    );
+
+    expect(supportedVariants[0]?.body).toMatchObject({
+      preserve_thinking: true,
+    });
+    expect(supportedVariants[1]?.body).not.toHaveProperty("preserve_thinking");
+
+    const unsupportedProfile = makeProfile({
+      providerFlavor: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-max",
+      requestBody: {
+        preserve_thinking: true,
+      },
+    });
+    const unsupportedVariants = getProviderAdapter("qwen").prepareRequest(
+      { profile: unsupportedProfile, reasoningEffort: "medium" },
+      {
+        messages: [{ role: "user", content: "hello" }],
+      },
+    );
+
+    expect(unsupportedVariants[0]?.body).not.toHaveProperty("preserve_thinking");
+    expect(unsupportedVariants[1]?.body).not.toHaveProperty("preserve_thinking");
   });
 
   it("lets kimi carry compatible reasoning breadcrumbs but downgrade request patches cleanly", () => {
@@ -187,15 +286,15 @@ describe("vendor adapter behavior", () => {
     });
     expect(variants).toHaveLength(2);
     expect(variants[0]?.body).toMatchObject({
-      reasoning: {
-        effort: "high",
+      thinking: {
+        type: "enabled",
       },
     });
     expect(variants[1]).toMatchObject({
       id: "compatibility-fallback",
       fallbackReason: "kimi_vendor_patch_unsupported",
     });
-    expect(variants[1]?.body).not.toHaveProperty("reasoning");
+    expect(variants[1]?.body).not.toHaveProperty("thinking");
   });
 
   it("adds ark-specific compatible request patches with a dedicated fallback reason", () => {

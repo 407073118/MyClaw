@@ -5,15 +5,9 @@
  * 并为 exec.command 提供梯度扩容的超时重试策略。
  */
 
-import { execSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 
 import type { SkillDefinition } from "@shared/contracts";
@@ -210,7 +204,91 @@ function buildExecAttemptTimeouts(request: ExecCommandRequest): number[] {
   return timeouts;
 }
 
-/** 判断 execSync 失败是否属于可重试的超时。 */
+/** 异步执行 shell 命令，替代 execSync 避免阻塞 Electron 主进程事件循环。 */
+function execCommandAsync(
+  command: string,
+  options: { cwd: string; timeout: number; env: NodeJS.ProcessEnv; signal?: AbortSignal },
+): Promise<{ stdout: Buffer; stderr: Buffer }> {
+  return new Promise((resolve, reject) => {
+    const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
+    const shellArgs = process.platform === "win32"
+      ? ["/c", buildExecCommand(command)]
+      : ["-c", command];
+
+    const child = spawn(shell, shellArgs, {
+      cwd: options.cwd,
+      env: options.env,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+    let settled = false;
+    const killChild = (reason: string): void => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGTERM");
+      setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* ignore */ } }, 2000);
+      reject(Object.assign(new Error(reason), {
+        code: "ETIMEDOUT",
+        signal: "SIGTERM",
+        stdout: Buffer.concat(stdoutChunks),
+        stderr: Buffer.concat(stderrChunks),
+      }));
+    };
+
+    const timer = setTimeout(() => {
+      killChild(`Command timed out after ${options.timeout}ms`);
+    }, options.timeout);
+
+    // 支持外部中断（用户点击停止按钮）
+    if (options.signal) {
+      if (options.signal.aborted) {
+        clearTimeout(timer);
+        killChild("Command aborted by user");
+        return;
+      }
+      options.signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        killChild("Command aborted by user");
+      }, { once: true });
+    }
+
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      const stdout = Buffer.concat(stdoutChunks);
+      const stderr = Buffer.concat(stderrChunks);
+      if (code === 0) {
+        resolve({ stdout, stderr });
+      } else {
+        reject(Object.assign(new Error(`Command failed with exit code ${code}`), {
+          code: code ?? 1,
+          signal,
+          stdout,
+          stderr,
+        }));
+      }
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      reject(Object.assign(err, {
+        stdout: Buffer.concat(stdoutChunks),
+        stderr: Buffer.concat(stderrChunks),
+      }));
+    });
+  });
+}
+
+/** 判断命令执行失败是否属于可重试的超时。 */
 function isExecTimeoutError(err: unknown): boolean {
   const execErr = err as ExecSyncError | undefined;
   const message = (execErr?.message ?? "").toLowerCase();
@@ -363,27 +441,27 @@ function buildSkillExecutionGuidance(skillPath: string): string {
 /** 搜索递归上限：已扫描目录数超过此值时提前退出，防止在超大目录树中阻塞主进程。 */
 const MAX_SCAN_DIRS = 2000;
 
-/** 递归搜索文本内容。 */
-function searchTextInDir(base: string, pattern: string, maxResults: number, results: string[], scanned: { count: number } = { count: 0 }): void {
-  if (results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) return;
+/** 递归搜索文本内容（异步，不阻塞主进程事件循环）。 */
+async function searchTextInDir(base: string, pattern: string, maxResults: number, results: string[], scanned: { count: number } = { count: 0 }, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted || results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) return;
   scanned.count++;
 
   let entries;
   try {
-    entries = readdirSync(base, { withFileTypes: true });
+    entries = await readdir(base, { withFileTypes: true });
   } catch {
     return;
   }
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) break;
+    if (signal?.aborted || results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) break;
     const fullPath = join(base, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === ".git") continue;
-      searchTextInDir(fullPath, pattern, maxResults, results, scanned);
+      await searchTextInDir(fullPath, pattern, maxResults, results, scanned, signal);
     } else {
       try {
-        const content = readFileSync(fullPath, "utf8");
+        const content = await readFile(fullPath, "utf8");
         const lines = content.split(/\r?\n/);
         for (let i = 0; i < lines.length; i++) {
           if (results.length >= maxResults) break;
@@ -419,25 +497,25 @@ function matchGlob(relPath: string, pattern: string): boolean {
   return false;
 }
 
-/** 递归查找符合 glob 的文件。 */
-function findFilesInDir(base: string, root: string, pattern: string, maxResults: number, results: string[], scanned: { count: number } = { count: 0 }): void {
-  if (results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) return;
+/** 递归查找符合 glob 的文件（异步，不阻塞主进程事件循环）。 */
+async function findFilesInDir(base: string, root: string, pattern: string, maxResults: number, results: string[], scanned: { count: number } = { count: 0 }, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted || results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) return;
   scanned.count++;
 
   let entries;
   try {
-    entries = readdirSync(base, { withFileTypes: true });
+    entries = await readdir(base, { withFileTypes: true });
   } catch {
     return;
   }
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) break;
+    if (signal?.aborted || results.length >= maxResults || scanned.count >= MAX_SCAN_DIRS) break;
     const fullPath = join(base, entry.name);
     const relPath = normalizeSep(relative(root, fullPath));
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === ".git") continue;
-      findFilesInDir(fullPath, root, pattern, maxResults, results, scanned);
+      await findFilesInDir(fullPath, root, pattern, maxResults, results, scanned, signal);
     } else if (matchGlob(relPath, pattern)) {
       results.push(relPath);
     }
@@ -453,6 +531,11 @@ export class BuiltinToolExecutor {
   /** 更新技能列表。 */
   setSkills(skills: SkillDefinition[]): void {
     this.skills = skills;
+  }
+
+  /** 暴露共享浏览器服务，供原生 computer harness 复用同一浏览器上下文。 */
+  getBrowserService(): BrowserService {
+    return this.browserService;
   }
 
   /** 关闭浏览器与 PPT 引擎资源。 */
@@ -505,7 +588,7 @@ export class BuiltinToolExecutor {
   ): Promise<ToolExecutionResult> {
     if (toolId === "fs.read") {
       const filePath = this.resolvePathSafe(cwd, label.trim());
-      const content = readFileSync(filePath, "utf8");
+      const content = await readFile(filePath, "utf8");
       const truncated = content.length > 12000 ? content.slice(0, 12000) + "\n\n...（内容已截断）" : content;
       return { success: true, output: truncated };
     }
@@ -513,8 +596,8 @@ export class BuiltinToolExecutor {
     if (toolId === "fs.write") {
       const { path: filePath, content } = parsePathAndContent(label);
       const resolved = this.resolvePathSafe(cwd, filePath);
-      mkdirSync(dirname(resolved), { recursive: true });
-      writeFileSync(resolved, content, "utf8");
+      await mkdir(dirname(resolved), { recursive: true });
+      await writeFile(resolved, content, "utf8");
       return {
         success: true,
         output: "已写入文件：" + filePath + "（" + content.length + " 字符）",
@@ -524,7 +607,7 @@ export class BuiltinToolExecutor {
     if (toolId === "fs.list") {
       const targetPath = label.trim() || ".";
       const resolved = this.resolvePathSafe(cwd, targetPath);
-      const entries = readdirSync(resolved, { withFileTypes: true });
+      const entries = await readdir(resolved, { withFileTypes: true });
       const lines = entries
         .map((entry) => (entry.isDirectory() ? "dir " : "file ") + entry.name)
         .sort((a, b) => a.localeCompare(b));
@@ -535,7 +618,7 @@ export class BuiltinToolExecutor {
       const { pattern, searchPath } = parseSearchPayload(label);
       const resolved = this.resolvePathSafe(cwd, searchPath);
       const results: string[] = [];
-      searchTextInDir(resolved, pattern, 100, results);
+      await searchTextInDir(resolved, pattern, 100, results, { count: 0 }, options?.signal);
       return { success: true, output: results.length > 0 ? results.join("\n") : "(无匹配)" };
     }
 
@@ -543,7 +626,7 @@ export class BuiltinToolExecutor {
       const { pattern, searchPath } = parseSearchPayload(label);
       const resolved = this.resolvePathSafe(cwd, searchPath);
       const results: string[] = [];
-      findFilesInDir(resolved, resolved, pattern, 200, results);
+      await findFilesInDir(resolved, resolved, pattern, 200, results, { count: 0 }, options?.signal);
       return { success: true, output: results.length > 0 ? results.join("\n") : "(无匹配文件)" };
     }
 
@@ -562,25 +645,25 @@ export class BuiltinToolExecutor {
         return { success: false, output: "", error: validationError };
       }
 
-      return this.executeShellCommand(request, cwd);
+      return this.executeShellCommand(request, cwd, options?.signal);
     }
 
     if (toolId === "git.status") {
       const target = label.trim();
       const args = ["status", "--short", "--branch", ...(target && target !== "." ? ["--", target] : [])];
-      return this.runGit(args, cwd);
+      return await this.runGit(args, cwd);
     }
 
     if (toolId === "git.diff") {
       const target = label.trim();
       const args = target && target !== "." ? ["diff", "--stat", "--", target] : ["diff", "--stat"];
-      return this.runGit(args, cwd);
+      return await this.runGit(args, cwd);
     }
 
     if (toolId === "git.log") {
       const count = label.trim() || "10";
       const n = Math.min(Math.max(Number.parseInt(count, 10) || 10, 1), 50);
-      return this.runGit(["log", "--oneline", "-n", String(n)], cwd);
+      return await this.runGit(["log", "--oneline", "-n", String(n)], cwd);
     }
 
     if (toolId === "git.commit") {
@@ -589,18 +672,15 @@ export class BuiltinToolExecutor {
         return { success: false, output: "", error: "请提供 commit 信息。" };
       }
       try {
-        execSync(buildExecCommand("git add -A"), {
+        await execCommandAsync("git add -A", {
           cwd,
           timeout: 15_000,
-          encoding: "buffer",
           env: buildExecEnvironment(),
-          windowsHide: true,
-          stdio: ["pipe", "pipe", "pipe"],
         });
       } catch {
         // 忽略暂存失败，交给 commit 结果统一反馈。
       }
-      return this.runGit(["commit", "-m", message], cwd);
+      return await this.runGit(["commit", "-m", message], cwd);
     }
 
     if (toolId === "http.fetch") {
@@ -662,8 +742,8 @@ export class BuiltinToolExecutor {
     };
   }
 
-  /** 按梯度超时策略执行命令。 */
-  private executeShellCommand(request: ExecCommandRequest, cwd: string): ToolExecutionResult {
+  /** 按梯度超时策略执行命令（异步，不阻塞主进程事件循环）。 */
+  private async executeShellCommand(request: ExecCommandRequest, cwd: string, signal?: AbortSignal): Promise<ToolExecutionResult> {
     const attemptedTimeouts = buildExecAttemptTimeouts(request);
     const execCwd = request.cwd ? resolve(cwd, request.cwd) : cwd;
     let activeCommand = request.command;
@@ -680,13 +760,11 @@ export class BuiltinToolExecutor {
       });
 
       try {
-        const stdout = execSync(buildExecCommand(activeCommand), {
+        const { stdout } = await execCommandAsync(activeCommand, {
           cwd: execCwd,
           timeout: timeoutMs,
-          encoding: "buffer",
           env: buildExecEnvironment(),
-          windowsHide: true,
-          stdio: ["pipe", "pipe", "pipe"],
+          signal,
         });
         const decodedOutput = decodeExecText(stdout).trim();
         return { success: true, output: decodedOutput || "(无输出)" };
@@ -796,7 +874,7 @@ export class BuiltinToolExecutor {
   }
 
   /** 处理局部文件编辑。 */
-  private executeFileEdit(label: string, cwd: string): ToolExecutionResult {
+  private async executeFileEdit(label: string, cwd: string): Promise<ToolExecutionResult> {
     let filePath: string;
     let oldString: string;
     let newString: string;
@@ -828,7 +906,7 @@ export class BuiltinToolExecutor {
       return { success: false, output: "", error: "文件不存在：" + filePath };
     }
 
-    const content = readFileSync(resolved, "utf8");
+    const content = await readFile(resolved, "utf8");
     const occurrences = content.split(oldString).length - 1;
 
     if (occurrences === 0) {
@@ -849,7 +927,7 @@ export class BuiltinToolExecutor {
     }
 
     const newContent = content.replace(oldString, newString);
-    writeFileSync(resolved, newContent, "utf8");
+    await writeFile(resolved, newContent, "utf8");
 
     return {
       success: true,
@@ -864,16 +942,13 @@ export class BuiltinToolExecutor {
     };
   }
 
-  /** 执行 Git 命令。 */
-  private runGit(args: string[], cwd: string): ToolExecutionResult {
+  /** 执行 Git 命令（异步，不阻塞主进程事件循环）。 */
+  private async runGit(args: string[], cwd: string): Promise<ToolExecutionResult> {
     try {
-      const stdout = execSync(buildExecCommand(["git", ...args].join(" ")), {
+      const { stdout } = await execCommandAsync(["git", ...args].join(" "), {
         cwd,
         timeout: 15_000,
-        encoding: "buffer",
         env: buildExecEnvironment(),
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
       });
       const decodedOutput = decodeExecText(stdout).trim();
       return { success: true, output: decodedOutput || "(无输出)" };
@@ -996,7 +1071,7 @@ export class BuiltinToolExecutor {
   }
 
   /** 读取技能内容并返回给模型。 */
-  private executeSkillInvoke(toolId: string, input: string): ToolExecutionResult {
+  private async executeSkillInvoke(toolId: string, input: string): Promise<ToolExecutionResult> {
     const rawSkillId = toolId.replace("skill_invoke__", "");
     const skill = this.skills.find((item) => {
       const sanitizedId = item.id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -1016,26 +1091,26 @@ export class BuiltinToolExecutor {
 
       const skillMdPath = join(skillPath, "SKILL.md");
       if (existsSync(skillMdPath)) {
-        content = readFileSync(skillMdPath, "utf8");
+        content = await readFile(skillMdPath, "utf8");
       } else if (existsSync(skillPath) && skillPath.endsWith(".json")) {
-        const raw = readFileSync(skillPath, "utf8");
+        const raw = await readFile(skillPath, "utf8");
         const manifest = JSON.parse(raw);
         content = manifest.content || manifest.description || ("Skill: " + skill.name);
         if (manifest.entrypoint) {
           const entryPath = resolve(dirname(skillPath), manifest.entrypoint);
           if (existsSync(entryPath)) {
-            content += "\n\n---\n\n" + readFileSync(entryPath, "utf8");
+            content += "\n\n---\n\n" + await readFile(entryPath, "utf8");
           }
         }
       } else if (existsSync(skillPath)) {
-        const stat = statSync(skillPath);
-        if (stat.isFile()) {
-          content = readFileSync(skillPath, "utf8");
-        } else if (stat.isDirectory()) {
+        const fileStat = await stat(skillPath);
+        if (fileStat.isFile()) {
+          content = await readFile(skillPath, "utf8");
+        } else if (fileStat.isDirectory()) {
           for (const candidate of ["SKILL.md", "README.md", "index.md"]) {
             const candidatePath = join(skillPath, candidate);
             if (existsSync(candidatePath)) {
-              content = readFileSync(candidatePath, "utf8");
+              content = await readFile(candidatePath, "utf8");
               break;
             }
           }

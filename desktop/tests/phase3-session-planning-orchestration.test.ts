@@ -1562,7 +1562,7 @@ describe("Phase 3 session planning orchestration", () => {
     });
   });
 
-  it("does not overwrite a completed plan task when the final response lands on the safety-ceiling round", async () => {
+  it("allows the main session loop to continue beyond 200 rounds and complete normally", async () => {
     const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
     const ctx = buildContext();
     let callCount = 0;
@@ -1578,7 +1578,7 @@ describe("Phase 3 session planning orchestration", () => {
     assembleContextMock.mockReturnValue({
       messages: [
         { role: "system", content: "system" },
-        { role: "user", content: "Finish on the last safe round" },
+        { role: "user", content: "Finish after 200 rounds" },
       ],
       budgetUsed: 10,
       wasCompacted: false,
@@ -1587,7 +1587,7 @@ describe("Phase 3 session planning orchestration", () => {
     });
     callModelMock.mockImplementation(async () => {
       callCount++;
-      if (callCount < 200) {
+      if (callCount < 201) {
         return {
           content: "",
           toolCalls: [
@@ -1619,7 +1619,7 @@ describe("Phase 3 session planning orchestration", () => {
     };
     created.session.runtimeIntent = runtimeIntent;
 
-    const response = await sendHandler?.({}, created.session.id, { content: "Finish on the last safe round" }) as {
+    const response = await sendHandler?.({}, created.session.id, { content: "Finish after 200 rounds" }) as {
       session: {
         messages: Array<{ role: string; content: unknown }>;
         planState?: {
@@ -1628,11 +1628,11 @@ describe("Phase 3 session planning orchestration", () => {
       };
     };
 
-    expect(callModelMock).toHaveBeenCalledTimes(200);
+    expect(callModelMock).toHaveBeenCalledTimes(201);
     expect(response.session.planState).toMatchObject({
       tasks: [
         {
-          title: "Finish on the last safe round",
+          title: "Finish after 200 rounds",
           status: "completed",
         },
       ],
@@ -1641,5 +1641,79 @@ describe("Phase 3 session planning orchestration", () => {
       role: "assistant",
       content: expect.stringContaining("安全上限"),
     }));
-  });
+  }, ORCHESTRATION_TEST_TIMEOUT_MS);
+
+  it("still stops on repeated identical tool rounds after removing the main session turn ceiling", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+
+    resolveSessionRuntimeIntentMock.mockReturnValue(runtimeIntent);
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue(executionPlan);
+    assembleContextMock.mockReturnValue({
+      messages: [
+        { role: "system", content: "system" },
+        { role: "user", content: "Break the loop safely" },
+      ],
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    callModelMock.mockResolvedValue({
+      content: "",
+      toolCalls: [
+        {
+          id: "tool-call-loop",
+          name: "fs.read",
+          argumentsJson: JSON.stringify({ path: "README.md" }),
+          input: { path: "README.md" },
+        },
+      ],
+      finishReason: "tool_calls",
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Phase 3" }) as {
+      session: { id: string; runtimeIntent?: typeof runtimeIntent };
+    };
+    created.session.runtimeIntent = runtimeIntent;
+
+    const response = await sendHandler?.({}, created.session.id, { content: "Break the loop safely" }) as {
+      session: {
+        messages: Array<{ role: string; content: unknown }>;
+        planState?: {
+          tasks: Array<{ title: string; status: string; blocker?: string }>;
+        } | null;
+      };
+    };
+
+    expect(callModelMock).toHaveBeenCalledTimes(5);
+    expect(response.session.messages).toContainEqual(expect.objectContaining({
+      role: "assistant",
+      content: expect.stringContaining("检测到工具调用循环"),
+    }));
+    expect(response.session.messages).not.toContainEqual(expect.objectContaining({
+      role: "assistant",
+      content: expect.stringContaining("安全上限"),
+    }));
+    expect(response.session.planState).toMatchObject({
+      tasks: [
+        {
+          title: "Break the loop safely",
+          status: "blocked",
+          blocker: expect.stringContaining("Detected tool loop"),
+        },
+      ],
+    });
+  }, ORCHESTRATION_TEST_TIMEOUT_MS);
 });

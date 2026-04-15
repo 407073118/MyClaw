@@ -16,6 +16,8 @@ import type {
 } from "@shared/contracts";
 
 import type { MyClawPaths } from "./directory-service";
+import type { ArtifactManager } from "./artifact-manager";
+import type { ArtifactRegistry } from "./artifact-registry";
 import type { McpServerManager } from "./mcp-server-manager";
 import type { ResolvedModelCapability } from "./model-capability-resolver";
 import type { AppUpdaterService } from "./app-updater";
@@ -34,6 +36,9 @@ export type RuntimeContext = {
   runtime: {
     myClawRootPath: string;
     skillsRootPath: string;
+    workspaceRootPath: string;
+    artifactsRootPath: string;
+    cacheRootPath: string;
     sessionsRootPath: string;
     paths: MyClawPaths;
   };
@@ -57,6 +62,8 @@ export type RuntimeContext = {
     setPersonalPromptProfile: (profile: PersonalPromptProfile) => void;
   };
   services: {
+    artifactRegistry: ArtifactRegistry;
+    artifactManager: ArtifactManager;
     refreshSkills: () => Promise<SkillDefinition[]>;
     listMcpServers: () => McpServer[];
     mcpManager: McpServerManager | null;

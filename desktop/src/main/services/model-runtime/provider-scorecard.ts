@@ -100,6 +100,17 @@ export function buildVendorProtocolScorecards(
         (outcome) => (outcome.fallbackEvents?.length ?? 0) > 0 || !!outcome.fallbackReason,
       ).length;
       const stableCount = scopedOutcomes.filter((outcome) => outcome.contextStability !== false).length;
+      const vendorNativeCount = scopedOutcomes.filter((outcome) => outcome.toolStackSource === "vendor-native").length;
+      const activeNativeToolStackIds = [...new Set(
+        scopedOutcomes
+          .map((outcome) => outcome.nativeToolStackId)
+          .filter((value): value is string => typeof value === "string" && value.length > 0),
+      )];
+      const thinkingControlKinds = [...new Set(
+        scopedOutcomes
+          .map((outcome) => outcome.thinkingControlKind)
+          .filter((value): value is NonNullable<TurnOutcome["thinkingControlKind"]> => !!value),
+      )];
       const sortedLatency = scopedOutcomes.map((outcome) => outcome.latencyMs).sort((left, right) => left - right);
       const p95Index = totalTurns === 0 ? 0 : Math.max(0, Math.ceil(sortedLatency.length * 0.95) - 1);
 
@@ -112,6 +123,9 @@ export function buildVendorProtocolScorecards(
         fallbackRate: totalTurns === 0 ? 0 : fallbackCount / totalTurns,
         p95Latency: sortedLatency[p95Index] ?? 0,
         contextStabilityRate: totalTurns === 0 ? 0 : stableCount / totalTurns,
+        vendorNativeToolRate: totalTurns === 0 ? 0 : vendorNativeCount / totalTurns,
+        activeNativeToolStackIds,
+        thinkingControlKinds,
       };
     })
     .sort(compareVendorProtocols);

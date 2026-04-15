@@ -1,6 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import { formatTokenCount, formatCapabilitySource } from "../utils/context-ui-helpers";
+import { getModelVendorLabel } from "../utils/model-profile-display";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
 import type { ProtocolTarget } from "@shared/contracts";
 
@@ -88,7 +89,7 @@ export default function ModelsPage() {
                       <span className="source-badge">{formatCapabilitySource(resolved.effective.source)}</span>
                     ) : null;
                   })()}
-                  <span className="provider-badge">{model.provider}</span>
+                  <span className="provider-badge">{getModelVendorLabel(model)}</span>
                 </div>
               </Link>
             ))}

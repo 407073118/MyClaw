@@ -4,6 +4,7 @@ import { inferVendorFamily } from "../model-runtime/vendor-runtime-policy-resolv
 
 import type { ProviderAdapter, ProviderAdapterId } from "./base";
 import { anthropicNativeAdapter } from "./anthropic-native";
+import { deepseekAdapter } from "./deepseek";
 import { kimiAdapter } from "./kimi";
 import { minimaxAdapter } from "./minimax";
 import { minimaxCompatibleAdapter } from "./minimax-compatible";
@@ -18,6 +19,7 @@ const ADAPTERS: Record<ProviderAdapterId, ProviderAdapter> = {
   "anthropic-native": anthropicNativeAdapter,
   "qwen": qwenAdapter,
   "kimi": kimiAdapter,
+  "deepseek": deepseekAdapter,
   "volcengine-ark": volcengineArkAdapter,
   "minimax": minimaxCompatibleAdapter,
   "br-minimax": minimaxAdapter,
@@ -31,6 +33,7 @@ export function listProviderAdapters(): ProviderAdapter[] {
     ADAPTERS["anthropic-native"],
     ADAPTERS["qwen"],
     ADAPTERS["kimi"],
+    ADAPTERS["deepseek"],
     ADAPTERS["volcengine-ark"],
     ADAPTERS["minimax"],
     ADAPTERS["br-minimax"],
@@ -58,6 +61,8 @@ export function resolveProviderAdapterId(
       return "qwen";
     case "kimi":
       return "kimi";
+    case "deepseek":
+      return "deepseek";
     case "volcengine-ark":
       return "volcengine-ark";
     case "minimax":
@@ -77,6 +82,7 @@ export function getProviderAdapter(
 
 export type * from "./base";
 export { anthropicNativeAdapter } from "./anthropic-native";
+export { deepseekAdapter } from "./deepseek";
 export { kimiAdapter } from "./kimi";
 export { minimaxAdapter } from "./minimax";
 export { minimaxCompatibleAdapter } from "./minimax-compatible";

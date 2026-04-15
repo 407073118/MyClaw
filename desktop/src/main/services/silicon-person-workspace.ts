@@ -141,6 +141,17 @@ export async function shutdownWorkspace(personId: string): Promise<void> {
   log.info("工作空间已关闭", { personId });
 }
 
+/** 销毁硅基员工工作空间缓存（删除员工时调用，释放内存与 MCP 连接）。 */
+export function destroyWorkspace(personId: string): void {
+  const workspace = activeWorkspaces.get(personId);
+  if (!workspace) return;
+  try {
+    workspace.mcpManager.disconnectAll().catch(() => {});
+  } catch { /* 忽略 */ }
+  activeWorkspaces.delete(personId);
+  log.info("工作空间已销毁", { personId });
+}
+
 /** 关闭所有活跃的硅基员工工作空间（应用退出时调用）。 */
 export async function shutdownAllWorkspaces(): Promise<void> {
   const ids = [...activeWorkspaces.keys()];

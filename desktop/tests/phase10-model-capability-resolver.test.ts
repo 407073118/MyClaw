@@ -114,6 +114,52 @@ describe("resolveModelCapability", () => {
     expect(resolved.effective.contextWindowTokens).toBe(262144);
     expect((resolved.effective.maxInputTokens ?? 0) <= 262144).toBe(true);
   });
+
+  it("resolves Qwen vendor-native capability semantics with exact-model overrides", () => {
+    const qwenResolved = resolveModelCapability(buildProfile({
+      providerFlavor: "qwen",
+      providerFamily: "qwen-native",
+      vendorFamily: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-max",
+    }));
+    const qwenCoderResolved = resolveModelCapability(buildProfile({
+      providerFlavor: "qwen",
+      providerFamily: "qwen-native",
+      vendorFamily: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen3-coder-next",
+    }));
+
+    expect(qwenResolved.effective.thinkingControlKind).toBe("budget");
+    expect(qwenResolved.effective.toolChoiceConstraint).toBe("no_forced_when_thinking");
+    expect(qwenResolved.effective.supportsNativeCodeInterpreter).toBe(true);
+    expect(qwenResolved.effective.supportsNativeWebExtractor).toBe(true);
+    expect(qwenCoderResolved.effective.thinkingControlKind).toBe("unsupported");
+  });
+
+  it("resolves Kimi vendor-native capability semantics with exact-model overrides", () => {
+    const kimiResolved = resolveModelCapability(buildProfile({
+      providerFlavor: "moonshot",
+      providerFamily: "moonshot-native",
+      vendorFamily: "kimi",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k2.5",
+    }));
+    const kimiThinkingResolved = resolveModelCapability(buildProfile({
+      providerFlavor: "moonshot",
+      providerFamily: "moonshot-native",
+      vendorFamily: "kimi",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k2-thinking",
+    }));
+
+    expect(kimiResolved.effective.thinkingControlKind).toBe("boolean");
+    expect(kimiResolved.effective.toolChoiceConstraint).toBe("auto_none_only_when_thinking");
+    expect(kimiResolved.effective.requiresReasoningReplay).toBe(true);
+    expect(kimiResolved.effective.nativeToolStackId).toBe("moonshot-formula");
+    expect(kimiThinkingResolved.effective.thinkingControlKind).toBe("always_on");
+  });
 });
 
 describe("findRegistryCapability", () => {

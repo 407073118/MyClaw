@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createBrMiniMaxProfile } from "@shared/br-minimax";
-import { coerceManagedProfileWrite } from "../src/main/services/managed-model-profile";
+import { coerceManagedProfileWrite, normalizeFirstClassVendorRoute } from "../src/main/services/managed-model-profile";
 
 describe("coerceManagedProfileWrite", () => {
   it("locks br-minimax create payload to managed defaults", () => {
@@ -70,6 +70,140 @@ describe("coerceManagedProfileWrite", () => {
     expect(coerced).toMatchObject({
       apiKey: "new-key",
       protocolTarget: "openai-responses",
+    });
+  });
+
+  it("fills the default qwen route when no explicit route has been saved", () => {
+    const coerced = coerceManagedProfileWrite(null, {
+      name: "Qwen",
+      provider: "openai-compatible",
+      providerFlavor: "qwen",
+      providerFamily: "qwen-dashscope",
+      baseUrl: "https://dashscope.aliyuncs.com",
+      apiKey: "qwen-key",
+      model: "qwen-max",
+    });
+
+    expect(coerced).toMatchObject({
+      providerFlavor: "qwen",
+      providerFamily: "qwen-native",
+      protocolTarget: "openai-responses",
+      savedProtocolPreferences: ["openai-responses"],
+      protocolSelectionSource: "registry-default",
+    });
+  });
+
+  it("fills the default kimi route when no explicit route has been saved", () => {
+    const coerced = coerceManagedProfileWrite(null, {
+      name: "Kimi",
+      provider: "openai-compatible",
+      providerFlavor: "moonshot",
+      providerFamily: "moonshot-native",
+      baseUrl: "https://api.moonshot.cn",
+      apiKey: "kimi-key",
+      model: "kimi-k2-0905-preview",
+    });
+
+    expect(coerced).toMatchObject({
+      providerFlavor: "moonshot",
+      providerFamily: "moonshot-native",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages"],
+      protocolSelectionSource: "registry-default",
+    });
+  });
+
+  it("preserves explicitly saved qwen routes instead of resetting them to registry defaults", () => {
+    const normalized = normalizeFirstClassVendorRoute({
+      name: "Qwen",
+      provider: "openai-compatible",
+      providerFlavor: "qwen",
+      providerFamily: "qwen-dashscope",
+      vendorFamily: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com",
+      apiKey: "qwen-key",
+      model: "qwen-max",
+      protocolTarget: "openai-chat-compatible",
+      savedProtocolPreferences: ["openai-chat-compatible", "openai-responses"],
+      protocolSelectionSource: "saved",
+    });
+
+    expect(normalized).toMatchObject({
+      providerFamily: "qwen-native",
+      vendorFamily: "qwen",
+      protocolTarget: "openai-chat-compatible",
+      savedProtocolPreferences: ["openai-chat-compatible", "openai-responses"],
+      protocolSelectionSource: "saved",
+    });
+  });
+
+  it("migrates legacy qwen-compatible defaults onto first-class defaults when no explicit selection source was saved", () => {
+    const normalized = normalizeFirstClassVendorRoute({
+      name: "Qwen",
+      provider: "openai-compatible",
+      providerFlavor: "qwen",
+      providerFamily: "qwen-dashscope",
+      vendorFamily: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com",
+      apiKey: "qwen-key",
+      model: "qwen-max",
+      protocolTarget: "openai-chat-compatible",
+      savedProtocolPreferences: ["openai-chat-compatible", "openai-responses"],
+    });
+
+    expect(normalized).toMatchObject({
+      providerFamily: "qwen-native",
+      vendorFamily: "qwen",
+      protocolTarget: "openai-responses",
+      savedProtocolPreferences: ["openai-responses"],
+      protocolSelectionSource: "registry-default",
+    });
+  });
+
+  it("migrates legacy kimi-compatible defaults onto first-class defaults when no explicit selection source was saved", () => {
+    const normalized = normalizeFirstClassVendorRoute({
+      name: "Kimi",
+      provider: "openai-compatible",
+      providerFlavor: "moonshot",
+      providerFamily: "moonshot-native",
+      vendorFamily: "kimi",
+      baseUrl: "https://api.moonshot.cn",
+      apiKey: "kimi-key",
+      model: "kimi-k2-0905-preview",
+      protocolTarget: "openai-chat-compatible",
+      savedProtocolPreferences: ["openai-chat-compatible", "anthropic-messages"],
+    });
+
+    expect(normalized).toMatchObject({
+      providerFamily: "moonshot-native",
+      vendorFamily: "kimi",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages"],
+      protocolSelectionSource: "registry-default",
+    });
+  });
+
+  it("corrects stale moonshot identity for volcengine profiles without overwriting probed routes", () => {
+    const normalized = normalizeFirstClassVendorRoute({
+      name: "Ark Kimi",
+      provider: "openai-compatible",
+      providerFlavor: "volcengine-ark",
+      providerFamily: "moonshot-native",
+      vendorFamily: "kimi",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      apiKey: "ark-key",
+      model: "kimi-k2.5",
+      protocolTarget: "openai-responses",
+      savedProtocolPreferences: ["openai-responses", "openai-chat-compatible"],
+      protocolSelectionSource: "probe",
+    });
+
+    expect(normalized).toMatchObject({
+      providerFamily: "volcengine-ark",
+      vendorFamily: "volcengine-ark",
+      protocolTarget: "openai-responses",
+      savedProtocolPreferences: ["openai-responses", "openai-chat-compatible"],
+      protocolSelectionSource: "probe",
     });
   });
 });

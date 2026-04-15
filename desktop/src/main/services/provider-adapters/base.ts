@@ -6,6 +6,7 @@ export type ProviderAdapterId =
   | "anthropic-native"
   | "qwen"
   | "kimi"
+  | "deepseek"
   | "volcengine-ark"
   | "minimax"
   | "br-minimax";
@@ -36,6 +37,7 @@ export type ProviderAdapterMessage = {
 
 export type ProviderAdapterContext = {
   profile: ModelProfile;
+  reasoningEnabled?: boolean;
   reasoningEffort?: SessionReasoningEffort;
 };
 

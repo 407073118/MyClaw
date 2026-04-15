@@ -5,7 +5,7 @@ import type { McpServer, McpServerConfig } from "@shared/contracts";
 import type { RuntimeContext } from "../services/runtime-context";
 import type { DiscoveredMcpServer } from "../services/mcp-server-manager";
 
-type CreateMcpServerInput = Omit<McpServerConfig, "id">;
+type CreateMcpServerInput = McpServerConfig;
 type UpdateMcpServerInput = Partial<Omit<McpServerConfig, "id">>;
 
 /** 注册 MCP 相关 IPC 处理器。 */

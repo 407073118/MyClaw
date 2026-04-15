@@ -50,45 +50,78 @@ export type FamilyPolicyResolutionInput = {
   multimodalMode?: TurnExecutionPlan["multimodalMode"];
 };
 
-/** 根据 profile/baseUrl/flavor 推断 provider family。 */
-export function inferProviderFamily(profile: FamilyPolicyResolutionInput["profile"]): ProviderFamily {
-  if (profile.providerFamily) {
-    return profile.providerFamily;
-  }
-
+/** 优先根据显式供应商信号解析 provider family，避免模型名前缀覆盖更强配置。 */
+function resolveExplicitProviderFamily(profile: FamilyPolicyResolutionInput["profile"]): ProviderFamily | null {
+  const explicitProviderFamily = profile.providerFamily;
   const flavor = (profile.providerFlavor ?? "").toLowerCase();
   const provider = profile.provider.toLowerCase();
   const baseUrl = profile.baseUrl.toLowerCase();
-  const model = profile.model.toLowerCase();
 
-  if (flavor === "br-minimax" || baseUrl.includes("cybotforge.100credit.cn")) {
+  if (flavor === "br-minimax" || explicitProviderFamily === "br-minimax" || baseUrl.includes("cybotforge.100credit.cn")) {
     return "br-minimax";
   }
 
-  if (
-    flavor === "anthropic"
-    || provider === "anthropic"
-    || baseUrl.includes("anthropic.com")
-    || model.startsWith("claude")
-  ) {
+  if (flavor === "volcengine-ark" || explicitProviderFamily === "volcengine-ark" || baseUrl.includes("ark.cn-beijing.volces.com") || baseUrl.includes("volces.com")) {
+    return "volcengine-ark";
+  }
+
+  if (flavor === "anthropic" || explicitProviderFamily === "anthropic-native" || provider === "anthropic" || baseUrl.includes("anthropic.com")) {
     return "anthropic-native";
   }
 
   if (
     flavor === "qwen"
+    || explicitProviderFamily === "qwen-native"
+    || explicitProviderFamily === "qwen-dashscope"
     || baseUrl.includes("dashscope.aliyuncs.com")
     || baseUrl.includes("coding.dashscope")
-    || model.startsWith("qwen")
   ) {
-    return "qwen-dashscope";
+    return "qwen-native";
   }
 
-  if (flavor === "volcengine-ark" || baseUrl.includes("ark.cn-beijing.volces.com") || baseUrl.includes("volces.com")) {
-    return "volcengine-ark";
+  if (
+    flavor === "moonshot"
+    || explicitProviderFamily === "moonshot-native"
+    || baseUrl.includes("moonshot")
+    || baseUrl.includes("platform.kimi")
+  ) {
+    return "moonshot-native";
   }
 
-  if (flavor === "openai" || (provider === "openai-compatible" && baseUrl.includes("api.openai.com"))) {
+  if (flavor === "deepseek" || explicitProviderFamily === "deepseek" || baseUrl.includes("api.deepseek.com")) {
+    return "deepseek";
+  }
+
+  if (flavor === "openai" || explicitProviderFamily === "openai-native" || (provider === "openai-compatible" && baseUrl.includes("api.openai.com"))) {
     return "openai-native";
+  }
+
+  return explicitProviderFamily ?? null;
+}
+
+/** 根据 profile/baseUrl/flavor 推断 provider family。 */
+export function inferProviderFamily(profile: FamilyPolicyResolutionInput["profile"]): ProviderFamily {
+  const explicitProviderFamily = resolveExplicitProviderFamily(profile);
+  if (explicitProviderFamily) {
+    return explicitProviderFamily;
+  }
+
+  const model = profile.model.toLowerCase();
+
+  if (model.startsWith("claude")) {
+    return "anthropic-native";
+  }
+
+  if (model.startsWith("qwen")) {
+    return "qwen-native";
+  }
+
+  if (model.startsWith("kimi") || model.startsWith("k2")) {
+    return "moonshot-native";
+  }
+
+  if (model.startsWith("deepseek")) {
+    return "deepseek";
   }
 
   return "generic-openai-compatible";
@@ -105,6 +138,8 @@ export function resolveProtocolTarget(
 
   if (providerFamily === "openai-native") return "openai-responses";
   if (providerFamily === "anthropic-native") return "anthropic-messages";
+  if (providerFamily === "qwen-native") return "openai-responses";
+  if (providerFamily === "moonshot-native") return "anthropic-messages";
   return "openai-chat-compatible";
 }
 
@@ -135,7 +170,10 @@ function resolveToolCompileMode(providerFamily: ProviderFamily): string {
   if (providerFamily === "openai-native") return "openai-strict";
   if (providerFamily === "anthropic-native") return "anthropic-detailed-description";
   if (providerFamily === "br-minimax") return "openai-compatible-reasoning";
+  if (providerFamily === "qwen-native") return "openai-compatible-conservative";
   if (providerFamily === "qwen-dashscope") return "openai-compatible-conservative";
+  if (providerFamily === "moonshot-native") return "openai-compatible-relaxed";
+  if (providerFamily === "deepseek") return "openai-compatible-relaxed";
   if (providerFamily === "volcengine-ark") return "openai-compatible-ark";
   return "openai-compatible-relaxed";
 }

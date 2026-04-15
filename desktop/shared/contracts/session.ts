@@ -1,6 +1,10 @@
 import type { ChatRunPhase, ChatRunStatus } from "./events";
 import type { PlanModeState, PlanState } from "./plan";
 import type {
+  BackgroundTaskHandle,
+  CapabilityEvent,
+  CitationRecord,
+  ComputerCall,
   ResolvedExecutionPlan,
   SessionRuntimeIntent,
   SessionRuntimeVersion,
@@ -72,6 +76,14 @@ export type ChatSession = {
   turnExecutionPlan?: TurnExecutionPlan | null;
   /** 最近一轮统一执行结果的持久化索引。 */
   lastTurnOutcomeId?: string | null;
+  /** 最近一轮的来源引用快照，供前端直接展示 citation/source 面板。 */
+  lastTurnCitations?: CitationRecord[];
+  /** 最近一轮的能力轨迹快照，供前端展示搜索/回退/后台任务时间线。 */
+  lastCapabilityEvents?: CapabilityEvent[];
+  /** 最近一轮 native computer 动作批次快照，供前端展示动作卡片与调试信息。 */
+  lastComputerCalls?: ComputerCall[];
+  /** 最近一轮后台任务的派生快照，由主进程基于 turn outcome 回填给前端。 */
+  backgroundTask?: BackgroundTaskHandle | null;
   /** Phase 3.5 在 session 级别持久化 plan mode 状态机，兼容旧会话缺字段。 */
   planModeState?: PlanModeState | null;
   /** Phase 3 允许旧会话缺少 planState，新增会话可按需持久化计划进度。 */

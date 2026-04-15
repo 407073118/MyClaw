@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { ipcMain, webContents } from "electron";
 import { randomUUID } from "node:crypto";
 
 import type { ChatSession, SiliconPerson } from "@shared/contracts";
@@ -15,8 +15,9 @@ import {
   switchSiliconPersonCurrentSession,
 } from "../services/silicon-person-session";
 import type { McpServer, SkillDefinition } from "@shared/contracts";
-import { saveSiliconPerson } from "../services/state-persistence";
-import { initializeWorkspaceDirectories, getOrCreateWorkspace, refreshWorkspaceSkills } from "../services/silicon-person-workspace";
+import { EventType } from "@shared/contracts";
+import { saveSiliconPerson, deleteSiliconPersonFiles } from "../services/state-persistence";
+import { initializeWorkspaceDirectories, getOrCreateWorkspace, refreshWorkspaceSkills, destroyWorkspace } from "../services/silicon-person-workspace";
 import { deriveSiliconPersonPaths } from "../services/directory-service";
 
 // ---------------------------------------------------------------------------
@@ -87,9 +88,17 @@ async function drainSiliconPersonQueue(
           remaining: queue.length,
         });
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         console.error("[silicon-person-queue] 消息执行失败", {
           siliconPersonId,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
+        });
+        // 通知渲染层消息执行失败
+        broadcastToRenderers("session:stream", {
+          type: EventType.RuntimeStatus,
+          siliconPersonId,
+          error: errorMessage,
+          message: `硅基员工消息执行失败：${errorMessage}`,
         });
       }
     }
@@ -100,6 +109,30 @@ async function drainSiliconPersonQueue(
     if (queue && queue.length > 0) {
       void drainSiliconPersonQueue(ctx, siliconPersonId);
     }
+  }
+}
+
+/** 创建时冻结模型绑定快照，记录 profileId、模型名称和时间戳。 */
+function buildModelBindingSnapshot(
+  ctx: RuntimeContext,
+  modelProfileId?: string,
+): SiliconPerson["modelBindingSnapshot"] {
+  if (!modelProfileId) return null;
+  const profile = ctx.state.models.find((m) => m.id === modelProfileId);
+  if (!profile) return null;
+  return {
+    modelProfileId: profile.id,
+    modelName: profile.name || profile.id,
+    frozenAt: new Date().toISOString(),
+  };
+}
+
+/** 向所有渲染窗口广播消息。 */
+function broadcastToRenderers(channel: string, payload: unknown): void {
+  for (const wc of webContents.getAllWebContents()) {
+    try {
+      if (!wc.isDestroyed()) wc.send(channel, payload);
+    } catch { /* 忽略已销毁的 webContents */ }
   }
 }
 
@@ -150,7 +183,7 @@ export function registerSiliconPersonHandlers(ctx: RuntimeContext): void {
         baseIdentity: (input.baseIdentity as string | undefined)?.trim() || undefined,
         rolePersona: (input.rolePersona as string | undefined)?.trim() || undefined,
         soul: (input.soul as string | undefined)?.trim() || undefined,
-        modelBindingSnapshot: (input.modelBindingSnapshot as SiliconPerson["modelBindingSnapshot"]) ?? null,
+        modelBindingSnapshot: buildModelBindingSnapshot(ctx, input.modelProfileId as string | undefined),
         updatedAt: now,
       };
 
@@ -218,6 +251,51 @@ export function registerSiliconPersonHandlers(ctx: RuntimeContext): void {
       });
 
       return { siliconPerson };
+    },
+  );
+
+  ipcMain.handle(
+    "silicon-person:delete",
+    async (
+      _event,
+      siliconPersonId: string,
+    ): Promise<{ items: SiliconPerson[] }> => {
+      const index = ctx.state.siliconPersons.findIndex((item) => item.id === siliconPersonId);
+      if (index === -1) {
+        throw new Error(`SiliconPerson not found: ${siliconPersonId}`);
+      }
+
+      // 清理内存中该员工的所有会话
+      const relatedSessionIds = ctx.state.sessions
+        .filter((s) => s.siliconPersonId === siliconPersonId)
+        .map((s) => s.id);
+      ctx.state.sessions = ctx.state.sessions.filter(
+        (s) => s.siliconPersonId !== siliconPersonId,
+      );
+
+      // 清理消息队列
+      spMessageQueues.delete(siliconPersonId);
+
+      // 从内存中移除员工
+      ctx.state.siliconPersons.splice(index, 1);
+
+      // 清理磁盘文件（员工目录 + 工作空间缓存）
+      try {
+        await deleteSiliconPersonFiles(ctx.runtime.paths, siliconPersonId);
+        destroyWorkspace(siliconPersonId);
+      } catch (error) {
+        console.warn("[silicon-person:delete] 磁盘清理部分失败（内存已移除）", {
+          siliconPersonId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      console.info("[silicon-person:delete] 已删除硅基员工", {
+        siliconPersonId,
+        removedSessions: relatedSessionIds.length,
+      });
+
+      return { items: [...ctx.state.siliconPersons] };
     },
   );
 

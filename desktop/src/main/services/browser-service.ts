@@ -135,6 +135,55 @@ export class BrowserService {
   private refCounter = 0;
   private refMap = new Map<number, string>();
 
+  /** 将模型产出的按键名归一化为 Playwright 期望的名称。 */
+  private normalizeComputerKey(key: string): string {
+    const trimmed = key.trim();
+    const upper = trimmed.toUpperCase();
+    const keyMap: Record<string, string> = {
+      CTRL: "Control",
+      CONTROL: "Control",
+      ALT: "Alt",
+      SHIFT: "Shift",
+      META: "Meta",
+      CMD: "Meta",
+      COMMAND: "Meta",
+      ENTER: "Enter",
+      ESC: "Escape",
+      ESCAPE: "Escape",
+      SPACE: "Space",
+      TAB: "Tab",
+      BACKSPACE: "Backspace",
+      DELETE: "Delete",
+      HOME: "Home",
+      END: "End",
+      PAGEUP: "PageUp",
+      PAGEDOWN: "PageDown",
+      ARROWUP: "ArrowUp",
+      ARROWDOWN: "ArrowDown",
+      ARROWLEFT: "ArrowLeft",
+      ARROWRIGHT: "ArrowRight",
+    };
+
+    return keyMap[upper] ?? (trimmed.length === 1 ? trimmed : trimmed);
+  }
+
+  /** 在鼠标动作期间临时按住修饰键，动作完成后自动释放。 */
+  private async withHeldKeys(keys: string[] | undefined, run: () => Promise<void>): Promise<void> {
+    const normalizedKeys = [...new Set((keys ?? []).map((key) => this.normalizeComputerKey(String(key))))];
+    const page = await this.ensurePage();
+    for (const key of normalizedKeys) {
+      await page.keyboard.down(key);
+    }
+
+    try {
+      await run();
+    } finally {
+      for (const key of [...normalizedKeys].reverse()) {
+        await page.keyboard.up(key);
+      }
+    }
+  }
+
   // ── 生命周期 ────────────────────────────────────────────────
 
   private async ensurePage(): Promise<Page> {
@@ -755,7 +804,7 @@ export class BrowserService {
     ]);
     const ALLOWED_MODIFIERS = new Set(["Control", "Shift", "Alt", "Meta"]);
 
-    const parts = key.split("+").map((p) => p.trim());
+    const parts = key.split("+").map((p) => this.normalizeComputerKey(p));
     const mainKey = parts[parts.length - 1];
     const modifiers = parts.slice(0, -1);
 
@@ -778,7 +827,7 @@ export class BrowserService {
     }
 
     try {
-      await page.keyboard.press(key);
+      await page.keyboard.press(parts.join("+"));
       await page.waitForTimeout(200);
       return { success: true, output: `已按下: ${key}` };
     } catch (err) {
@@ -788,5 +837,157 @@ export class BrowserService {
         error: `按键失败 (${key}): ${err instanceof Error ? err.message : String(err)}`,
       };
     }
+  }
+
+  /** 按坐标执行点击或双击，用于 OpenAI native computer 动作。 */
+  async clickAt(
+    x: number,
+    y: number,
+    options?: {
+      button?: "left" | "right" | "middle";
+      clickCount?: number;
+      keys?: string[];
+    },
+  ): Promise<ToolExecutionResult> {
+    const page = await this.ensurePage();
+    const button = options?.button ?? "left";
+    const clickCount = options?.clickCount ?? 1;
+
+    try {
+      await this.withHeldKeys(options?.keys, async () => {
+        if (clickCount >= 2) {
+          await page.mouse.dblclick(x, y, { button, delay: 60 });
+        } else {
+          await page.mouse.click(x, y, { button, delay: 40 });
+        }
+      });
+      await page.waitForTimeout(250);
+      return {
+        success: true,
+        output: `已在坐标 (${x}, ${y}) 执行${clickCount >= 2 ? "双击" : "点击"}，按钮=${button}`,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: `坐标点击失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /** 将鼠标移动到指定坐标，用于 OpenAI native computer 动作。 */
+  async movePointer(
+    x: number,
+    y: number,
+    options?: { keys?: string[] },
+  ): Promise<ToolExecutionResult> {
+    const page = await this.ensurePage();
+
+    try {
+      await this.withHeldKeys(options?.keys, async () => {
+        await page.mouse.move(x, y, { steps: 12 });
+      });
+      return {
+        success: true,
+        output: `已移动鼠标到 (${x}, ${y})`,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: `鼠标移动失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /** 按坐标路径执行拖拽，用于 OpenAI native computer 动作。 */
+  async dragPath(
+    path: Array<{ x: number; y: number }>,
+    options?: { keys?: string[] },
+  ): Promise<ToolExecutionResult> {
+    const page = await this.ensurePage();
+    if (path.length < 2) {
+      return {
+        success: false,
+        output: "",
+        error: "拖拽路径至少需要两个坐标点",
+      };
+    }
+
+    try {
+      await this.withHeldKeys(options?.keys, async () => {
+        const [start, ...rest] = path;
+        await page.mouse.move(start.x, start.y, { steps: 8 });
+        await page.mouse.down();
+        for (const point of rest) {
+          await page.mouse.move(point.x, point.y, { steps: 8 });
+        }
+        await page.mouse.up();
+      });
+      await page.waitForTimeout(200);
+      return {
+        success: true,
+        output: `已完成拖拽，共经过 ${path.length} 个点`,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: `拖拽失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /** 在指定坐标附近执行滚动，用于 OpenAI native computer 动作。 */
+  async scrollAt(
+    deltaX: number,
+    deltaY: number,
+    options?: { x?: number; y?: number; keys?: string[] },
+  ): Promise<ToolExecutionResult> {
+    const page = await this.ensurePage();
+
+    try {
+      await this.withHeldKeys(options?.keys, async () => {
+        if (typeof options?.x === "number" && typeof options?.y === "number") {
+          await page.mouse.move(options.x, options.y, { steps: 6 });
+        }
+        await page.mouse.wheel(deltaX, deltaY);
+      });
+      await page.waitForTimeout(250);
+      return {
+        success: true,
+        output: `已按位移滚动：deltaX=${deltaX}, deltaY=${deltaY}`,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: `滚动失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /** 向当前聚焦元素直接输入文本，用于 OpenAI native computer 动作。 */
+  async typeText(text: string): Promise<ToolExecutionResult> {
+    const page = await this.ensurePage();
+
+    try {
+      await page.keyboard.type(text, { delay: 20 });
+      return {
+        success: true,
+        output: `已向当前焦点输入文本: "${text}"`,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: `键盘输入失败: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /** 捕获用于原生 computer 回传的全页截图，统一输出图像和摘要。 */
+  async captureComputerState(): Promise<ToolExecutionResult> {
+    return this.screenshot(true);
   }
 }

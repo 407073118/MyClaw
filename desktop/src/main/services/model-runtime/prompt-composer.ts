@@ -14,7 +14,6 @@ import {
   resolveReasoningProfileLines,
   resolveToolPolicySummaryLines,
 } from "./vendor-policy-registry";
-import { buildToolSchemas } from "../tool-schemas";
 
 function createSection(
   id: string,
@@ -58,8 +57,251 @@ export type ComposePromptInput = {
   personalPromptProfile?: PersonalPromptProfile | null;
   reasoningEffort?: "low" | "medium" | "high" | null;
   enrichedContextBlock?: string | null;
+  artifactContextBlock?: string | null;
   mcpTools?: Array<McpTool & { serverId: string }>;
 };
+
+// ── Task Planning 引导内容 ──────────────────────────────────────
+
+function buildTaskPlanningContent(effort: string): string {
+  if (effort === "low") {
+    return "You have task tracking tools (task_create, task_update, etc.) — use them only when explicitly asked.";
+  }
+  const lines: string[] = [
+    "You have task tools for decomposing and tracking user requests. **This is your primary workflow — use it for every non-trivial request.**",
+    "",
+    "## Mandatory Workflow",
+    "When you receive a user request (except simple Q&A like \"what is X?\"), you MUST follow this workflow:",
+    "1. **Analyze** — Understand what the user really wants. Identify the logical steps needed.",
+    "2. **Decompose** — Call `task_create` for EACH step to build a task list. This shows the user your execution plan BEFORE you start working.",
+    "3. **Execute** — Work through tasks one by one: `task_update(id, status: \"in_progress\")` → do the work → `task_update(id, status: \"completed\")`",
+    "",
+    "## Task Tools",
+    "- `task_create({ subject, description, activeForm })` — subject: imperative (e.g. \"修复登录Bug\"), activeForm: present continuous (e.g. \"正在修复登录Bug\"). Always provide activeForm.",
+    "- `task_update({ id, status })` — Mark \"in_progress\" before starting, \"completed\" immediately after finishing.",
+    "- `task_list()` / `task_get({ id })` — Check current task state.",
+    "- **Status flow**: pending → in_progress → completed. Only ONE task can be in_progress at a time.",
+    "",
+    "## Key Rules",
+    "- **Plan first, execute second** — Create ALL tasks before starting the first one. Let the user see the full plan.",
+    "- **Even single-step requests get a task** — Creating a task signals \"I understood your request and here's what I'll do.\"",
+    "- **Discover new steps? Add tasks** — If you find additional work during execution, create new tasks to track it.",
+    "- **Skip tasks ONLY for**: direct factual Q&A, greetings, or clarification questions.",
+  ];
+  if (effort === "high") {
+    lines.push(
+      "",
+      "## Deep Reasoning Protocol (MANDATORY)",
+      "- Before creating tasks, output your analysis: what is the core need? what are the constraints? what could go wrong?",
+      "- Express task dependencies via `blocks`/`blockedBy` fields.",
+      "- If a task fails or is blocked, update its description with the reason and create a follow-up task.",
+      "- After completing each task, verify the result before marking completed.",
+      "- Consider edge cases and failure modes for every task.",
+    );
+  }
+  return lines.join("\n");
+}
+
+// ── Tool Strategy 引导内容 ──────────────────────────────────────
+
+function buildToolStrategyContent(effort: string): string {
+  if (effort === "low") {
+    return [
+      "- You can call multiple independent tools in a single response — no need to call them one by one.",
+      "- Keep tool usage minimal. One search or file read is usually sufficient.",
+      "- Answer directly when you already know the answer.",
+    ].join("\n");
+  }
+  if (effort === "high") {
+    return [
+      "## Aggressive Parallel Calling",
+      "Call up to 10 tools in a single response. NEVER call independent tools one by one.",
+      "",
+      "For information research, plan 3-5 different search queries and issue them ALL at once:",
+      "- Vary keywords and angles to maximize coverage",
+      "- Mix languages (Chinese + English) for broader sources",
+      "- Use specific terms alongside general queries",
+      "",
+      "For code investigation, batch-read all related files in one response:",
+      "- Source files, type definitions, tests, configs — read them all at once",
+      "- Then read upstream/downstream dependencies in the next round",
+      "",
+      "## Iterative Research Loop (MANDATORY)",
+      "One round of tool calls is NEVER enough for deep thinking. Follow this cycle:",
+      "",
+      "  Round 1 — Broad gathering",
+      "    Issue multiple parallel tool calls to cover different angles.",
+      "    (e.g., 5 web_searches with different queries, or 8 fs_reads for all related files)",
+      "",
+      "  Assess — Review what you received",
+      "    What did you learn? What's still unclear? What needs deeper investigation?",
+      "",
+      "  Round 2 — Targeted deep-dive",
+      "    Based on gaps identified, issue focused tool calls:",
+      "    - http_fetch to read full articles from promising search results",
+      "    - fs_read for dependency files that turned out to be relevant",
+      "    - Additional web_search with refined queries",
+      "",
+      "  Assess — Is information sufficient?",
+      "    Can you give a comprehensive, verified answer? Are there contradictions to resolve?",
+      "",
+      "  Round 3+ — Fill remaining gaps",
+      "    Continue gathering until you can answer with confidence.",
+      "    There is no round limit — keep going until the information is sufficient.",
+      "",
+      "## Web Research Escalation",
+      "For information gathering, prefer this escalation order:",
+      "1. web_search — Fast, returns summarized results",
+      "2. http_fetch — Read full page content from promising URLs",
+      "3. browser_open + browser_snapshot — For JS-heavy sites that http_fetch can't render",
+      "",
+      "## Verification",
+      "- Cross-reference key facts across multiple sources",
+      "- If search results contradict each other, investigate further",
+      "- For code changes, read back modified files to verify correctness",
+      "",
+      "## Skill Awareness",
+      "Before starting complex tasks, review available skills — a skill may already encapsulate the workflow you need.",
+      "",
+      "## What NOT to Over-Research",
+      "Even in deep mode, skip deep research for:",
+      "- Direct factual Q&A you already know (\"what is a closure?\")",
+      "- Greetings and clarification questions",
+      "- Requests where the user explicitly wants a quick answer",
+    ].join("\n");
+  }
+  // medium
+  return [
+    "## Parallel Calling",
+    "You can call MULTIPLE tools in a single response. When operations are independent, issue them all at once.",
+    "",
+    "Examples:",
+    "- Need 3 files? → 3× fs_read in one response (parallel)",
+    "- Need to search 2 topics? → 2× web_search in one response (parallel)",
+    "- Need git status + file content? → Both in one response (parallel)",
+    "",
+    "BAD: web_search → wait for result → another web_search → wait → ... (sequential, slow)",
+    "GOOD: web_search + web_search + web_search in one response (parallel, fast)",
+    "",
+    "## Iterative Gathering",
+    "After receiving tool results, assess whether you have enough information:",
+    "- If yes → proceed to answer or next task",
+    "- If gaps remain → call more tools to fill them",
+    "",
+    "For research questions, expect 1-2 rounds of tool calls before answering.",
+  ].join("\n");
+}
+
+// ── Tool Usage 分类引导 ─────────────────────────────────────────
+
+function buildToolUsageContent(
+  mcpTools?: Array<{ name: string; description?: string }>,
+): string {
+  const lines: string[] = [
+    "## Files",
+    "- `fs_read` — Read file contents. **Always read before editing.**",
+    "- `fs_edit` — Replace a specific string in a file (preferred for partial edits).",
+    "- `fs_write` — Create new files or full rewrites only.",
+    "- `fs_list` / `fs_find` / `fs_search` — List dirs, find files by glob, grep text.",
+    "## Shell & Git",
+    "- `exec_command` — Run shell commands (dangerous commands are blocked).",
+    "- `git_status` / `git_diff` / `git_log` / `git_commit` — Git operations.",
+    "## Web & Browser",
+    "- `web_search` — Search the web for current information.",
+    "- `http_fetch` — Fetch a URL via HTTP GET.",
+    "- Browser workflow: `browser_open` → `browser_snapshot` (accessibility tree, use ref=N) → `browser_click`/`browser_type` → `browser_snapshot` to verify.",
+    "- Also: `browser_screenshot`, `browser_evaluate`, `browser_select`, `browser_hover`, `browser_scroll`, `browser_press_key`, `browser_back`, `browser_forward`, `browser_wait`.",
+    "## Presentation (PPT)",
+    "- `ppt_themes` — List available presentation themes (call first to show user the options).",
+    "- `ppt_generate` — Generate an editable .pptx file from structured slide data.",
+    "- When the user asks to create a PPT, presentation, slide deck, 汇报, 演示, or 幻灯片: **always use ppt_generate**, not plain text.",
+    "- Workflow: understand requirements → `ppt_themes` to pick a theme → structure slides as JSON → `ppt_generate` to create the file.",
+    "- Available layouts: cover(封面), section(章节过渡), key_points(要点列表), metrics(数据大字报), comparison(左右对比), closing(结束页).",
+    "- If a `ppt-designer` skill is available, invoke it first for design methodology guidance.",
+  ];
+  if (mcpTools && mcpTools.length > 0) {
+    lines.push(
+      "## Connected Services (MCP)",
+      "You have access to the following enterprise tools via MCP servers.",
+      "These connect to internal company systems — use them when you need corporate data.",
+      "",
+    );
+    for (const tool of mcpTools) {
+      const desc = tool.description ? ` — ${tool.description}` : "";
+      lines.push(`- \`${tool.name}\`${desc}`);
+    }
+    lines.push(
+      "",
+      "When the user asks about internal projects, tasks, or company data, prefer these MCP tools over web_search.",
+    );
+  }
+  return lines.join("\n");
+}
+
+// ── Skills 引导内容 ─────────────────────────────────────────────
+
+function buildSkillsContent(skills: SkillDefinition[]): string {
+  if (skills.length === 0) {
+    return "No skills are currently available.";
+  }
+  const skillsWithView = skills.filter((s) => s.hasViewFile);
+  const lines: string[] = [
+    "**IMPORTANT — Skill-first principle:** Before doing any work manually, check if one of the skills below matches the user's request. If a skill's description matches the user's intent, you MUST call `skill_invoke__<skill_id>` first to read the skill's instructions, then follow those instructions to complete the work. Do NOT try to do the work yourself without reading the skill first.",
+    "",
+    "How to use skills:",
+    "1. **Match**: Compare the user's request against each skill's description below.",
+    "2. **Invoke**: Call `skill_invoke__<skill_id>` to read the skill's instructions (SKILL.md).",
+    "3. **Execute**: Follow the skill's instructions to complete the work — the skill tells you what tools to call, what scripts to run, and what data to produce.",
+  ];
+  if (skillsWithView.length > 0) {
+    lines.push("4. **Visualize**: If the skill has an HTML panel, call `skill_view({ skill_id, page, data })` with the generated data to open the visual panel.");
+  }
+  lines.push("", "**Available skills:**");
+  const usedIds = new Set<string>();
+  for (const skill of skills) {
+    let sid = skill.id.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "");
+    const baseSid = sid;
+    let sfx = 2;
+    while (usedIds.has(sid)) { sid = `${baseSid}_${sfx}`; sfx++; }
+    usedIds.add(sid);
+    const viewNote = skill.hasViewFile
+      ? ` [有HTML面板: ${skill.viewFiles?.join(", ")} — 完成后用 skill_view 传入数据打开]`
+      : "";
+    lines.push(`- **${skill.name}**: ${skill.description || "(无描述)"}${viewNote} → call \`skill_invoke__${sid}\``);
+  }
+  return lines.join("\n");
+}
+
+// ── Guidelines 引导内容 ─────────────────────────────────────────
+
+function buildGuidelinesContent(effort: string): string {
+  const lines: string[] = [
+    "- Respond in the same language the user uses.",
+    "- Read existing code before modifying it. Understand context first.",
+    "- If a tool call fails, analyze the error — don't retry blindly.",
+  ];
+  if (effort === "high") {
+    lines.push(
+      "- **Deep reasoning mode is ON.** You must think deeply and thoroughly before acting.",
+      "- Before responding, spend significant time analyzing the request: what is the user really asking? What are the constraints? What could go wrong?",
+      "- Break complex problems into sub-problems. Consider multiple approaches and choose the best one with explicit reasoning.",
+      "- Consider edge cases, error handling, and potential regressions before writing any code.",
+      "- After completing work, verify results by reading back modified files or running tests.",
+      "- If an available skill matches the user's request, invoke the skill FIRST — do not attempt manual workarounds.",
+      "- Explain your reasoning process and trade-offs clearly.",
+    );
+  } else if (effort === "low") {
+    lines.push(
+      "- Be extremely concise. Direct answers, no filler.",
+      "- Prefer the simplest solution that works.",
+    );
+  } else {
+    lines.push(
+      "- For multi-step tasks, plan first, then execute step by step.",
+    );
+  }
+  return lines.join("\n");
+}
 
 /**
  * 组合 canonical prompt sections，保留旧 system prompt 的主要信息结构。
@@ -101,6 +343,15 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
     ));
   }
 
+  if (input.artifactContextBlock) {
+    sections.push(createSection(
+      "work-files",
+      "Work Files",
+      "context",
+      input.artifactContextBlock,
+    ));
+  }
+
   sections.push(createSection(
     "response-strategy",
     "Response Strategy",
@@ -119,30 +370,24 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
 
   sections.push(createSection(
     "task-planning",
-    "Task Planning",
+    "Task Planning (IMPORTANT)",
     "task",
-    effort === "low"
-      ? "Use task tracking only when the user explicitly asks for a tracked workflow."
-      : [
-          "For non-trivial work, decompose the request before execution.",
-          "Create all obvious tasks before starting the first implementation step.",
-          "Update task status immediately when work starts or finishes.",
-        ].join("\n"),
+    buildTaskPlanningContent(effort),
   ));
 
-  const availableTools = buildToolSchemas(
-    input.workingDir,
-    input.skills,
-    input.mcpTools,
-    input.toolPolicyId ?? "generic.tools.default",
-  ).map((tool) => tool.function.name);
-  const toolLines = [
-    `Builtin and connected tools: ${availableTools.join(", ")}`,
-  ];
-  if (input.mcpTools && input.mcpTools.length > 0) {
-    toolLines.push(`Connected MCP tools: ${input.mcpTools.map((tool) => tool.name).join(", ")}`);
-  }
-  sections.push(createSection("tools", "Tools", "tools", toolLines.join("\n")));
+  sections.push(createSection(
+    "tool-strategy",
+    "Tool Strategy",
+    "guidelines",
+    buildToolStrategyContent(effort),
+  ));
+
+  sections.push(createSection(
+    "tools",
+    "Tools",
+    "tools",
+    buildToolUsageContent(input.mcpTools),
+  ));
 
   const toolPolicyLines = input.toolPolicyId ? resolveToolPolicySummaryLines(input.toolPolicyId) : [];
   if (toolPolicyLines.length > 0) {
@@ -158,16 +403,20 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
   }
 
   if (input.skills && input.skills.length > 0) {
-    const enabledSkills = input.skills.filter((skill) => skill.enabled).map((skill) => skill.name);
     sections.push(createSection(
       "skills",
-      "Skills",
+      "Available Skills",
       "skills",
-      enabledSkills.length > 0
-        ? `Enabled skills: ${enabledSkills.join(", ")}`
-        : "No enabled skills are currently available.",
+      buildSkillsContent(input.skills),
     ));
   }
+
+  sections.push(createSection(
+    "guidelines",
+    "Guidelines",
+    "guidelines",
+    buildGuidelinesContent(effort),
+  ));
 
   sections.push(createSection(
     "family-overlay",

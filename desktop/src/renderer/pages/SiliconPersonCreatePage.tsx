@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import type { SiliconPersonApprovalMode } from "@shared/contracts";
+import type { ModelProfile, SiliconPersonApprovalMode } from "@shared/contracts";
+import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
 import { useWorkspaceStore } from "../stores/workspace";
+import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
+import { resolveReasoningControlSpec } from "../utils/reasoning-controls";
 
 /** 从“身份与人格”中提取一段稳定摘要，兼容现有列表页和工作台概览。 */
 function deriveDescriptionFromSoul(input: string, fallbackName: string): string {
@@ -38,10 +41,23 @@ export default function SiliconPersonCreatePage() {
   // 执行配置
   const [approvalMode, setApprovalMode] = useState<SiliconPersonApprovalMode>("inherit");
   const [selectedModelId, setSelectedModelId] = useState("");
-  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high">("medium");
+  const [reasoningEnabled, setReasoningEnabled] = useState(true);
+  const [reasoningEffort, setReasoningEffort] = useState<"low" | "medium" | "high" | "xhigh">("medium");
 
   const personList = useMemo(() => siliconPersons ?? [], [siliconPersons]);
   const modelList = useMemo(() => models ?? [], [models]);
+  const activeModelProfile = useMemo<ModelProfile | null>(
+    () => modelList.find((model) => model.id === (selectedModelId || defaultModelProfileId || "")) ?? null,
+    [defaultModelProfileId, modelList, selectedModelId],
+  );
+  const reasoningControlSpec = useMemo(
+    () => resolveReasoningControlSpec(activeModelProfile),
+    [activeModelProfile],
+  );
+  const runtimeModelStatusItems = useMemo(
+    () => buildModelRuntimeStatusItems(activeModelProfile),
+    [activeModelProfile],
+  );
 
   const canCreate = Boolean(name.trim() && soul.trim());
 
@@ -61,6 +77,7 @@ export default function SiliconPersonCreatePage() {
     setSoul(source.soul ?? "");
     setApprovalMode(source.approvalMode ?? "inherit");
     setSelectedModelId(source.modelProfileId ?? "");
+    setReasoningEnabled(source.reasoningEnabled ?? true);
     setReasoningEffort(source.reasoningEffort ?? "medium");
   }
 
@@ -91,12 +108,14 @@ export default function SiliconPersonCreatePage() {
         (
           approvalMode !== "inherit" ||
           Boolean(selectedModelId) ||
+          reasoningEnabled !== true ||
           reasoningEffort !== "medium"
         )
       ) {
         await workspace.updateSiliconPerson(created.id, {
           approvalMode,
           modelProfileId: selectedModelId || undefined,
+          reasoningEnabled,
           reasoningEffort,
         });
       }
@@ -222,6 +241,16 @@ export default function SiliconPersonCreatePage() {
               </select>
             </label>
 
+            {runtimeModelStatusItems.length > 0 && (
+              <div className="spc-model-status" data-testid="silicon-person-create-model-status">
+                {runtimeModelStatusItems.map((item) => (
+                  <span key={item.key} className={`spc-model-status-pill spc-model-status-pill--${item.tone}`}>
+                    {item.label}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <label className="spc-field spc-field--compact">
               <span>审批模式</span>
               <select
@@ -235,25 +264,17 @@ export default function SiliconPersonCreatePage() {
               </select>
             </label>
 
-            <label className="spc-field spc-field--compact">
+            <div className="spc-field spc-field--compact">
               <span>推理等级</span>
-              <div className="spc-effort-col" data-testid="silicon-person-create-reasoning-effort">
-                {([
-                  ["low", "快速"],
-                  ["medium", "思考"],
-                  ["high", "深度"],
-                ] as const).map(([level, label]) => (
-                  <button
-                    key={level}
-                    type="button"
-                    className={`spc-effort-btn${reasoningEffort === level ? " active" : ""}`}
-                    onClick={() => setReasoningEffort(level)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </label>
+              <ReasoningPresetPanel
+                spec={reasoningControlSpec}
+                enabled={reasoningEnabled}
+                effort={reasoningEffort}
+                onEnabledChange={setReasoningEnabled}
+                onEffortChange={setReasoningEffort}
+                effortTestId="silicon-person-create-reasoning-effort"
+              />
+            </div>
           </aside>
         </div>
       </form>
@@ -370,6 +391,34 @@ export default function SiliconPersonCreatePage() {
           min-width: 0;
         }
 
+        .spc-model-status {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+          margin-top: -2px;
+        }
+
+        .spc-model-status-pill {
+          display: inline-flex;
+          align-items: center;
+          min-height: 28px;
+          padding: 0 10px;
+          border-radius: 999px;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(255, 255, 255, 0.04);
+          color: var(--text-secondary);
+          font-size: 12px;
+          line-height: 1;
+          white-space: nowrap;
+        }
+
+        .spc-model-status-pill--vendor,
+        .spc-model-status-pill--protocol {
+          color: var(--accent-strong);
+          border-color: rgba(16, 163, 127, 0.26);
+          background: rgba(16, 163, 127, 0.08);
+        }
+
         .spc-field--full {
           grid-column: 1 / -1;
         }
@@ -417,37 +466,6 @@ export default function SiliconPersonCreatePage() {
           min-height: 332px;
           resize: vertical;
           line-height: 1.7;
-        }
-
-        .spc-effort-col {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 10px;
-        }
-
-        .spc-effort-btn {
-          min-height: 40px;
-          padding: 0 14px;
-          border-radius: 12px;
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          background: rgba(255, 255, 255, 0.02);
-          color: var(--text-secondary);
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          text-align: left;
-        }
-
-        .spc-effort-btn:hover {
-          border-color: var(--glass-border-hover);
-          color: var(--text-primary);
-        }
-
-        .spc-effort-btn.active {
-          border-color: rgba(16, 163, 127, 0.32);
-          background: rgba(16, 163, 127, 0.08);
-          color: var(--accent-cyan);
         }
 
         .spc-error {

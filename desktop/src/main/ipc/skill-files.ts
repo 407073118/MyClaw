@@ -55,21 +55,38 @@ function getImageMimeType(ext: string): string {
   }
 }
 
+/** 根据 skillId 查找技能定义，优先从硅基员工工作空间查找（如果提供了 siliconPersonId）。 */
+async function resolveSkill(
+  ctx: RuntimeContext,
+  skillId: string,
+  siliconPersonId?: string | null,
+): Promise<{ id: string; path?: string }> {
+  if (siliconPersonId) {
+    const { getOrCreateWorkspace } = await import("../services/silicon-person-workspace");
+    const workspace = await getOrCreateWorkspace(ctx.runtime.paths, siliconPersonId);
+    const personSkill = workspace.skills.find((s) => s.id === skillId);
+    if (personSkill) return personSkill;
+  }
+  const globalSkill = ctx.state.skills.find((s) => s.id === skillId);
+  if (globalSkill) return globalSkill;
+  throw new Error(`Skill not found: ${skillId}`);
+}
+
 export function registerSkillFileHandlers(ctx: RuntimeContext): void {
-  ipcMain.handle("skill:read-tree", (_event, skillId: string) => {
-    const skill = ctx.state.skills.find((s) => s.id === skillId);
+  ipcMain.handle("skill:read-tree", async (_event, skillId: string, siliconPersonId?: string) => {
+    const skill = await resolveSkill(ctx, skillId, siliconPersonId);
     if (!skill?.path) throw new Error(`Skill not found: ${skillId}`);
     if (!existsSync(skill.path)) throw new Error(`Skill directory not found: ${skill.path}`);
 
     return buildTree(skill.path, skill.path);
   });
 
-  ipcMain.handle("skill:read-file", (_event, skillId: string, relativePath: string) => {
+  ipcMain.handle("skill:read-file", async (_event, skillId: string, relativePath: string, siliconPersonId?: string) => {
     if (relativePath.includes("..")) {
       throw new Error("Path traversal is not allowed");
     }
 
-    const skill = ctx.state.skills.find((s) => s.id === skillId);
+    const skill = await resolveSkill(ctx, skillId, siliconPersonId);
     if (!skill?.path) throw new Error(`Skill not found: ${skillId}`);
 
     const filePath = join(skill.path, relativePath);

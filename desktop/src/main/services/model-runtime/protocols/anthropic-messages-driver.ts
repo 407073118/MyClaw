@@ -238,6 +238,8 @@ async function consumeAnthropicStream(
       finishReason: "stop",
       retryCount: 0,
       fallbackEvents: [],
+      citations: [],
+      capabilityEvents: [],
     };
   }
 
@@ -308,6 +310,8 @@ async function consumeAnthropicStream(
     fallbackReason: null,
     retryCount: 0,
     fallbackEvents: [],
+    citations: [],
+    capabilityEvents: [],
   };
 }
 
@@ -338,14 +342,21 @@ export const anthropicMessagesDriver: ProtocolDriver = {
         fallbackReason: transportMetadata.fallbackReason,
         retryCount: transportMetadata.retryCount,
         fallbackEvents: transportMetadata.fallbackEvents,
+        citations: [],
+        capabilityEvents: [],
       };
     }
 
     const requestBody = buildAnthropicMessagesRequestBody(input);
+    const requestVariantId = input.plan.providerFamily === "moonshot-native"
+      ? "anthropic-messages-moonshot"
+      : input.plan.providerFamily === "qwen-native"
+        ? "anthropic-messages-qwen"
+        : "anthropic-messages";
     const transportResult = await executeRequestVariants({
       url: resolveModelEndpointUrl(input.profile, "anthropic-messages"),
       headers: buildRequestHeaders(input.profile, "anthropic-messages"),
-      requestVariants: [{ id: "anthropic-messages", body: requestBody }],
+      requestVariants: [{ id: requestVariantId, body: requestBody }],
       signal: input.signal,
     });
     const parsed = await consumeAnthropicStream(
@@ -360,10 +371,12 @@ export const anthropicMessagesDriver: ProtocolDriver = {
       toolCalls: parsed.toolCalls,
       finishReason: parsed.finishReason,
       usage: parsed.usage,
-      requestVariantId: transportResult.variant.id,
+      requestVariantId: requestVariantId,
       fallbackReason: transportResult.variant.fallbackReason ?? null,
       retryCount: transportResult.retryCount,
       fallbackEvents: transportResult.fallbackEvents,
+      citations: parsed.citations ?? [],
+      capabilityEvents: parsed.capabilityEvents ?? [],
     };
   },
 };

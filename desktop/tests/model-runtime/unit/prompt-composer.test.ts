@@ -31,15 +31,17 @@ describe("prompt composer", () => {
 
     expect(sections.some((section) => section.layer === "family-overlay")).toBe(true);
     expect(rendered).toContain("Provider family: qwen-dashscope");
-    expect(rendered).toContain("Assume compatible transport and conservative tool compilation.");
-    expect(rendered).toContain("Prefer explicit tool intent before execution.");
-    expect(rendered).not.toContain("browser_evaluate");
-    expect(rendered).not.toContain("exec_command");
-    expect(rendered).not.toContain("git_commit");
+    expect(rendered).toContain("Prefer Qwen-native Responses features first, including continuation and vendor-native search/extractor tools.");
+    expect(rendered).toContain("Prefer explicit tool intent and Responses-native continuation before execution.");
+    // 工具分类引导始终包含完整工具列表；实际可用工具由 tool schema 层的 policy 过滤控制
+    expect(rendered).toContain("fs_read");
     expect(rendered).toContain("git_status");
     expect(rendered).toContain("Tool policy: qwen.tools.conservative");
     expect(rendered).toContain("Reasoning profile: qwen.reasoning.responses");
-    expect(rendered).toContain("Prefer medium/high effort for multi-step code and analysis turns.");
+    expect(rendered).toContain("Map effort into Qwen enable_thinking/thinking_budget and avoid forced tool_choice while thinking is enabled.");
     expect(rendered).toContain("Git branch: main");
+    // Task planning 引导必须包含工具名和强制工作流
+    expect(rendered).toContain("task_create");
+    expect(rendered).toContain("Mandatory Workflow");
   });
 });

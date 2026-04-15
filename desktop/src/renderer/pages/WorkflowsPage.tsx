@@ -368,7 +368,7 @@ export default function WorkflowsPage() {
   }
 
   return (
-    <main data-testid="workflows-view" className="page-container">
+    <main data-testid="workflows-view" className="page-container" style={{ height: "100%", overflowY: "auto" }}>
       <header className="page-header">
         <div className="header-text">
           <span className="eyebrow">工作流</span>

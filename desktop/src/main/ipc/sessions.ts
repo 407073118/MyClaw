@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, ExperienceProfileId, PromptSection, ProviderFamily, TurnOutcome, McpTool } from "@shared/contracts";
+import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, ResolvedSessionRuntimeIntent, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, ExperienceProfileId, PromptSection, ProviderFamily, TurnOutcome, McpTool } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
+import { buildTaskDisplayItems } from "@shared/task-logical";
 
 import type { ActiveSessionRun, RuntimeContext } from "../services/runtime-context";
 import type { ChatMessage as ModelChatMessage, ChatMessageContent, ResolvedToolCall } from "../services/model-client";
@@ -14,30 +15,31 @@ import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../servi
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
+import { buildArtifactContextBlock } from "../services/artifact-context-builder";
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
 import { extractEnrichedContext, buildEnrichedContextBlock } from "../services/context-enricher";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
 import { buildCanonicalTurnContent } from "../services/model-runtime/canonical-turn-content";
+import { createBackgroundTaskManager } from "../services/model-runtime/background-task-manager";
+import type { BackgroundTaskSnapshot } from "../services/model-runtime/background-task-manager";
+import { createComputerActionHarness, getComputerActionToolId, buildComputerActionLabel, getComputerActionRisk } from "../services/model-runtime/computer-action-harness";
 import { createExecutionGateway } from "../services/model-runtime/execution-gateway";
 import { composePromptSections } from "../services/model-runtime/prompt-composer";
 import { buildCanonicalToolRegistry } from "../services/model-runtime/tool-registry";
 import { resolveTurnExecutionPlan } from "../services/model-runtime/turn-execution-plan-resolver";
 import { loadTurnOutcome, updateTurnOutcome } from "../services/model-runtime/turn-outcome-store";
+import { isTerminalBackgroundTaskStatus, syncSessionBackgroundTaskSnapshot } from "../services/session-background-task";
 import { syncSiliconPersonExecutionResult } from "../services/silicon-person-session";
 import { getOrCreateWorkspace } from "../services/silicon-person-workspace";
 import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
 import { createTask, listTasks, getTask, updateTask, clearCompletedTasks } from "../services/task-store";
 import type { TaskCreateInput, TaskUpdateInput } from "../services/task-store";
 
+type ComputerHarnessBrowser = Parameters<typeof createComputerActionHarness>[0]["browser"];
+
 // ---------------------------------------------------------------------------
 // 常量
 // ---------------------------------------------------------------------------
-
-/**
- * 绝对安全上限，用来防止 bug 导致的无限循环。
- * 这不是任务完成轮数限制；模型正常情况下会因为不再发起工具调用而自然停止。
- */
-const SAFETY_CEILING = 200;
 
 /** 连续出现相同轮次签名前，先对模型发出警告的阈值。 */
 const LOOP_WARN_THRESHOLD = 3;
@@ -162,6 +164,16 @@ const TOOL_RISK_MAP: Record<string, ToolRiskCategory> = {
   "browser.back": ToolRiskCategory.Write,
   "browser.forward": ToolRiskCategory.Write,
   "browser.wait": ToolRiskCategory.Read,
+  // native computer.* 动作
+  "computer.screenshot": ToolRiskCategory.Read,
+  "computer.wait": ToolRiskCategory.Read,
+  "computer.scroll": ToolRiskCategory.Read,
+  "computer.move": ToolRiskCategory.Read,
+  "computer.click": ToolRiskCategory.Write,
+  "computer.double_click": ToolRiskCategory.Write,
+  "computer.type": ToolRiskCategory.Write,
+  "computer.keypress": ToolRiskCategory.Write,
+  "computer.drag": ToolRiskCategory.Write,
 };
 
 function getToolRisk(toolId: string, toolName: string): ToolRiskCategory {
@@ -285,6 +297,63 @@ function resolveApprovalPolicyForSession(
   }
 
   return clonedWorkspacePolicy;
+}
+
+/**
+ * 克隆会话上显式声明的 runtimeIntent，冻结当前轮次的执行配置，
+ * 避免聊天进行中切换推理深度/模式时污染正在运行的这一轮。
+ */
+function cloneExplicitRuntimeIntent(
+  runtimeIntent: SessionRuntimeIntent | null | undefined,
+): SessionRuntimeIntent | null | undefined {
+  if (runtimeIntent === null || runtimeIntent === undefined) {
+    return runtimeIntent;
+  }
+  return { ...runtimeIntent };
+}
+
+/**
+ * 将冻结后的 runtimeIntent 快照映射成 buildExecutionPlan 需要的 session 形状，
+ * 只回填用户显式设置过的字段，保持默认值与降级来源判定不变。
+ */
+function buildExecutionPlanSessionFromRuntimeIntentSnapshot(
+  explicitRuntimeIntent: SessionRuntimeIntent | null | undefined,
+  resolvedRuntimeIntent: ResolvedSessionRuntimeIntent,
+): { runtimeIntent?: SessionRuntimeIntent | null } | undefined {
+  if (explicitRuntimeIntent === undefined) {
+    return undefined;
+  }
+  if (explicitRuntimeIntent === null) {
+    return { runtimeIntent: null };
+  }
+  return {
+    runtimeIntent: {
+      ...(Object.prototype.hasOwnProperty.call(explicitRuntimeIntent, "reasoningMode")
+        ? { reasoningMode: resolvedRuntimeIntent.reasoningMode }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(explicitRuntimeIntent, "reasoningEnabled")
+        ? { reasoningEnabled: resolvedRuntimeIntent.reasoningEnabled }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(explicitRuntimeIntent, "reasoningEffort")
+        ? { reasoningEffort: resolvedRuntimeIntent.reasoningEffort }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(explicitRuntimeIntent, "adapterHint")
+        ? { adapterHint: resolvedRuntimeIntent.adapterHint }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(explicitRuntimeIntent, "replayPolicy")
+        ? { replayPolicy: resolvedRuntimeIntent.replayPolicy }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(explicitRuntimeIntent, "toolStrategy")
+        ? { toolStrategy: resolvedRuntimeIntent.toolStrategy }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(explicitRuntimeIntent, "workflowMode")
+        ? { workflowMode: resolvedRuntimeIntent.workflowMode }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(explicitRuntimeIntent, "planModeEnabled")
+        ? { planModeEnabled: resolvedRuntimeIntent.planModeEnabled }
+        : {}),
+    },
+  };
 }
 
 type SessionWithExecutionPlan = ChatSession & {
@@ -470,11 +539,13 @@ function patchOrphanedToolCalls(session: ChatSession, now: string): void {
       .map((m) => m.tool_call_id!),
   );
 
+  // 先收集待补充的占位消息，避免在 for...of 遍历中修改被遍历的数组
+  const patches: SessionChatMessage[] = [];
   for (const msg of session.messages) {
     if (msg.role !== "assistant" || !msg.tool_calls) continue;
     for (const tc of msg.tool_calls) {
       if (!existingToolResultIds.has(tc.id)) {
-        session.messages.push({
+        patches.push({
           id: randomUUID(),
           role: "tool",
           content: "[已取消] 工具调用因用户终止而未执行。",
@@ -484,6 +555,9 @@ function patchOrphanedToolCalls(session: ChatSession, now: string): void {
         existingToolResultIds.add(tc.id);
       }
     }
+  }
+  if (patches.length > 0) {
+    session.messages.push(...patches);
   }
 }
 
@@ -558,6 +632,7 @@ function buildSessionPromptSections(input: {
   personalPromptProfile?: PersonalPromptProfile | null;
   reasoningEffort?: "low" | "medium" | "high" | null;
   enrichedContextBlock?: string | null;
+  artifactContextBlock?: string | null;
   mcpTools?: Array<McpTool & { serverId: string }>;
   providerFamily: ProviderFamily;
   experienceProfileId: ExperienceProfileId;
@@ -580,8 +655,38 @@ function buildSessionPromptSections(input: {
     personalPromptProfile: input.personalPromptProfile,
     reasoningEffort: input.reasoningEffort,
     enrichedContextBlock: input.enrichedContextBlock,
+    artifactContextBlock: input.artifactContextBlock,
     mcpTools: input.mcpTools,
   });
+
+  // 当会话中有 task 时，将当前状态摘要注入系统提示词，让模型每轮都能看到任务顺序和依赖
+  const sessionTasks = input.session.tasks;
+  if (sessionTasks && sessionTasks.length > 0) {
+    const taskItems = buildTaskDisplayItems(sessionTasks);
+    const sequenceById = new Map(taskItems.map((item) => [item.task.id, item.sequence]));
+    const total = taskItems.length;
+    const taskLines = taskItems.map(({ task, sequence }) => {
+      let line = `[${sequence}/${total}] (${task.id}) ${task.status}: ${task.subject}`;
+      if (task.blockedBy && task.blockedBy.length > 0 && task.status !== "completed") {
+        const unfinished = task.blockedBy.filter(
+          (bid) => taskItems.find((item) => item.task.id === bid)?.task.status !== "completed",
+        );
+        if (unfinished.length > 0) {
+          line += ` [blocked by: ${unfinished.map((id) => `#${sequenceById.get(id) ?? id}`).join(", ")}]`;
+        }
+      }
+      return line;
+    });
+    sections.push({
+      id: "current-tasks",
+      title: "Current Tasks",
+      layer: "context",
+      content: [
+        "Execute tasks strictly in order. Complete each task before starting the next one.",
+        ...taskLines,
+      ].join("\n"),
+    });
+  }
 
   sections.push(...buildSiliconPersonPromptSection(input.siliconPersonIdentity ?? null, input.workingDir));
   if (input.extraGuidance?.trim()) {
@@ -608,12 +713,17 @@ async function persistSessionTurnOutcomeMetrics(
   },
 ): Promise<void> {
   try {
-    await updateTurnOutcome(ctx.runtime.paths, {
+    const nextOutcome = {
       ...outcome,
       toolCallCount: metrics.toolCallCount,
       toolSuccessCount: metrics.toolSuccessCount,
       contextStability: (outcome.contextStability !== false) && metrics.contextStability,
-    });
+    };
+    if (ctx.services.artifactManager) {
+      await updateTurnOutcome(ctx.runtime.paths, nextOutcome, ctx.services.artifactManager);
+    } else {
+      await updateTurnOutcome(ctx.runtime.paths, nextOutcome);
+    }
   } catch (error) {
     console.warn("[session:runtime] 回写 turn outcome 指标失败", {
       outcomeId: outcome.id,
@@ -647,6 +757,193 @@ function resolvePreviousResponseIdForSessionTurn(
     previousResponseId: lastOutcome.responseId,
   });
   return lastOutcome.responseId;
+}
+
+/** 解析会话关联的后台任务快照，供轮询与取消入口复用。 */
+function resolveSessionBackgroundTaskContext(
+  ctx: RuntimeContext,
+  sessionId: string,
+): {
+  session: ChatSession;
+  profile: ModelProfile;
+  outcome: TurnOutcome;
+} {
+  const session = ctx.state.sessions.find((item) => item.id === sessionId);
+  if (!session) {
+    throw new Error(`Session not found: ${sessionId}`);
+  }
+
+  const profile = ctx.state.models.find((item) => item.id === session.modelProfileId);
+  if (!profile) {
+    throw new Error(`Model profile not found for session: ${session.modelProfileId}`);
+  }
+
+  if (!session.lastTurnOutcomeId) {
+    throw new Error("Session does not have a turn outcome to inspect");
+  }
+
+  const outcome = loadTurnOutcome(ctx.runtime.paths, session.lastTurnOutcomeId);
+  if (!outcome?.backgroundTask) {
+    throw new Error("Session does not have an active background task");
+  }
+
+  return { session, profile, outcome };
+}
+
+/** 合并 capability events，按稳定键去重，避免 background retrieve 重复写入相同 trace。 */
+function mergeCapabilityEvents(
+  existing: TurnOutcome["capabilityEvents"] | undefined,
+  incoming: TurnOutcome["capabilityEvents"] | undefined,
+): TurnOutcome["capabilityEvents"] {
+  const merged = [...(existing ?? [])];
+  const seen = new Set(
+    merged.map((event) => [
+      event.type,
+      event.capabilityId,
+      event.createdAt,
+      JSON.stringify(event.payload ?? null),
+    ].join("|")),
+  );
+
+  for (const event of incoming ?? []) {
+    const key = [
+      event.type,
+      event.capabilityId,
+      event.createdAt,
+      JSON.stringify(event.payload ?? null),
+    ].join("|");
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(event);
+  }
+
+  return merged;
+}
+
+/** 合并 citations，优先使用 citation id 去重，保证后台补拉结果不会重复展示来源。 */
+function mergeCitations(
+  existing: TurnOutcome["citations"] | undefined,
+  incoming: TurnOutcome["citations"] | undefined,
+): TurnOutcome["citations"] {
+  const merged = [...(existing ?? [])];
+  const seen = new Set(merged.map((citation) => citation.id));
+
+  for (const citation of incoming ?? []) {
+    if (seen.has(citation.id)) {
+      continue;
+    }
+    seen.add(citation.id);
+    merged.push(citation);
+  }
+
+  return merged;
+}
+
+/** 将后台任务的终态结果回灌进会话消息流，保证 deep research 最终答复能像普通 assistant 消息一样落盘。 */
+function appendBackgroundResultToSession(
+  session: ChatSession,
+  snapshot: {
+    status: string;
+    outputText: string;
+    result?: {
+      content?: string;
+      reasoning?: string;
+      usage?: TurnOutcome["usage"];
+      finishReason?: string | null;
+    } | null;
+  },
+): void {
+  const content = snapshot.result?.content?.trim() || snapshot.outputText.trim();
+  const reasoning = snapshot.result?.reasoning?.trim() || "";
+  const now = new Date().toISOString();
+
+  if (content) {
+    session.messages.push({
+      id: randomUUID(),
+      role: "assistant",
+      content,
+      ...(reasoning ? { reasoning } : {}),
+      createdAt: now,
+    });
+    return;
+  }
+
+  if (snapshot.status === "failed") {
+    session.messages.push({
+      id: randomUUID(),
+      role: "assistant",
+      content: "[后台任务失败] 研究任务未能完成，请稍后重试。",
+      createdAt: now,
+    });
+  }
+}
+
+/** 为缺少浏览器服务的测试桩提供安全降级，避免 computer harness 初始化阶段直接抛错。 */
+function resolveComputerHarnessBrowser(toolExecutor: unknown): ComputerHarnessBrowser {
+  if (
+    toolExecutor &&
+    typeof toolExecutor === "object" &&
+    "getBrowserService" in toolExecutor &&
+    typeof (toolExecutor as { getBrowserService?: unknown }).getBrowserService === "function"
+  ) {
+    return (toolExecutor as { getBrowserService: () => ComputerHarnessBrowser }).getBrowserService();
+  }
+
+  const unavailableResult = async () => ({
+    success: false,
+    output: "",
+    error: "Browser service unavailable",
+  });
+
+  return {
+    clickAt: async () => unavailableResult(),
+    movePointer: async () => unavailableResult(),
+    dragPath: async () => unavailableResult(),
+    scrollAt: async () => unavailableResult(),
+    typeText: async () => unavailableResult(),
+    wait: async () => unavailableResult(),
+    pressKey: async () => unavailableResult(),
+    captureComputerState: async () => unavailableResult(),
+  };
+}
+
+/** 持久化后台任务快照，并在任务完成时把最终结果重新并入会话。 */
+async function persistSessionBackgroundTaskSnapshot(
+  ctx: RuntimeContext,
+  session: ChatSession,
+  outcome: TurnOutcome,
+  snapshot: BackgroundTaskSnapshot,
+): Promise<TurnOutcome> {
+  const nextTask = isTerminalBackgroundTaskStatus(snapshot.status) ? null : snapshot.task;
+  const result = snapshot.result ?? {
+    responseId: null,
+    finishReason: null,
+    citations: [],
+    capabilityEvents: [],
+  };
+  const updatedOutcome: TurnOutcome = {
+    ...outcome,
+    backgroundTask: nextTask,
+    responseId: result.responseId ?? outcome.responseId,
+    finishReason: result.finishReason ?? outcome.finishReason,
+    citations: mergeCitations(outcome.citations, result.citations),
+    capabilityEvents: mergeCapabilityEvents(outcome.capabilityEvents, result.capabilityEvents),
+  };
+
+  if (ctx.services.artifactManager) {
+    await updateTurnOutcome(ctx.runtime.paths, updatedOutcome, ctx.services.artifactManager);
+  } else {
+    await updateTurnOutcome(ctx.runtime.paths, updatedOutcome);
+  }
+  syncSessionBackgroundTaskSnapshot(ctx.runtime.paths, session, updatedOutcome);
+
+  if (isTerminalBackgroundTaskStatus(snapshot.status)) {
+    appendBackgroundResultToSession(session, snapshot);
+  }
+
+  return updatedOutcome;
 }
 
 /**
@@ -963,6 +1260,28 @@ type TaskToolResult = {
   mutated: boolean;
 };
 
+/** 给 task 工具构建稳定的序号视图，避免重复任务把执行顺序和进度弄乱。 */
+function buildSerializedTaskList(tasks: Task[]): Array<Record<string, unknown>> {
+  const items = buildTaskDisplayItems(tasks);
+  const sequenceById = new Map(items.map((item) => [item.task.id, item.sequence]));
+  return items.map(({ task, sequence, total }) => ({
+    ...task,
+    sequence,
+    total,
+    blockedBySequences: task.blockedBy
+      .map((blockedId) => sequenceById.get(blockedId))
+      .filter((value): value is number => typeof value === "number"),
+    blocksSequences: task.blocks
+      .map((blockedId) => sequenceById.get(blockedId))
+      .filter((value): value is number => typeof value === "number"),
+  }));
+}
+
+/** 给单条 task 输出补上 sequence/total，方便模型按顺序继续推进。 */
+function buildSerializedTask(tasks: Task[], task: Task): Record<string, unknown> {
+  return buildSerializedTaskList(tasks).find((item) => item.id === task.id) ?? task;
+}
+
 function executeTaskTool(
   session: ChatSession,
   toolId: string,
@@ -991,12 +1310,12 @@ function executeTaskTool(
         }
         const result = createTask(tasks, input);
         session.tasks = result.tasks;
-        return { success: true, output: JSON.stringify(result.created), mutated: true };
+        return { success: true, output: JSON.stringify(buildSerializedTask(result.tasks, result.created)), mutated: true };
       }
 
       case "task.list": {
         const all = listTasks(tasks);
-        return { success: true, output: JSON.stringify(all), mutated: false };
+        return { success: true, output: JSON.stringify(buildSerializedTaskList(all)), mutated: false };
       }
 
       case "task.get": {
@@ -1008,7 +1327,7 @@ function executeTaskTool(
         if (!found) {
           return { success: false, output: "", error: `Task not found: ${id}`, mutated: false };
         }
-        return { success: true, output: JSON.stringify(found), mutated: false };
+        return { success: true, output: JSON.stringify(buildSerializedTask(tasks, found)), mutated: false };
       }
 
       case "task.update": {
@@ -1027,7 +1346,7 @@ function executeTaskTool(
         if (args.metadata !== undefined) input.metadata = args.metadata as Record<string, unknown>;
         const result = updateTask(tasks, id, input);
         session.tasks = result.tasks;
-        return { success: true, output: JSON.stringify(result.updated), mutated: true };
+        return { success: true, output: JSON.stringify(buildSerializedTask(result.tasks, result.updated)), mutated: true };
       }
 
       default:
@@ -1611,6 +1930,7 @@ function markPlanTaskToolProgress(
 // ---------------------------------------------------------------------------
 
 export function registerSessionHandlers(ctx: RuntimeContext): void {
+  const backgroundTaskManager = createBackgroundTaskManager();
   // 创建新的聊天会话
   ipcMain.handle("session:create", async (_event, input: CreateSessionInput): Promise<SessionPayload> => {
     const now = new Date().toISOString();
@@ -1755,8 +2075,15 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
       // 解析当前会话应使用的模型配置
       const profileId = session.modelProfileId || ctx.state.getDefaultModelProfileId();
-      const modelProfile = ctx.state.models.find((m) => m.id === profileId)
-        ?? ctx.state.models[0];
+      let modelProfile = ctx.state.models.find((m) => m.id === profileId);
+      if (!modelProfile && profileId) {
+        console.warn("[sessions] 会话绑定的模型已被删除，回落到默认模型", {
+          sessionId,
+          missingProfileId: profileId,
+          siliconPersonId: session.siliconPersonId ?? null,
+        });
+      }
+      modelProfile = modelProfile ?? ctx.state.models[0];
 
       if (!modelProfile) {
         const errorContent = "错误：未配置任何模型。请在设置中添加一个模型配置。";
@@ -1819,14 +2146,20 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
       // 创建一个绑定版 system prompt 构造器，复用已缓存的 Git 分支
       // 避免在每次 agentic 循环中都执行一次 execSync
-      // 从 session 的 runtimeIntent 中读取 reasoningEffort，传入 system prompt 构造器
+      // 冻结本轮 runtimeIntent 快照：运行中允许用户修改配置，但只能影响下一次发送
       // enrichedContext 在每轮动态提取，因为 session messages 和 tasks 会随循环变化
-      const sessionRuntimeIntentForPrompt = resolveSessionRuntimeIntent(session);
-      const sessionReasoningEffort = sessionRuntimeIntentForPrompt.reasoningEffort as "low" | "medium" | "high" | undefined;
-      const sessionRuntimeIntentForMode = resolveSessionRuntimeIntent(session);
+      const runRuntimeIntentSnapshot = cloneExplicitRuntimeIntent(session.runtimeIntent);
+      const resolvedRunRuntimeIntent = resolveSessionRuntimeIntent(
+        runRuntimeIntentSnapshot === undefined ? session : { runtimeIntent: runRuntimeIntentSnapshot },
+      );
+      const runReasoningEffort = resolvedRunRuntimeIntent.reasoningEffort as "low" | "medium" | "high" | undefined;
+      const frozenExecutionPlanSession = buildExecutionPlanSessionFromRuntimeIntentSnapshot(
+        runRuntimeIntentSnapshot,
+        resolvedRunRuntimeIntent,
+      );
       const initialResolvedCapability = resolveModelCapability(modelProfile);
       const initialExecutionPlan = buildExecutionPlan({
-        session: session.runtimeIntent ? { runtimeIntent: sessionRuntimeIntentForMode } : session.runtimeIntent === null ? { runtimeIntent: null } : undefined,
+        session: frozenExecutionPlanSession,
         profile: modelProfile,
         capability: initialResolvedCapability.effective,
       }) as ResolvedExecutionPlan;
@@ -1863,7 +2196,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       const boundBuildSystemPrompt = (s: ChatSession, wd: string, sk?: SkillDefinition[]) => {
         const enriched = extractEnrichedContext(s);
         const enrichedBlock = buildEnrichedContextBlock(enriched);
-        let prompt = buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile(), sessionReasoningEffort, enrichedBlock || null, mcpTools);
+        let prompt = buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile(), runReasoningEffort, enrichedBlock || null, mcpTools);
 
         // 硅基员工身份注入：告诉模型自己是谁、在哪工作
         if (siliconPersonIdentity) {
@@ -1885,46 +2218,90 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
         return prompt;
       };
-      const executionGateway = createExecutionGateway({ paths: ctx.runtime.paths });
+      const executionGateway = createExecutionGateway({
+        paths: ctx.runtime.paths,
+        artifactManager: ctx.services.artifactManager,
+        computerHarness: createComputerActionHarness({
+          browser: resolveComputerHarnessBrowser(toolExecutor),
+          requestApproval: async (approvalInput) => {
+            const toolId = approvalInput.toolId || getComputerActionToolId(approvalInput.action);
+            const label = approvalInput.label || buildComputerActionLabel(approvalInput.action);
+            const risk = approvalInput.risk || getComputerActionRisk(approvalInput.action);
+            const source = getApprovalSource(toolId);
+            const policy = resolveApprovalPolicyForSession(ctx, session);
+            const needsApproval = shouldRequestApproval({ policy, source, toolId, risk });
 
-      if ((sessionRuntimeIntentForMode.workflowMode === "plan" || sessionRuntimeIntentForMode.planModeEnabled === true) && session.planModeState?.mode !== "executing") {
-        const runtimeIntent = sessionRuntimeIntentForMode;
-        const executionPlanSession = session.runtimeIntent
-          ? {
-              runtimeIntent: {
-                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningMode")
-                  ? { reasoningMode: runtimeIntent.reasoningMode }
-                  : {}),
-                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningEnabled")
-                  ? { reasoningEnabled: runtimeIntent.reasoningEnabled }
-                  : {}),
-                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningEffort")
-                  ? { reasoningEffort: runtimeIntent.reasoningEffort }
-                  : {}),
-                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "adapterHint")
-                  ? { adapterHint: runtimeIntent.adapterHint }
-                  : {}),
-                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "replayPolicy")
-                  ? { replayPolicy: runtimeIntent.replayPolicy }
-                  : {}),
-                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "toolStrategy")
-                  ? { toolStrategy: runtimeIntent.toolStrategy }
-                  : {}),
-                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "workflowMode")
-                  ? { workflowMode: runtimeIntent.workflowMode }
-                  : {}),
-                ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "planModeEnabled")
-                  ? { planModeEnabled: runtimeIntent.planModeEnabled }
-                  : {}),
-              },
+            if (!needsApproval) {
+              return { approved: true, reason: null };
             }
-          : session.runtimeIntent === null
-            ? { runtimeIntent: null }
-            : undefined;
+
+            const approvalId = randomUUID();
+            const approvalRequest: ApprovalRequest = {
+              id: approvalId,
+              sessionId,
+              source,
+              toolId,
+              label,
+              risk,
+              detail: approvalInput.detail,
+            };
+
+            syncChatRunState(session, sessionId, activeRun, {
+              runId,
+              status: activeRun.cancelRequested ? "canceling" : "running",
+              phase: "approval",
+              messageId: currentMessageId,
+              reason: activeRun.cancelRequested ? "user_requested" : null,
+            });
+            ctx.state.setApprovalRequests([...ctx.state.getApprovalRequests(), approvalRequest]);
+            await syncSiliconPersonSummaryForSession(ctx, session);
+
+            broadcastToRenderers("session:stream", {
+              type: EventType.ApprovalRequested,
+              sessionId,
+              approvalRequest,
+            });
+
+            activeRun.pendingApprovalIds.push(approvalId);
+            const decision = await new Promise<"approve" | "deny" | "canceled">((resolve) => {
+              const timeout = setTimeout(() => {
+                if (pendingApprovals.has(approvalId)) {
+                  pendingApprovals.get(approvalId)?.resolve("deny");
+                  pendingApprovals.delete(approvalId);
+                  console.warn(`[approval] Timed out approval ${approvalId} after 5 minutes`);
+                }
+              }, 5 * 60 * 1000);
+              pendingApprovals.set(approvalId, { resolve, timeout });
+            });
+
+            const pending = pendingApprovals.get(approvalId);
+            if (pending) clearTimeout(pending.timeout);
+            pendingApprovals.delete(approvalId);
+            activeRun.pendingApprovalIds = activeRun.pendingApprovalIds.filter((id) => id !== approvalId);
+            ctx.state.setApprovalRequests(
+              ctx.state.getApprovalRequests().filter((request) => request.id !== approvalId),
+            );
+            await syncSiliconPersonSummaryForSession(ctx, session);
+
+            if (decision === "canceled") {
+              const abortError = new Error("User requested cancellation");
+              abortError.name = "AbortError";
+              throw abortError;
+            }
+
+            return {
+              approved: decision !== "deny",
+              reason: decision === "deny" ? "user_denied" : null,
+            };
+          },
+        }),
+      });
+
+      if ((resolvedRunRuntimeIntent.workflowMode === "plan" || resolvedRunRuntimeIntent.planModeEnabled === true) && session.planModeState?.mode !== "executing") {
         const resolved = resolveModelCapability(modelProfile);
         const executionPlan = {
           ...(buildExecutionPlan({
-            session: executionPlanSession,
+            session: frozenExecutionPlanSession,
             profile: modelProfile,
             capability: resolved.effective,
           }) as ResolvedExecutionPlan),
@@ -1965,8 +2342,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           skills: enabledSkills,
           gitBranch,
           personalPromptProfile: ctx.state.getPersonalPromptProfile(),
-          reasoningEffort: sessionReasoningEffort,
+          reasoningEffort: runReasoningEffort,
           enrichedContextBlock: buildEnrichedContextBlock(extractEnrichedContext(session)) || null,
+          artifactContextBlock: buildArtifactContextBlock({
+            artifactRegistry: ctx.services.artifactRegistry,
+            sessionId: session.id,
+            siliconPersonId: session.siliconPersonId ?? null,
+          }),
           mcpTools,
           providerFamily: turnExecutionPlan.providerFamily,
           experienceProfileId: turnExecutionPlan.experienceProfileId,
@@ -2014,6 +2396,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         });
         session.turnExecutionPlan = result.plan;
         session.lastTurnOutcomeId = result.outcome.id;
+        syncSessionBackgroundTaskSnapshot(ctx.runtime.paths, session, result.outcome);
         await persistSessionTurnOutcomeMetrics(ctx, result.outcome, {
           toolCallCount: result.toolCalls.length,
           toolSuccessCount: 0,
@@ -2080,7 +2463,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       let suggestNewChatSent = false;
 
       try {
-        while (round < SAFETY_CEILING) {
+        while (true) {
           round++;
           markPlanTaskInProgress(session, activePlanTaskId, round, new Date().toISOString());
           broadcastToRenderers("session:stream", {
@@ -2089,44 +2472,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             session,
           });
           // 使用显式编排链路：intent → capability → plan → context → execute
-          const runtimeIntent = resolveSessionRuntimeIntent(session);
-          // 仅把会话中显式设置过的字段回填给 buildExecutionPlan，
-          // 这样 runtimeIntent 成为当前编排的单一来源，同时不改变默认值/降级来源判定。
-          const executionPlanSession = session.runtimeIntent
-            ? {
-                runtimeIntent: {
-                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningMode")
-                    ? { reasoningMode: runtimeIntent.reasoningMode }
-                    : {}),
-                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningEnabled")
-                    ? { reasoningEnabled: runtimeIntent.reasoningEnabled }
-                    : {}),
-                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "reasoningEffort")
-                    ? { reasoningEffort: runtimeIntent.reasoningEffort }
-                    : {}),
-                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "adapterHint")
-                    ? { adapterHint: runtimeIntent.adapterHint }
-                    : {}),
-                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "replayPolicy")
-                    ? { replayPolicy: runtimeIntent.replayPolicy }
-                    : {}),
-                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "toolStrategy")
-                    ? { toolStrategy: runtimeIntent.toolStrategy }
-                    : {}),
-                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "workflowMode")
-                    ? { workflowMode: runtimeIntent.workflowMode }
-                    : {}),
-                  ...(Object.prototype.hasOwnProperty.call(session.runtimeIntent, "planModeEnabled")
-                    ? { planModeEnabled: runtimeIntent.planModeEnabled }
-                    : {}),
-                },
-              }
-            : session.runtimeIntent === null
-              ? { runtimeIntent: null }
-              : undefined;
           const resolved = resolveModelCapability(modelProfile);
           const executionPlan = buildExecutionPlan({
-            session: executionPlanSession,
+            session: frozenExecutionPlanSession,
             profile: modelProfile,
             capability: resolved.effective,
           }) as ResolvedExecutionPlan;
@@ -2143,7 +2491,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           console.info("[session:runtime] 已生成执行计划", {
             sessionId,
             round,
-            runtimeIntent,
+            runtimeIntent: resolvedRunRuntimeIntent,
             adapterId: executionPlan.adapterId,
             replayPolicy: executionPlan.replayPolicy,
             degradationReason: executionPlan.degradationReason,
@@ -2184,11 +2532,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             workingDir,
             skills: enabledSkills,
             gitBranch,
-            personalPromptProfile: ctx.state.getPersonalPromptProfile(),
-            reasoningEffort: sessionReasoningEffort,
-            enrichedContextBlock: buildEnrichedContextBlock(extractEnrichedContext(session)) || null,
-            mcpTools,
-            providerFamily: turnExecutionPlan.providerFamily,
+          personalPromptProfile: ctx.state.getPersonalPromptProfile(),
+          reasoningEffort: runReasoningEffort,
+          enrichedContextBlock: buildEnrichedContextBlock(extractEnrichedContext(session)) || null,
+          artifactContextBlock: buildArtifactContextBlock({
+            artifactRegistry: ctx.services.artifactRegistry,
+            sessionId: session.id,
+            siliconPersonId: session.siliconPersonId ?? null,
+          }),
+          mcpTools,
+          providerFamily: turnExecutionPlan.providerFamily,
             experienceProfileId: turnExecutionPlan.experienceProfileId,
             promptPolicyId: turnExecutionPlan.promptPolicyId,
             toolPolicyId: turnExecutionPlan.toolPolicyId,
@@ -2250,6 +2603,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           });
           session.turnExecutionPlan = result.plan;
           session.lastTurnOutcomeId = result.outcome.id;
+          syncSessionBackgroundTaskSnapshot(ctx.runtime.paths, session, result.outcome);
           await persistSessionTurnOutcomeMetrics(ctx, result.outcome, {
             toolCallCount: result.toolCalls.length,
             toolSuccessCount: 0,
@@ -2291,10 +2645,78 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
             // ---- 第 1 步：检查所有工具调用的审批（串行执行，需要等待用户） ----
             type ApprovedTool = { toolCall: ResolvedToolCall; denied: boolean };
+            type PendingToolApproval = { toolCall: ResolvedToolCall; approvalId: string; approvalRequest: ApprovalRequest };
             const approvedTools: ApprovedTool[] = [];
+            const queuedReadOnlyApprovals: PendingToolApproval[] = [];
+
+            const awaitApprovalDecision = async (approvalId: string): Promise<"approve" | "deny" | "canceled"> => {
+              return new Promise<"approve" | "deny" | "canceled">((resolve) => {
+                const timeout = setTimeout(() => {
+                  if (pendingApprovals.has(approvalId)) {
+                    pendingApprovals.get(approvalId)?.resolve("deny");
+                    pendingApprovals.delete(approvalId);
+                    console.warn(`[approval] Timed out approval ${approvalId} after 5 minutes`);
+                  }
+                }, 5 * 60 * 1000);
+                pendingApprovals.set(approvalId, { resolve, timeout });
+              });
+            };
+
+            const requestToolApprovalBatch = async (batch: PendingToolApproval[]): Promise<void> => {
+              if (batch.length === 0) {
+                return;
+              }
+
+              syncChatRunState(session, sessionId, activeRun, {
+                runId,
+                status: activeRun.cancelRequested ? "canceling" : "running",
+                phase: "approval",
+                messageId: currentMessageId,
+                reason: activeRun.cancelRequested ? "user_requested" : null,
+              });
+              ctx.state.setApprovalRequests([
+                ...ctx.state.getApprovalRequests(),
+                ...batch.map((item) => item.approvalRequest),
+              ]);
+              await syncSiliconPersonSummaryForSession(ctx, session);
+
+              for (const item of batch) {
+                broadcastToRenderers("session:stream", {
+                  type: EventType.ApprovalRequested,
+                  sessionId,
+                  approvalRequest: item.approvalRequest,
+                });
+              }
+
+              activeRun.pendingApprovalIds.push(...batch.map((item) => item.approvalId));
+              const decisions = await Promise.all(batch.map(async (item) => ({
+                item,
+                decision: await awaitApprovalDecision(item.approvalId),
+              })));
+
+              const pendingIds = new Set(batch.map((item) => item.approvalId));
+              for (const { item } of decisions) {
+                const pending = pendingApprovals.get(item.approvalId);
+                if (pending) clearTimeout(pending.timeout);
+                pendingApprovals.delete(item.approvalId);
+              }
+              activeRun.pendingApprovalIds = activeRun.pendingApprovalIds.filter((id) => !pendingIds.has(id));
+              ctx.state.setApprovalRequests(
+                ctx.state.getApprovalRequests().filter((request) => !pendingIds.has(request.id)),
+              );
+              await syncSiliconPersonSummaryForSession(ctx, session);
+
+              for (const { item, decision } of decisions) {
+                if (decision === "canceled") {
+                  const abortError = new Error("User requested cancellation");
+                  abortError.name = "AbortError";
+                  throw abortError;
+                }
+                approvedTools.push({ toolCall: item.toolCall, denied: decision === "deny" });
+              }
+            };
 
             for (const toolCall of result.toolCalls) {
-              const toolCallId = toolCall.id;
               const toolId = functionNameToToolId(toolCall.name);
               const label = buildToolLabel(toolCall.name, toolCall.input);
               const risk = getToolRisk(toolId, toolCall.name);
@@ -2320,6 +2742,10 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                     arguments: toolCall.input,
                   } : {}),
                 };
+                if (isReadOnlyTool(toolId)) {
+                  queuedReadOnlyApprovals.push({ toolCall, approvalId, approvalRequest });
+                  continue;
+                }
 
                 syncChatRunState(session, sessionId, activeRun, {
                   runId,
@@ -2371,6 +2797,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 }
               }
 
+              await requestToolApprovalBatch(queuedReadOnlyApprovals.splice(0, queuedReadOnlyApprovals.length));
               approvedTools.push({ toolCall, denied: false });
             }
 
@@ -2671,14 +3098,25 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             });
           } else {
             // 没有工具调用，说明这就是最终回复
-            session.messages.push({
-              id: currentMessageId,
-              role: "assistant",
-              content: result.content,
-              ...(result.reasoning ? { reasoning: result.reasoning } : {}),
-              ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
-              createdAt: new Date().toISOString(),
-            });
+            const isBackgroundHandoff = result.finishReason === "background" && !!result.backgroundTask;
+            if (isBackgroundHandoff) {
+              syncSessionBackgroundTaskSnapshot(ctx.runtime.paths, session, result.outcome);
+              console.info("[session:runtime] 已切换到后台任务执行", {
+                sessionId,
+                outcomeId: result.outcome.id,
+                responseId: result.backgroundTask?.providerResponseId ?? null,
+                status: result.backgroundTask?.status ?? null,
+              });
+            } else {
+              session.messages.push({
+                id: currentMessageId,
+                role: "assistant",
+                content: result.content,
+                ...(result.reasoning ? { reasoning: result.reasoning } : {}),
+                ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
+                createdAt: new Date().toISOString(),
+              });
+            }
 
             // 根据首次对话自动生成会话标题
             if (session.title === "New Chat" && session.messages.length >= 2) {
@@ -2730,30 +3168,6 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             break;
           }
         }
-
-        // 命中安全上限（极少发生，默认 200 轮）
-        if (round >= SAFETY_CEILING && !completedNormally) {
-          console.warn(`[session:agentic] Hit safety ceiling of ${SAFETY_CEILING} rounds`);
-          session.messages.push({
-            id: randomUUID(),
-            role: "assistant",
-            content: `[已执行 ${SAFETY_CEILING} 轮工具调用，达到安全上限，自动停止]`,
-            createdAt: new Date().toISOString(),
-          });
-          markPlanTaskBlocked(
-            session,
-            activePlanTaskId,
-            `Hit safety ceiling after ${SAFETY_CEILING} rounds`,
-            new Date().toISOString(),
-          );
-          if (session.planModeState?.mode === "executing") {
-            session.planModeState = {
-              ...session.planModeState,
-              mode: "blocked",
-              blockedReason: `Hit safety ceiling after ${SAFETY_CEILING} rounds`,
-            };
-          }
-        }
       } catch (err) {
         const now = new Date().toISOString();
         if (isAbortError(err)) {
@@ -2775,18 +3189,30 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           const errorText = err instanceof Error ? err.message : String(err);
         const errorContent = `[模型调用失败] ${errorText}`;
 
+        // 保存已流式传输的部分内容，避免用户已看到的文本在重启后丢失
+        persistPartialAssistantDraft(session, currentMessageId, streamedDrafts, now);
+
+        // 检查部分内容是否已落盘：如果有，则将错误信息追加到已有内容后面；
+        // 否则作为独立 assistant 消息写入。
+        const existingDraft = session.messages.find((m) => m.id === currentMessageId);
+        if (existingDraft && existingDraft.role === "assistant") {
+          existingDraft.content = typeof existingDraft.content === "string"
+            ? `${existingDraft.content}\n\n${errorContent}`
+            : errorContent;
+        } else {
+          session.messages.push({
+            id: currentMessageId,
+            role: "assistant",
+            content: errorContent,
+            createdAt: now,
+          });
+        }
+
         broadcastToRenderers("session:stream", {
           type: EventType.MessageDelta,
           sessionId,
           messageId: currentMessageId,
           delta: { content: errorContent },
-        });
-
-        session.messages.push({
-          id: currentMessageId,
-          role: "assistant",
-          content: errorContent,
-          createdAt: now,
         });
         markPlanTaskBlocked(session, activePlanTaskId, errorText, now);
         if (session.planModeState?.mode === "executing") {
@@ -2835,6 +3261,85 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
   ipcMain.handle("session:send-message", handleSessionSendMessage);
 
+  ipcMain.handle(
+    "session:poll-background-task",
+    async (_event, sessionId: string): Promise<{
+      outcomeId: string;
+      task: TurnOutcome["backgroundTask"];
+      status: string;
+      outputText: string;
+      session: ChatSession;
+    }> => {
+      const { session, profile, outcome } = resolveSessionBackgroundTaskContext(ctx, sessionId);
+      const snapshot = await backgroundTaskManager.retrieve({
+        profile,
+        task: outcome.backgroundTask!,
+      });
+
+      const updatedOutcome = await persistSessionBackgroundTaskSnapshot(ctx, session, outcome, snapshot);
+      await saveSessionWithPlanWorkflowSync(ctx, session);
+      broadcastToRenderers("session:stream", {
+        type: EventType.SessionUpdated,
+        sessionId,
+        session,
+      });
+      console.info("[session:runtime] 已刷新后台任务状态", {
+        sessionId,
+        outcomeId: updatedOutcome.id,
+        responseId: snapshot.task?.providerResponseId ?? outcome.backgroundTask?.providerResponseId ?? null,
+        status: snapshot.status,
+        terminal: isTerminalBackgroundTaskStatus(snapshot.status),
+      });
+
+      return {
+        outcomeId: outcome.id,
+        task: updatedOutcome.backgroundTask,
+        status: snapshot.status,
+        outputText: snapshot.outputText,
+        session,
+      };
+    },
+  );
+
+  ipcMain.handle(
+    "session:cancel-background-task",
+    async (_event, sessionId: string): Promise<{
+      outcomeId: string;
+      task: TurnOutcome["backgroundTask"];
+      status: string;
+      outputText: string;
+      session: ChatSession;
+    }> => {
+      const { session, profile, outcome } = resolveSessionBackgroundTaskContext(ctx, sessionId);
+      const snapshot = await backgroundTaskManager.cancel({
+        profile,
+        task: outcome.backgroundTask!,
+      });
+
+      const updatedOutcome = await persistSessionBackgroundTaskSnapshot(ctx, session, outcome, snapshot);
+      await saveSessionWithPlanWorkflowSync(ctx, session);
+      broadcastToRenderers("session:stream", {
+        type: EventType.SessionUpdated,
+        sessionId,
+        session,
+      });
+      console.info("[session:runtime] 已取消后台任务", {
+        sessionId,
+        outcomeId: outcome.id,
+        responseId: snapshot.task?.providerResponseId ?? outcome.backgroundTask?.providerResponseId ?? null,
+        status: snapshot.status,
+      });
+
+      return {
+        outcomeId: updatedOutcome.id,
+        task: updatedOutcome.backgroundTask,
+        status: snapshot.status,
+        outputText: snapshot.outputText,
+        session,
+      };
+    },
+  );
+
   // 获取某个会话当前待处理的 execution intents
   ipcMain.handle(
     "session:cancel-run",
@@ -2850,6 +3355,21 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
       const activeRun = getActiveSessionRuns(ctx).get(sessionId);
       if (!activeRun) {
+        // 无活跃进程但 session 仍显示运行态（异常退出后的残留），强制重置
+        if (session.chatRunState
+          && (session.chatRunState.status === "running" || session.chatRunState.status === "canceling")) {
+          session.chatRunState = {
+            ...session.chatRunState,
+            status: "failed",
+            lastReason: "stale_run_cleanup",
+          };
+          await saveSession(ctx.runtime.paths, session);
+          broadcastToRenderers("session:stream", {
+            type: EventType.SessionUpdated,
+            sessionId,
+            session,
+          });
+        }
         return { success: false, state: "idle" };
       }
       if (input?.runId && input.runId !== activeRun.runId) {
@@ -3070,6 +3590,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         throw new Error(`Session not found: ${sessionId}`);
       }
       const session = ctx.state.sessions[index]!;
+      const activeRun = getActiveSessionRuns(ctx).get(sessionId);
       const merged = {
         ...(session.runtimeIntent ?? {}),
         ...intent,
@@ -3078,12 +3599,23 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         planModeEnabled?: boolean;
       };
       const disablePlanMode = merged.workflowMode === "default" && merged.planModeEnabled === false;
-      const updated = disablePlanMode
-        ? { ...session, runtimeIntent: merged, planModeState: null, planState: null }
-        : { ...session, runtimeIntent: merged };
-      ctx.state.sessions[index] = updated;
-      await saveSession(ctx.runtime.paths, updated);
-      return { session: updated };
+      session.runtimeIntent = merged;
+
+      if (activeRun) {
+        console.info("[session:update-runtime-intent] 运行中更新 runtimeIntent，新配置将在下次发送生效", {
+          sessionId,
+          runId: activeRun.runId,
+          intent,
+        });
+      }
+
+      if (disablePlanMode && !activeRun) {
+        session.planModeState = null;
+        session.planState = null;
+      }
+
+      await saveSession(ctx.runtime.paths, session);
+      return { session };
     },
   );
 }

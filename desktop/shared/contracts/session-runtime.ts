@@ -3,6 +3,8 @@ import type {
   JsonValue,
   ProtocolTarget,
   ProviderFamily,
+  ThinkingControlKind,
+  ToolChoiceConstraint,
   VendorFamily,
 } from "./model";
 
@@ -16,6 +18,7 @@ export type SessionRuntimeAdapterId =
   | "anthropic-native"
   | "qwen"
   | "kimi"
+  | "deepseek"
   | "volcengine-ark"
   | "minimax"
   | "br-minimax";
@@ -28,6 +31,7 @@ export const SESSION_RUNTIME_ADAPTER_VALUES = [
   "anthropic-native",
   "qwen",
   "kimi",
+  "deepseek",
   "volcengine-ark",
   "minimax",
   "br-minimax",
@@ -125,6 +129,46 @@ export type TurnFallbackCandidate = {
   reason: string;
 };
 
+export type CapabilityKind =
+  | "search"
+  | "page-read"
+  | "computer"
+  | "knowledge-retrieval"
+  | "research-task"
+  | "citation";
+
+export type CapabilityRouteType =
+  | "vendor-native"
+  | "managed-local"
+  | "disabled";
+
+export type ToolStackSource =
+  | "vendor-native"
+  | "managed-local"
+  | "hybrid"
+  | "none";
+
+export type CapabilityDescriptor = {
+  id: CapabilityKind;
+  purpose: string;
+  riskLevel: "low" | "medium" | "high";
+  supportsBackground?: boolean;
+  supportsCitations?: boolean;
+  requiresApproval?: boolean;
+};
+
+export type CapabilityExecutionRoute = {
+  capabilityId: CapabilityKind;
+  routeType: CapabilityRouteType;
+  providerFamily: ProviderFamily;
+  protocolTarget: ProtocolTarget;
+  nativeToolName?: string | null;
+  nativeToolStackId?: string | null;
+  toolStackSource?: ToolStackSource;
+  fallbackToolChain?: string[];
+  reason?: string | null;
+};
+
 export type TurnExecutionPlan = {
   runtimeVersion: number;
   legacyExecutionPlan: ExecutionPlan;
@@ -149,6 +193,12 @@ export type TurnExecutionPlan = {
   cacheMode: TurnCacheMode;
   multimodalMode: TurnMultimodalMode;
   toolCompileTarget: ProviderFamily;
+  reasoningEnabled?: boolean;
+  reasoningEffort?: SessionReasoningEffort;
+  thinkingControlKind?: ThinkingControlKind;
+  toolChoiceConstraint?: ToolChoiceConstraint;
+  nativeToolStackId?: string | null;
+  capabilityRoutes?: CapabilityExecutionRoute[];
   fallbackCandidates: TurnFallbackCandidate[];
   telemetryTags: Record<string, string>;
 };
@@ -230,6 +280,78 @@ export type CanonicalApprovalEvent = {
   createdAt?: string;
 };
 
+export type CapabilityEventType =
+  | "web_search_call"
+  | "computer_call"
+  | "file_search_call"
+  | "background_response_started"
+  | "tool_fallback"
+  | (string & {});
+
+export type CapabilityEvent = {
+  type: CapabilityEventType;
+  capabilityId: CapabilityKind;
+  sessionId?: string | null;
+  toolCallId?: string | null;
+  createdAt: string;
+  vendor?: VendorFamily;
+  payload?: Record<string, JsonValue | null>;
+};
+
+export type CitationSourceType =
+  | "vendor-web-search"
+  | "local-web-search"
+  | "http-fetch"
+  | "browser-page"
+  | "file-search";
+
+export type CitationRecord = {
+  id: string;
+  url?: string | null;
+  title?: string | null;
+  domain?: string | null;
+  snippet?: string | null;
+  startIndex?: number | null;
+  endIndex?: number | null;
+  publishedAt?: string | null;
+  fileId?: string | null;
+  filename?: string | null;
+  sourceType: CitationSourceType;
+  traceRef?: string | null;
+};
+
+export type BackgroundTaskStatus =
+  | "queued"
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "expired"
+  | (string & {});
+
+export type BackgroundTaskHandle = {
+  id: string;
+  providerFamily: ProviderFamily;
+  protocolTarget: ProtocolTarget;
+  providerResponseId: string;
+  status: BackgroundTaskStatus;
+  pollAfterMs?: number | null;
+  startedAt: string;
+  updatedAt: string;
+};
+
+export type ComputerAction = {
+  type: string;
+  [key: string]: JsonValue | undefined;
+};
+
+export type ComputerCall = {
+  id: string;
+  callId?: string | null;
+  status?: string | null;
+  actions: ComputerAction[];
+};
+
 export type CanonicalTurnContent = {
   systemSections: PromptSection[];
   userSections: PromptSection[];
@@ -282,6 +404,11 @@ export type TurnTelemetryEvent = {
   latencyMs: number;
   toolCompileMode: string;
   replayMode: string;
+  reasoningEnabled?: boolean;
+  thinkingControlKind?: ThinkingControlKind;
+  toolChoiceConstraint?: ToolChoiceConstraint;
+  nativeToolStackId?: string | null;
+  toolStackSource?: ToolStackSource;
   actualExecutionPath?: TurnActualExecutionPath;
   fallbackEvents: TurnFallbackEvent[];
   createdAt: string;
@@ -306,6 +433,11 @@ export type TurnOutcome = {
   retryCount: number;
   toolCompileMode: string;
   replayMode: string;
+  reasoningEnabled?: boolean;
+  thinkingControlKind?: ThinkingControlKind;
+  toolChoiceConstraint?: ToolChoiceConstraint;
+  nativeToolStackId?: string | null;
+  toolStackSource?: ToolStackSource;
   startedAt: string;
   finishedAt: string;
   success: boolean;
@@ -318,6 +450,10 @@ export type TurnOutcome = {
   toolCallCount?: number;
   toolSuccessCount?: number;
   contextStability?: boolean;
+  citations?: CitationRecord[];
+  capabilityEvents?: CapabilityEvent[];
+  computerCalls?: ComputerCall[];
+  backgroundTask?: BackgroundTaskHandle | null;
   telemetry?: TurnTelemetryEvent;
   telemetryTags?: TurnTelemetryTags;
 };
@@ -340,6 +476,9 @@ export type VendorProtocolScorecard = {
   fallbackRate: number;
   p95Latency: number;
   contextStabilityRate: number;
+  vendorNativeToolRate?: number;
+  activeNativeToolStackIds?: string[];
+  thinkingControlKinds?: ThinkingControlKind[];
   sampleSize: number;
 };
 

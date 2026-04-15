@@ -4,13 +4,17 @@
  * 在启动时从磁盘同步加载所有已持久化状态，
  * 并在状态变更后异步保存单个对象。
  *
- * 目录布局：
+ * 会话数据使用 SQLite（sql.js, 纯 WASM）统一存储：
+ *   <myClawDir>/sessions.db        — 所有会话 + 消息（主聊天 & 硅基员工）
+ *
+ * 其余数据仍使用 JSON 文件：
  *   <myClawDir>/models/<id>.json
- *   <myClawDir>/sessions/<id>/session.json
- *   <myClawDir>/sessions/<id>/messages.json
- *   <myClawDir>/silicon-persons/<id>/person.json  (legacy: <id>.json)
+ *   <myClawDir>/silicon-persons/<id>/person.json
  *   <myClawDir>/workflows/<id>.json
  *   <myClawDir>/settings.json
+ *
+ * 旧 JSON 会话目录（sessions/、silicon-persons/<id>/sessions/）在首次启动时
+ * 自动迁移至 sessions.db，迁移完成后保留原文件供回滚。
  */
 
 import {
@@ -18,10 +22,9 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  rmSync,
   statSync,
-  writeFileSync,
 } from "node:fs";
+// rmSync / writeFileSync 已不再需要，会话数据通过 SessionDatabase 管理
 import { writeFile, mkdir, rm, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -39,6 +42,8 @@ import type {
 import { createDefaultApprovalPolicy, createDefaultPersonalPromptProfile } from "@shared/contracts";
 
 import type { MyClawPaths } from "./directory-service";
+import { normalizeFirstClassVendorRoute } from "./managed-model-profile";
+import { SessionDatabase } from "./session-database";
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -63,6 +68,42 @@ export type PersistedState = {
 };
 
 type PersistedSessionMetadata = Omit<ChatSession, "messages">;
+
+// ---------------------------------------------------------------------------
+// SessionDatabase 单例
+// ---------------------------------------------------------------------------
+
+let _sessionDb: SessionDatabase | null = null;
+
+/** 获取已初始化的 SessionDatabase 单例。loadPersistedState 内部创建。 */
+export function getSessionDatabase(): SessionDatabase {
+  if (!_sessionDb) {
+    throw new Error("[state-persistence] SessionDatabase 尚未初始化，请确保 loadPersistedState 已被调用");
+  }
+  return _sessionDb;
+}
+
+/** 关闭并重置 SessionDatabase 单例（测试清理用）。 */
+export function resetSessionDatabase(): void {
+  if (_sessionDb) {
+    _sessionDb.close();
+    _sessionDb = null;
+  }
+}
+
+/**
+ * 确保 SessionDatabase 单例可用。
+ * 正常启动后直接返回 loadPersistedState 创建的实例；
+ * 测试等场景下通过 async create 延迟初始化 sql.js 引擎。
+ */
+async function ensureSessionDatabase(paths: MyClawPaths): Promise<SessionDatabase> {
+  if (!_sessionDb) {
+    const dbFile = (paths as Record<string, string>).sessionsDbFile
+      || join(paths.myClawDir, "sessions.db");
+    _sessionDb = await SessionDatabase.create(dbFile);
+  }
+  return _sessionDb;
+}
 
 // ---------------------------------------------------------------------------
 // 辅助方法
@@ -139,26 +180,13 @@ function hydrateSession(
   return hydratedSession;
 }
 
-function dehydrateSession(session: ChatSession): PersistedSessionMetadata {
-  const { messages: _messages, ...meta }: { messages: ChatSession["messages"] } & PersistedSessionMetadata = session;
-
-  if (hasOwnPlanModeState(session)) {
-    meta.planModeState = session.planModeState;
-  }
-  if (hasOwnPlanState(session)) {
-    meta.planState = session.planState;
-  }
-  if (hasOwnTasks(session)) {
-    meta.tasks = session.tasks;
-  }
-  return meta;
-}
+// dehydrateSession 已移除：会话数据通过 SessionDatabase 统一序列化
 
 // ---------------------------------------------------------------------------
 // 从磁盘加载全部状态（同步执行，仅在启动时调用一次）
 // ---------------------------------------------------------------------------
 
-export function loadPersistedState(paths: MyClawPaths): PersistedState {
+export async function loadPersistedState(paths: MyClawPaths): Promise<PersistedState> {
   // ---- settings.json -----------------------------------------------------
   let defaultModelProfileId: string | null = null;
   let approvalPolicy: ApprovalPolicy = createDefaultApprovalPolicy();
@@ -183,28 +211,15 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       if (!file.endsWith(".json")) continue;
       const data = tryReadJson<ModelProfile>(join(paths.modelsDir, file));
       if (data && data.id) {
-        models.push(data);
+        const normalized = normalizeFirstClassVendorRoute(data);
+        models.push(normalized);
+        if (JSON.stringify(normalized) !== JSON.stringify(data)) {
+          await atomicWriteFile(join(paths.modelsDir, file), JSON.stringify(normalized, null, 2));
+        }
       }
     }
   } catch {
     // modelsDir 不可读时从空数据启动
-  }
-
-  // ---- sessions ----------------------------------------------------------
-  const sessions: ChatSession[] = [];
-  ensureDir(paths.sessionsDir);
-  try {
-    for (const sessionId of readdirSync(paths.sessionsDir)) {
-      const sessionDir = join(paths.sessionsDir, sessionId);
-      const metaFile = join(sessionDir, "session.json");
-      const messagesFile = join(sessionDir, "messages.json");
-      const meta = tryReadJson<PersistedSessionMetadata>(metaFile);
-      if (!meta || !meta.id) continue;
-      const messages = tryReadJson<ChatSession["messages"]>(messagesFile) ?? [];
-      sessions.push(hydrateSession(meta, messages));
-    }
-  } catch {
-    // sessionsDir 不可读时从空数据启动
   }
 
   // ---- silicon persons ---------------------------------------------------
@@ -216,24 +231,9 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
       const entryPath = join(personDir, entry);
       try {
         if (statSync(entryPath).isDirectory()) {
-          // 新格式：<id>/person.json
           const data = tryReadJson<SiliconPerson>(join(entryPath, "person.json"));
           if (data && data.id) {
             siliconPersons.push(data);
-
-            // 加载该员工独立目录下的 sessions
-            const personSessionsDir = join(entryPath, "sessions");
-            if (existsSync(personSessionsDir)) {
-              try {
-                for (const sid of readdirSync(personSessionsDir)) {
-                  const sDir = join(personSessionsDir, sid);
-                  const sMeta = tryReadJson<PersistedSessionMetadata>(join(sDir, "session.json"));
-                  if (!sMeta || !sMeta.id) continue;
-                  const sMsgs = tryReadJson<ChatSession["messages"]>(join(sDir, "messages.json")) ?? [];
-                  sessions.push(hydrateSession(sMeta, sMsgs));
-                }
-              } catch { /* 不可读时跳过 */ }
-            }
           }
         } else if (entry.endsWith(".json")) {
           // 旧格式兼容：<id>.json
@@ -248,6 +248,32 @@ export function loadPersistedState(paths: MyClawPaths): PersistedState {
     }
   } catch {
     // 不可读时从空数据启动
+  }
+
+  // ---- sessions (SQLite) ------------------------------------------------
+  // 关闭此前可能由上一次 loadPersistedState 打开的连接
+  if (_sessionDb) {
+    _sessionDb.close();
+    _sessionDb = null;
+  }
+
+  const sessionDb = await SessionDatabase.create(paths.sessionsDbFile);
+  _sessionDb = sessionDb;
+
+  let sessions: ChatSession[];
+
+  if (sessionDb.getSessionCount() === 0) {
+    // DB 为空 — 尝试从旧 JSON 文件迁移
+    const jsonSessions = loadLegacyJsonSessions(paths, siliconPersons);
+    if (jsonSessions.length > 0) {
+      sessionDb.migrateFromJson(jsonSessions);
+      console.info("[state-persistence] 已将 JSON 会话迁移至 sessions.db", {
+        count: jsonSessions.length,
+      });
+    }
+    sessions = sessionDb.loadAllSessions();
+  } else {
+    sessions = sessionDb.loadAllSessions();
   }
 
   // ---- workflows ---------------------------------------------------------
@@ -319,7 +345,8 @@ export async function saveModelProfile(
 ): Promise<void> {
   ensureDir(paths.modelsDir);
   const filePath = join(paths.modelsDir, `${profile.id}.json`);
-  await atomicWriteFile(filePath, JSON.stringify(profile, null, 2));
+  const normalizedProfile = normalizeFirstClassVendorRoute(profile);
+  await atomicWriteFile(filePath, JSON.stringify(normalizedProfile, null, 2));
 }
 
 export async function deleteModelProfileFile(
@@ -332,49 +359,84 @@ export async function deleteModelProfileFile(
   }
 }
 
-/**
- * 解析 session 的实际存储目录。
- *
- * 硅基员工的 session 存储在 `silicon-persons/<personId>/sessions/`，
- * 主助手的 session 存储在全局 `sessions/`。
- */
-function resolveSessionsDir(paths: MyClawPaths, session: { siliconPersonId?: string | null }): string {
-  if (session.siliconPersonId) {
-    return join(siliconPersonsDir(paths), session.siliconPersonId, "sessions");
+// ---------------------------------------------------------------------------
+// 旧 JSON 会话加载（仅供迁移使用）
+// ---------------------------------------------------------------------------
+
+/** 从旧目录结构加载所有 JSON 会话（主聊天 + 硅基员工），用于首次迁移到 SQLite。 */
+function loadLegacyJsonSessions(
+  paths: MyClawPaths,
+  siliconPersons: SiliconPerson[],
+): ChatSession[] {
+  const sessions: ChatSession[] = [];
+
+  // 主聊天 sessions
+  ensureDir(paths.sessionsDir);
+  try {
+    for (const sessionId of readdirSync(paths.sessionsDir)) {
+      const sessionDir = join(paths.sessionsDir, sessionId);
+      const meta = tryReadJson<PersistedSessionMetadata>(join(sessionDir, "session.json"));
+      if (!meta || !meta.id) continue;
+      const messages = tryReadJson<ChatSession["messages"]>(join(sessionDir, "messages.json")) ?? [];
+      sessions.push(hydrateSession(meta, messages));
+    }
+  } catch {
+    // 不可读时跳过
   }
-  return paths.sessionsDir;
+
+  // 硅基员工 sessions
+  const personBaseDir = siliconPersonsDir(paths);
+  for (const person of siliconPersons) {
+    const personSessionsDir = join(personBaseDir, person.id, "sessions");
+    if (!existsSync(personSessionsDir)) continue;
+    try {
+      for (const sid of readdirSync(personSessionsDir)) {
+        const sDir = join(personSessionsDir, sid);
+        const sMeta = tryReadJson<PersistedSessionMetadata>(join(sDir, "session.json"));
+        if (!sMeta || !sMeta.id) continue;
+        // 校验会话归属
+        if (sMeta.siliconPersonId && sMeta.siliconPersonId !== person.id) {
+          console.warn("[state-persistence] 迁移时跳过归属不一致的硅基员工会话", {
+            sessionId: sMeta.id,
+            expected: person.id,
+            actual: sMeta.siliconPersonId,
+          });
+          continue;
+        }
+        const sMsgs = tryReadJson<ChatSession["messages"]>(join(sDir, "messages.json")) ?? [];
+        const session = hydrateSession(sMeta, sMsgs);
+        if (!session.siliconPersonId) {
+          session.siliconPersonId = person.id;
+        }
+        sessions.push(session);
+      }
+    } catch {
+      // 不可读时跳过
+    }
+  }
+
+  return sessions;
 }
 
+// ---------------------------------------------------------------------------
+// 会话持久化（SQLite）
+// ---------------------------------------------------------------------------
+
+/** 保存会话到 SQLite 数据库（元数据 + 消息，事务原子写入）。 */
 export async function saveSession(
   paths: MyClawPaths,
   session: ChatSession,
 ): Promise<void> {
-  const sessionsDir = resolveSessionsDir(paths, session);
-  const sessionDir = join(sessionsDir, session.id);
-  await mkdir(sessionDir, { recursive: true });
-
-  // 拆分保存：metadata（不含 messages）与 messages 分别落盘
-  // 两者都使用原子写入（临时文件 + rename）避免数据损坏
-  // 先写 messages 再写 session：session.json 存在即表示该次保存已完成，
-  // 若中间崩溃只有 messages 写入则 session.json 仍为上一版本，加载时不会出错。
-  const { messages } = session;
-  const meta = dehydrateSession(session);
-  await atomicWriteFile(join(sessionDir, "messages.json"), JSON.stringify(messages, null, 2));
-  await atomicWriteFile(join(sessionDir, "session.json"), JSON.stringify(meta, null, 2));
+  (await ensureSessionDatabase(paths)).saveSession(session);
 }
 
+/** 从 SQLite 数据库中删除会话（CASCADE 自动清理消息和 FTS 索引）。 */
 export async function deleteSessionFiles(
   paths: MyClawPaths,
   id: string,
-  siliconPersonId?: string | null,
+  _siliconPersonId?: string | null,
 ): Promise<void> {
-  const sessionsDir = siliconPersonId
-    ? join(siliconPersonsDir(paths), siliconPersonId, "sessions")
-    : paths.sessionsDir;
-  const sessionDir = join(sessionsDir, id);
-  if (existsSync(sessionDir)) {
-    await rm(sessionDir, { recursive: true, force: true });
-  }
+  (await ensureSessionDatabase(paths)).deleteSession(id);
 }
 
 export async function saveSiliconPerson(
@@ -384,6 +446,16 @@ export async function saveSiliconPerson(
   const personDirPath = join(siliconPersonsDir(paths), siliconPerson.id);
   await mkdir(personDirPath, { recursive: true });
   await atomicWriteFile(join(personDirPath, "person.json"), JSON.stringify(siliconPerson, null, 2));
+}
+
+export async function deleteSiliconPersonFiles(
+  paths: MyClawPaths,
+  siliconPersonId: string,
+): Promise<void> {
+  const personDirPath = join(siliconPersonsDir(paths), siliconPersonId);
+  if (existsSync(personDirPath)) {
+    await rm(personDirPath, { recursive: true, force: true });
+  }
 }
 
 export async function saveWorkflow(

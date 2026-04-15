@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { ChatSession } from "@shared/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadPersistedState, saveSession } from "../src/main/services/state-persistence";
+import { loadPersistedState, resetSessionDatabase, saveSession } from "../src/main/services/state-persistence";
 
 let testRootDir: string;
 
@@ -17,17 +17,20 @@ function createPaths(rootDir: string) {
     myClawDir,
     skillsDir: join(myClawDir, "skills"),
     sessionsDir: join(myClawDir, "sessions"),
+    sessionsDbFile: join(myClawDir, "sessions.db"),
     modelsDir: join(myClawDir, "models"),
     settingsFile: join(myClawDir, "settings.json"),
   };
 }
 
 beforeEach(() => {
+  resetSessionDatabase();
   testRootDir = join(tmpdir(), `myclaw-plan-persistence-${randomUUID()}`);
   mkdirSync(testRootDir, { recursive: true });
 });
 
 afterEach(() => {
+  resetSessionDatabase();
   rmSync(testRootDir, { recursive: true, force: true });
 });
 
@@ -69,17 +72,11 @@ describe("Phase 3 plan persistence", () => {
 
     await saveSession(paths, session);
 
-    const rawMeta = JSON.parse(
-      readFileSync(join(paths.sessionsDir, session.id, "session.json"), "utf-8"),
-    ) as Omit<ChatSession, "messages">;
+    // 验证通过 DB 回读而非直接读取 JSON 文件
+    const reloaded = await loadPersistedState(paths);
 
-    expect(rawMeta).not.toHaveProperty("messages");
-    expect(rawMeta.planState).toEqual(session.planState);
-
-    const persisted = loadPersistedState(paths);
-
-    expect(persisted.sessions).toHaveLength(1);
-    expect(persisted.sessions[0]).toMatchObject({
+    expect(reloaded.sessions).toHaveLength(1);
+    expect(reloaded.sessions[0]).toMatchObject({
       id: session.id,
       planState: {
         updatedAt: "2026-04-06T00:00:02.000Z",
@@ -97,7 +94,7 @@ describe("Phase 3 plan persistence", () => {
         ],
       },
     });
-    expect(persisted.sessions[0].messages).toEqual(session.messages);
+    expect(reloaded.sessions[0].messages).toEqual(session.messages);
   });
 
   it("preserves omitted and null planState shapes across real save/load round-trips", async () => {
@@ -123,17 +120,7 @@ describe("Phase 3 plan persistence", () => {
     await saveSession(paths, sessionWithoutPlanState);
     await saveSession(paths, sessionWithNullPlanState);
 
-    const rawMetaWithoutPlanState = JSON.parse(
-      readFileSync(join(paths.sessionsDir, sessionWithoutPlanState.id, "session.json"), "utf-8"),
-    ) as Omit<ChatSession, "messages">;
-    const rawMetaWithNullPlanState = JSON.parse(
-      readFileSync(join(paths.sessionsDir, sessionWithNullPlanState.id, "session.json"), "utf-8"),
-    ) as Omit<ChatSession, "messages">;
-
-    expect(rawMetaWithoutPlanState).not.toHaveProperty("planState");
-    expect(rawMetaWithNullPlanState).toHaveProperty("planState", null);
-
-    const persisted = loadPersistedState(paths);
+    const persisted = await loadPersistedState(paths);
     const reloadedWithoutPlanState = persisted.sessions.find((session) => session.id === sessionWithoutPlanState.id);
     const reloadedWithNullPlanState = persisted.sessions.find((session) => session.id === sessionWithNullPlanState.id);
 
@@ -146,7 +133,7 @@ describe("Phase 3 plan persistence", () => {
     expect(reloadedWithNullPlanState?.messages).toEqual([]);
   });
 
-  it("keeps older persisted sessions loadable when planState is missing", () => {
+  it("keeps older persisted sessions loadable when planState is missing", async () => {
     const paths = createPaths(testRootDir);
     const sessionDir = join(paths.sessionsDir, "legacy-session");
 
@@ -164,7 +151,7 @@ describe("Phase 3 plan persistence", () => {
     );
     writeFileSync(join(sessionDir, "messages.json"), JSON.stringify([]), "utf-8");
 
-    const persisted = loadPersistedState(paths);
+    const persisted = await loadPersistedState(paths);
 
     expect(persisted.sessions).toHaveLength(1);
     expect(persisted.sessions[0]).toMatchObject({
@@ -238,18 +225,7 @@ describe("Phase 3 plan persistence", () => {
 
     await saveSession(paths, session);
 
-    const rawMeta = JSON.parse(
-      readFileSync(join(paths.sessionsDir, session.id, "session.json"), "utf-8"),
-    ) as Omit<ChatSession, "messages"> & Record<string, unknown>;
-
-    expect(rawMeta.planModeState).toMatchObject({
-      mode: "awaiting_approval",
-      approvalStatus: "pending",
-      planVersion: 3,
-      lastPlanMessageId: "assistant-plan-message",
-    });
-
-    const persisted = loadPersistedState(paths);
+    const persisted = await loadPersistedState(paths);
     expect(persisted.sessions).toHaveLength(1);
     expect((persisted.sessions[0] as ChatSession & Record<string, unknown>).planModeState).toMatchObject({
       mode: "awaiting_approval",

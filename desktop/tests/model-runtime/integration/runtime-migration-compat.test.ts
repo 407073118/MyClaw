@@ -18,7 +18,7 @@ describe("runtime migration compatibility", () => {
     mkdirSync(join(paths.myClawDir, "workflow-runs"), { recursive: true });
     writeFileSync(join(paths.myClawDir, "workflow-runs", "run-1.json"), JSON.stringify({ id: "run-1", workflowId: "wf-1", workflowVersion: 1, status: "running", currentNodeIds: [], startedAt: "2026-04-10T00:00:00.000Z", updatedAt: "2026-04-10T00:00:01.000Z" }));
 
-    const persisted = loadPersistedState(paths);
+    const persisted = await loadPersistedState(paths);
     expect(persisted.sessions[0]?.id).toBe("session-1");
     expect(persisted.workflowRuns[0]?.id).toBe("run-1");
   });
@@ -30,8 +30,53 @@ describe("runtime migration compatibility", () => {
     await saveSession(paths, session as any);
     await saveWorkflowRun(paths, { id: "run-2", workflowId: "wf-1", workflowVersion: 1, status: "running", currentNodeIds: [], startedAt: "2026-04-10T00:00:00.000Z", updatedAt: "2026-04-10T00:00:01.000Z", lastTurnOutcomeId: "turn-1" } as any);
 
-    const persisted = loadPersistedState(paths);
+    const persisted = await loadPersistedState(paths);
     expect((persisted.sessions[0] as any).turnExecutionPlan.providerFamily).toBe("openai-native");
     expect((persisted.workflowRuns[0] as any).lastTurnOutcomeId).toBe("turn-1");
+  });
+
+  it("auto-migrates persisted qwen and kimi model routes onto first-class defaults", async () => {
+    const root = mkdtempSync(join(tmpdir(), "myclaw-persist-"));
+    const paths = derivePaths(root);
+    mkdirSync(paths.modelsDir, { recursive: true });
+    writeFileSync(join(paths.modelsDir, "qwen.json"), JSON.stringify({
+      id: "qwen",
+      name: "Qwen",
+      provider: "openai-compatible",
+      providerFlavor: "qwen",
+      providerFamily: "qwen-dashscope",
+      baseUrl: "https://dashscope.aliyuncs.com",
+      apiKey: "qwen-key",
+      model: "qwen-max",
+      protocolTarget: "openai-chat-compatible",
+      savedProtocolPreferences: ["openai-chat-compatible", "openai-responses"],
+    }));
+    writeFileSync(join(paths.modelsDir, "kimi.json"), JSON.stringify({
+      id: "kimi",
+      name: "Kimi",
+      provider: "openai-compatible",
+      providerFlavor: "moonshot",
+      providerFamily: "moonshot-native",
+      baseUrl: "https://api.moonshot.cn",
+      apiKey: "kimi-key",
+      model: "kimi-k2-0905-preview",
+      protocolTarget: "openai-chat-compatible",
+      savedProtocolPreferences: ["openai-chat-compatible", "anthropic-messages"],
+    }));
+
+    const persisted = await loadPersistedState(paths);
+    const qwen = persisted.models.find((model) => model.id === "qwen");
+    const kimi = persisted.models.find((model) => model.id === "kimi");
+
+    expect(qwen).toMatchObject({
+      providerFamily: "qwen-native",
+      protocolTarget: "openai-responses",
+      savedProtocolPreferences: ["openai-responses"],
+    });
+    expect(kimi).toMatchObject({
+      providerFamily: "moonshot-native",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages"],
+    });
   });
 });

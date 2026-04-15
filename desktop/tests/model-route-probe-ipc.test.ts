@@ -137,8 +137,12 @@ describe("model route probe ipc", () => {
     ]);
   });
 
-  it("probes Kimi with anthropic-first vendor policy candidates", async () => {
-    const fetchMock = vi.fn(async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+  it("probes Kimi with anthropic first while preserving chat-compatible fallback routes", async () => {
+    const requestedUrls: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      requestedUrls.push(String(input));
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const { registerModelHandlers } = await import("../src/main/ipc/models");
@@ -181,18 +185,77 @@ describe("model route probe ipc", () => {
       "anthropic-messages",
       "openai-chat-compatible",
     ]);
+    expect(requestedUrls).toContain("https://api.moonshot.cn/v1/messages");
+    expect(requestedUrls).toContain("https://api.moonshot.cn/v1/chat/completions");
   });
 
-  it("probes Qwen across all first-tier supported protocol routes", async () => {
+  it("falls back to Kimi chat-compatible probing when the anthropic route is unavailable", async () => {
+    const requestedUrls: string[] = [];
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      requestedUrls.push(url);
+      if (url.endsWith("/v1/messages")) {
+        return new Response("not found", { status: 404 });
+      }
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { registerModelHandlers } = await import("../src/main/ipc/models");
+    registerModelHandlers({
+      state: {
+        models: [],
+        sessions: [],
+        getDefaultModelProfileId: () => null,
+        setDefaultModelProfileId: () => {},
+        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
+      },
+      runtime: {
+        paths: { myClawDir: "/tmp" },
+      },
+    } as any);
+
+    const handler = findHandler("model:probe-routes-by-config");
+    const result = await handler(null, {
+      provider: "openai-compatible",
+      providerFlavor: "moonshot",
+      baseUrl: "https://api.moonshot.cn",
+      baseUrlMode: "provider-root",
+      apiKey: "test-key",
+      model: "kimi-k2-0905-preview",
+      headers: {},
+      requestBody: {},
+    }) as {
+      recommendedProtocolTarget: string | null;
+      availableProtocolTargets: string[];
+      entries: Array<{ protocolTarget: string; ok: boolean }>;
+    };
+
+    expect(result.entries.map((entry) => entry.protocolTarget)).toEqual([
+      "anthropic-messages",
+      "openai-chat-compatible",
+    ]);
+    expect(result.recommendedProtocolTarget).toBe("openai-chat-compatible");
+    expect(result.availableProtocolTargets).toEqual([
+      "openai-chat-compatible",
+    ]);
+    expect(requestedUrls).toContain("https://api.moonshot.cn/v1/messages");
+    expect(requestedUrls).toContain("https://api.moonshot.cn/v1/chat/completions");
+  });
+
+  it("probes Qwen with responses first while preserving compatible fallback routes", async () => {
+    const requestedUrls: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
       if (url.endsWith("/v1/responses")) {
         return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
       }
-      if (url.endsWith("/v1/messages")) {
-        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      if (url.endsWith("/chat/completions")) {
+        return new Response("validation", { status: 422 });
       }
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      return new Response("not found", { status: 404 });
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -229,15 +292,76 @@ describe("model route probe ipc", () => {
 
     expect(result.entries.map((entry) => entry.protocolTarget)).toEqual([
       "openai-responses",
-      "anthropic-messages",
       "openai-chat-compatible",
+      "anthropic-messages",
     ]);
     expect(result.recommendedProtocolTarget).toBe("openai-responses");
     expect(result.availableProtocolTargets).toEqual([
       "openai-responses",
-      "anthropic-messages",
       "openai-chat-compatible",
     ]);
+    expect(requestedUrls).toContain("https://dashscope.aliyuncs.com/compatible-mode/v1/responses");
+    expect(requestedUrls).toContain("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
+  });
+
+  it("lets coding.dashscope fall back to chat-compatible when responses route is unavailable", async () => {
+    const requestedUrls: string[] = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      requestedUrls.push(url);
+      if (url.endsWith("/v1/responses")) {
+        return new Response("not found", { status: 404 });
+      }
+      if (url.endsWith("/v1/chat/completions")) {
+        return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { registerModelHandlers } = await import("../src/main/ipc/models");
+    registerModelHandlers({
+      state: {
+        models: [],
+        sessions: [],
+        getDefaultModelProfileId: () => null,
+        setDefaultModelProfileId: () => {},
+        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
+      },
+      runtime: {
+        paths: { myClawDir: "/tmp" },
+      },
+    } as any);
+
+    const handler = findHandler("model:probe-routes-by-config");
+    const result = await handler(null, {
+      provider: "openai-compatible",
+      providerFlavor: "qwen",
+      baseUrl: "https://coding.dashscope.aliyuncs.com",
+      baseUrlMode: "provider-root",
+      apiKey: "test-key",
+      model: "qwen3.5-plus",
+      headers: {},
+      requestBody: {},
+    }) as {
+      recommendedProtocolTarget: string | null;
+      availableProtocolTargets: string[];
+      entries: Array<{ protocolTarget: string; ok: boolean }>;
+    };
+
+    expect(result.entries.map((entry) => entry.protocolTarget)).toEqual([
+      "openai-responses",
+      "openai-chat-compatible",
+      "anthropic-messages",
+    ]);
+    expect(result.recommendedProtocolTarget).toBe("openai-chat-compatible");
+    expect(result.availableProtocolTargets).toEqual([
+      "openai-chat-compatible",
+    ]);
+    expect(requestedUrls).toContain("https://coding.dashscope.aliyuncs.com/v1/responses");
+    expect(requestedUrls).toContain("https://coding.dashscope.aliyuncs.com/v1/chat/completions");
+    expect(requestedUrls).toContain("https://coding.dashscope.aliyuncs.com/apps/anthropic/messages");
   });
 
   it("probes all project-supported routes for manual custom gateways", async () => {

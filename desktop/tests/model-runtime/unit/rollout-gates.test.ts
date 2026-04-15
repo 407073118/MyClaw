@@ -50,16 +50,19 @@ describe("rollout gates", () => {
     expect(listProviderFamilyRolloutGates().map((gate) => gate.providerFamily)).toEqual([
       "generic-openai-compatible",
       "qwen-dashscope",
+      "qwen-native",
       "openai-native",
       "anthropic-native",
+      "moonshot-native",
       "br-minimax",
       "volcengine-ark",
+      "deepseek",
     ]);
   });
 
   it("can toggle vendor protocol gates independently", () => {
     expect(resolveVendorProtocolRolloutGate("qwen", "openai-responses")).toMatchObject({
-      enabled: false,
+      enabled: true,
       state: "beta",
     });
     expect(resolveVendorProtocolRolloutGate("qwen", "anthropic-messages")).toMatchObject({
@@ -77,6 +80,16 @@ describe("rollout gates", () => {
     expect(resolveVendorProtocolRolloutGate("minimax", "anthropic-messages")).toMatchObject({
       enabled: false,
       state: "beta",
+    });
+  });
+
+  it("keeps Qwen responses available by default so canonical routing does not fall back to compatible", () => {
+    expect(resolveEffectiveExecutionRolloutGate({
+      providerFamily: "qwen-native",
+      vendorFamily: "qwen",
+      protocolTarget: "openai-responses",
+    })).toMatchObject({
+      enabled: true,
     });
   });
 

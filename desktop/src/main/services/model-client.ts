@@ -44,6 +44,11 @@ export type ChatMessage = {
   }>;
 };
 
+type AdapterExecutionPlan = Pick<ExecutionPlan, "adapterId" | "replayPolicy"> & {
+  reasoningEnabled?: boolean;
+  reasoningEffort?: string;
+};
+
 export type ModelCallOptions = {
   profile: ModelProfile;
   messages: ChatMessage[];
@@ -57,7 +62,7 @@ export type ModelCallOptions = {
   }>;
   onDelta?: (delta: { content?: string; reasoning?: string }) => void;
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void;
-  executionPlan?: Pick<ExecutionPlan, "adapterId" | "replayPolicy"> & { reasoningEffort?: string } | null;
+  executionPlan?: AdapterExecutionPlan | null;
   signal?: AbortSignal;
   timeoutMs?: number;
 };
@@ -103,6 +108,7 @@ type BuildRequestBodyVariantsInput = {
   messages: Array<Record<string, unknown>>;
   tools?: RequestTool[];
   adapterId?: ExecutionPlan["adapterId"];
+  reasoningEnabled?: boolean;
   reasoningEffort?: "low" | "medium" | "high" | "xhigh";
 };
 
@@ -141,6 +147,13 @@ function stripKnownEndpointSuffixes(baseUrl: string): string {
     }
   }
   return normalizeBaseUrl(url) || baseUrl;
+}
+
+/**
+ * 判断当前 Base URL 是否指向阿里云 Coding Plan 专属域名。
+ */
+function isCodingDashscopeBaseUrl(baseUrl: string): boolean {
+  return normalizeBaseUrl(baseUrl).toLowerCase().includes("coding.dashscope.aliyuncs.com");
 }
 
 type ProviderFlavor = "anthropic" | "qwen" | "qwen-coding" | "generic";
@@ -249,6 +262,18 @@ export function resolveProtocolEndpointUrl(
     return appendIfMissing(root, "/chat/completions");
   }
 
+  if (protocolTarget === "openai-responses") {
+    const root = resolveApiRoot(profile as ModelProfile);
+    return appendIfMissing(root, "/responses");
+  }
+
+  if (protocolTarget === "anthropic-messages" && isCodingDashscopeBaseUrl(cleaned)) {
+    const anthropicRoot = cleaned.toLowerCase().includes("/apps/anthropic")
+      ? cleaned
+      : `${cleaned}/apps/anthropic`;
+    return appendIfMissing(anthropicRoot, "/messages");
+  }
+
   const protocolRoot = profile.baseUrlMode === "provider-root"
     ? appendIfMissing(cleaned, "/v1")
     : cleaned;
@@ -256,7 +281,6 @@ export function resolveProtocolEndpointUrl(
   if (protocolTarget === "anthropic-messages") {
     return appendIfMissing(protocolRoot, "/messages");
   }
-
   return appendIfMissing(protocolRoot, "/responses");
 }
 
@@ -266,7 +290,7 @@ export function resolveProtocolEndpointUrl(
 
 /** 根据 provider 类型构造统一请求头，供聊天、探测与目录接口复用。 */
 export function buildRequestHeaders(
-  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "apiKey" | "model" | "headers">,
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "apiKey" | "model" | "headers" | "responsesApiConfig">,
   protocolTarget?: ProtocolTarget,
 ): Record<string, string> {
   return buildProtocolRequestHeaders(
@@ -279,7 +303,7 @@ export function buildRequestHeaders(
 
 /** 按协议目标构造请求头，允许兼容 Anthropic 路由时继续使用 Bearer 认证。 */
 export function buildProtocolRequestHeaders(
-  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "apiKey" | "model" | "headers">,
+  profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "apiKey" | "model" | "headers" | "responsesApiConfig">,
   protocolTarget: ProtocolTarget,
 ): Record<string, string> {
   const flavor = resolveProviderFlavor(profile as ModelProfile);
@@ -296,6 +320,13 @@ export function buildProtocolRequestHeaders(
     base["anthropic-version"] = "2023-06-01";
   } else {
     base["authorization"] = `Bearer ${profile.apiKey}`;
+  }
+  if (
+    protocolTarget === "openai-responses"
+    && (flavor === "qwen" || flavor === "qwen-coding")
+    && (profile.responsesApiConfig?.sessionCache === "enable" || profile.responsesApiConfig?.sessionCache === "disable")
+  ) {
+    base["x-dashscope-session-cache"] = profile.responsesApiConfig.sessionCache;
   }
 
   // 允许通过 profile 覆盖请求头（例如自定义认证方案）。
@@ -389,11 +420,19 @@ export function buildRequestBodyVariants(input: BuildRequestBodyVariantsInput): 
     tools: input.tools as ProviderAdapterTool[] | undefined,
   };
   const replayMessages = adapter.materializeReplayMessages(
-    { profile: input.profile, reasoningEffort: input.reasoningEffort },
+    {
+      profile: input.profile,
+      reasoningEnabled: input.reasoningEnabled,
+      reasoningEffort: input.reasoningEffort,
+    },
     adapterInput,
   );
   return adapter.prepareRequest(
-    { profile: input.profile, reasoningEffort: input.reasoningEffort },
+    {
+      profile: input.profile,
+      reasoningEnabled: input.reasoningEnabled,
+      reasoningEffort: input.reasoningEffort,
+    },
     { ...adapterInput, messages: replayMessages },
   ).map((variant) => variant.body);
 }
@@ -431,7 +470,8 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   };
   const adapterContext = {
     profile,
-    reasoningEffort: (executionPlan as { reasoningEffort?: "low" | "medium" | "high" } | null)?.reasoningEffort,
+    reasoningEnabled: (executionPlan as { reasoningEnabled?: boolean } | null)?.reasoningEnabled,
+    reasoningEffort: (executionPlan as { reasoningEffort?: "low" | "medium" | "high" | "xhigh" } | null)?.reasoningEffort,
   };
   const replayMessages = adapter.materializeReplayMessages(
     adapterContext,
@@ -446,7 +486,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   const maskedKey = profile.apiKey
     ? `${profile.apiKey.slice(0, 6)}...${profile.apiKey.slice(-4)} (len=${profile.apiKey.length})`
     : "(empty)";
-  console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model} | adapter=${adapter.id} | reasoningEffort=${adapterContext.reasoningEffort ?? "(none)"} | tools=${tools?.length ?? 0}`);
+  console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model} | adapter=${adapter.id} | reasoningEnabled=${adapterContext.reasoningEnabled ?? "(auto)"} | reasoningEffort=${adapterContext.reasoningEffort ?? "(none)"} | tools=${tools?.length ?? 0}`);
   const transportResult = await executeRequestVariants({
     url,
     headers,

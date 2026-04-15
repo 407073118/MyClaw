@@ -36,11 +36,27 @@ function buildTaskState(tasks?: Task[]): CanonicalTaskState | null {
     return null;
   }
 
+  const total = tasks.length;
+  const summary = tasks.map((task, idx) => {
+    let line = `[${idx + 1}/${total}] ${task.status}: ${task.subject}`;
+    // 显示阻塞状态，帮助模型感知依赖链
+    if (task.blockedBy && task.blockedBy.length > 0 && task.status !== "completed") {
+      const blockerIds = task.blockedBy;
+      const unfinished = blockerIds.filter(
+        (bid) => tasks.find((t) => t.id === bid)?.status !== "completed",
+      );
+      if (unfinished.length > 0) {
+        line += ` [blocked by: ${unfinished.join(", ")}]`;
+      }
+    }
+    return line;
+  }).join("\n");
+
   return {
-    taskCount: tasks.length,
+    taskCount: total,
     inProgressTaskId: tasks.find((task) => task.status === "in_progress")?.id ?? null,
     completedTaskIds: tasks.filter((task) => task.status === "completed").map((task) => task.id),
-    summary: tasks.map((task) => `${task.status}: ${task.subject}`).join("\n"),
+    summary,
   };
 }
 

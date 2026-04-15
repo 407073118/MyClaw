@@ -48,6 +48,7 @@ describe("phase1 provider adapter contracts", () => {
       "anthropic-native",
       "qwen",
       "kimi",
+      "deepseek",
       "volcengine-ark",
       "minimax",
       "br-minimax",
@@ -151,5 +152,56 @@ describe("phase1 provider adapter contracts", () => {
       baseUrl: "https://api.anthropic.com/v1",
       model: "claude-3-7-sonnet",
     }))).toBe("anthropic-native");
+  });
+
+  it("keeps Qwen on a dedicated adapter contract with vendor-native request fields and a compatibility fallback", () => {
+    const profile = makeProfile({
+      providerFlavor: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-max",
+      requestBody: {
+        enable_search: true,
+        enable_code_interpreter: true,
+      },
+    });
+    const adapter = getProviderAdapter(profile);
+    const context = { profile, reasoningEffort: "high" } as ProviderAdapterContext;
+    const variants = adapter.prepareRequest(context, {
+      messages: adapter.materializeReplayMessages(context, {
+        messages: [{ role: "user", content: "hello" }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "lookup_weather",
+            description: "Lookup weather",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+      }),
+      tools: [{
+        type: "function",
+        function: {
+          name: "lookup_weather",
+          description: "Lookup weather",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+    });
+
+    expect(adapter.id).toBe("qwen");
+    expect(variants[0]).toMatchObject({
+      id: "primary",
+      body: {
+        enable_thinking: true,
+        thinking_budget: 8192,
+        enable_search: true,
+        enable_code_interpreter: true,
+      },
+    });
+    expect(variants[0]?.body).not.toHaveProperty("tool_choice");
+    expect(variants[1]).toMatchObject({
+      id: "compatibility-fallback",
+      fallbackReason: "qwen_vendor_patch_unsupported",
+    });
   });
 });

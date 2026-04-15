@@ -5,6 +5,7 @@ import type { ProtocolTarget } from "@shared/contracts";
 import { readBrMiniMaxRuntimeDiagnostics } from "@shared/br-minimax";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
 import { formatCapabilitySource } from "../utils/context-ui-helpers";
+import { getModelVendorLabel } from "../utils/model-profile-display";
 
 type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
 
@@ -22,14 +23,7 @@ function createDefaultApprovalPolicy() {
 
 /** 根据完整 profile 推断供应商标签 */
 function getProviderLabel(profile: any): string {
-  if (profile.providerFlavor === "br-minimax") return "BR MiniMax";
-  const url = profile.baseUrl ?? "";
-  if (url.includes("anthropic")) return "Anthropic";
-  if (url.includes("openai")) return "OpenAI";
-  if (url.includes("azure")) return "Azure";
-  if (url.includes("deepseek")) return "DeepSeek";
-  if (url.includes("mistral")) return "Mistral";
-  return profile.provider ?? "Other";
+  return getModelVendorLabel(profile);
 }
 
 function formatProtocolTargetLabel(target?: ProtocolTarget | null): string | null {
@@ -225,7 +219,7 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          <div className="model-cards-container">
+          <div data-testid="model-cards-container" className="model-cards-container single-column">
             {(workspace.models ?? []).map((profile: any) => (
               <div key={profile.id} className={`model-card${workspace.defaultModelProfileId === profile.id ? " is-active" : ""}`}>
                 <div className="card-status-bar">
@@ -254,26 +248,32 @@ export default function SettingsPage() {
                 </div>
                 <div className="card-body">
                   <div className="model-info">
-                    <div className="model-name-row">
-                      <span className="provider-tag">{getProviderLabel(profile)}</span>
-                      {formatProtocolTargetLabel(profile.protocolTarget) && (
-                        <span className="route-tag">{formatProtocolTargetLabel(profile.protocolTarget)}</span>
-                      )}
-                      {formatProtocolSelectionSourceLabel(profile.protocolSelectionSource) && (
-                        <span className="route-source-tag">{formatProtocolSelectionSourceLabel(profile.protocolSelectionSource)}</span>
-                      )}
-                      <span className="route-source-tag capability-source-tag">
-                        {formatCapabilitySource(resolveModelCapability(profile).effective.source)}
-                      </span>
-                      <strong>{profile.name}</strong>
+                    <div className="model-name-block">
+                      <div data-testid="model-name-title" className="model-name-title-row">
+                        <strong>{profile.name}</strong>
+                      </div>
+                      <div data-testid="model-name-tags" className="model-name-tags-row">
+                        <span className="provider-tag">{getProviderLabel(profile)}</span>
+                        {formatProtocolTargetLabel(profile.protocolTarget) && (
+                          <span className="route-tag">{formatProtocolTargetLabel(profile.protocolTarget)}</span>
+                        )}
+                        {formatProtocolSelectionSourceLabel(profile.protocolSelectionSource) && (
+                          <span className="route-source-tag">{formatProtocolSelectionSourceLabel(profile.protocolSelectionSource)}</span>
+                        )}
+                        <span className="route-source-tag capability-source-tag">
+                          {formatCapabilitySource(resolveModelCapability(profile).effective.source)}
+                        </span>
+                      </div>
                     </div>
-                    <p className="model-id"><span>ID:</span> {profile.model}</p>
-                    <p className="model-url"><span>URL:</span> {profile.baseUrl}</p>
-                    {profile.providerFlavor === "br-minimax" && (
-                      <p className="model-url">
-                        <span>Thinking:</span> {readBrMiniMaxRuntimeDiagnostics(profile).thinkingPath}
-                      </p>
-                    )}
+                    <div className="model-metrics-grid">
+                      <p className="model-metric"><span>Model ID</span> <strong className="metric-value">{profile.model || "--"}</strong></p>
+                      <p className="model-metric"><span>Base URL</span> <strong className="metric-value">{profile.baseUrl || "--"}</strong></p>
+                      {profile.providerFlavor === "br-minimax" && (
+                        <p className="model-metric">
+                          <span>Thinking</span> <strong className="metric-value">{readBrMiniMaxRuntimeDiagnostics(profile).thinkingPath || "--"}</strong>
+                        </p>
+                      )}
+                    </div>
                   </div>
                   {modelConnectivityStatus[profile.id] && (
                     <div className="connectivity-info">
@@ -442,34 +442,44 @@ export default function SettingsPage() {
         .header-content h3 { font-size: 24px; margin: 0 0 8px; }
         .description { color: var(--text-muted); max-width: 600px; }
         .add-btn { display: flex; align-items: center; gap: 8px; padding: 12px 20px; }
-        .model-cards-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-bottom: 32px; padding: 0 32px; }
-        .model-card { background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-xl); display: flex; flex-direction: column; transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease; backdrop-filter: var(--blur-std); -webkit-backdrop-filter: var(--blur-std); }
-        .model-card:hover { border-color: var(--glass-border-hover); transform: translateY(-2px); box-shadow: var(--shadow-card-hover), var(--glass-inner-glow); }
-        .model-card.is-active { border-color: var(--status-green); background: linear-gradient(135deg, var(--bg-card), rgba(46,160,67,0.03)); }
-        .card-status-bar { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); }
-        .status-badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
-        .status-badge.active { color: var(--status-green); }
+        .model-cards-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 24px; margin: 0 auto 32px; padding: 0 32px; max-width: 1040px; }
+        .model-card { background: linear-gradient(145deg, var(--bg-card), rgba(0,0,0,0.3)); border: 1px solid var(--glass-border); border-radius: var(--radius-xl); display: flex; flex-direction: column; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); backdrop-filter: var(--blur-std); -webkit-backdrop-filter: var(--blur-std); overflow: hidden; position: relative; }
+        .model-card:hover { border-color: var(--glass-border-hover); transform: translateY(-4px); box-shadow: 0 12px 24px -10px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1); background: linear-gradient(145deg, var(--bg-card), rgba(0,0,0,0.1)); }
+        .model-card.is-active { border-color: var(--status-green); background: linear-gradient(145deg, rgba(46,160,67,0.06), rgba(46,160,67,0.01)); box-shadow: 0 0 0 1px rgba(46,160,67,0.3), inset 0 1px 0 rgba(255,255,255,0.05); }
+        .model-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent); opacity: 0; transition: opacity 0.3s; }
+        .model-card:hover::before { opacity: 1; }
+        .card-status-bar { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); flex-wrap: wrap; background: rgba(0,0,0,0.15); }
+        .status-badge { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+        .status-badge.active { color: #3fb950; text-shadow: 0 0 10px rgba(63,185,80,0.3); }
         .status-badge.inactive { color: var(--text-muted); }
-        .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--status-green); box-shadow: 0 0 8px var(--status-green); }
-        .card-actions-mini { display: flex; gap: 4px; }
-        .icon-btn { width: 32px; height: 32px; border-radius: 6px; border: 0; background: transparent; color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; }
-        .icon-btn:hover { background: var(--bg-base); color: var(--text-primary); }
-        .card-body { padding: 24px 20px; flex: 1; }
-        .model-info { display: flex; flex-direction: column; gap: 12px; }
-        .model-name-row { display: flex; align-items: center; gap: 10px; }
-        .provider-tag { font-size: 10px; font-weight: 700; padding: 2px 8px; background: var(--bg-base); border: 1px solid var(--glass-border); border-radius: 4px; color: var(--text-muted); text-transform: uppercase; }
-        .route-tag { font-size: 10px; font-weight: 700; padding: 2px 8px; background: rgba(16,163,127,0.12); border: 1px solid rgba(16,163,127,0.28); border-radius: 999px; color: #34d399; }
-        .route-source-tag { font-size: 10px; font-weight: 700; padding: 2px 8px; background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.28); border-radius: 999px; color: #fbbf24; }
-        .capability-source-tag { background: rgba(59,130,246,0.12); border-color: rgba(96,165,250,0.28); color: #93c5fd; }
-        .model-info strong { font-size: 16px; color: var(--text-primary); }
-        .model-info p { font-size: 13px; margin: 0; display: flex; gap: 8px; }
-        .model-info p span { color: var(--text-muted); width: 32px; font-weight: 500; }
-        .connectivity-info { margin-top: 16px; font-size: 12px; }
-        .status-text.ok { color: var(--status-green); }
-        .card-footer-actions { padding: 16px 20px; background: rgba(0,0,0,0.1); border-top: 1px solid var(--glass-border); }
-        .primary-ghost { background: transparent; border: 1px solid var(--glass-border); color: var(--text-primary); width: 100%; padding: 8px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
-        .primary-ghost:hover:not(.disabled) { background: var(--status-green); color: white; border-color: var(--status-green); }
-        .model-card.is-active .primary-ghost.disabled { color: var(--status-green); font-weight: 700; border-color: transparent; cursor: default; }
+        .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
+        .card-actions-mini { display: flex; gap: 6px; }
+        .icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; }
+        .icon-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); border-color: rgba(255,255,255,0.1); }
+        .card-body { padding: 24px 20px; flex: 1; display: flex; flex-direction: column; }
+        .model-info { display: flex; flex-direction: column; gap: 16px; }
+        .model-name-block { display: flex; flex-direction: column; gap: 12px; margin-bottom: 4px; }
+        .model-name-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .model-name-tags-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .provider-tag, .route-tag, .route-source-tag, .capability-source-tag { font-size: 10px; font-weight: 700; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1; border: 1px solid transparent; display: inline-block; }
+        .provider-tag { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.1); color: var(--text-secondary); }
+        .route-tag { background: rgba(16,163,127,0.1); border-color: rgba(16,163,127,0.2); color: #34d399; }
+        .route-source-tag { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2); color: #fbbf24; }
+        .capability-source-tag { background: rgba(59,130,246,0.1); border-color: rgba(96,165,250,0.2); color: #93c5fd; }
+        .model-info strong { font-size: 18px; line-height: 1.3; color: #e6edf3; font-weight: 600; letter-spacing: -0.01em; }
+        .model-metrics-grid { display: flex; flex-direction: column; gap: 8px; }
+        .model-info p.model-metric { font-size: 12px; margin: 0; display: flex; flex-direction: column; gap: 4px; color: #8b949e; background: rgba(0,0,0,0.2); padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); }
+        .model-info p.model-metric span { color: #7d8590; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; width: auto; }
+        .model-info p.model-metric strong.metric-value { font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #c9d1d9; word-break: break-all; }
+        .connectivity-info { margin-top: 16px; padding-top: 16px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 12px; display: flex; align-items: center; gap: 8px; }
+        .status-text { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-secondary); }
+        .status-text::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
+        .status-text.ok { color: #3fb950; }
+        .status-text.ok::before { background: #3fb950; box-shadow: 0 0 8px rgba(63,185,80,0.4); }
+        .card-footer-actions { padding: 16px 20px; background: rgba(0,0,0,0.2); border-top: 1px solid rgba(255,255,255,0.04); margin-top: auto; }
+        .primary-ghost { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); color: #c9d1d9; width: 100%; padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; letter-spacing: 0.02em; }
+        .primary-ghost:hover:not(.disabled) { background: rgba(63,185,80,0.1); color: #3fb950; border-color: rgba(63,185,80,0.3); box-shadow: 0 0 12px rgba(63,185,80,0.15); }
+        .model-card.is-active .primary-ghost.disabled { background: transparent; color: #3fb950; font-weight: 600; border-color: transparent; cursor: default; }
         .storage-section { margin: 0 32px 32px; }
         .storage-path-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
         .storage-path-item { display: flex; flex-direction: column; gap: 4px; }
@@ -493,6 +503,18 @@ export default function SettingsPage() {
         .approval-mode-hint .danger-hint { color: var(--status-red); font-weight: 500; }
         .approval-summary { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; padding: 16px; background: var(--bg-base); border-radius: var(--radius-md); border: 1px solid var(--glass-border); }
         .approval-summary p { font-size: 13px !important; color: var(--text-secondary) !important; }
+        @media (max-width: 900px) {
+          .section-header-row { flex-direction: column; gap: 16px; }
+          .model-cards-container { padding: 0 20px; }
+        }
+        @media (max-width: 640px) {
+          .page-container { padding: 20px; }
+          .section-header-row { padding: 24px 20px 0; }
+          .model-cards-container { padding: 0 20px; gap: 14px; }
+          .card-status-bar, .card-body, .card-footer-actions { padding-left: 16px; padding-right: 16px; }
+          .model-info p { flex-direction: column; gap: 4px; }
+          .model-info p span { width: auto; }
+        }
       `}</style>
     </main>
   );

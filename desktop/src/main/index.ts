@@ -1,6 +1,18 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { join } from "node:path";
 
+// ---------------------------------------------------------------------------
+// 防止 EPIPE 错误导致应用崩溃。
+// 开发模式下 stdout/stderr 管道可能被父进程关闭（如终端退出），
+// 此时 console.log/console.info 会抛 EPIPE，不应终止整个应用。
+// ---------------------------------------------------------------------------
+for (const stream of [process.stdout, process.stderr]) {
+  stream?.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") return;
+    throw err;
+  });
+}
+
 import type {
   ApprovalRequest,
   ChatSession,
@@ -13,6 +25,8 @@ import type {
 } from "@shared/contracts";
 
 import { createRuntimeContext } from "./services/runtime-context";
+import { ArtifactManager } from "./services/artifact-manager";
+import { ArtifactRegistry } from "./services/artifact-registry";
 import { listBuiltinToolDefinitions } from "./services/builtin-tool-stubs";
 import { initializeDirectories, redirectUserData } from "./services/directory-service";
 import { initLogger, createLogger } from "./services/logger";
@@ -26,7 +40,8 @@ import { trackSave, waitForPendingSaves, getPendingSavesCount } from "./services
 export { trackSave };
 
 import type { MyClawPaths } from "./services/directory-service";
-import { loadPersistedState } from "./services/state-persistence";
+import { getSessionDatabase, loadPersistedState } from "./services/state-persistence";
+import { syncSessionBackgroundTaskSnapshot } from "./services/session-background-task";
 import { registerAllIpcHandlers } from "./ipc";
 import { McpServerManager } from "./services/mcp-server-manager";
 import { shutdownToolExecutor } from "./ipc/sessions";
@@ -103,13 +118,39 @@ function createMainWindow(): BrowserWindow {
 // 运行时上下文启动（先用启动时加载出的状态初始化）
 // ---------------------------------------------------------------------------
 
-function buildRuntimeContext(
+async function buildRuntimeContext(
   paths: MyClawPaths,
   mcpManager: McpServerManager,
   appUpdater: ReturnType<typeof createAppUpdaterService>,
 ) {
   // 从磁盘加载所有已持久化状态
-  const persisted = loadPersistedState(paths);
+  const persisted = await loadPersistedState(paths);
+
+  // 清理上次异常退出时遗留的运行态（running/canceling → idle），
+  // 避免 UI 显示"正在响应"但实际无活跃进程的死锁状态。
+  for (const session of persisted.sessions) {
+    if (session.chatRunState
+      && (session.chatRunState.status === "running" || session.chatRunState.status === "canceling")) {
+      console.info("[startup] 清理遗留运行态", {
+        sessionId: session.id,
+        staleStatus: session.chatRunState.status,
+      });
+      session.chatRunState = {
+        ...session.chatRunState,
+        status: "failed",
+        lastReason: "process_exit_cleanup",
+      };
+    }
+
+    syncSessionBackgroundTaskSnapshot(paths, session);
+    if (session.backgroundTask) {
+      console.info("[startup] 已恢复会话后台任务快照", {
+        sessionId: session.id,
+        responseId: session.backgroundTask.providerResponseId,
+        status: session.backgroundTask.status,
+      });
+    }
+  }
 
   // 基于磁盘数据构建可变的内存镜像
   const sessions: ChatSession[] = persisted.sessions;
@@ -123,11 +164,16 @@ function buildRuntimeContext(
   let defaultModelProfileId: string | null = persisted.defaultModelProfileId;
   const approvalPolicy = persisted.approvalPolicy;
   let personalPromptProfile: PersonalPromptProfile = persisted.personalPrompt;
+  const artifactRegistry = new ArtifactRegistry(getSessionDatabase());
+  const artifactManager = new ArtifactManager(paths, artifactRegistry);
 
   return createRuntimeContext({
     runtime: {
       myClawRootPath: paths.myClawDir,
       skillsRootPath: paths.skillsDir,
+      workspaceRootPath: paths.workspaceDir,
+      artifactsRootPath: paths.artifactsDir,
+      cacheRootPath: paths.cacheDir,
       sessionsRootPath: paths.sessionsDir,
       paths,
     },
@@ -163,6 +209,8 @@ function buildRuntimeContext(
       },
     },
     services: {
+      artifactRegistry,
+      artifactManager,
       refreshSkills: async () => {
         const loaded = loadSkillsFromDisk(paths.skillsDir);
         // 保持内存中的 skills 数组同步，确保 skill:detail 查询可用。
@@ -211,7 +259,7 @@ app.whenReady().then(async () => {
   });
 
   // 初始化运行时上下文并注册所有 IPC 处理器
-  const ctx = buildRuntimeContext(paths, mcpManager, appUpdater);
+  const ctx = await buildRuntimeContext(paths, mcpManager, appUpdater);
   registerAllIpcHandlers(ctx);
 
   // 在后台自动连接所有启用中的 MCP 服务

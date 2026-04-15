@@ -1,3 +1,5 @@
+import type { ArtifactLifecycle, ArtifactScopeKind, ArtifactStatus } from "./artifact";
+
 export enum EventType {
   SessionUpdated = "session.updated",
   MessageDelta = "message.delta",
@@ -10,7 +12,12 @@ export enum EventType {
   ToolFailed = "tool.failed",
   RuntimeStatus = "runtime.status",
   TasksUpdated = "tasks.updated",
-  /** 上下文压缩次数过多，建议用户新建对话 */
+  ArtifactCreated = "artifact.created",
+  ArtifactUpdated = "artifact.updated",
+  ArtifactCompleted = "artifact.completed",
+  ArtifactFailed = "artifact.failed",
+  ArtifactLinked = "artifact.linked",
+  /** 上下文压缩次数过多，建议用户新建对话。 */
   ContextLimitWarning = "context.limit_warning",
 }
 
@@ -66,6 +73,15 @@ export type ChatRunRuntimeStatusPayload = {
   phase: ChatRunPhase;
   messageId?: string;
   reason?: string;
+};
+
+export type ArtifactRuntimeEventPayload = {
+  artifactId: string;
+  scopeKind: ArtifactScopeKind;
+  scopeId: string;
+  lifecycle: ArtifactLifecycle;
+  status: ArtifactStatus;
+  title?: string;
 };
 
 export type SiliconPersonStatus =

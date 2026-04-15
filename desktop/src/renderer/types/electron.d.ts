@@ -1,4 +1,6 @@
 import type {
+  ArtifactRecord,
+  ArtifactScopeRef,
   ApprovalDecision,
   ApprovalMode,
   ApprovalPolicy,
@@ -67,6 +69,9 @@ type BootstrapPayload = {
   myClawRootPath?: string;
   skillsRootPath?: string;
   sessionsRootPath?: string;
+  workspaceRootPath?: string;
+  artifactsRootPath?: string;
+  cacheRootPath?: string;
   requiresInitialSetup?: boolean;
   tools: { builtin: ResolvedBuiltinTool[]; mcp: ResolvedMcpTool[] };
   mcp: { servers: McpServer[] };
@@ -111,10 +116,6 @@ type McpToolPayload = { tool: ResolvedMcpTool };
 type BuiltinToolsPayload = { items: ResolvedBuiltinTool[] };
 type McpToolsPayload = { items: ResolvedMcpTool[] };
 type ApprovalsPayload = { approvals: ApprovalPolicy };
-
-type StreamOptions = {
-  onSnapshot?: (snapshot: SessionPayload) => void;
-};
 
 type CancelSessionRunInput = {
   runId?: string;
@@ -175,12 +176,29 @@ declare global {
       sendMessage: (
         sessionId: string,
         content: string,
-        options?: StreamOptions,
       ) => Promise<SessionPayload>;
       cancelSessionRun: (
         sessionId: string,
         input?: CancelSessionRunInput,
       ) => Promise<SessionPayload>;
+      pollBackgroundTask: (
+        sessionId: string,
+      ) => Promise<{
+        outcomeId: string;
+        task: import("@shared/contracts").BackgroundTaskHandle | null;
+        status: string;
+        outputText: string;
+        session: import("@shared/contracts").ChatSession;
+      }>;
+      cancelBackgroundTask: (
+        sessionId: string,
+      ) => Promise<{
+        outcomeId: string;
+        task: import("@shared/contracts").BackgroundTaskHandle | null;
+        status: string;
+        outputText: string;
+        session: import("@shared/contracts").ChatSession;
+      }>;
       requestExecutionIntent: (
         sessionId: string,
         intent: unknown,
@@ -202,6 +220,11 @@ declare global {
       cancelPlanMode: (
         sessionId: string,
       ) => Promise<{ session: import("@shared/contracts").ChatSession }>;
+      listArtifactsByScope: (scope: ArtifactScopeRef) => Promise<ArtifactRecord[]>;
+      listRecentArtifacts: (input?: { limit?: number }) => Promise<ArtifactRecord[]>;
+      markArtifactFinal: (artifactId: string, scope?: ArtifactScopeRef) => Promise<ArtifactRecord>;
+      openArtifact: (artifactId: string) => Promise<{ success: boolean }>;
+      revealArtifact: (artifactId: string) => Promise<{ success: boolean }>;
       /** Subscribe to real-time session streaming events (deltas, completion, etc.) */
       onSessionStream: (callback: (event: Record<string, unknown>) => void) => () => void;
 
@@ -236,7 +259,7 @@ declare global {
 
       // --- MCP servers ---
       fetchMcpServers: () => Promise<McpServersPayload>;
-      createMcpServer: (input: Omit<McpServerConfig, "id">) => Promise<McpServerPayload>;
+      createMcpServer: (input: McpServerConfig) => Promise<McpServerPayload>;
       updateMcpServer: (serverId: string, input: Partial<Omit<McpServerConfig, "id">>) => Promise<McpServerPayload>;
       deleteMcpServer: (serverId: string) => Promise<McpServersPayload>;
       refreshMcpServer: (serverId: string) => Promise<McpServerPayload>;
@@ -332,6 +355,9 @@ declare global {
         siliconPersonId: string,
         input: Partial<SiliconPerson>,
       ) => Promise<{ siliconPerson: SiliconPerson }>;
+      deleteSiliconPerson: (
+        siliconPersonId: string,
+      ) => Promise<{ items: SiliconPerson[] }>;
 
       createSiliconPersonSession: (
         siliconPersonId: string,
@@ -344,7 +370,7 @@ declare global {
       sendSiliconPersonMessage: (
         siliconPersonId: string,
         content: string,
-      ) => Promise<{ siliconPerson: SiliconPerson; session: ChatSession }>;
+      ) => Promise<{ dispatched: boolean; siliconPersonId: string }>;
       /** 将指定硅基员工会话标记为已读，仅同步未读状态，不切换 currentSession。 */
       markSiliconPersonSessionRead: (
         siliconPersonId: string,

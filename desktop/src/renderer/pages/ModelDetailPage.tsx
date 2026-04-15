@@ -13,6 +13,7 @@ import {
   readBrMiniMaxRuntimeDiagnostics,
 } from "@shared/br-minimax";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
+import { resolveNativeFileSearchConfig } from "../../main/services/model-runtime/tool-middleware";
 import { formatTokenCount, formatCapabilitySource } from "../utils/context-ui-helpers";
 
 // ── 供应商预设（从旧设置页内联迁移） ─────────────────────────────────────────
@@ -32,6 +33,8 @@ const providerPresets: ProviderPreset[] = [
   { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimaxi.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
   { id: "moonshot", label: "Moonshot", baseUrl: "https://api.moonshot.cn", baseUrlMode: "provider-root", provider: "openai-compatible" },
   { id: "qwen", label: "Qwen", baseUrl: "https://dashscope.aliyuncs.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
+  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "deepseek" },
+  { id: "volcengine-ark", label: "火山引擎 (Ark)", baseUrl: "https://ark.cn-beijing.volces.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "volcengine-ark" },
   { id: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com", baseUrlMode: "provider-root", provider: "anthropic" },
   { id: "custom", label: "Custom", baseUrl: "", baseUrlMode: "manual", provider: "openai-compatible" },
 ];
@@ -54,7 +57,41 @@ function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "baseU
   if (normalizedBaseUrl.includes("dashscope.aliyuncs.com") || normalizedModel.startsWith("qwen")) return "qwen";
   if (normalizedBaseUrl.includes("moonshot")) return "moonshot";
   if (normalizedBaseUrl.includes("openai.com")) return "openai";
+  if (normalizedBaseUrl.includes("volces.com") || normalizedBaseUrl.includes("volcengine")) return "volcengine-ark";
   return "custom";
+}
+
+/** 将结构化输入里的向量库 ID 清洗成稳定数组。 */
+function parseVectorStoreIdsInput(value: string): string[] {
+  return value
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+/** 从 profile 中回填原生 file search 表单，兼容 responsesApiConfig 与旧 requestBody。 */
+function resolveInitialFileSearchForm(profile: Pick<ModelProfile, "responsesApiConfig" | "requestBody">): {
+  enabled: boolean;
+  vectorStoresText: string;
+  maxNumResultsText: string;
+  includeSearchResults: boolean;
+} {
+  const config = resolveNativeFileSearchConfig(profile);
+  return {
+    enabled: !!config && config.vectorStoreIds.length > 0,
+    vectorStoresText: config?.vectorStoreIds.join(", ") ?? "",
+    maxNumResultsText: typeof config?.maxNumResults === "number" ? String(config.maxNumResults) : "",
+    includeSearchResults: config?.includeSearchResults ?? false,
+  };
+}
+
+/** 移除高级 JSON 中与结构化 file search 重复的字段，避免两套配置互相覆盖。 */
+function stripStructuredFileSearchKeys(parsedBody: Record<string, JsonValue>): Record<string, JsonValue> {
+  const nextBody = { ...parsedBody };
+  delete nextBody.nativeFileSearch;
+  delete nextBody.fileSearch;
+  delete nextBody.file_search;
+  return nextBody;
 }
 
 // ── ModelDetailPage 页面 ─────────────────────────────────────────────────────
@@ -75,6 +112,18 @@ export default function ModelDetailPage() {
   const [selectedPresetId, setSelectedPresetId] = useState("br-minimax");
   const [headersText, setHeadersText] = useState("");
   const [requestBodyText, setRequestBodyText] = useState("");
+  const [nativeFileSearchEnabled, setNativeFileSearchEnabled] = useState(false);
+  const [nativeFileSearchVectorStoresText, setNativeFileSearchVectorStoresText] = useState("");
+  const [nativeFileSearchMaxResultsText, setNativeFileSearchMaxResultsText] = useState("");
+  const [nativeFileSearchIncludeResults, setNativeFileSearchIncludeResults] = useState(false);
+  const [defaultReasoningEffortValue, setDefaultReasoningEffortValue] = useState<"" | "low" | "medium" | "high" | "xhigh">("");
+  const [contextWindowOverrideText, setContextWindowOverrideText] = useState("");
+  const [maxOutputTokensOverrideText, setMaxOutputTokensOverrideText] = useState("");
+  const [compactTriggerTokensText, setCompactTriggerTokensText] = useState("");
+  const [disableResponseStorageEnabled, setDisableResponseStorageEnabled] = useState(false);
+  const [useServerStateEnabled, setUseServerStateEnabled] = useState(false);
+  const [backgroundModeValue, setBackgroundModeValue] = useState<"" | "off" | "auto" | "always">("");
+  const [backgroundPollIntervalText, setBackgroundPollIntervalText] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -93,6 +142,7 @@ export default function ModelDetailPage() {
   const [showRouteDetails, setShowRouteDetails] = useState(false);
 
   const managedBrMiniMax = selectedPresetId === "br-minimax";
+  const supportsStructuredFileSearch = !managedBrMiniMax && profile.provider === "openai-compatible";
   const brMiniMaxDiagnostics = readBrMiniMaxRuntimeDiagnostics(profile);
   const requiresModelBeforeProbe = !managedBrMiniMax && !profile.model.trim();
   const baseUrlPlaceholder = profile.baseUrlMode === "provider-root"
@@ -127,9 +177,17 @@ export default function ModelDetailPage() {
       if (preset.id === "br-minimax") {
         setHeadersText("");
         setRequestBodyText(JSON.stringify(BR_MINIMAX_REQUEST_BODY, null, 2));
+        setNativeFileSearchEnabled(false);
+        setNativeFileSearchVectorStoresText("");
+        setNativeFileSearchMaxResultsText("");
+        setNativeFileSearchIncludeResults(false);
       } else {
         setHeadersText("");
         setRequestBodyText("");
+        setNativeFileSearchEnabled(false);
+        setNativeFileSearchVectorStoresText("");
+        setNativeFileSearchMaxResultsText("");
+        setNativeFileSearchIncludeResults(false);
       }
       setCatalogItems([]);
       setAvailableModelIds([]);
@@ -165,6 +223,31 @@ export default function ModelDetailPage() {
         setProfile({ ...existing });
         setHeadersText(existing.headers ? JSON.stringify(existing.headers, null, 2) : "");
         setRequestBodyText(existing.requestBody ? JSON.stringify(existing.requestBody, null, 2) : "");
+        const initialFileSearch = resolveInitialFileSearchForm(existing);
+        setNativeFileSearchEnabled(initialFileSearch.enabled);
+        setNativeFileSearchVectorStoresText(initialFileSearch.vectorStoresText);
+        setNativeFileSearchMaxResultsText(initialFileSearch.maxNumResultsText);
+        setNativeFileSearchIncludeResults(initialFileSearch.includeSearchResults);
+        setDefaultReasoningEffortValue(existing.defaultReasoningEffort ?? "");
+        setContextWindowOverrideText(
+          typeof existing.contextWindowOverride === "number" ? String(existing.contextWindowOverride) : "",
+        );
+        setMaxOutputTokensOverrideText(
+          typeof existing.capabilityOverrides?.maxOutputTokens === "number"
+            ? String(existing.capabilityOverrides.maxOutputTokens)
+            : "",
+        );
+        setCompactTriggerTokensText(
+          typeof existing.compactTriggerTokens === "number" ? String(existing.compactTriggerTokens) : "",
+        );
+        setDisableResponseStorageEnabled(existing.responsesApiConfig?.disableResponseStorage ?? false);
+        setUseServerStateEnabled(existing.responsesApiConfig?.useServerState ?? false);
+        setBackgroundModeValue(existing.responsesApiConfig?.backgroundMode ?? "");
+        setBackgroundPollIntervalText(
+          typeof existing.responsesApiConfig?.backgroundPollIntervalMs === "number"
+            ? String(existing.responsesApiConfig.backgroundPollIntervalMs)
+            : "",
+        );
         const presetId = resolveProviderPresetId(existing);
         setSelectedPresetId(presetId);
         setSelectedRoute(existing.protocolTarget ?? null);
@@ -173,6 +256,14 @@ export default function ModelDetailPage() {
         navigate("/settings");
       }
     } else {
+      setDefaultReasoningEffortValue("");
+      setContextWindowOverrideText("");
+      setMaxOutputTokensOverrideText("");
+      setCompactTriggerTokensText("");
+      setDisableResponseStorageEnabled(false);
+      setUseServerStateEnabled(false);
+      setBackgroundModeValue("");
+      setBackgroundPollIntervalText("");
       applyPreset("br-minimax");
     }
   }, [isNew, profileId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -262,6 +353,41 @@ export default function ModelDetailPage() {
     return "registry-default";
   }
 
+  /** 将结构化 file search 表单折叠回 profile.responsesApiConfig。 */
+  function resolveResponsesApiConfigFromForm(): ModelProfile["responsesApiConfig"] {
+    const nextConfig: NonNullable<ModelProfile["responsesApiConfig"]> = {
+      ...(profile.responsesApiConfig ?? {}),
+      disableResponseStorage: disableResponseStorageEnabled,
+      useServerState: useServerStateEnabled,
+    };
+    if (backgroundModeValue) {
+      nextConfig.backgroundMode = backgroundModeValue;
+    } else {
+      delete nextConfig.backgroundMode;
+    }
+    if (backgroundPollIntervalText.trim()) {
+      nextConfig.backgroundPollIntervalMs = Number.parseInt(backgroundPollIntervalText.trim(), 10);
+    } else {
+      delete nextConfig.backgroundPollIntervalMs;
+    }
+    const vectorStoreIds = parseVectorStoreIdsInput(nativeFileSearchVectorStoresText);
+
+    if (nativeFileSearchEnabled && vectorStoreIds.length > 0) {
+      const parsedMaxResults = nativeFileSearchMaxResultsText.trim()
+        ? Number.parseInt(nativeFileSearchMaxResultsText.trim(), 10)
+        : null;
+      nextConfig.fileSearch = {
+        vectorStoreIds,
+        ...(typeof parsedMaxResults === "number" && Number.isFinite(parsedMaxResults) ? { maxNumResults: parsedMaxResults } : {}),
+        includeSearchResults: nativeFileSearchIncludeResults,
+      };
+    } else {
+      delete nextConfig.fileSearch;
+    }
+
+    return Object.keys(nextConfig).length > 0 ? nextConfig : undefined;
+  }
+
   /** 手动触发路线探测，并把推荐路线同步到本地 UI 状态。 */
   async function probeRoutes(options?: { silent?: boolean }): Promise<ModelRouteProbeResult | null> {
     const parsed = managedBrMiniMax
@@ -347,11 +473,63 @@ export default function ModelDetailPage() {
 
     setIsBusy(true);
     try {
+      const vectorStoreIds = parseVectorStoreIdsInput(nativeFileSearchVectorStoresText);
+      const parsedContextWindowOverride = contextWindowOverrideText.trim()
+        ? Number.parseInt(contextWindowOverrideText.trim(), 10)
+        : null;
+      const parsedMaxOutputTokensOverride = maxOutputTokensOverrideText.trim()
+        ? Number.parseInt(maxOutputTokensOverrideText.trim(), 10)
+        : null;
+      const parsedCompactTriggerTokens = compactTriggerTokensText.trim()
+        ? Number.parseInt(compactTriggerTokensText.trim(), 10)
+        : null;
+      const parsedBackgroundPollInterval = backgroundPollIntervalText.trim()
+        ? Number.parseInt(backgroundPollIntervalText.trim(), 10)
+        : null;
+      if (!managedBrMiniMax && nativeFileSearchEnabled && vectorStoreIds.length === 0) {
+        setError("启用原生 File Search 后，至少需要填写一个 Vector Store ID。");
+        return;
+      }
+      if (!managedBrMiniMax && nativeFileSearchMaxResultsText.trim()) {
+        const parsedMaxResults = Number.parseInt(nativeFileSearchMaxResultsText.trim(), 10);
+        if (!Number.isFinite(parsedMaxResults) || parsedMaxResults <= 0) {
+          setError("File Search 的最大结果数必须是大于 0 的整数。");
+          return;
+        }
+      }
+      if (contextWindowOverrideText.trim() && (parsedContextWindowOverride == null || !Number.isFinite(parsedContextWindowOverride) || parsedContextWindowOverride <= 0)) {
+        setError("上下文窗口覆盖值必须是大于 0 的整数。");
+        return;
+      }
+      if (maxOutputTokensOverrideText.trim() && (parsedMaxOutputTokensOverride == null || !Number.isFinite(parsedMaxOutputTokensOverride) || parsedMaxOutputTokensOverride <= 0)) {
+        setError("最大输出 Tokens 覆盖值必须是大于 0 的整数。");
+        return;
+      }
+      if (compactTriggerTokensText.trim() && (parsedCompactTriggerTokens == null || !Number.isFinite(parsedCompactTriggerTokens) || parsedCompactTriggerTokens <= 0)) {
+        setError("自动压缩阈值必须是大于 0 的整数。");
+        return;
+      }
+      if (backgroundPollIntervalText.trim() && (parsedBackgroundPollInterval == null || !Number.isFinite(parsedBackgroundPollInterval) || parsedBackgroundPollInterval <= 0)) {
+        setError("后台轮询间隔必须是大于 0 的整数毫秒。");
+        return;
+      }
+      const sanitizedBody = managedBrMiniMax
+        ? BR_MINIMAX_REQUEST_BODY
+        : stripStructuredFileSearchKeys(parsed.parsedBody);
+      const nextCapabilityOverrides = { ...(profile.capabilityOverrides ?? {}) };
+      if (typeof parsedMaxOutputTokensOverride === "number" && Number.isFinite(parsedMaxOutputTokensOverride)) {
+        nextCapabilityOverrides.maxOutputTokens = parsedMaxOutputTokensOverride;
+      } else {
+        delete nextCapabilityOverrides.maxOutputTokens;
+      }
+      const capabilityOverrides = Object.keys(nextCapabilityOverrides).length > 0 ? nextCapabilityOverrides : undefined;
       let finalProtocolTarget = selectedRoute;
+      let allAvailableProtocols: ProtocolTarget[] = routeProbeResult?.availableProtocolTargets ?? [];
       let persistedSelectionSource = resolvePersistedProtocolSelectionSource(routeSelectionSource);
       if (!finalProtocolTarget) {
         const probeResult = await probeRoutes({ silent: true });
         finalProtocolTarget = probeResult?.recommendedProtocolTarget ?? null;
+        allAvailableProtocols = probeResult?.availableProtocolTargets ?? [];
         if (!finalProtocolTarget) {
           setError("当前模型尚未探测到可用路线，无法保存配置。");
           return;
@@ -362,11 +540,16 @@ export default function ModelDetailPage() {
         setRouteStatusMessage(`已完成路线探测，已为当前模型设置最佳路线：${formatProtocolTargetLabel(finalProtocolTarget)}`);
       }
 
+      // 保存完整的探测可用列表，选中路线排首位，其余作为 fallback 链。
+      const savedProtocolPreferences: ProtocolTarget[] | undefined = finalProtocolTarget
+        ? [finalProtocolTarget, ...allAvailableProtocols.filter((t) => t !== finalProtocolTarget)]
+        : undefined;
+
       const data: ModelProfile = managedBrMiniMax
         ? {
             ...profile,
             ...createBrMiniMaxProfile({ apiKey: profile.apiKey.trim() }),
-            savedProtocolPreferences: finalProtocolTarget ? [finalProtocolTarget] : undefined,
+            savedProtocolPreferences: savedProtocolPreferences?.length ? savedProtocolPreferences : undefined,
             protocolSelectionSource: persistedSelectionSource,
             protocolTarget: finalProtocolTarget ?? undefined,
           }
@@ -378,9 +561,18 @@ export default function ModelDetailPage() {
             apiKey: profile.apiKey.trim(),
             model: profile.model.trim(),
             headers: parsed.parsedHeaders,
-            requestBody: parsed.parsedBody,
+            requestBody: sanitizedBody,
+            defaultReasoningEffort: defaultReasoningEffortValue || undefined,
+            contextWindowOverride: typeof parsedContextWindowOverride === "number" && Number.isFinite(parsedContextWindowOverride)
+              ? parsedContextWindowOverride
+              : undefined,
+            compactTriggerTokens: typeof parsedCompactTriggerTokens === "number" && Number.isFinite(parsedCompactTriggerTokens)
+              ? parsedCompactTriggerTokens
+              : undefined,
+            capabilityOverrides,
+            responsesApiConfig: resolveResponsesApiConfigFromForm(),
             discoveredCapabilities: resolveSelectedCatalogCapability(profile.model.trim()),
-            savedProtocolPreferences: finalProtocolTarget ? [finalProtocolTarget] : undefined,
+            savedProtocolPreferences: savedProtocolPreferences?.length ? savedProtocolPreferences : undefined,
             protocolSelectionSource: persistedSelectionSource,
             protocolTarget: finalProtocolTarget ?? undefined,
           };
@@ -513,7 +705,7 @@ export default function ModelDetailPage() {
               删除
             </button>
           )}
-          <button className="primary-save-btn" onClick={upsertProfile} disabled={isBusy}>
+          <button className="primary-save-btn" data-testid="model-save-profile" onClick={upsertProfile} disabled={isBusy}>
             <svg viewBox="0 0 24 24" width="16" height="16">
               <path
                 fill="none"
@@ -923,6 +1115,214 @@ export default function ModelDetailPage() {
               </div>
             ) : (
             <div className="editor-row">
+              <div className="native-tool-card">
+                <div className="native-tool-card-header">
+                  <div>
+                    <div className="label">模型级高级参数</div>
+                    <div className="field-hint">
+                      这里维护默认推理强度、上下文/输出覆盖、压缩阈值，以及 Responses API 的存储与后台执行参数。
+                    </div>
+                  </div>
+                </div>
+                <div className="compact-field-grid">
+                  <label className="field">
+                    <span className="label">默认推理强度</span>
+                    <div className="select-wrapper">
+                      <select
+                        value={defaultReasoningEffortValue}
+                        data-testid="model-default-reasoning-effort"
+                        onChange={(e) => setDefaultReasoningEffortValue(e.target.value as typeof defaultReasoningEffortValue)}
+                      >
+                        <option value="">跟随会话 / 模型默认</option>
+                        <option value="low">low</option>
+                        <option value="medium">medium</option>
+                        <option value="high">high</option>
+                        <option value="xhigh">xhigh</option>
+                      </select>
+                      <div className="select-arrow">
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                          <path
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M6 9l6 6 6-6"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="field-hint">会话未显式指定时，运行时会回退到这个默认值。</div>
+                  </label>
+                  <label className="field">
+                    <span className="label">上下文窗口覆盖</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={contextWindowOverrideText}
+                      data-testid="model-context-window-override"
+                      onChange={(e) => setContextWindowOverrideText(e.target.value)}
+                      placeholder="1000000"
+                    />
+                    <div className="field-hint">留空时使用能力目录或服务商探测结果。</div>
+                  </label>
+                  <label className="field">
+                    <span className="label">最大输出 Tokens 覆盖</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={maxOutputTokensOverrideText}
+                      data-testid="model-max-output-tokens-override"
+                      onChange={(e) => setMaxOutputTokensOverrideText(e.target.value)}
+                      placeholder="32768"
+                    />
+                    <div className="field-hint">写入 `capabilityOverrides.maxOutputTokens`。</div>
+                  </label>
+                  <label className="field">
+                    <span className="label">自动压缩触发阈值</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={compactTriggerTokensText}
+                      data-testid="model-compact-trigger-tokens"
+                      onChange={(e) => setCompactTriggerTokensText(e.target.value)}
+                      placeholder="900000"
+                    />
+                    <div className="field-hint">达到阈值后优先触发上下文压缩，而不是继续堆积历史消息。</div>
+                  </label>
+                  <label className="field">
+                    <span className="label">Responses 后台模式</span>
+                    <div className="select-wrapper">
+                      <select
+                        value={backgroundModeValue}
+                        data-testid="model-background-mode"
+                        onChange={(e) => setBackgroundModeValue(e.target.value as typeof backgroundModeValue)}
+                      >
+                        <option value="">默认 / 自动判断</option>
+                        <option value="off">off</option>
+                        <option value="auto">auto</option>
+                        <option value="always">always</option>
+                      </select>
+                      <div className="select-arrow">
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                          <path
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M6 9l6 6 6-6"
+                          />
+                        </svg>
+                      </div>
+                    </div>
+                    <div className="field-hint">仅对 `openai-responses` 路线生效。</div>
+                  </label>
+                  <label className="field">
+                    <span className="label">后台轮询间隔 (ms)</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={backgroundPollIntervalText}
+                      data-testid="model-background-poll-interval"
+                      onChange={(e) => setBackgroundPollIntervalText(e.target.value)}
+                      placeholder="4500"
+                    />
+                    <div className="field-hint">留空时使用运行时默认值。</div>
+                  </label>
+                </div>
+                <div className="compact-field-grid">
+                  <label className="inline-toggle checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={disableResponseStorageEnabled}
+                      data-testid="model-disable-response-storage"
+                      onChange={(e) => setDisableResponseStorageEnabled(e.target.checked)}
+                    />
+                    <span>禁用 Responses 服务端存储 (`store=false`)</span>
+                  </label>
+                  <label className="inline-toggle checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={useServerStateEnabled}
+                      data-testid="model-use-server-state"
+                      onChange={(e) => setUseServerStateEnabled(e.target.checked)}
+                    />
+                    <span>启用服务端状态连续体 (`previous_response_id`)</span>
+                  </label>
+                </div>
+              </div>
+              {supportsStructuredFileSearch && (
+                <div className="native-tool-card">
+                  <div className="native-tool-card-header">
+                    <div>
+                      <div className="label">OpenAI 原生 File Search</div>
+                      <div className="field-hint">
+                        用结构化表单维护向量库检索参数，保存时会自动写入 `responsesApiConfig.fileSearch`。
+                      </div>
+                    </div>
+                    <label className="inline-toggle">
+                      <input
+                        type="checkbox"
+                        checked={nativeFileSearchEnabled}
+                        data-testid="native-file-search-enabled"
+                        onChange={(e) => {
+                          invalidateRouteState();
+                          setNativeFileSearchEnabled(e.target.checked);
+                        }}
+                      />
+                      <span>启用</span>
+                    </label>
+                  </div>
+                  <div className="compact-field-grid">
+                    <label className="field">
+                      <span className="label">Vector Store IDs</span>
+                      <input
+                        value={nativeFileSearchVectorStoresText}
+                        data-testid="native-file-search-vector-stores"
+                        onChange={(e) => {
+                          invalidateRouteState();
+                          setNativeFileSearchVectorStoresText(e.target.value);
+                        }}
+                        placeholder="vs_knowledge, vs_docs"
+                      />
+                      <div className="field-hint">多个 ID 用英文逗号或换行分隔。</div>
+                    </label>
+                    <label className="field">
+                      <span className="label">最大结果数</span>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={nativeFileSearchMaxResultsText}
+                        data-testid="native-file-search-max-results"
+                        onChange={(e) => {
+                          invalidateRouteState();
+                          setNativeFileSearchMaxResultsText(e.target.value);
+                        }}
+                        placeholder="8"
+                      />
+                      <div className="field-hint">留空时沿用 OpenAI 默认值。</div>
+                    </label>
+                  </div>
+                  <label className="inline-toggle checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={nativeFileSearchIncludeResults}
+                      data-testid="native-file-search-include-results"
+                      onChange={(e) => {
+                        invalidateRouteState();
+                        setNativeFileSearchIncludeResults(e.target.checked);
+                      }}
+                    />
+                    <span>在 trace 中附带原始检索结果，便于调试与引用回放</span>
+                  </label>
+                </div>
+              )}
               <div className="editor-col">
                 <div className="field">
                   <span className="label">自定义 Headers</span>
@@ -986,12 +1386,34 @@ export default function ModelDetailPage() {
                       </div>
                     </div>
                     <div className="cap-features">
+                      {eff.thinkingControlKind && <span className="feature-tag">thinking:{eff.thinkingControlKind}</span>}
+                      {eff.toolChoiceConstraint && <span className="feature-tag">tool_choice:{eff.toolChoiceConstraint}</span>}
+                      {eff.nativeToolStackId && eff.nativeToolStackId !== "none" && <span className="feature-tag">tool-stack:{eff.nativeToolStackId}</span>}
                       {eff.supportsTools && <span className="feature-tag">工具调用</span>}
                       {eff.supportsStreaming && <span className="feature-tag">流式输出</span>}
                       {eff.supportsReasoning && <span className="feature-tag">推理</span>}
                       {eff.supportsVision && <span className="feature-tag">视觉</span>}
                       {eff.supportsPromptCaching && <span className="feature-tag">提示缓存</span>}
                     </div>
+                    {(() => {
+                      const TOOL_RESTRICTIONS: Record<string, string[]> = {
+                        qwen: ["browser_evaluate", "exec_command", "git_commit", "ppt_generate"],
+                        moonshot: ["browser_evaluate", "git_commit", "ppt_generate"],
+                        "volcengine-ark": ["browser_evaluate", "ppt_generate"],
+                        "br-minimax": ["browser_evaluate", "exec_command", "git_commit", "ppt_generate"],
+                      };
+                      const flavor = profile.providerFlavor ?? selectedPresetId;
+                      const restricted = TOOL_RESTRICTIONS[flavor] ?? [];
+                      if (restricted.length === 0) return null;
+                      return (
+                        <div className="cap-restrictions">
+                          <span className="cap-label">受限工具</span>
+                          <span className="cap-value" style={{ color: "var(--color-text-muted, #888)" }}>
+                            {restricted.join(", ")}
+                          </span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })()}
@@ -1224,6 +1646,48 @@ export default function ModelDetailPage() {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
           gap: 16px;
+        }
+
+        .native-tool-card {
+          grid-column: 1 / -1;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          padding: 16px;
+          border-radius: 12px;
+          border: 1px solid #27272a;
+          background: linear-gradient(180deg, rgba(24, 24, 27, 0.96) 0%, rgba(14, 14, 18, 0.96) 100%);
+        }
+
+        .native-tool-card-header {
+          display: flex;
+          justify-content: space-between;
+          gap: 16px;
+          align-items: flex-start;
+        }
+
+        .inline-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          color: #e4e4e7;
+          font-size: 13px;
+        }
+
+        .inline-toggle input {
+          width: 16px;
+          height: 16px;
+        }
+
+        .checkbox-label {
+          padding-top: 4px;
+          border-top: 1px solid #27272a;
+        }
+
+        .compact-field-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px;
         }
 
         .editor-col {

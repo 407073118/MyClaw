@@ -48,8 +48,9 @@ export type SiliconPerson = {
   soul?: string;
   /** 员工使用的模型 ID，对应用户已配置的 ModelProfile.id。为空时使用全局默认模型。 */
   modelProfileId?: string;
-  /** 员工推理等级: low（快速）、medium（思考）、high（深度）。为空时默认 medium。 */
-  reasoningEffort?: "low" | "medium" | "high";
+  /** 员工推理等级: low（快速）、medium（思考）、high（深度）、xhigh（极深）。为空时默认 medium。 */
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh";
+  reasoningEnabled?: boolean;
   /** 模型配置快照，创建时冻结，不随全局模型变化而更新。 */
   modelBindingSnapshot?: {
     modelProfileId: string;

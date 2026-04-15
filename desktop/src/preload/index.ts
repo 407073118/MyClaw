@@ -6,6 +6,8 @@ webFrame.setZoomFactor(0.85);
 import type {
   ApprovalDecision,
   ApprovalPolicy,
+  ArtifactRecord,
+  ArtifactScopeRef,
   AuthLoginRequest,
   ModelCatalogItem,
   McpServerConfig,
@@ -84,13 +86,18 @@ const myClawAPI = {
   sendMessage: (
     sessionId: string,
     content: string,
-    _options?: { onSnapshot?: (snapshot: unknown) => void },
   ) => ipcRenderer.invoke("session:send-message", sessionId, { content }),
 
   cancelSessionRun: (
     sessionId: string,
     input?: { runId?: string; messageId?: string; reason?: string },
   ) => ipcRenderer.invoke("session:cancel-run", sessionId, input ?? {}),
+
+  pollBackgroundTask: (sessionId: string) =>
+    ipcRenderer.invoke("session:poll-background-task", sessionId),
+
+  cancelBackgroundTask: (sessionId: string) =>
+    ipcRenderer.invoke("session:cancel-background-task", sessionId),
 
   requestExecutionIntent: (sessionId: string, intent: unknown) =>
     ipcRenderer.invoke("session:get-execution-intents", sessionId),
@@ -106,6 +113,22 @@ const myClawAPI = {
 
   cancelPlanMode: (sessionId: string) =>
     ipcRenderer.invoke("session:cancel-plan-mode", sessionId),
+
+  // ---- 宸ヤ綔鏂囦欢 ------------------------------------------------------------
+  listArtifactsByScope: (scope: ArtifactScopeRef) =>
+    ipcRenderer.invoke("artifact:list-by-scope", scope) as Promise<ArtifactRecord[]>,
+
+  listRecentArtifacts: (input?: { limit?: number }) =>
+    ipcRenderer.invoke("artifact:list-recent", input ?? {}) as Promise<ArtifactRecord[]>,
+
+  markArtifactFinal: (artifactId: string, scope?: ArtifactScopeRef) =>
+    ipcRenderer.invoke("artifact:mark-final", artifactId, scope ?? null) as Promise<ArtifactRecord>,
+
+  openArtifact: (artifactId: string) =>
+    ipcRenderer.invoke("artifact:open", artifactId) as Promise<{ success: boolean }>,
+
+  revealArtifact: (artifactId: string) =>
+    ipcRenderer.invoke("artifact:reveal", artifactId) as Promise<{ success: boolean }>,
 
   /** 订阅会话流式事件，例如消息增量、工具调用等 */
   onSessionStream: (callback: (event: Record<string, unknown>) => void): UnsubscribeFn =>
@@ -208,7 +231,7 @@ const myClawAPI = {
   fetchMcpServers: () =>
     ipcRenderer.invoke("mcp:list-servers").then((servers: unknown[]) => ({ servers })),
 
-  createMcpServer: async (input: Omit<McpServerConfig, "id">) => {
+  createMcpServer: async (input: McpServerConfig) => {
     const server = await ipcRenderer.invoke("mcp:create-server", input);
     const servers = await ipcRenderer.invoke("mcp:list-servers");
     return { server, servers };
@@ -348,6 +371,9 @@ const myClawAPI = {
 
   updateSiliconPerson: (siliconPersonId: string, input: Record<string, unknown>) =>
     ipcRenderer.invoke("silicon-person:update", siliconPersonId, input).catch(() => ({ siliconPerson: null })),
+
+  deleteSiliconPerson: (siliconPersonId: string) =>
+    ipcRenderer.invoke("silicon-person:delete", siliconPersonId).catch(() => ({ items: [] })),
 
   createSiliconPersonSession: (siliconPersonId: string, input?: { title?: string }) =>
     ipcRenderer.invoke("silicon-person:create-session", siliconPersonId, input ?? {}).catch(() => ({ siliconPerson: null, session: null })),

@@ -15,7 +15,7 @@ import {
 } from "@shared/contracts";
 
 import type { RuntimeContext } from "./runtime-context";
-import { openSiliconPersonRuntime, saveSession, saveSiliconPerson } from "./state-persistence";
+import { saveSession, saveSiliconPerson } from "./state-persistence";
 
 /** 统一构建硅基员工会话摘要，避免各层重复拼装状态字段。 */
 function buildSiliconPersonSessionSummary(input: {
@@ -65,9 +65,23 @@ function buildSiliconPersonSession(
   },
 ): ChatSession {
   const now = new Date().toISOString();
-  const modelProfileId = input.siliconPerson.modelProfileId
-    || ctx.state.getDefaultModelProfileId()
-    || "";
+  // 优先使用 modelProfileId；若对应模型已删除，回落到快照中的 profileId；最终回落到全局默认
+  let modelProfileId = input.siliconPerson.modelProfileId || "";
+  if (modelProfileId && !ctx.state.models.find((m) => m.id === modelProfileId)) {
+    const snapshotId = input.siliconPerson.modelBindingSnapshot?.modelProfileId;
+    if (snapshotId && ctx.state.models.find((m) => m.id === snapshotId)) {
+      modelProfileId = snapshotId;
+    } else {
+      console.warn("[silicon-person-session] 绑定模型已删除，回落到全局默认", {
+        siliconPersonId: input.siliconPerson.id,
+        missingProfileId: modelProfileId,
+      });
+      modelProfileId = ctx.state.getDefaultModelProfileId() || "";
+    }
+  }
+  if (!modelProfileId) {
+    modelProfileId = ctx.state.getDefaultModelProfileId() || "";
+  }
   const session: ChatSession = {
     id: randomUUID(),
     title: input.title?.trim() || input.fallbackTitle,
@@ -78,8 +92,11 @@ function buildSiliconPersonSession(
     siliconPersonId: input.siliconPerson.id,
     messages: [],
   };
-  if (input.siliconPerson.reasoningEffort) {
-    session.runtimeIntent = { reasoningEffort: input.siliconPerson.reasoningEffort };
+  if (input.siliconPerson.reasoningEffort || input.siliconPerson.reasoningEnabled !== undefined) {
+    session.runtimeIntent = {
+      ...(input.siliconPerson.reasoningEffort ? { reasoningEffort: input.siliconPerson.reasoningEffort } : {}),
+      ...(input.siliconPerson.reasoningEnabled !== undefined ? { reasoningEnabled: input.siliconPerson.reasoningEnabled } : {}),
+    };
   }
   return session;
 }
@@ -162,29 +179,7 @@ export async function syncSiliconPersonExecutionResult(
     forceCurrentSession: input.forceCurrentSession ?? false,
   });
 
-  // 执行结果同步后，将会话与消息写入运行时数据库
-  try {
-    const runtimeStore = await openSiliconPersonRuntime(ctx.runtime.paths, input.siliconPersonId);
-    try {
-      runtimeStore.upsertSession(input.siliconPersonId, input.session);
-      for (const message of input.session.messages) {
-        try {
-          runtimeStore.insertMessage(input.session.id, message);
-        } catch {
-          // INSERT OR IGNORE 语义：忽略重复消息写入
-        }
-      }
-      runtimeStore.flush();
-    } finally {
-      runtimeStore.close();
-    }
-  } catch (err) {
-    console.warn("[silicon-person-session] 写入运行时数据库失败（syncExecutionResult）", {
-      siliconPersonId: input.siliconPersonId,
-      sessionId: input.session.id,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  // 会话与消息已由 saveSession() 统一写入 sessions.db，无需再双写 runtime.db
 
   return syncedPerson;
 }
@@ -271,22 +266,7 @@ export async function createSiliconPersonSession(
     forceCurrentSession: true,
   });
 
-  // 同步写入硅基员工运行时数据库
-  try {
-    const runtimeStore = await openSiliconPersonRuntime(ctx.runtime.paths, siliconPerson.id);
-    try {
-      runtimeStore.upsertSession(siliconPerson.id, session);
-      runtimeStore.flush();
-    } finally {
-      runtimeStore.close();
-    }
-  } catch (err) {
-    console.warn("[silicon-person-session] 写入运行时数据库失败（createSession）", {
-      siliconPersonId: siliconPerson.id,
-      sessionId: session.id,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
+  // 会话已由 saveSession() 统一写入 sessions.db，无需再双写 runtime.db
 
   return { siliconPerson: syncedSiliconPerson, session };
 }

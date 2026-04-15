@@ -1,5 +1,6 @@
 import type { RuntimeContext } from "../services/runtime-context";
 import { registerApprovalHandlers } from "./approvals";
+import { registerArtifactHandlers } from "./artifacts";
 import { registerBootstrapHandlers } from "./bootstrap";
 import { registerCloudHandlers } from "./cloud";
 import { registerMcpHandlers } from "./mcp";
@@ -19,6 +20,7 @@ import { registerWorkflowHandlers } from "./workflows";
  */
 export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerBootstrapHandlers(ctx);
+  registerArtifactHandlers(ctx);
   registerSessionHandlers(ctx);
   registerModelHandlers(ctx);
   registerPersonalPromptHandlers(ctx);

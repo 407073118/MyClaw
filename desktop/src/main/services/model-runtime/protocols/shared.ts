@@ -1,7 +1,11 @@
 import type {
+  BackgroundTaskHandle,
+  CapabilityEvent,
+  ComputerCall,
   CanonicalMessage,
   CanonicalMessagePart,
   CanonicalTurnContent,
+  CitationRecord,
   ModelProfile,
   ProtocolTarget,
   TurnExecutionPlan,
@@ -15,8 +19,11 @@ export type ProtocolExecutionInput = {
   profile: ModelProfile;
   plan: TurnExecutionPlan;
   content: CanonicalTurnContent;
+  responseInputItems?: Array<Record<string, unknown>> | null;
   toolBundle: CompiledToolBundle;
   previousResponseId?: string | null;
+  sessionId?: string | null;
+  workflowRunId?: string | null;
   signal?: AbortSignal;
   onDelta?: (delta: { content?: string; reasoning?: string }) => void;
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void;
@@ -38,6 +45,10 @@ export type ProtocolExecutionOutput = {
   fallbackReason?: string | null;
   retryCount: number;
   fallbackEvents: TurnFallbackEvent[];
+  citations?: CitationRecord[];
+  capabilityEvents?: CapabilityEvent[];
+  computerCalls?: ComputerCall[];
+  backgroundTask?: BackgroundTaskHandle | null;
 };
 
 export type ProtocolDriver = {

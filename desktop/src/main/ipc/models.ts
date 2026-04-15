@@ -91,6 +91,7 @@ function resolveProviderFlavor(
   if (baseUrl.includes("api.openai.com")) return "openai";
   if (baseUrl.includes("ollama") || baseUrl.includes(":11434")) return "ollama";
   if (baseUrl.includes("minimax") || baseUrl.includes("minimaxi") || model.startsWith("minimax")) return "minimax-anthropic";
+  if (baseUrl.includes("volces.com") || baseUrl.includes("volcengine")) return "volcengine-ark";
 
   if (profile.provider === "anthropic") {
     return "anthropic";
@@ -135,27 +136,25 @@ function normalizeCatalogPayload(
 }
 
 /** 解析 Responses API 地址，避免把兼容接口尾缀错误拼接到 `/responses` 后面。 */
-function resolveResponsesApiUrl(profile: Pick<ModelProfile, "baseUrl">): string {
-  return profile.baseUrl
-    .replace(/\/(chat\/completions|messages|responses)$/i, "")
-    .replace(/\/(compatible-mode\/v1|v1)$/i, "")
-    .replace(/\/+$/, "") + "/v1/responses";
+function resolveResponsesApiUrl(profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "model">): string {
+  return resolveProtocolEndpointUrl(profile, "openai-responses");
 }
 
 /** 根据当前配置决定本次需要探测哪些路线。 */
 function resolveRouteProbeCandidates(
   profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "baseUrlMode" | "model">,
 ): ProtocolTarget[] {
-  if (profile.baseUrlMode === "manual" && profile.provider !== "anthropic") {
-    return ["openai-responses", "anthropic-messages", "openai-chat-compatible"];
-  }
-
   const vendorFamily = inferVendorFamily({
     ...profile,
     vendorFamily: undefined,
     protocolTarget: undefined,
     deploymentProfile: undefined,
   });
+  const isGenericVendor = vendorFamily === "generic-openai-compatible" || vendorFamily === "generic-local-gateway";
+
+  if (profile.baseUrlMode === "manual" && profile.provider !== "anthropic" && isGenericVendor) {
+    return ["openai-responses", "anthropic-messages", "openai-chat-compatible"];
+  }
 
   return [...getVendorPolicy(vendorFamily).recommendedProtocolsByUseCase.default];
 }
@@ -224,7 +223,7 @@ function resolveRouteProbeUrl(
   if (protocolTarget === "anthropic-messages") {
     return resolveProtocolEndpointUrl(profile, protocolTarget);
   }
-  return resolveModelEndpointUrl(profile);
+  return resolveModelEndpointUrl(profile, protocolTarget);
 }
 
 /** 依据固定优先级从可用路线中选出推荐项。 */

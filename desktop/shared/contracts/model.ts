@@ -6,6 +6,7 @@ export type ProviderFlavor =
   | "vercel-ai-gateway"
   | "qwen"
   | "moonshot"
+  | "deepseek"
   | "ollama"
   | "lm-studio"
   | "vllm"
@@ -22,6 +23,7 @@ export const PROVIDER_FLAVOR_VALUES = [
   "vercel-ai-gateway",
   "qwen",
   "moonshot",
+  "deepseek",
   "ollama",
   "lm-studio",
   "vllm",
@@ -36,7 +38,10 @@ export const PROVIDER_FLAVOR_VALUES = [
 export type ProviderFamily =
   | "openai-native"
   | "anthropic-native"
+  | "qwen-native"
+  | "moonshot-native"
   | "qwen-dashscope"
+  | "deepseek"
   | "br-minimax"
   | "volcengine-ark"
   | "generic-openai-compatible";
@@ -44,7 +49,10 @@ export type ProviderFamily =
 export const PROVIDER_FAMILY_VALUES = [
   "openai-native",
   "anthropic-native",
+  "qwen-native",
+  "moonshot-native",
   "qwen-dashscope",
+  "deepseek",
   "br-minimax",
   "volcengine-ark",
   "generic-openai-compatible",
@@ -55,6 +63,7 @@ export type VendorFamily =
   | "anthropic"
   | "qwen"
   | "kimi"
+  | "deepseek"
   | "volcengine-ark"
   | "minimax"
   | "generic-openai-compatible"
@@ -65,6 +74,7 @@ export const VENDOR_FAMILY_VALUES = [
   "anthropic",
   "qwen",
   "kimi",
+  "deepseek",
   "volcengine-ark",
   "minimax",
   "generic-openai-compatible",
@@ -159,6 +169,32 @@ export const TOKEN_COUNTING_MODE_VALUES = [
   "character-fallback",
 ] as const satisfies readonly TokenCountingMode[];
 
+export type ThinkingControlKind =
+  | "effort"
+  | "budget"
+  | "boolean"
+  | "always_on"
+  | "unsupported";
+
+export const THINKING_CONTROL_KIND_VALUES = [
+  "effort",
+  "budget",
+  "boolean",
+  "always_on",
+  "unsupported",
+] as const satisfies readonly ThinkingControlKind[];
+
+export type ToolChoiceConstraint =
+  | "none"
+  | "no_forced_when_thinking"
+  | "auto_none_only_when_thinking";
+
+export const TOOL_CHOICE_CONSTRAINT_VALUES = [
+  "none",
+  "no_forced_when_thinking",
+  "auto_none_only_when_thinking",
+] as const satisfies readonly ToolChoiceConstraint[];
+
 export type JsonValue =
   | string
   | number
@@ -176,6 +212,19 @@ export type ModelCapability = {
   supportsStreaming?: boolean;
   supportsPromptCaching?: boolean;
   supportsVision?: boolean;
+  supportsNativeWebSearch?: boolean;
+  supportsNativeWebExtractor?: boolean;
+  supportsNativeComputer?: boolean;
+  supportsNativeCodeInterpreter?: boolean;
+  supportsNativeFileSearch?: boolean;
+  supportsBackgroundMode?: boolean;
+  supportsContinuation?: boolean;
+  supportsToolSearch?: boolean;
+  supportsCompaction?: boolean;
+  thinkingControlKind?: ThinkingControlKind;
+  toolChoiceConstraint?: ToolChoiceConstraint;
+  requiresReasoningReplay?: boolean;
+  nativeToolStackId?: string;
   tokenCountingMode?: TokenCountingMode;
   source: ModelCapabilitySource;
   lastValidatedAt?: string | null;
@@ -256,6 +305,14 @@ export type ModelProfile = {
   responsesApiConfig?: {
     disableResponseStorage?: boolean;
     useServerState?: boolean;
+    backgroundMode?: "off" | "auto" | "always";
+    backgroundPollIntervalMs?: number;
+    sessionCache?: "enable" | "disable";
+    fileSearch?: {
+      vectorStoreIds: string[];
+      maxNumResults?: number;
+      includeSearchResults?: boolean;
+    };
   };
   contextWindow?: number; // legacy field kept for backward compatibility
   discoveredCapabilities?: ModelCapability | null;

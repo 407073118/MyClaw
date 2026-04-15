@@ -76,7 +76,7 @@ describe("ModelsPage route badges", () => {
     expect(screen.getByText("已保存模型配置，默认路线：OpenAI Responses")).toBeTruthy();
     expect(screen.getAllByText("OpenAI Responses").length).toBeGreaterThan(0);
     expect(screen.getAllByText("保存选择").length).toBeGreaterThan(0);
-    expect(screen.getByText("openai-compatible")).toBeTruthy();
+    expect(screen.getByText("OpenAI")).toBeTruthy();
     expect(screen.getByText("服务商目录")).toBeTruthy();
   });
 
@@ -105,5 +105,45 @@ describe("ModelsPage route badges", () => {
     expect(screen.queryByText("OpenAI Responses")).toBeNull();
     expect(screen.queryByText("Anthropic Messages")).toBeNull();
     expect(screen.queryByText("OpenAI Compatible")).toBeNull();
+  });
+
+  it("shows Qwen as a first-class vendor badge for DashScope profiles", async () => {
+    mocks.workspace.models = [
+      {
+        id: "profile-qwen",
+        name: "Qwen Profile",
+        provider: "openai-compatible",
+        providerFlavor: "qwen",
+        vendorFamily: "qwen",
+        providerFamily: "qwen-native",
+        baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        apiKey: "test-key",
+        model: "qwen-max",
+        protocolTarget: "openai-responses",
+        protocolSelectionSource: "probe",
+        discoveredCapabilities: {
+          contextWindowTokens: 131072,
+          maxInputTokens: 120000,
+          maxOutputTokens: 8192,
+          supportsTools: true,
+          supportsStreaming: true,
+          thinkingControlKind: "budget",
+          source: "provider-catalog",
+        },
+      },
+    ];
+    const { default: ModelsPage } = await import("../src/renderer/pages/ModelsPage");
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ["/settings/models"] },
+        React.createElement(ModelsPage),
+      ),
+    );
+
+    expect(screen.getByText("Qwen")).toBeTruthy();
+    expect(screen.getByText("OpenAI Responses")).toBeTruthy();
+    expect(screen.queryByText("openai-compatible")).toBeNull();
   });
 });

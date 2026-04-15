@@ -20,7 +20,8 @@
     "dist:prod": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false pnpm run build:prod && electron-builder",
     "scorecard:model-runtime": "node scripts/model-runtime-scorecard.js",
     "typecheck": "tsc --noEmit -p tsconfig.main.json && tsc --noEmit -p tsconfig.renderer.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "electron-updater": "^6.8.3",

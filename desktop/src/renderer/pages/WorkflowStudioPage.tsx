@@ -3,12 +3,13 @@ import { Link, useParams } from "react-router-dom";
 import { AlertTriangle, Bug, ChevronDown, ChevronLeft, PanelRight, Play, Save, Square, ToggleLeft, ToggleRight } from "lucide-react";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useWorkflowRunsStore, type NodeLiveStatus } from "../stores/workflow-runs";
-import type { WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowNodeKind, WorkflowInterruptPayload } from "@shared/contracts";
+import type { ArtifactScopeRef, WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowNodeKind, WorkflowInterruptPayload } from "@shared/contracts";
 import WorkflowCanvas from "../components/workflow/WorkflowCanvas";
 import WorkflowGraphInspector from "../components/workflow/WorkflowGraphInspector";
 import WorkflowRunPanel from "../components/workflow/WorkflowRunPanel";
 import { WorkflowDebugPanel } from "../components/workflow/WorkflowDebugPanel";
 import { createWorkflowNodeDraft } from "../components/workflow/workflow-node-factory";
+import WorkFilesPanel from "../components/WorkFilesPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -193,6 +194,19 @@ export default function WorkflowStudioPage() {
     () => (workspace.workflowDefinitions?.[workflowId] as WorkflowDefinition | undefined) ?? null,
     [workspace.workflowDefinitions, workflowId],
   );
+  const workFilesScope = useMemo<ArtifactScopeRef | null>(() => {
+    if (activeRunId) {
+      return { scopeKind: "workflowRun", scopeId: activeRunId };
+    }
+    const latestWorkflowRun = Object.values(workspace.workflowRuns)
+      .map((item) => item as Record<string, unknown>)
+      .filter((item) => item.workflowId === workflowId && typeof item.id === "string")
+      .sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")))[0];
+    if (latestWorkflowRun?.id && typeof latestWorkflowRun.id === "string") {
+      return { scopeKind: "workflowRun", scopeId: latestWorkflowRun.id };
+    }
+    return null;
+  }, [activeRunId, workflowId, workspace.workflowRuns]);
 
   // Sync draft from workflow
   useEffect(() => {
@@ -761,6 +775,15 @@ export default function WorkflowStudioPage() {
             )}
           </aside>
         )}
+
+        <aside className="studio-files-panel">
+          <WorkFilesPanel
+            scope={workFilesScope}
+            title="Run Files"
+            description={workFilesScope ? "Managed outputs, logs, and deliverables for the current workflow run." : "Managed workflow files will appear here after the first run."}
+            emptyHint="No indexed files for this workflow yet. Run it once to populate this panel."
+          />
+        </aside>
       </main>
 
       <style>{`
@@ -972,6 +995,16 @@ export default function WorkflowStudioPage() {
           flex-shrink: 0;
           z-index: 10;
           overflow: hidden;
+        }
+
+        .studio-files-panel {
+          width: 340px;
+          min-width: 320px;
+          border-left: 1px solid #27272a;
+          background: #121214;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
         }
 
         .inspector-content {
@@ -1210,6 +1243,11 @@ export default function WorkflowStudioPage() {
           .studio-right-panel {
             width: 380px;
             min-width: 340px;
+          }
+
+          .studio-files-panel {
+            width: 300px;
+            min-width: 280px;
           }
         }
       `}</style>

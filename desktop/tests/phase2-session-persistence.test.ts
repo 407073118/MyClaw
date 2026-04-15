@@ -7,7 +7,7 @@ import type { ChatSession, ResolvedExecutionPlan } from "@shared/contracts";
 import { SESSION_RUNTIME_VERSION } from "@shared/contracts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadPersistedState, saveSession } from "../src/main/services/state-persistence";
+import { loadPersistedState, resetSessionDatabase, saveSession } from "../src/main/services/state-persistence";
 
 let testRootDir: string;
 
@@ -18,17 +18,20 @@ function createPaths(rootDir: string) {
     myClawDir,
     skillsDir: join(myClawDir, "skills"),
     sessionsDir: join(myClawDir, "sessions"),
+    sessionsDbFile: join(myClawDir, "sessions.db"),
     modelsDir: join(myClawDir, "models"),
     settingsFile: join(myClawDir, "settings.json"),
   };
 }
 
 beforeEach(() => {
+  resetSessionDatabase();
   testRootDir = join(tmpdir(), `myclaw-session-persistence-${randomUUID()}`);
   mkdirSync(testRootDir, { recursive: true });
 });
 
 afterEach(() => {
+  resetSessionDatabase();
   rmSync(testRootDir, { recursive: true, force: true });
 });
 
@@ -77,24 +80,7 @@ describe("Phase 2 session persistence", () => {
 
     await saveSession(paths, session);
 
-    const rawMeta = JSON.parse(
-      readFileSync(join(paths.sessionsDir, session.id, "session.json"), "utf-8"),
-    ) as Omit<ChatSession, "messages">;
-
-    expect(rawMeta).not.toHaveProperty("messages");
-    expect(rawMeta.runtimeIntent).toMatchObject({
-      reasoningEnabled: true,
-      toolStrategy: "auto",
-      replayPolicy: "assistant-turn-with-reasoning",
-    });
-    expect(rawMeta.executionPlan).toMatchObject({
-      adapterId: "br-minimax",
-      degradationReason: "tool-strategy-downgraded",
-      planSource: "capability",
-      fallbackAdapterIds: ["openai-compatible"],
-    });
-
-    const persisted = loadPersistedState(paths);
+    const persisted = await loadPersistedState(paths);
 
     expect(persisted.sessions).toHaveLength(1);
     expect(persisted.sessions[0]).toMatchObject({
@@ -116,7 +102,7 @@ describe("Phase 2 session persistence", () => {
     expect(persisted.sessions[0].messages).toEqual(session.messages);
   });
 
-  it("keeps older persisted sessions loadable when phase 2 metadata is absent", () => {
+  it("keeps older persisted sessions loadable when phase 2 metadata is absent", async () => {
     const paths = createPaths(testRootDir);
     const sessionDir = join(paths.sessionsDir, "legacy-session");
 
@@ -139,7 +125,7 @@ describe("Phase 2 session persistence", () => {
     );
     writeFileSync(join(sessionDir, "messages.json"), JSON.stringify([]), "utf-8");
 
-    const persisted = loadPersistedState(paths);
+    const persisted = await loadPersistedState(paths);
 
     expect(persisted.sessions).toHaveLength(1);
     expect(persisted.sessions[0]).toMatchObject({

@@ -40,7 +40,7 @@ describe("workflow run persistence", () => {
     } as const;
 
     await saveWorkflowRun(paths as never, workflowRun);
-    const persisted = loadPersistedState(paths as never);
+    const persisted = await loadPersistedState(paths as never);
 
     expect(persisted.workflowRuns).toEqual([workflowRun]);
   });

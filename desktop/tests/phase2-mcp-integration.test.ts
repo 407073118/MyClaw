@@ -49,6 +49,37 @@ describe("Phase 2: MCP server config persistence", () => {
     expect(manager.listServers()).toEqual([]);
   });
 
+  it("should reject duplicate server ids on create and keep persisted configs unchanged", async () => {
+    const manager = new McpServerManager(testDir);
+
+    await manager.createServer({
+      id: "playwright",
+      name: "Playwright",
+      source: "manual",
+      enabled: false,
+      transport: "stdio",
+      command: "npx",
+      args: ["@playwright/mcp@latest"],
+    } as any);
+
+    await expect(
+      manager.createServer({
+        id: "playwright",
+        name: "Playwright Duplicate",
+        source: "manual",
+        enabled: false,
+        transport: "stdio",
+        command: "node",
+        args: ["server.js"],
+      } as any),
+    ).rejects.toThrow("MCP server id already exists: playwright");
+
+    const configs = JSON.parse(readFileSync(join(testDir, "mcp-servers.json"), "utf8"));
+    expect(configs).toHaveLength(1);
+    expect(configs[0].id).toBe("playwright");
+    expect(configs[0].name).toBe("Playwright");
+  });
+
   it("should persist server configs to mcp-servers.json", async () => {
     const manager = new McpServerManager(testDir);
     await manager.createServer({

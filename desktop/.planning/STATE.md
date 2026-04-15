@@ -4,15 +4,15 @@
 
 Phase: 11 of 11 (OpenAI / Anthropic compatibility bridge)
 Plan: 0 of 0 in current phase
-Status: Phase 9/10 已完成，desktop 通用推理运行时与 MiniMax-first adapter 已落地
-Last activity: 2026-04-04 -- 收口 Phase 9/10 规划状态，并新增 Phase 11 作为下一阶段
+Status: Phase 11 已进入 native capability runtime 收口与 vendor rollout 验证阶段
+Last activity: 2026-04-15 -- 收口当前规划状态，整理 native capability runtime、vendor rollout 与 backlog 文档
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** 用户可以通过自然语言与 AI 对话，AI 自动调用工具完成复杂的编码和系统管理任务。
-**Current focus:** Phase 11 待规划，优先把 OpenAI / Anthropic compatibility bridge 接到现有 reasoning runtime 上，并补齐跨 provider 验证矩阵。
+**Current focus:** Phase 11 以 OpenAI / Anthropic compatibility bridge、native capability runtime 收口和 vendor rollout 为主线，继续补齐跨 provider 验证矩阵并清理 backlog。
 
 ## Completed Phases
 
@@ -53,7 +53,7 @@ See: .planning/PROJECT.md (updated 2026-04-01)
 - **Reasoning runtime 已落地** — 会话级 thinking 状态、request-body patch、Chat thinking 开关与确认交互已经接通
 - **MiniMax-first adapter 已落地** — first-class provider adapter、assistant replay payload、settings/catalog 语义对齐和回归矩阵已经补齐
 - Phase 9/10 的 targeted vitest suites 与 `pnpm --dir desktop run typecheck` 已通过
-- MCP SSE/HTTP 模式、Cloud Hub、Workflow 运行时仍是 stub
+- Cloud Hub 已具备基础入口与发布草稿链路，Workflow runtime 已接入执行、持久化与恢复骨架，剩余发布闭环、冷恢复和实时推送仍在收口中
 
 ### Roadmap Evolution
 

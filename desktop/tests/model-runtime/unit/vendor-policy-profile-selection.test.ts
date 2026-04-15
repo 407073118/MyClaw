@@ -15,8 +15,8 @@ import {
 describe("vendor policy profile selection", () => {
   it("resolves prompt overlay lines from the registry", () => {
     expect(resolvePromptOverlayLines("qwen-dashscope")).toEqual(expect.arrayContaining([
-      "Assume compatible transport and conservative tool compilation.",
-      "Do not rely on server-side continuity across turns.",
+      "Prefer Qwen-native Responses features first, including continuation and vendor-native search/extractor tools.",
+      "When thinking is enabled, do not force tool_choice and do not rely on server-side continuity outside the current turn.",
     ]));
   });
 
@@ -33,7 +33,7 @@ describe("vendor policy profile selection", () => {
 
   it("resolves prompt and reasoning profiles from the registry", () => {
     expect(resolvePromptProfileLines("qwen.responses.default")).toEqual(expect.arrayContaining([
-      "Prefer explicit tool intent before execution.",
+      "Prefer explicit tool intent and Responses-native continuation before execution.",
     ]));
     expect(resolveReasoningProfileId("openai-native", "openai-responses")).toBe("openai.reasoning.native");
     expect(resolveReasoningProfileId("br-minimax", "openai-chat-compatible")).toBe("minimax.reasoning.br-private");
@@ -53,7 +53,7 @@ describe("vendor policy profile selection", () => {
 
   it("resolves tool and reasoning profile summary lines", () => {
     expect(resolveToolPolicySummaryLines("qwen.tools.conservative")).toEqual(expect.arrayContaining([
-      "Hide high-risk shell and browser script tools unless explicitly needed.",
+      "Hide high-risk shell and browser script tools unless explicitly needed, and let Qwen native search/extractor cover the overlapping paths first.",
     ]));
     expect(resolveReasoningProfileLines("anthropic.reasoning.native")).toEqual(expect.arrayContaining([
       "Use Anthropic thinking budgets for deeper reasoning turns.",

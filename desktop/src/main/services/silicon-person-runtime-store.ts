@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   model_profile_id TEXT,
   runtime_version INTEGER DEFAULT 2,
   silicon_person_id TEXT,
+  runtime_intent TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -95,6 +96,16 @@ function deserializeContent(raw: string): ChatMessageContent {
   return raw;
 }
 
+/** 安全解析 JSON 字符串，失败或 null 时返回 null。 */
+function parseJsonOrNull(raw: string | null): Record<string, unknown> | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 // ── SiliconPersonRuntimeStore ──
 
 export class SiliconPersonRuntimeStore {
@@ -117,6 +128,7 @@ export class SiliconPersonRuntimeStore {
       this.db = new SQL.Database();
     }
     this.ensureDb().exec(SCHEMA_SQL);
+    this.migrateSchema();
     this.flush();
   }
 
@@ -147,8 +159,8 @@ export class SiliconPersonRuntimeStore {
     const now = new Date().toISOString();
     db.run(
       `INSERT OR REPLACE INTO sessions
-       (id, person_id, title, status, model_profile_id, runtime_version, silicon_person_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, person_id, title, status, model_profile_id, runtime_version, silicon_person_id, runtime_intent, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         session.id,
         personId,
@@ -157,6 +169,7 @@ export class SiliconPersonRuntimeStore {
         session.modelProfileId || null,
         session.runtimeVersion ?? 2,
         session.siliconPersonId ?? null,
+        session.runtimeIntent ? JSON.stringify(session.runtimeIntent) : null,
         session.createdAt || now,
         now,
       ],
@@ -169,7 +182,7 @@ export class SiliconPersonRuntimeStore {
     const db = this.ensureDb();
     const stmt = db.prepare(
       `SELECT id, person_id, title, status, model_profile_id, runtime_version,
-              silicon_person_id, created_at, updated_at
+              silicon_person_id, runtime_intent, created_at, updated_at
        FROM sessions WHERE id = ?`,
     );
     stmt.bind([sessionId]);
@@ -185,6 +198,7 @@ export class SiliconPersonRuntimeStore {
         modelProfileId: (row.model_profile_id as string) || null,
         runtimeVersion: row.runtime_version as number,
         siliconPersonId: (row.silicon_person_id as string) || null,
+        runtimeIntent: parseJsonOrNull(row.runtime_intent as string | null),
         createdAt: row.created_at as string,
         updatedAt: row.updated_at as string,
       };
@@ -200,7 +214,7 @@ export class SiliconPersonRuntimeStore {
 
     const stmt = db.prepare(
       `SELECT id, person_id, title, status, model_profile_id, runtime_version,
-              silicon_person_id, created_at, updated_at
+              silicon_person_id, runtime_intent, created_at, updated_at
        FROM sessions WHERE person_id = ?
        ORDER BY created_at DESC`,
     );
@@ -216,6 +230,7 @@ export class SiliconPersonRuntimeStore {
         modelProfileId: (row.model_profile_id as string) || null,
         runtimeVersion: row.runtime_version as number,
         siliconPersonId: (row.silicon_person_id as string) || null,
+        runtimeIntent: parseJsonOrNull(row.runtime_intent as string | null),
         createdAt: row.created_at as string,
         updatedAt: row.updated_at as string,
       });
@@ -440,6 +455,17 @@ export class SiliconPersonRuntimeStore {
   }
 
   // ── Private helpers ──
+
+  /** 对已有数据库补充缺少的列（向前兼容旧版 schema）。 */
+  private migrateSchema(): void {
+    const db = this.ensureDb();
+    try {
+      const stmt = db.prepare("SELECT runtime_intent FROM sessions LIMIT 0");
+      stmt.free();
+    } catch {
+      db.run("ALTER TABLE sessions ADD COLUMN runtime_intent TEXT");
+    }
+  }
 
   private ensureDb(): Database {
     if (!this.db) {

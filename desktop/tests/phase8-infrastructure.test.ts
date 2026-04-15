@@ -81,6 +81,35 @@ describe("Model Client URL Resolution", () => {
     expect(url).toContain("/v1/chat/completions");
   });
 
+  it("resolves coding.dashscope anthropic route to apps/anthropic", async () => {
+    const { resolveProtocolEndpointUrl } = await import("../src/main/services/model-client");
+    const url = resolveProtocolEndpointUrl({
+      id: "test",
+      name: "Test",
+      provider: "openai-compatible",
+      baseUrl: "https://coding.dashscope.aliyuncs.com",
+      baseUrlMode: "provider-root",
+      apiKey: "test",
+      model: "qwen3.5-plus",
+    }, "anthropic-messages");
+    expect(url).toBe("https://coding.dashscope.aliyuncs.com/apps/anthropic/messages");
+  });
+
+  it("resolves dashscope responses route with compatible-mode preserved", async () => {
+    const { resolveProtocolEndpointUrl } = await import("../src/main/services/model-client");
+    const url = resolveProtocolEndpointUrl({
+      id: "test",
+      name: "Test",
+      provider: "openai-compatible",
+      providerFlavor: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com",
+      baseUrlMode: "provider-root",
+      apiKey: "test",
+      model: "qwen-plus",
+    }, "openai-responses");
+    expect(url).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1/responses");
+  });
+
   it("resolves generic provider URL with /v1/chat/completions", async () => {
     const { resolveModelEndpointUrl } = await import("../src/main/services/model-client");
     const url = resolveModelEndpointUrl({
@@ -159,6 +188,28 @@ describe("Model Client request headers", () => {
       "x-api-key": "test-key",
       "anthropic-version": "2023-06-01",
     });
+  });
+
+  it("adds the DashScope session cache header only on Qwen responses requests when configured", async () => {
+    const { buildProtocolRequestHeaders } = await import("../src/main/services/model-client");
+    const profile = {
+      id: "test",
+      name: "Test",
+      provider: "openai-compatible" as const,
+      providerFlavor: "qwen" as const,
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "test-key",
+      model: "qwen3.6-plus",
+      headers: {},
+      responsesApiConfig: {
+        sessionCache: "enable" as const,
+      },
+    };
+
+    expect(buildProtocolRequestHeaders(profile, "openai-responses")).toMatchObject({
+      "x-dashscope-session-cache": "enable",
+    });
+    expect(buildProtocolRequestHeaders(profile, "openai-chat-compatible")).not.toHaveProperty("x-dashscope-session-cache");
   });
 });
 

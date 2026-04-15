@@ -27,6 +27,8 @@ import { McpClient, type McpToolInfo } from "./mcp-client";
 import { McpHttpClient } from "./mcp-http-client";
 import { createLogger } from "./logger";
 
+type McpServerCreateInput = McpServerConfig | Omit<McpServerConfig, "id">;
+
 /** stdio 与 HTTP 两类 MCP 客户端共用的统一接口。 */
 type McpClientLike = {
   connected: boolean;
@@ -126,14 +128,36 @@ export class McpServerManager {
   }
 
   /** 创建新的服务配置，持久化保存，并按需自动连接。 */
-  async createServer(input: Omit<McpServerConfig, "id">): Promise<McpServer> {
+  async createServer(input: McpServerCreateInput): Promise<McpServer> {
+    const requestedId = typeof (input as { id?: unknown }).id === "string"
+      ? ((input as { id?: string }).id ?? "").trim()
+      : "";
+    const normalizedName = input.name.trim();
+    const serverId = requestedId || this.generateServerId(normalizedName);
+
+    if (!normalizedName) {
+      throw new Error("MCP server name is required");
+    }
+
+    if (this.configs.some((config) => config.id === serverId)) {
+      log.warn("MCP 服务 ID 已存在，拒绝重复创建", { serverId, name: normalizedName });
+      throw new Error(`MCP server id already exists: ${serverId}`);
+    }
+
     const config: McpServerConfig = {
-      id: randomUUID(),
       ...input,
+      id: serverId,
+      name: normalizedName,
     } as McpServerConfig;
 
     this.configs.push(config);
     this.persist();
+    log.info("已创建 MCP 服务配置", {
+      serverId: config.id,
+      name: config.name,
+      transport: config.transport,
+      enabled: config.enabled,
+    });
 
     // 若已启用则自动连接
     if (config.enabled) {
@@ -469,6 +493,20 @@ export class McpServerManager {
     }
 
     return leftEntries.every(([key, value]) => rightEntries.some(([otherKey, otherValue]) => otherKey === key && otherValue === value));
+  }
+
+  /** 为未显式提供 ID 的新建 MCP 服务生成稳定且不冲突的服务 ID。 */
+  private generateServerId(name: string): string {
+    const baseId = name.trim() || `mcp-${randomUUID()}`;
+    let nextId = baseId;
+    let suffix = 2;
+
+    while (this.configs.some((config) => config.id === nextId)) {
+      nextId = `${baseId}-${suffix}`;
+      suffix += 1;
+    }
+
+    return nextId;
   }
 
   private toMcpServer(config: McpServerConfig): McpServer {

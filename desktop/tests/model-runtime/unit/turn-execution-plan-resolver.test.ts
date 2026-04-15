@@ -31,7 +31,8 @@ describe("turn execution plan resolver", () => {
   it.each([
     [buildProfile({ providerFlavor: "openai", baseUrl: "https://api.openai.com/v1" }), "openai-native", "openai", "openai-responses", "openai-responses"],
     [buildProfile({ provider: "anthropic", providerFlavor: "anthropic", model: "claude-3-7-sonnet" }), "anthropic-native", "anthropic", "anthropic-messages", "anthropic-messages"],
-    [buildProfile({ providerFlavor: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-max" }), "qwen-dashscope", "qwen", "openai-chat-compatible", "openai-responses"],
+    [buildProfile({ providerFlavor: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-max" }), "qwen-native", "qwen", "openai-responses", "openai-responses"],
+    [buildProfile({ providerFlavor: "moonshot", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k2.5" }), "moonshot-native", "kimi", "anthropic-messages", "anthropic-messages"],
     [buildProfile({ providerFlavor: "br-minimax", baseUrl: "https://api.minimax.chat/v1", model: "minimax-m2-5" }), "br-minimax", "minimax", "openai-chat-compatible", "anthropic-messages"],
     [buildProfile({ providerFlavor: "minimax-anthropic", baseUrl: "https://api.minimax.chat/v1", model: "minimax-m2-5" }), "generic-openai-compatible", "minimax", "openai-chat-compatible", "anthropic-messages"],
     [buildProfile({ providerFlavor: "volcengine-ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }), "volcengine-ark", "volcengine-ark", "openai-chat-compatible", "openai-responses"],
@@ -50,5 +51,23 @@ describe("turn execution plan resolver", () => {
     expect(plan.supportedProtocolTargets?.length).toBeGreaterThan(0);
     expect(plan.fallbackChain).toBeDefined();
     expect(plan.selectedModelProfileId).toBe(profile.id);
+  });
+
+  it("includes capability routes so downstream runtime layers can choose native or managed execution", () => {
+    const plan = resolveTurnExecutionPlan({
+      profile: buildProfile({
+        providerFlavor: "openai",
+        providerFamily: "openai-native",
+        vendorFamily: "openai",
+        baseUrl: "https://api.openai.com/v1",
+      }),
+      legacyExecutionPlan: buildLegacyExecutionPlan(),
+      selectedModelProfileId: "profile-1",
+    });
+
+    expect(plan.capabilityRoutes?.find((route) => route.capabilityId === "search")).toMatchObject({
+      routeType: "vendor-native",
+    });
+    expect(plan.capabilityRoutes?.find((route) => route.capabilityId === "citation")).toBeDefined();
   });
 });
