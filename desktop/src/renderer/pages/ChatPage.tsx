@@ -1060,6 +1060,16 @@ export default function ChatPage() {
     }
   }
 
+  /** 从硅基员工私域聊天返回主聊天视图，只切换展示对象，不改主聊天 session 本身。 */
+  function handleReturnToMainChat() {
+    if (!selectedSiliconPerson) return;
+    console.info("[chat-page] 从硅基员工聊天返回主聊天", {
+      siliconPersonId: selectedSiliconPerson.id,
+      sessionId: session?.id ?? null,
+    });
+    workspace.setActiveSiliconPersonId(null);
+  }
+
   /** 提交当前输入框内容。 */
   /** 请求中断当前正在运行的聊天回合，并保留已经流出的半截回答。 */
   async function handleStopRun() {
@@ -1384,6 +1394,20 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="header-right">
+            {isSiliconPersonView && (
+              <button
+                type="button"
+                data-testid="return-main-chat-button"
+                className="chat-header-action-btn"
+                onClick={handleReturnToMainChat}
+                title="返回主聊天"
+              >
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+                </svg>
+                <span>返回主聊天</span>
+              </button>
+            )}
             <button
               type="button"
               data-testid="work-files-toggle"
@@ -1798,20 +1822,24 @@ export default function ChatPage() {
                 ) : (
                   <span className="composer-hints"></span>
                 )}
-                {(
+                {!isSiliconPersonView && (
                   <>
                     <div className="effort-selector" data-testid="effort-selector">
-                      {(["low", "medium", "high"] as const).map((level) => (
+                      {(["low", "medium", "high", "xhigh"] as const).map((level) => (
                         <button
                           key={level}
                           className={`effort-btn${(session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort === level || (!((session?.runtimeIntent as Record<string, unknown> | undefined)?.reasoningEffort) && level === "medium") ? " active" : ""}`}
                           onClick={() => void updateDisplayedSessionRuntimeIntent({ reasoningEffort: level })}
-                          title={level === "low" ? "快速回答" : level === "medium" ? "默认思考" : "深度推理"}
+                          title={level === "low" ? "快速回答" : level === "medium" ? "默认思考" : level === "high" ? "深度推理" : "极深推理"}
                         >
-                          {level === "low" ? "快速" : level === "medium" ? "思考" : "深度"}
+                          {level === "low" ? "快速" : level === "medium" ? "思考" : level === "high" ? "深度" : "极深"}
                         </button>
                       ))}
                     </div>
+                  </>
+                )}
+                {(
+                  <>
                     <button
                       type="button"
                       data-testid="plan-mode-toggle"

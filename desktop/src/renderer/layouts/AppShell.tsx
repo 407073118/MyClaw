@@ -200,14 +200,18 @@ export default function AppShell() {
   const navigate = useNavigate();
 
   const auth = useAuthStore();
-  const workspace = useWorkspaceStore();
-  const loadBootstrap = workspace.loadBootstrap;
+  const loadBootstrap = useWorkspaceStore((state) => state.loadBootstrap);
+  const ready = useWorkspaceStore((state) => state.ready);
+  const loading = useWorkspaceStore((state) => state.loading);
+  const error = useWorkspaceStore((state) => state.error);
+  const requiresInitialSetup = useWorkspaceStore((state) => state.requiresInitialSetup);
+  const defaultModelName = useWorkspaceStore(
+    (state) => state.models.find((m) => m.id === state.defaultModelProfileId)?.name ?? "Offline",
+  );
+  const activeSiliconPersonId = useWorkspaceStore((state) => state.activeSiliconPersonId);
+  const setActiveSiliconPersonId = useWorkspaceStore((state) => state.setActiveSiliconPersonId);
 
   const isAuthenticated = auth.isAuthenticated;
-  const ready = workspace.ready;
-  const loading = workspace.loading;
-  const error = workspace.error;
-  const requiresInitialSetup = workspace.requiresInitialSetup;
 
   const showBootstrapError = !ready && Boolean(error);
   const showBootstrapSplash = loading || (!ready && !error);
@@ -217,9 +221,6 @@ export default function AppShell() {
   const bootstrapMessage = showBootstrapError
     ? (error ?? "Unable to load startup data from the local runtime.")
     : "Preparing the local runtime, restoring workspace state, and opening your last session.";
-
-  const defaultModelName =
-    workspace.models.find((m) => m.id === workspace.defaultModelProfileId)?.name ?? "Offline";
 
   const currentUserDisplayName = auth.session.user?.displayName ?? "未登录用户";
   const currentUserAccount = auth.session.user?.account ?? "未绑定账号";
@@ -318,7 +319,11 @@ export default function AppShell() {
                 to={item.to}
                 end={item.to === "/"}
                 className={["nav-link", isNavItemActive(item.to) ? "active" : ""].filter(Boolean).join(" ")}
-                onClick={() => workspace.setActiveSiliconPersonId(null)}
+                onClick={() => {
+                  if (activeSiliconPersonId !== null) {
+                    setActiveSiliconPersonId(null);
+                  }
+                }}
               >
                 <div className="nav-icon-box">
                   <item.icon />

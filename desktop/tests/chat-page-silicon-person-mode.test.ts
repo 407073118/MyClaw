@@ -170,6 +170,44 @@ describe("ChatPage silicon person mode", () => {
     expect(mocks.workspace.createSession).not.toHaveBeenCalled();
   });
 
+  it("shows a return-to-main-chat action in silicon person mode", async () => {
+    mocks.workspace.loadSiliconPersonById.mockResolvedValue(undefined);
+    mocks.workspace.markSiliconPersonSessionRead.mockResolvedValue(undefined);
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    fireEvent.click(screen.getByTestId("return-main-chat-button"));
+
+    expect(mocks.workspace.setActiveSiliconPersonId).toHaveBeenCalledWith(null);
+  });
+
+  it("hides the reasoning-effort selector in silicon person mode", async () => {
+    mocks.workspace.loadSiliconPersonById.mockResolvedValue(undefined);
+    mocks.workspace.markSiliconPersonSessionRead.mockResolvedValue(undefined);
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    expect(screen.queryByTestId("effort-selector")).toBeNull();
+  });
+
   it("refreshes the active silicon person summary after receiving a session update for that person", async () => {
     const originalCurrentSessionId = mocks.workspace.siliconPersons[0]?.currentSessionId ?? null;
     const originalSessions = mocks.workspace.siliconPersons[0]?.sessions ?? [];

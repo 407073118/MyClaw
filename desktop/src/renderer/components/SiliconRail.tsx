@@ -76,9 +76,9 @@ function SiliconRailAvatar({
 
 /** 右侧竖向头像栏，展示硅基员工状态。点击后切换到共享主聊天容器中的目标对象。 */
 export default function SiliconRail() {
-  const workspace = useWorkspaceStore();
   const navigate = useNavigate();
-  const siliconPersons = workspace.siliconPersons ?? [];
+  const siliconPersons = useWorkspaceStore((state) => state.siliconPersons ?? []);
+  const setActiveSiliconPersonId = useWorkspaceStore((state) => state.setActiveSiliconPersonId);
 
   if (siliconPersons.length === 0) return null;
 
@@ -89,7 +89,7 @@ export default function SiliconRail() {
       siliconPersonId: person.id,
       route: workspaceRoute,
     });
-    workspace.setActiveSiliconPersonId(person.id);
+    setActiveSiliconPersonId(person.id);
     navigate(workspaceRoute);
   }
 

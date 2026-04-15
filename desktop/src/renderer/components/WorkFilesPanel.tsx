@@ -67,6 +67,35 @@ function splitArtifacts(artifacts: ArtifactRecord[]) {
   };
 }
 
+/** 从 session 流事件中解析当前面板需要比对的会话 ID。 */
+function readSessionStreamScopeId(event: Record<string, unknown>): string | null {
+  if (typeof event.sessionId === "string") {
+    return event.sessionId;
+  }
+
+  if (event.session && typeof event.session === "object" && typeof (event.session as { id?: unknown }).id === "string") {
+    return (event.session as { id: string }).id;
+  }
+
+  if (
+    event.approvalRequest
+    && typeof event.approvalRequest === "object"
+    && typeof (event.approvalRequest as { sessionId?: unknown }).sessionId === "string"
+  ) {
+    return (event.approvalRequest as { sessionId: string }).sessionId;
+  }
+
+  return null;
+}
+
+/** 仅让命中当前 session scope 的流事件触发工件重载，避免无关事件造成高频刷新。 */
+function shouldReloadArtifactsForSessionEvent(scope: ArtifactScopeRef, event: Record<string, unknown>): boolean {
+  if (scope.scopeKind !== "session") {
+    return false;
+  }
+  return readSessionStreamScopeId(event) === scope.scopeId;
+}
+
 /** 渲染单个工作文件卡片，并统一提供打开、定位和提升操作。 */
 function ArtifactCard({
   artifact,
@@ -160,6 +189,9 @@ export default function WorkFilesPanel({
         type === "approval.requested" ||
         type === "approval.resolved"
       ) {
+        if (!shouldReloadArtifactsForSessionEvent(scope, event)) {
+          return;
+        }
         void loadArtifactsByScope(scope);
       }
     });
