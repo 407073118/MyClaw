@@ -350,6 +350,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
         defaultModelProfileId: profile.id,
         approvalPolicy: ctx.state.getApprovals(),
         personalPrompt: ctx.state.getPersonalPromptProfile(),
+        asrConfig: ctx.state.getAsrConfig(),
       }).catch((err) => {
         console.error("[model:create] failed to persist default model setting", err);
       });
@@ -396,6 +397,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
         defaultModelProfileId: nextDefaultId,
         approvalPolicy: ctx.state.getApprovals(),
         personalPrompt: ctx.state.getPersonalPromptProfile(),
+        asrConfig: ctx.state.getAsrConfig(),
       }).catch((err) => {
         console.error("[model:delete] failed to persist runtime state", err);
       });
@@ -426,6 +428,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
         defaultModelProfileId: id,
         approvalPolicy: ctx.state.getApprovals(),
         personalPrompt: ctx.state.getPersonalPromptProfile(),
+        asrConfig: ctx.state.getAsrConfig(),
       }).catch((err) => {
         console.error("[model:set-default] failed to persist runtime state", err);
       });

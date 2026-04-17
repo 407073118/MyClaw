@@ -31,6 +31,7 @@ import { randomUUID } from "node:crypto";
 
 import type {
   ApprovalPolicy,
+  AsrConfig,
   ChatSession,
   ModelProfile,
   PersonalPromptProfile,
@@ -39,7 +40,11 @@ import type {
   WorkflowRunSummary,
   WorkflowSummary,
 } from "@shared/contracts";
-import { createDefaultApprovalPolicy, createDefaultPersonalPromptProfile } from "@shared/contracts";
+import {
+  createDefaultApprovalPolicy,
+  createDefaultPersonalPromptProfile,
+  DEFAULT_ASR_CONFIG,
+} from "@shared/contracts";
 
 import type { MyClawPaths } from "./directory-service";
 import { normalizeFirstClassVendorRoute } from "./managed-model-profile";
@@ -53,6 +58,8 @@ export type AppSettings = {
   defaultModelProfileId: string | null;
   approvalPolicy: ApprovalPolicy;
   personalPrompt: PersonalPromptProfile;
+  /** ASR 服务配置（会议录音）。 */
+  asrConfig?: AsrConfig;
 };
 
 export type PersistedState = {
@@ -65,6 +72,7 @@ export type PersistedState = {
   defaultModelProfileId: string | null;
   approvalPolicy: ApprovalPolicy;
   personalPrompt: PersonalPromptProfile;
+  asrConfig: AsrConfig;
 };
 
 type PersistedSessionMetadata = Omit<ChatSession, "messages">;
@@ -191,6 +199,7 @@ export async function loadPersistedState(paths: MyClawPaths): Promise<PersistedS
   let defaultModelProfileId: string | null = null;
   let approvalPolicy: ApprovalPolicy = createDefaultApprovalPolicy();
   let personalPrompt: PersonalPromptProfile = createDefaultPersonalPromptProfile();
+  let asrConfig: AsrConfig = { ...DEFAULT_ASR_CONFIG };
 
   const settings = tryReadJson<Partial<AppSettings>>(paths.settingsFile);
   if (settings) {
@@ -200,6 +209,9 @@ export async function loadPersistedState(paths: MyClawPaths): Promise<PersistedS
     }
     if (settings.personalPrompt) {
       personalPrompt = { ...personalPrompt, ...settings.personalPrompt };
+    }
+    if (settings.asrConfig) {
+      asrConfig = { ...asrConfig, ...settings.asrConfig };
     }
   }
 
@@ -332,6 +344,7 @@ export async function loadPersistedState(paths: MyClawPaths): Promise<PersistedS
     defaultModelProfileId,
     approvalPolicy,
     personalPrompt,
+    asrConfig,
   };
 }
 

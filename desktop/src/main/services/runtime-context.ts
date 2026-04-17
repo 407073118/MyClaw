@@ -1,6 +1,7 @@
 import type {
   ApprovalPolicy,
   ApprovalRequest,
+  AsrConfig,
   ChatRunPhase,
   ChatSession,
   McpServer,
@@ -21,6 +22,7 @@ import type { ArtifactRegistry } from "./artifact-registry";
 import type { McpServerManager } from "./mcp-server-manager";
 import type { ResolvedModelCapability } from "./model-capability-resolver";
 import type { AppUpdaterService } from "./app-updater";
+import type { MeetingRecorder } from "./meeting-recorder";
 
 export type ActiveSessionRun = {
   runId: string;
@@ -60,6 +62,8 @@ export type RuntimeContext = {
     setApprovalRequests: (requests: ApprovalRequest[]) => void;
     getPersonalPromptProfile: () => PersonalPromptProfile;
     setPersonalPromptProfile: (profile: PersonalPromptProfile) => void;
+    getAsrConfig: () => AsrConfig;
+    setAsrConfig: (config: AsrConfig) => void;
   };
   services: {
     artifactRegistry: ArtifactRegistry;
@@ -67,8 +71,11 @@ export type RuntimeContext = {
     refreshSkills: () => Promise<SkillDefinition[]>;
     listMcpServers: () => McpServer[];
     mcpManager: McpServerManager | null;
+    /** connectAllEnabled() 返回的 Promise，bootstrap 等待它完成后再返回 MCP 工具列表。 */
+    mcpReady?: Promise<void>;
     appUpdater: AppUpdaterService;
     resolveModelCapability?: (profile: ModelProfile) => ResolvedModelCapability;
+    meetingRecorder?: MeetingRecorder;
   };
   tools: {
     resolveBuiltinTools: () => ResolvedBuiltinTool[];

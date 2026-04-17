@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // 防止 EPIPE 错误导致应用崩溃。
@@ -18,6 +19,7 @@ import type {
   ChatSession,
   ModelProfile,
   PersonalPromptProfile,
+  ResolvedMcpTool,
   SkillDefinition,
   SiliconPerson,
   WorkflowDefinition,
@@ -33,6 +35,10 @@ import { initLogger, createLogger } from "./services/logger";
 import { loadSkillsFromDisk, seedBuiltinSkills } from "./services/skill-loader";
 import { createAppUpdaterService } from "./services/app-updater";
 import { resolveAppUpdaterConfig } from "./services/update-config";
+import { AsrClient } from "./services/asr-client";
+import { DirectAsrProvider } from "./services/meeting-intelligence-provider";
+import { MeetingRecorder } from "./services/meeting-recorder";
+import { callModel } from "./services/model-client";
 
 const log = createLogger("main");
 
@@ -164,8 +170,34 @@ async function buildRuntimeContext(
   let defaultModelProfileId: string | null = persisted.defaultModelProfileId;
   const approvalPolicy = persisted.approvalPolicy;
   let personalPromptProfile: PersonalPromptProfile = persisted.personalPrompt;
+  let asrConfig = persisted.asrConfig;
   const artifactRegistry = new ArtifactRegistry(getSessionDatabase());
   const artifactManager = new ArtifactManager(paths, artifactRegistry);
+
+  // 会议录音：AsrClient + DirectAsrProvider + MeetingRecorder
+  const asrClient = new AsrClient();
+  const meetingProvider = new DirectAsrProvider(asrClient);
+  const meetingRecorder = new MeetingRecorder(
+    meetingProvider,
+    paths,
+    () => asrConfig,
+    async (transcriptText: string) => {
+      // 选择模型：优先 asrConfig.summaryModelProfileId，回退默认模型
+      const targetId = asrConfig.summaryModelProfileId ?? defaultModelProfileId;
+      const profile = models.find((m) => m.id === targetId) ?? models[0];
+      if (!profile) {
+        throw new Error("未配置任何模型，无法生成会议纪要");
+      }
+      const result = await callModel({
+        profile,
+        messages: [
+          { role: "system", content: MeetingRecorder.SUMMARY_SYSTEM_PROMPT },
+          { role: "user", content: transcriptText },
+        ],
+      });
+      return result.content;
+    },
+  );
 
   return createRuntimeContext({
     runtime: {
@@ -207,6 +239,10 @@ async function buildRuntimeContext(
       setPersonalPromptProfile: (profile) => {
         personalPromptProfile = profile;
       },
+      getAsrConfig: () => asrConfig,
+      setAsrConfig: (next) => {
+        asrConfig = next;
+      },
     },
     services: {
       artifactRegistry,
@@ -220,6 +256,7 @@ async function buildRuntimeContext(
       listMcpServers: () => mcpManager.listServers(),
       mcpManager,
       appUpdater,
+      meetingRecorder,
     },
     tools: {
       resolveBuiltinTools: () => {
@@ -229,7 +266,26 @@ async function buildRuntimeContext(
           return [];
         }
       },
-      resolveMcpTools: () => [],
+      resolveMcpTools: (): ResolvedMcpTool[] => {
+        const rawTools = mcpManager.getAllTools();
+        // 读取用户偏好设置，与原始工具列表合并
+        const prefsPath = join(paths.myClawDir, "mcp-tool-preferences.json");
+        let prefs: Record<string, { enabled?: boolean; exposedToModel?: boolean; approvalModeOverride?: unknown }> = {};
+        try {
+          if (existsSync(prefsPath)) {
+            prefs = JSON.parse(readFileSync(prefsPath, "utf8"));
+          }
+        } catch { /* ignore */ }
+        return rawTools.map((tool) => {
+          const pref = prefs[tool.id];
+          return {
+            ...tool,
+            enabled: pref?.enabled ?? true,
+            exposedToModel: pref?.exposedToModel ?? true,
+            effectiveApprovalMode: (pref?.approvalModeOverride as string) ?? "inherit",
+          } as ResolvedMcpTool;
+        });
+      },
     },
   });
 }
@@ -262,8 +318,8 @@ app.whenReady().then(async () => {
   const ctx = await buildRuntimeContext(paths, mcpManager, appUpdater);
   registerAllIpcHandlers(ctx);
 
-  // 在后台自动连接所有启用中的 MCP 服务
-  mcpManager.connectAllEnabled().catch((err) => {
+  // 在后台自动连接所有启用中的 MCP 服务，将 Promise 存入 ctx 以便 bootstrap 等待
+  ctx.services.mcpReady = mcpManager.connectAllEnabled().catch((err) => {
     log.warn("MCP auto-connect failed", { error: String(err) });
   });
 

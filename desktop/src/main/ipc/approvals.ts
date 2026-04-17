@@ -24,6 +24,7 @@ export function registerApprovalHandlers(ctx: RuntimeContext): void {
         defaultModelProfileId: ctx.state.getDefaultModelProfileId(),
         approvalPolicy: updated,
         personalPrompt: ctx.state.getPersonalPromptProfile(),
+        asrConfig: ctx.state.getAsrConfig(),
       }).catch((err) => {
         console.error("[approval:set-policy] failed to persist settings", err);
       });

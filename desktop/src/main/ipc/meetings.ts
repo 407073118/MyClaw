@@ -1,8 +1,9 @@
 import { BrowserWindow, ipcMain } from "electron";
 
-import type { MeetingEvent } from "@shared/contracts";
+import type { AsrConfig, MeetingEvent } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
+import { saveSettings } from "../services/state-persistence";
 
 /**
  * 注册会议录音相关 IPC 通道。
@@ -80,5 +81,22 @@ export function registerMeetingHandlers(ctx: RuntimeContext): void {
       ? chunk
       : Buffer.from(chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : chunk);
     recorder.onAudioChunk(buf);
+  });
+
+  // ---- ASR 配置 ----------------------------------------------------------
+  ipcMain.handle("asr:get-config", () => {
+    return { config: ctx.state.getAsrConfig() };
+  });
+
+  ipcMain.handle("asr:save-config", async (_event, next: AsrConfig) => {
+    const merged: AsrConfig = { ...ctx.state.getAsrConfig(), ...next };
+    ctx.state.setAsrConfig(merged);
+    await saveSettings(ctx.runtime.paths, {
+      defaultModelProfileId: ctx.state.getDefaultModelProfileId(),
+      approvalPolicy: ctx.state.getApprovals(),
+      personalPrompt: ctx.state.getPersonalPromptProfile(),
+      asrConfig: merged,
+    });
+    return { config: merged };
   });
 }

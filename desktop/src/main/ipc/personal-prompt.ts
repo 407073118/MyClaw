@@ -32,6 +32,7 @@ export function registerPersonalPromptHandlers(ctx: RuntimeContext): void {
         defaultModelProfileId: ctx.state.getDefaultModelProfileId(),
         approvalPolicy: ctx.state.getApprovals(),
         personalPrompt: nextProfile,
+        asrConfig: ctx.state.getAsrConfig(),
       }).catch((err) => {
         console.error("[personal-prompt:set] 保存个人长期 Prompt 失败", err);
       });
