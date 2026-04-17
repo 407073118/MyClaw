@@ -4,6 +4,7 @@ import { registerArtifactHandlers } from "./artifacts";
 import { registerBootstrapHandlers } from "./bootstrap";
 import { registerCloudHandlers } from "./cloud";
 import { registerMcpHandlers } from "./mcp";
+import { registerMeetingHandlers } from "./meetings";
 import { registerModelHandlers } from "./models";
 import { registerPersonalPromptHandlers } from "./personal-prompt";
 import { registerSessionHandlers } from "./sessions";
@@ -33,4 +34,5 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerSiliconPersonHandlers(ctx);
   registerWebPanelHandlers(ctx);
   registerSkillFileHandlers(ctx);
+  registerMeetingHandlers(ctx);
 }
