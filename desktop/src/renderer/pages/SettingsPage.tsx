@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "@/stores/workspace";
-import type { ProtocolTarget } from "@shared/contracts";
+import type { AsrConfig, ProtocolTarget } from "@shared/contracts";
+import { DEFAULT_ASR_CONFIG } from "@shared/contracts";
 import { readBrMiniMaxRuntimeDiagnostics } from "@shared/br-minimax";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
 import { formatCapabilitySource } from "../utils/context-ui-helpers";
@@ -41,7 +42,7 @@ function formatProtocolSelectionSourceLabel(source?: "saved" | "probe" | "regist
   return "回退选择";
 }
 
-const TABS = ["模型", "通用", "审批"] as const;
+const TABS = ["模型", "通用", "审批", "语音识别"] as const;
 type TabName = typeof TABS[number];
 
 /** 渲染个人设置页，管理模型、通用选项与审批策略。 */
@@ -61,6 +62,36 @@ export default function SettingsPage() {
     autoApproveReadOnly: workspace.approvals?.autoApproveReadOnly ?? defaultApprovalPolicy.autoApproveReadOnly,
     autoApproveSkills: workspace.approvals?.autoApproveSkills ?? defaultApprovalPolicy.autoApproveSkills,
   });
+
+  // ---- ASR 配置 ----------------------------------------------------------
+  const [asrDraft, setAsrDraft] = useState<AsrConfig>({ ...DEFAULT_ASR_CONFIG });
+  const [asrSaving, setAsrSaving] = useState(false);
+  const [asrSaveStatus, setAsrSaveStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { config } = await window.myClawAPI.getAsrConfig();
+        if (config) setAsrDraft(config);
+      } catch (err) {
+        console.error("[settings] 读取 ASR 配置失败", err);
+      }
+    })();
+  }, []);
+
+  async function saveAsrConfig() {
+    setAsrSaving(true);
+    setAsrSaveStatus(null);
+    try {
+      const { config } = await window.myClawAPI.saveAsrConfig(asrDraft);
+      setAsrDraft(config);
+      setAsrSaveStatus("已保存");
+    } catch (err) {
+      setAsrSaveStatus(`保存失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setAsrSaving(false);
+    }
+  }
 
   // 工作区审批配置变化后，同步刷新本地编辑草稿。
   useEffect(() => {
@@ -415,6 +446,163 @@ export default function SettingsPage() {
             <p>{approvalDraft.autoApproveSkills ? "Skills 调用默认直接放行。" : "Skills 调用需要审批。"}</p>
             <p>{approvalDraft.autoApproveReadOnly ? "只读操作默认自动允许。" : "只读操作当前也需要审批。"}</p>
             <p>已设为始终允许的工具：{alwaysAllowedToolsLabel}</p>
+          </div>
+        </article>
+      )}
+
+      {/* 语音识别页签 */}
+      {activeTab === "语音识别" && (
+        <article className="card">
+          <p className="eyebrow">ASR</p>
+          <h3>会议语音识别服务</h3>
+          <p>配置实时流式 ASR 与离线识别服务地址，以及会议纪要生成使用的模型。</p>
+
+          <div className="approval-controls" style={{ marginTop: 20 }}>
+            <label className="field">
+              <span>实时流式 ASR WebSocket 地址</span>
+              <input
+                type="text"
+                value={asrDraft.wsUrl}
+                onChange={(e) => setAsrDraft((p) => ({ ...p, wsUrl: e.target.value }))}
+                placeholder="ws://host:port"
+                style={{
+                  height: 40,
+                  padding: "0 12px",
+                  background: "var(--bg-base)",
+                  border: "1px solid var(--glass-border)",
+                  borderRadius: 8,
+                  color: "var(--text-primary)",
+                  fontSize: 14,
+                }}
+              />
+            </label>
+
+            <label className="field">
+              <span>识别模式</span>
+              <div style={{ display: "flex", gap: 16 }}>
+                <label className="switch-row" style={{ cursor: "pointer" }}>
+                  <input
+                    type="radio"
+                    name="asr-mode"
+                    value="online"
+                    checked={asrDraft.mode === "online"}
+                    onChange={() => setAsrDraft((p) => ({ ...p, mode: "online" }))}
+                  />
+                  <span>online（低延迟）</span>
+                </label>
+                <label className="switch-row" style={{ cursor: "pointer" }}>
+                  <input
+                    type="radio"
+                    name="asr-mode"
+                    value="2pass"
+                    checked={asrDraft.mode === "2pass"}
+                    onChange={() => setAsrDraft((p) => ({ ...p, mode: "2pass" }))}
+                  />
+                  <span>2pass（更准确）</span>
+                </label>
+              </div>
+            </label>
+
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={asrDraft.ssl}
+                onChange={(e) => setAsrDraft((p) => ({ ...p, ssl: e.target.checked }))}
+              />
+              <span>启用 SSL / WSS</span>
+            </label>
+
+            <label className="field">
+              <span>离线 ASR HTTP 地址</span>
+              <input
+                type="text"
+                value={asrDraft.httpUrl}
+                onChange={(e) => setAsrDraft((p) => ({ ...p, httpUrl: e.target.value }))}
+                placeholder="https://host/recognition"
+                style={{
+                  height: 40,
+                  padding: "0 12px",
+                  background: "var(--bg-base)",
+                  border: "1px solid var(--glass-border)",
+                  borderRadius: 8,
+                  color: "var(--text-primary)",
+                  fontSize: 14,
+                }}
+              />
+            </label>
+
+            <label className="switch-row">
+              <input
+                type="checkbox"
+                checked={asrDraft.enableSpeaker}
+                onChange={(e) => setAsrDraft((p) => ({ ...p, enableSpeaker: e.target.checked }))}
+              />
+              <span>启用说话人识别</span>
+            </label>
+
+            <label className="field">
+              <span>最大说话人数</span>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={asrDraft.maxSpeakers}
+                onChange={(e) => setAsrDraft((p) => ({ ...p, maxSpeakers: Number(e.target.value) || 1 }))}
+                style={{
+                  height: 40,
+                  padding: "0 12px",
+                  background: "var(--bg-base)",
+                  border: "1px solid var(--glass-border)",
+                  borderRadius: 8,
+                  color: "var(--text-primary)",
+                  fontSize: 14,
+                  width: 120,
+                }}
+              />
+            </label>
+
+            <label className="field">
+              <span>会议纪要生成模型</span>
+              <select
+                value={asrDraft.summaryModelProfileId ?? ""}
+                onChange={(e) =>
+                  setAsrDraft((p) => ({
+                    ...p,
+                    summaryModelProfileId: e.target.value ? e.target.value : null,
+                  }))
+                }
+              >
+                <option value="">默认模型（跟随 Chat 默认）</option>
+                {(workspace.models ?? []).map((m: any) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name} · {m.model}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+              <button
+                type="button"
+                className="primary"
+                onClick={() => void saveAsrConfig()}
+                disabled={asrSaving}
+              >
+                {asrSaving ? "保存中..." : "保存配置"}
+              </button>
+              {asrSaveStatus && (
+                <span
+                  style={{
+                    fontSize: 13,
+                    color: asrSaveStatus.startsWith("保存失败")
+                      ? "var(--status-red)"
+                      : "var(--status-green)",
+                  }}
+                >
+                  {asrSaveStatus}
+                </span>
+              )}
+            </div>
           </div>
         </article>
       )}
