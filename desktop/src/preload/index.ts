@@ -8,11 +8,15 @@ import type {
   ApprovalPolicy,
   ArtifactRecord,
   ArtifactScopeRef,
+  AsrConfig,
   AuthLoginRequest,
+  MeetingEvent,
+  MeetingRecord,
   ModelCatalogItem,
   McpServerConfig,
   ModelProfile,
   PersonalPromptProfile,
+  StructuredTranscript,
   WorkflowDefinition,
 } from "@shared/contracts";
 
@@ -437,6 +441,44 @@ const myClawAPI = {
   // ---- 技能文件 ------------------------------------------------------------
   skillReadTree: (skillId: string) => ipcRenderer.invoke("skill:read-tree", skillId),
   skillReadFile: (skillId: string, relativePath: string) => ipcRenderer.invoke("skill:read-file", skillId, relativePath),
+
+  // ---- 会议录音 ------------------------------------------------------------
+  meetings: {
+    start: (title?: string) =>
+      ipcRenderer.invoke("meeting:start", title) as Promise<{ meetingId: string }>,
+    stop: () =>
+      ipcRenderer.invoke("meeting:stop") as Promise<{ meetingId: string | null }>,
+    cancel: () =>
+      ipcRenderer.invoke("meeting:cancel") as Promise<{ ok: boolean }>,
+    list: () =>
+      ipcRenderer.invoke("meeting:list") as Promise<{ items: MeetingRecord[] }>,
+    get: (meetingId: string) =>
+      ipcRenderer.invoke("meeting:get", meetingId) as Promise<{
+        meeting: MeetingRecord | null;
+        transcript: StructuredTranscript | null;
+        summary: string | null;
+      }>,
+    delete: (meetingId: string) =>
+      ipcRenderer.invoke("meeting:delete", meetingId) as Promise<{ ok: boolean }>,
+    updateSpeaker: (meetingId: string, speakerIndex: number, label: string) =>
+      ipcRenderer.invoke("meeting:update-speaker", meetingId, speakerIndex, label) as Promise<{ ok: boolean }>,
+    updateTitle: (meetingId: string, title: string) =>
+      ipcRenderer.invoke("meeting:update-title", meetingId, title) as Promise<{ ok: boolean }>,
+    /** 高频音频数据推送 — fire-and-forget */
+    sendAudioChunk: (chunk: ArrayBuffer) => {
+      ipcRenderer.send("meeting:audio-chunk", chunk);
+    },
+    /** 订阅录音事件（实时转写、状态变更） */
+    onEvent: (callback: (event: MeetingEvent) => void): UnsubscribeFn =>
+      onChannel("meeting:event", callback),
+  },
+
+  // ---- ASR 配置 ------------------------------------------------------------
+  getAsrConfig: () =>
+    ipcRenderer.invoke("asr:get-config") as Promise<{ config: AsrConfig }>,
+
+  saveAsrConfig: (config: AsrConfig) =>
+    ipcRenderer.invoke("asr:save-config", config) as Promise<{ config: AsrConfig }>,
 } as const;
 
 contextBridge.exposeInMainWorld("myClawAPI", myClawAPI);
