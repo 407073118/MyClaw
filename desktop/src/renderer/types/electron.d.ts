@@ -5,10 +5,13 @@ import type {
   ApprovalMode,
   ApprovalPolicy,
   ApprovalRequest,
+  AsrConfig,
   BuiltinToolApprovalMode,
   ChatSession,
   McpServer,
   McpServerConfig,
+  MeetingEvent,
+  MeetingRecord,
   ModelCatalogItem,
   ModelProfile,
   ModelRouteProbeResult,
@@ -17,6 +20,7 @@ import type {
   ResolvedMcpTool,
   SkillDefinition,
   SiliconPerson,
+  StructuredTranscript,
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
 import type { BrMiniMaxRuntimeDiagnostics } from "../../../shared/br-minimax";
@@ -439,6 +443,28 @@ declare global {
         sourceId: string;
         version: string;
       }) => Promise<unknown>;
+
+      // --- Meetings ---
+      meetings: {
+        start: (title?: string) => Promise<{ meetingId: string }>;
+        stop: () => Promise<{ meetingId: string | null }>;
+        cancel: () => Promise<{ ok: boolean }>;
+        list: () => Promise<{ items: MeetingRecord[] }>;
+        get: (meetingId: string) => Promise<{
+          meeting: MeetingRecord | null;
+          transcript: StructuredTranscript | null;
+          summary: string | null;
+        }>;
+        delete: (meetingId: string) => Promise<{ ok: boolean }>;
+        updateSpeaker: (meetingId: string, speakerIndex: number, label: string) => Promise<{ ok: boolean }>;
+        updateTitle: (meetingId: string, title: string) => Promise<{ ok: boolean }>;
+        sendAudioChunk: (chunk: ArrayBuffer) => void;
+        onEvent: (callback: (event: MeetingEvent) => void) => () => void;
+      };
+
+      // --- ASR config ---
+      getAsrConfig: () => Promise<{ config: AsrConfig }>;
+      saveAsrConfig: (config: AsrConfig) => Promise<{ config: AsrConfig }>;
     };
   }
 }
