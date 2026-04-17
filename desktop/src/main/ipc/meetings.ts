@@ -1,4 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 
 import type { AsrConfig, MeetingEvent } from "@shared/contracts";
 
@@ -72,6 +74,14 @@ export function registerMeetingHandlers(ctx: RuntimeContext): void {
   ipcMain.handle("meeting:update-title", async (_event, meetingId: string, title: string) => {
     await recorder.updateTitle(meetingId, title);
     return { ok: true };
+  });
+
+  /** 读取 WAV 音频字节；渲染进程转成 Blob URL 供 <audio> 播放。 */
+  ipcMain.handle("meeting:read-audio", async (_event, meetingId: string) => {
+    const audioPath = recorder.getAudioPath(meetingId);
+    if (!existsSync(audioPath)) return { buffer: null };
+    const buffer = await readFile(audioPath);
+    return { buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) };
   });
 
   // 高频音频数据通道 — fire-and-forget

@@ -464,6 +464,8 @@ const myClawAPI = {
       ipcRenderer.invoke("meeting:update-speaker", meetingId, speakerIndex, label) as Promise<{ ok: boolean }>,
     updateTitle: (meetingId: string, title: string) =>
       ipcRenderer.invoke("meeting:update-title", meetingId, title) as Promise<{ ok: boolean }>,
+    readAudio: (meetingId: string) =>
+      ipcRenderer.invoke("meeting:read-audio", meetingId) as Promise<{ buffer: ArrayBuffer | null }>,
     /** 高频音频数据推送 — fire-and-forget */
     sendAudioChunk: (chunk: ArrayBuffer) => {
       ipcRenderer.send("meeting:audio-chunk", chunk);

@@ -458,6 +458,7 @@ declare global {
         delete: (meetingId: string) => Promise<{ ok: boolean }>;
         updateSpeaker: (meetingId: string, speakerIndex: number, label: string) => Promise<{ ok: boolean }>;
         updateTitle: (meetingId: string, title: string) => Promise<{ ok: boolean }>;
+        readAudio: (meetingId: string) => Promise<{ buffer: ArrayBuffer | null }>;
         sendAudioChunk: (chunk: ArrayBuffer) => void;
         onEvent: (callback: (event: MeetingEvent) => void) => () => void;
       };
