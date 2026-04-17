@@ -58,6 +58,8 @@ export type ComposePromptInput = {
   reasoningEffort?: "low" | "medium" | "high" | null;
   enrichedContextBlock?: string | null;
   artifactContextBlock?: string | null;
+  /** 关联会议录音的转写稿上下文块，用户选择「对话分析」时由 sessions 主链填入。 */
+  meetingContextBlock?: string | null;
   mcpTools?: Array<McpTool & { serverId: string }>;
 };
 
@@ -70,11 +72,20 @@ function buildTaskPlanningContent(effort: string): string {
   const lines: string[] = [
     "You have task tools for decomposing and tracking user requests. **This is your primary workflow — use it for every non-trivial request.**",
     "",
-    "## Mandatory Workflow",
-    "When you receive a user request (except simple Q&A like \"what is X?\"), you MUST follow this workflow:",
+    "## Mandatory Workflow (Two Phases)",
+    "When you receive a user request (except simple Q&A like \"what is X?\"), you MUST follow this two-phase workflow:",
+    "",
+    "### Phase 1: Planning (ONLY task_create calls)",
     "1. **Analyze** — Understand what the user really wants. Identify the logical steps needed.",
-    "2. **Decompose** — Call `task_create` for EACH step to build a task list. This shows the user your execution plan BEFORE you start working.",
-    "3. **Execute** — Work through tasks one by one: `task_update(id, status: \"in_progress\")` → do the work → `task_update(id, status: \"completed\")`",
+    "2. **Decompose** — Call `task_create` for EACH step to build a task list.",
+    "3. **STOP** — End your response after creating all tasks. Do NOT call any work tools (fs_read, exec_command, web_search, etc.) in this response.",
+    "",
+    "⚠️ **ENFORCED CONSTRAINT**: If you call `task_create` in the same response as any non-task tool (e.g., fs_read, exec_command), **the non-task tools will be automatically rejected by the system**. You MUST separate planning from execution into different responses.",
+    "",
+    "### Phase 2: Execution (task_update + work tools)",
+    "4. **Execute** — Work through tasks one by one:",
+    "   - `task_update(id, status: \"in_progress\")` → do the work with appropriate tools → `task_update(id, status: \"completed\")`",
+    "5. **Complete ALL tasks** — Do not stop until every task is marked completed. The system will prompt you to continue if you stop prematurely.",
     "",
     "## Task Tools",
     "- `task_create({ subject, description, activeForm })` — subject: imperative (e.g. \"修复登录Bug\"), activeForm: present continuous (e.g. \"正在修复登录Bug\"). Always provide activeForm.",
@@ -83,9 +94,10 @@ function buildTaskPlanningContent(effort: string): string {
     "- **Status flow**: pending → in_progress → completed. Only ONE task can be in_progress at a time.",
     "",
     "## Key Rules",
-    "- **Plan first, execute second** — Create ALL tasks before starting the first one. Let the user see the full plan.",
+    "- **Plan first, execute second** — Create ALL tasks before starting the first one. These two phases MUST be in separate responses.",
     "- **Even single-step requests get a task** — Creating a task signals \"I understood your request and here's what I'll do.\"",
-    "- **Discover new steps? Add tasks** — If you find additional work during execution, create new tasks to track it.",
+    "- **Discover new steps? Add tasks** — If you find additional work during execution, call task_create alone (no other work tools in the same response).",
+    "- **Finish ALL tasks** — Never stop responding while tasks are still pending or in_progress. Complete every task you created.",
     "- **Skip tasks ONLY for**: direct factual Q&A, greetings, or clarification questions.",
   ];
   if (effort === "high") {
@@ -349,6 +361,15 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
       "Work Files",
       "context",
       input.artifactContextBlock,
+    ));
+  }
+
+  if (input.meetingContextBlock) {
+    sections.push(createSection(
+      "meeting-context",
+      "Meeting Context",
+      "context",
+      input.meetingContextBlock,
     ));
   }
 

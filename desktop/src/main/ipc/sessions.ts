@@ -622,6 +622,44 @@ function buildSiliconPersonPromptSection(
 }
 
 /**
+ * 根据 session 关联的会议录音构建上下文块。
+ *
+ * 仅当 session.linkedMeetingId 有效且离线 ASR 已产出结构化转写时返回内容，
+ * 否则返回 null，composePromptSections 会自动跳过该 section。
+ */
+function buildMeetingContextBlock(
+  ctx: RuntimeContext,
+  session: ChatSession,
+): string | null {
+  const meetingId = session.linkedMeetingId;
+  const recorder = ctx.services.meetingRecorder;
+  if (!meetingId || !recorder) return null;
+
+  const meeting = recorder.get(meetingId);
+  const transcript = recorder.getTranscript(meetingId);
+  if (!meeting || !transcript || transcript.segments.length === 0) return null;
+
+  const lines: string[] = [
+    `会议：${meeting.title}`,
+    `时间：${meeting.createdAt}`,
+    `时长：${Math.round(meeting.durationMs / 1000)}s · 发言人：${transcript.speakerCount} 位`,
+    "",
+    "转写稿：",
+  ];
+  let currentSpeaker: number | null = null;
+  for (const seg of transcript.segments) {
+    if (!seg.text.trim()) continue;
+    if (seg.speaker !== currentSpeaker) {
+      currentSpeaker = seg.speaker;
+      const label = meeting.speakerLabels?.[seg.speaker] || `发言人${seg.speaker}`;
+      lines.push(`\n【${label}】`);
+    }
+    lines.push(seg.text);
+  }
+  return lines.join("\n");
+}
+
+/**
  * 统一构建会话的 canonical prompt sections，让 sessions 主链与 PromptComposer 使用同一套结构化 prompt 入口。
  */
 function buildSessionPromptSections(input: {
@@ -633,6 +671,7 @@ function buildSessionPromptSections(input: {
   reasoningEffort?: "low" | "medium" | "high" | null;
   enrichedContextBlock?: string | null;
   artifactContextBlock?: string | null;
+  meetingContextBlock?: string | null;
   mcpTools?: Array<McpTool & { serverId: string }>;
   providerFamily: ProviderFamily;
   experienceProfileId: ExperienceProfileId;
@@ -656,6 +695,7 @@ function buildSessionPromptSections(input: {
     reasoningEffort: input.reasoningEffort,
     enrichedContextBlock: input.enrichedContextBlock,
     artifactContextBlock: input.artifactContextBlock,
+    meetingContextBlock: input.meetingContextBlock,
     mcpTools: input.mcpTools,
   });
 
@@ -2349,6 +2389,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             sessionId: session.id,
             siliconPersonId: session.siliconPersonId ?? null,
           }),
+          meetingContextBlock: buildMeetingContextBlock(ctx, session),
           mcpTools,
           providerFamily: turnExecutionPlan.providerFamily,
           experienceProfileId: turnExecutionPlan.experienceProfileId,
@@ -2461,6 +2502,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       let completedNormally = false;
       let compactionCount = 0;
       let suggestNewChatSent = false;
+      /** Task V2 续行计数：模型在 task 未完成时停止响应，系统最多自动续行几次。 */
+      let taskContinuationCount = 0;
+      const MAX_TASK_CONTINUATIONS = 3;
 
       try {
         while (true) {
@@ -2540,6 +2584,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             sessionId: session.id,
             siliconPersonId: session.siliconPersonId ?? null,
           }),
+          meetingContextBlock: buildMeetingContextBlock(ctx, session),
           mcpTools,
           providerFamily: turnExecutionPlan.providerFamily,
             experienceProfileId: turnExecutionPlan.experienceProfileId,
@@ -2643,6 +2688,57 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               session,
             });
 
+            // ---- Phase Gate：阻止规划与执行在同一轮混合 ----
+            // 如果模型在同一轮 response 中同时调用了 task_create 和非 task 类工具，
+            // 拒绝非 task 类工具，强制模型先完成规划再执行。
+            const phaseRejectedToolCallIds = new Set<string>();
+            const isTaskFamilyToolCall = (name: string): boolean => {
+              const tid = functionNameToToolId(name);
+              return tid.startsWith("task.");
+            };
+            const hasTaskCreateInThisRound = result.toolCalls.some(
+              (tc: ResolvedToolCall) => functionNameToToolId(tc.name) === "task.create",
+            );
+            if (hasTaskCreateInThisRound) {
+              for (const tc of result.toolCalls) {
+                if (!isTaskFamilyToolCall(tc.name)) {
+                  phaseRejectedToolCallIds.add(tc.id);
+                }
+              }
+              if (phaseRejectedToolCallIds.size > 0) {
+                console.info("[session:phase-gate] 阻止规划阶段执行工作工具", {
+                  sessionId,
+                  round,
+                  rejectedCount: phaseRejectedToolCallIds.size,
+                  rejectedTools: result.toolCalls
+                    .filter((tc: ResolvedToolCall) => phaseRejectedToolCallIds.has(tc.id))
+                    .map((tc: ResolvedToolCall) => tc.name),
+                });
+                for (const tc of result.toolCalls) {
+                  if (!phaseRejectedToolCallIds.has(tc.id)) continue;
+                  session.messages.push({
+                    id: randomUUID(),
+                    role: "tool" as const,
+                    content: "[阶段冲突] 你正在创建任务（规划阶段），不能同时执行工作工具。请先用 task_create 完成所有任务的创建，然后在下一轮开始按顺序执行任务（task_update → 工作工具 → task_update）。",
+                    tool_call_id: tc.id,
+                    createdAt: new Date().toISOString(),
+                  });
+                  broadcastToRenderers("session:stream", {
+                    type: EventType.ToolFailed,
+                    sessionId,
+                    toolCallId: tc.id,
+                    toolId: functionNameToToolId(tc.name),
+                    error: "[阶段冲突] 规划阶段不可执行工作工具",
+                  });
+                }
+                broadcastToRenderers("session:stream", {
+                  type: EventType.SessionUpdated,
+                  sessionId,
+                  session,
+                });
+              }
+            }
+
             // ---- 第 1 步：检查所有工具调用的审批（串行执行，需要等待用户） ----
             type ApprovedTool = { toolCall: ResolvedToolCall; denied: boolean };
             type PendingToolApproval = { toolCall: ResolvedToolCall; approvalId: string; approvalRequest: ApprovalRequest };
@@ -2717,6 +2813,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             };
 
             for (const toolCall of result.toolCalls) {
+              // 跳过被 Phase Gate 拒绝的工具调用（已在上方推送拒绝结果）
+              if (phaseRejectedToolCallIds.has(toolCall.id)) continue;
+
               const toolId = functionNameToToolId(toolCall.name);
               const label = buildToolLabel(toolCall.name, toolCall.input);
               const risk = getToolRisk(toolId, toolCall.name);
@@ -2800,6 +2899,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               await requestToolApprovalBatch(queuedReadOnlyApprovals.splice(0, queuedReadOnlyApprovals.length));
               approvedTools.push({ toolCall, denied: false });
             }
+
+            // 循环结束后，如果仍有未刷新的只读审批（全部工具都是只读时会出现），统一刷新
+            await requestToolApprovalBatch(queuedReadOnlyApprovals.splice(0, queuedReadOnlyApprovals.length));
 
             // ---- 第 2 步：执行单个工具调用（复用共享 helper） ----
             if (activeRun.cancelRequested) {
@@ -3097,7 +3199,53 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               round,
             });
           } else {
-            // 没有工具调用，说明这就是最终回复
+            // 没有工具调用——检查是否是异常截断而非真正的最终回复
+            const isStreamIncomplete = result.streamCompleted === false;
+            const hasNoContent = !result.content?.trim() && !result.reasoning?.trim();
+            const isAbnormalFinish = !result.finishReason || result.finishReason === "length";
+
+            if (isStreamIncomplete && hasNoContent) {
+              // 流异常截断且没有任何有效内容——记录错误并作为失败处理
+              console.error("[session:stream-integrity] 模型响应流异常截断，无有效内容", {
+                sessionId,
+                round,
+                finishReason: result.finishReason,
+                streamCompleted: result.streamCompleted,
+                contentLength: result.content?.length ?? 0,
+              });
+              session.messages.push({
+                id: currentMessageId,
+                role: "assistant",
+                content: "[模型响应中断] 与模型的连接意外断开，未收到有效回复。请重新发送消息重试。",
+                createdAt: new Date().toISOString(),
+              });
+              terminalStatus = "failed";
+              terminalReason = "stream_interrupted";
+              break;
+            }
+
+            if (isAbnormalFinish && hasNoContent && round > 1) {
+              // finishReason 异常（null 或 length）且无内容——可能是上下文超限
+              console.warn("[session:stream-integrity] 模型返回空内容，可能上下文超限", {
+                sessionId,
+                round,
+                finishReason: result.finishReason,
+                streamCompleted: result.streamCompleted,
+              });
+              session.messages.push({
+                id: currentMessageId,
+                role: "assistant",
+                content: result.finishReason === "length"
+                  ? "[上下文超限] 对话上下文已超出模型处理能力，请开启新对话继续。"
+                  : "[模型响应异常] 模型返回了空内容，可能是网络波动或上下文过长。请重试或开启新对话。",
+                createdAt: new Date().toISOString(),
+              });
+              terminalStatus = "failed";
+              terminalReason = result.finishReason === "length" ? "context_length_exceeded" : "empty_response";
+              break;
+            }
+
+            // 正常最终回复
             const isBackgroundHandoff = result.finishReason === "background" && !!result.backgroundTask;
             if (isBackgroundHandoff) {
               syncSessionBackgroundTaskSnapshot(ctx.runtime.paths, session, result.outcome);
@@ -3165,6 +3313,47 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               terminalReason = null;
               completedNormally = true;
             }
+
+            // ---- Task V2 续行：模型停止但仍有未完成任务时自动推进 ----
+            // 仅在 Plan Mode 未接管执行时生效，避免与 Plan Mode 的续行逻辑冲突
+            const unfinishedV2Tasks = (session.tasks ?? []).filter(
+              (t) => t.status !== "completed",
+            );
+            const isPlanModeManagingExecution = session.planModeState?.mode === "executing";
+            if (
+              unfinishedV2Tasks.length > 0 &&
+              !isPlanModeManagingExecution &&
+              taskContinuationCount < MAX_TASK_CONTINUATIONS &&
+              !isBackgroundHandoff
+            ) {
+              taskContinuationCount++;
+              completedNormally = false;
+              const pendingCount = unfinishedV2Tasks.filter((t) => t.status === "pending").length;
+              const inProgressCount = unfinishedV2Tasks.filter((t) => t.status === "in_progress").length;
+              console.info("[session:task-continuation] 模型停止但仍有未完成任务，注入续行提示", {
+                sessionId,
+                round,
+                taskContinuationCount,
+                maxContinuations: MAX_TASK_CONTINUATIONS,
+                pendingCount,
+                inProgressCount,
+              });
+              session.messages.push({
+                id: randomUUID(),
+                role: "system",
+                content: `[任务未完成] 你还有 ${unfinishedV2Tasks.length} 个任务未完成（${pendingCount} 个待执行，${inProgressCount} 个执行中）。请继续按计划推进任务，完成所有任务后再停止。`,
+                createdAt: new Date().toISOString(),
+              });
+              currentMessageId = randomUUID();
+              broadcastToRenderers("session:stream", {
+                type: EventType.RunStarted,
+                sessionId,
+                messageId: currentMessageId,
+                round,
+              });
+              continue;
+            }
+
             break;
           }
         }
