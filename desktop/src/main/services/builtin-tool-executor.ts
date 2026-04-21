@@ -15,6 +15,8 @@ import { BrowserService } from "./browser-service";
 import { PptEngine } from "./ppt/index";
 import { createDocCache, type DocCache } from "./document/doc-cache";
 import { executeDocumentRead, type DocumentReadArgs } from "./document/document-read-facade";
+import { getParser, registerParser } from "./document/parser-registry";
+import { xlsParser, xlsmParser, xlsxParser } from "./document/parsers/xlsx-parser";
 import {
   canonicalize as canonicalizePath,
   PathAccessPolicy,
@@ -737,6 +739,7 @@ export class BuiltinToolExecutor {
   private pathAudit: PathAccessAudit | null = null;
   private _docCacheRoot: string | null = null;
   private _docCache: DocCache | null = null;
+  private parsersRegistered = false;
 
   /** 更新技能列表。 */
   setSkills(skills: SkillDefinition[]): void {
@@ -776,6 +779,22 @@ export class BuiltinToolExecutor {
   setDocCacheRoot(root: string): void {
     this._docCacheRoot = root;
     this._docCache = null; // 若 root 在会话中被改写，下次 resolveDocCache 会重新构建
+  }
+
+  /**
+   * 惰性注册 document 解析器（Phase 8 Wave 3）。
+   *
+   * 每个 BuiltinToolExecutor 实例只注册一次；同一 format 已注册时跳过，避免重复覆盖
+   * 测试替身或其它已注册实现。放到 dispatch 顶部调用，这样：
+   * - 主进程启动不会强制加载 xlsx 等解析依赖
+   * - 但 document.read / xlsx.extract 第一次执行前一定完成注册
+   */
+  private ensureParsersRegistered(): void {
+    if (this.parsersRegistered) return;
+    if (!getParser("xlsx")) registerParser(xlsxParser);
+    if (!getParser("xls")) registerParser(xlsParser);
+    if (!getParser("xlsm")) registerParser(xlsmParser);
+    this.parsersRegistered = true;
   }
 
   /** 惰性解析 doc-cache 实例；未初始化时抛出带下一步提示的错误（ASST-04）。 */
@@ -941,6 +960,8 @@ export class BuiltinToolExecutor {
     options?: ToolExecutionOptions,
     ctx?: ExecutionContext,
   ): Promise<ToolExecutionResult> {
+    // Phase 8：在任何文档相关工具执行前完成 parser 注册（幂等 / 进程内只做一次）。
+    this.ensureParsersRegistered();
     if (toolId === "fs.read") {
       const filePath = this.resolvePathSafe(cwd, label.trim(), ctx);
       const bin = detectBinaryByExt(filePath);
@@ -1367,6 +1388,9 @@ export class BuiltinToolExecutor {
     };
   }
 
+  // NOTE: legacy toolId "xlsx.extract" preserved for backward compatibility.
+  // Prefer document.read (Phase 8). Remove in a future phase after deprecation window.
+  // Byte-compatible output is tested by tests/document-xlsx-extract-alias.test.ts.
   /** xlsx.extract：抽取 Excel 文件内容为 Markdown 表格。xlsx 包未装时给明确错误。 */
   private async executeXlsxExtract(
     label: string,
