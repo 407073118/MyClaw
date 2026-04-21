@@ -53,9 +53,9 @@ function isEnoent(err: unknown): boolean {
  */
 async function recursiveSize(dir: string): Promise<number> {
   let total = 0;
-  let entries: Awaited<ReturnType<typeof readdir>>;
+  let entries;
   try {
-    entries = await readdir(dir, { withFileTypes: true });
+    entries = await readdir(dir, { withFileTypes: true, encoding: "utf8" });
   } catch (err) {
     if (isEnoent(err)) return 0;
     throw err;
@@ -117,9 +117,9 @@ export function createDocCache(opts: DocCacheOptions): DocCache {
   }
 
   async function enforceLru(): Promise<void> {
-    let entries: Awaited<ReturnType<typeof readdir>>;
+    let entries;
     try {
-      entries = await readdir(root, { withFileTypes: true });
+      entries = await readdir(root, { withFileTypes: true, encoding: "utf8" });
     } catch (err) {
       if (isEnoent(err)) return;
       throw err;
