@@ -16,6 +16,9 @@
  *   - jszip 作为显式顶层依赖声明，避免 pnpm 隔离 node_modules 下仅能解析到 mammoth 内部副本
  */
 
+import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { join } from "node:path";
 import type {
   DocumentIR,
   HeadingNode,
@@ -28,6 +31,8 @@ import type {
   Locator,
   CommentNode,
   FootnoteNode,
+  ImageNode,
+  MediaRef,
 } from "@shared/contracts";
 import type { DocumentParser, ParseInput } from "../parser-registry";
 
@@ -106,6 +111,80 @@ function parseCommentsXml(xml: string): CommentNode[] {
     results.push(node);
   }
   return results;
+}
+
+/** 依扩展名猜测常见图片 MIME；未知扩展名回退到 application/octet-stream。 */
+function guessMimeFromExt(ext: string): string {
+  const e = ext.toLowerCase().replace(/^\./, "");
+  switch (e) {
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "bmp":
+      return "image/bmp";
+    case "webp":
+      return "image/webp";
+    case "svg":
+      return "image/svg+xml";
+    case "tif":
+    case "tiff":
+      return "image/tiff";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+/**
+ * 解压 word/media/* 到 mediaDir，按 sha256(bytes) 去重：
+ *   - 同 sha 复用同一磁盘文件，但仍为每个引用生成一个 ImageNode
+ *   - 单 entry 超过 16MiB 视为异常（zip-bomb 防御）
+ *   - ImageNode.locator.heading 记录最近一次标题文本（由 ctx.lastHeading 传入）
+ */
+async function extractDocxMedia(
+  zip: any,
+  mediaDir: string,
+  lastHeading: string | undefined,
+): Promise<{ images: ImageNode[]; media: MediaRef[] }> {
+  const images: ImageNode[] = [];
+  const media: MediaRef[] = [];
+  const seen = new Map<string, { ext: string; cachePath: string }>();
+
+  // zip.files 是一个 { path: JSZipObject } 对象；按路径筛 word/media/*
+  const allPaths = Object.keys(zip.files);
+  for (const entryName of allPaths) {
+    if (!/^word\/media\//.test(entryName)) continue;
+    const entry = zip.file(entryName);
+    if (!entry || entry.dir) continue;
+    const bytes: Uint8Array = await entry.async("uint8array");
+    if (bytes.byteLength > MAX_DOCX_ZIP_ENTRY_BYTES) {
+      throw new Error(
+        `[E_DOC_ZIP_ENTRY_TOO_LARGE] docx 内部 ${entryName} 超过 16MiB 上限（实际 ${bytes.byteLength} 字节）。请确认文件未包含异常大的嵌入资源。`,
+      );
+    }
+    const sha = createHash("sha256").update(bytes).digest("hex");
+    const extMatch = entryName.match(/\.[^./]+$/);
+    const ext = (extMatch ? extMatch[0] : "").toLowerCase();
+
+    if (!seen.has(sha)) {
+      const filename = `${sha}${ext}`;
+      const cachePath = join(mediaDir, filename);
+      await writeFile(cachePath, bytes);
+      seen.set(sha, { ext, cachePath });
+      media.push({
+        id: sha,
+        mime: guessMimeFromExt(ext),
+        cachePath,
+      });
+    }
+    const locator: Locator = lastHeading ? { heading: lastHeading } : {};
+    images.push({ kind: "image", mediaId: sha, locator });
+  }
+
+  return { images, media };
 }
 
 /**
@@ -508,6 +587,10 @@ export async function parseDocxBuffer(input: ParseInput): Promise<DocumentIR> {
     for (const f of footnotes) ctx.body.push(f);
   }
 
+  // ─── Task 3：解压 word/media/* 到 mediaDir，产出 ImageNode + MediaRef ───
+  const { images, media } = await extractDocxMedia(zip, input.mediaDir, ctx.lastHeading);
+  for (const img of images) ctx.body.push(img);
+
   return {
     source: {
       path: input.path,
@@ -518,7 +601,7 @@ export async function parseDocxBuffer(input: ParseInput): Promise<DocumentIR> {
     meta: { words: approximateWords(ctx.body) },
     outline: ctx.outline,
     body: ctx.body,
-    media: [],
+    media,
   };
 }
 

@@ -148,8 +148,9 @@ describe("xlsx.extract alias + document.read registration", () => {
     expect(r1.success).toBe(true);
     expect(r2.success).toBe(true);
 
-    // Parser registry has xlsx/xls/xlsm registered — not multiplied by call count.
+    // Parser registry has xlsx/xls/xlsm/docx registered — not multiplied by call count.
+    // (docx parser landed in 08-05; this list grows as Wave 3 plans add more parsers.)
     const formats = listRegisteredFormats().sort();
-    expect(formats).toEqual(["xls", "xlsm", "xlsx"]);
+    expect(formats).toEqual(["docx", "xls", "xlsm", "xlsx"]);
   });
 });
