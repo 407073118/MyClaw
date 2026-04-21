@@ -75,9 +75,21 @@ export class ArtifactRegistry {
     return this.sessionDb.listArtifactsByScope(scope.scopeKind, scope.scopeId);
   }
 
+  /** 查询指定 scope 下用户可见的 artifact（排除 cache 类内部文件）。 */
+  listUserArtifactsByScope(scope: ArtifactScopeRef): ArtifactScopeItem[] {
+    return this.sessionDb
+      .listArtifactsByScope(scope.scopeKind, scope.scopeId)
+      .filter((a) => a.storageClass !== "cache");
+  }
+
   /** 查询最近更新的 artifact。 */
   listRecentArtifacts(limit = 20): ArtifactRecord[] {
     return this.sessionDb.listRecentArtifacts(limit);
+  }
+
+  /** 查询最近更新的用户可见 artifact（排除 cache 类内部文件）。 */
+  listRecentUserArtifacts(limit = 20): ArtifactRecord[] {
+    return this.sessionDb.listRecentArtifacts(limit).filter((a) => a.storageClass !== "cache");
   }
 
   /** 保存 scope 关联。 */

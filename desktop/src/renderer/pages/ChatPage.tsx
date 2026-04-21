@@ -20,6 +20,7 @@ import type {
   ExecutionIntent,
 } from "@shared/contracts";
 import { ToolRiskCategory, resolveSiliconPersonCurrentSessionId } from "@shared/contracts";
+import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
 
 // 配置 `marked`，统一启用 GFM 和换行转 `<br>`。
 marked.setOptions({ gfm: true, breaks: true });
@@ -316,6 +317,7 @@ export default function ChatPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => Promise<void> | void } | null>(null);
   const timelinePanelRef = useRef<HTMLElement | null>(null);
+  const timelineStickToBottomRef = useRef(true);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const confirmCancelRef = useRef<HTMLButtonElement | null>(null);
 
@@ -333,6 +335,8 @@ export default function ChatPage() {
   const [mentionMenuIndex, setMentionMenuIndex] = useState(0);
   const [mentionTargetSiliconPersonId, setMentionTargetSiliconPersonId] = useState<string | null>(null);
   const [dispatchTraces, setDispatchTraces] = useState<Array<{ id: string; personName: string; personId: string; content: string; timestamp: string }>>([]);
+  const [autoExpandedReasoningMessageId, setAutoExpandedReasoningMessageId] = useState<string | null>(null);
+  const [reasoningPanelOverrides, setReasoningPanelOverrides] = useState<Record<string, boolean>>({});
 
   const siliconPersons = workspace.siliconPersons ?? [];
   const activeSiliconPersonId = workspace.activeSiliconPersonId;
@@ -416,6 +420,14 @@ export default function ChatPage() {
   const activeViewSessionIdRef = useRef<string | null>(session?.id ?? null);
   const activeViewSiliconPersonIdRef = useRef<string | null>(selectedSiliconPerson?.id ?? null);
 
+  /** 当前默认模型配置，用于显示运行时状态。 */
+  const activeModelProfile = useMemo(() => {
+    const models = (workspace as any).models as Array<Record<string, unknown>> | undefined;
+    const defaultId = (workspace as any).defaultModelProfileId as string | null | undefined;
+    if (!models || models.length === 0) return null;
+    return models.find((m) => m.id === defaultId) ?? models[0] ?? null;
+  }, [(workspace as any).models, (workspace as any).defaultModelProfileId]);
+
   activeViewSessionIdRef.current = session?.id ?? null;
   activeViewSiliconPersonIdRef.current = selectedSiliconPerson?.id ?? null;
 
@@ -484,6 +496,23 @@ export default function ChatPage() {
     session?.chatRunState?.lastReason,
   ]);
 
+  useEffect(() => {
+    setAutoExpandedReasoningMessageId(readSessionRunState(session)?.messageId ?? null);
+  }, [session?.id]);
+
+  useEffect(() => {
+    timelineStickToBottomRef.current = true;
+    setReasoningPanelOverrides({});
+  }, [session?.id]);
+
+  useEffect(() => {
+    if (activeRunState?.messageId) {
+      setAutoExpandedReasoningMessageId(activeRunState.messageId);
+      return;
+    }
+    setAutoExpandedReasoningMessageId(null);
+  }, [activeRunState?.messageId, activeRunState?.status, activeRunState?.sessionId]);
+
   // 切换 session 时重置上下文警告
   useEffect(() => {
     setShowContextWarning(false);
@@ -504,6 +533,24 @@ export default function ChatPage() {
     initialFocusRef: confirmCancelRef,
     dialogName: "删除会话确认弹层",
   });
+
+  /** 判断思考过程面板是否展开，优先尊重用户手动指定的开合状态。 */
+  function isReasoningPanelOpen(messageId: string) {
+    if (Object.prototype.hasOwnProperty.call(reasoningPanelOverrides, messageId)) {
+      return reasoningPanelOverrides[messageId] === true;
+    }
+    return autoExpandedReasoningMessageId === messageId;
+  }
+
+  /** 记录用户对思考过程面板的展开或折叠选择，保证箭头和提示文案同步。 */
+  function handleReasoningPanelToggle(messageId: string, open: boolean) {
+    console.info("[chat-page] 用户切换思考过程面板", {
+      sessionId: session?.id ?? null,
+      messageId,
+      open,
+    });
+    setReasoningPanelOverrides((prev) => ({ ...prev, [messageId]: open }));
+  }
 
   const sessionMessages = session?.messages;
 
@@ -567,11 +614,13 @@ export default function ChatPage() {
       }
 
       const isTechnical = message.role === "system" || message.role === "tool";
-      // 没有正文但带 `tool_calls` 的助手消息属于中间思考步骤，归并到技术链中展示。
+      // 没有正文且没有 reasoning 但带 `tool_calls` 的助手消息属于中间思考步骤，归并到技术链中展示。
+      // 如果有 reasoning（思考过程），即使没有正文也应作为正常消息展示，让用户能看到模型的推理。
+      const hasVisibleContent = !!(textOf(message.content).trim() || (message as any).reasoning?.trim());
       const isToolCallAssistant = message.role === "assistant"
         && Array.isArray((message as any).tool_calls)
         && (message as any).tool_calls.length > 0
-        && !textOf(message.content).trim();
+        && !hasVisibleContent;
 
       if (isTechnical || isToolCallAssistant) {
         if (!currentGroup) {
@@ -664,18 +713,19 @@ export default function ChatPage() {
     const el = timelinePanelRef.current;
     if (!el) return;
     // 用户正在回看历史消息时，不主动抢走滚动位置，除非显式强制。
-    if (!force && !isNearBottom()) return;
+    if (!force && !timelineStickToBottomRef.current) return;
     requestAnimationFrame(() => {
       if (typeof el.scrollTo === "function") {
         el.scrollTo({ top: el.scrollHeight, behavior });
       } else {
         el.scrollTop = el.scrollHeight;
       }
+      timelineStickToBottomRef.current = true;
       if (behavior === "auto") {
         setTimeout(() => { if (el) el.scrollTop = el.scrollHeight; }, 80);
       }
     });
-  }, [isNearBottom]);
+  }, []);
 
   // 保持 ref 与最新的 scrollToBottom 同步，供流式回调内部调用。
   const scrollToBottomRef = useRef(scrollToBottom);
@@ -802,8 +852,8 @@ export default function ChatPage() {
             reason: runtimeStatus.reason ?? null,
           });
         }
-      } else if (type === "message.delta" && eventSessionId && messageId && delta?.content) {
-        ws.patchStreamingMessage(eventSessionId, messageId, delta.content);
+      } else if (type === "message.delta" && eventSessionId && messageId && (delta?.content || delta?.reasoning)) {
+        ws.patchStreamingMessage(eventSessionId, messageId, delta.content ?? null, delta.reasoning ?? null);
         // 流式输出时持续滚动到底部，避免用户需要手动滚动查看新内容。
         scrollToBottomRef.current("smooth");
       } else if (type === "session.updated" && updatedSession) {
@@ -939,6 +989,8 @@ export default function ChatPage() {
       } else {
         await workspace.createSession();
       }
+      // 新建对话后清除模型切换通知
+      workspace.dismissModelSwitchNotice();
     } catch (error) {
       reportChatError(error);
     } finally {
@@ -1124,7 +1176,7 @@ export default function ChatPage() {
       if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); selectSlashItem(filteredSlash[slashIdx]); return; }
       if (e.key === "Escape") { e.preventDefault(); setComposerDraft(""); return; }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && e.keyCode !== 229 && e.which !== 229) {
       e.preventDefault();
       void submitMessage();
     }
@@ -1440,7 +1492,13 @@ export default function ChatPage() {
 
         {/* 时间线区域 */}
         <div className={`chat-timeline-container${showWorkFiles ? " chat-timeline-container--with-sidebar" : ""}`}>
-          <section className="timeline-panel" ref={timelinePanelRef as React.RefObject<HTMLElement>}>
+          <section
+            className="timeline-panel"
+            ref={timelinePanelRef as React.RefObject<HTMLElement>}
+            onScroll={() => {
+              timelineStickToBottomRef.current = isNearBottom();
+            }}
+          >
             <div className="timeline">
 
               {/* 上下文压缩警告 */}
@@ -1469,11 +1527,56 @@ export default function ChatPage() {
                 </div>
               )}
 
+              {/* 模型切换提示 */}
+              {workspace.modelSwitchNotice && (
+                <div className="context-limit-warning">
+                  <div className="context-limit-warning-content model-switch-notice">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>默认模型已从 <strong>{workspace.modelSwitchNotice.fromName}</strong> 切换为 <strong>{workspace.modelSwitchNotice.toName}</strong>，建议新建对话以获得最佳体验。</span>
+                    <div className="context-limit-warning-actions">
+                      <button
+                        className="btn-new-chat"
+                        onClick={async () => {
+                          await createSession();
+                        }}
+                      >
+                        新建对话
+                      </button>
+                      <button className="btn-dismiss" onClick={() => workspace.dismissModelSwitchNotice()}>
+                        继续当前对话
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {groupedMessages.map((message, index) => {
+                const msgCreatedAt = message.isTechnicalGroup
+                  ? message.items[0]?.createdAt
+                  : message.createdAt;
+                const prevCreatedAt = index > 0
+                  ? (groupedMessages[index - 1].isTechnicalGroup
+                      ? groupedMessages[index - 1].items[0]?.createdAt
+                      : groupedMessages[index - 1].createdAt)
+                  : undefined;
+                const showDateSep = msgCreatedAt && (
+                  index === 0 || (prevCreatedAt && isDifferentDay(prevCreatedAt, msgCreatedAt))
+                );
+
                 if (!message.isTechnicalGroup) {
+                  const isReasoningOpen = message.role === "assistant" && message.renderedReasoningHtml
+                    ? isReasoningPanelOpen(message.id)
+                    : false;
+                  const reasoningToggleLabel = isReasoningOpen ? "点击折叠" : "点击展开";
                   // 普通消息卡片。
                   return (
-                    <div key={message.id} className={`message-row role-${message.role}`}>
+                    <React.Fragment key={message.id}>
+                    {showDateSep && (
+                      <div className="date-separator"><span>{formatDateSeparator(msgCreatedAt)}</span></div>
+                    )}
+                    <div className={`message-row role-${message.role}`}>
                       <div className="message-avatar">
                         {message.role === "user" ? (
                           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1491,15 +1594,40 @@ export default function ChatPage() {
                         )}
                       </div>
                       <div className="message-body">
-                        <div className="message-header">{roleLabel(message.role)}</div>
+                        <div className="message-header">
+                          {roleLabel(message.role)}
+                          {msgCreatedAt && (
+                            <span className="message-time" title={formatFullTime(msgCreatedAt)}>
+                              {formatMessageTime(msgCreatedAt)}
+                            </span>
+                          )}
+                        </div>
 
                         {message.role === "assistant" && message.renderedReasoningHtml && (
-                          <details data-testid={`reasoning-${message.id}`} className="message-details">
-                            <summary className="details-summary">
+                          <details
+                            data-testid={`reasoning-${message.id}`}
+                            className="message-details"
+                            open={isReasoningOpen}
+                          >
+                            <summary
+                              className="details-summary"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                handleReasoningPanelToggle(message.id, !isReasoningOpen);
+                              }}
+                            >
                               <div className="summary-inner">
                                 <span className="pulse-dot active"></span>
                                 <strong>思考过程</strong>
                               </div>
+                              <span className="details-toggle-hint" aria-hidden="true">
+                                <span className="details-chevron" data-testid={`reasoning-toggle-icon-${message.id}`}>
+                                  {isReasoningOpen ? "▾" : "▸"}
+                                </span>
+                                <span className="details-toggle-label" data-testid={`reasoning-toggle-label-${message.id}`}>
+                                  {reasoningToggleLabel}
+                                </span>
+                              </span>
                             </summary>
                             <div
                               className="details-content reasoning-content"
@@ -1513,6 +1641,28 @@ export default function ChatPage() {
                             className="message-content"
                             dangerouslySetInnerHTML={{ __html: message.renderedHtml }}
                           />
+                        )}
+
+                        {message.role === "assistant" && Array.isArray((message as any).tool_calls) && (message as any).tool_calls.length > 0 && (
+                          <details className="message-details">
+                            <summary className="details-summary">
+                              <div className="summary-inner">
+                                <span className="pulse-dot"></span>
+                                <strong>工具调用</strong>
+                                <span style={{ opacity: 0.6, marginLeft: 6 }}>
+                                  {((message as any).tool_calls as Array<{ function: { name: string } }>).map((tc) => tc.function.name).join(", ")}
+                                </span>
+                              </div>
+                            </summary>
+                            <div className="details-content">
+                              {((message as any).tool_calls as Array<{ function: { name: string; arguments: string } }>).map((tc, i) => (
+                                <div key={i} className="tool-call-args" style={{ marginBottom: 8 }}>
+                                  <div className="tool-call-name" style={{ fontWeight: 600, marginBottom: 2 }}>{tc.function.name}</div>
+                                  <pre className="tool-args-json" style={{ fontSize: 12, opacity: 0.8, overflow: "auto", maxHeight: 200 }}>{formatToolArgs(tc.function.arguments)}</pre>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
                         )}
 
                         {message.role === "assistant" && message.usage && (
@@ -1543,11 +1693,16 @@ export default function ChatPage() {
                         {shouldRenderInlineA2UiForm(message.ui) && renderUiFields(message)}
                       </div>
                     </div>
+                    </React.Fragment>
                   );
                 } else {
                   // 技术链分组，用于折叠展示工具调用过程。
                   return (
-                    <div key={message.id} className="message-row role-tool">
+                    <React.Fragment key={message.id}>
+                    {showDateSep && (
+                      <div className="date-separator"><span>{formatDateSeparator(msgCreatedAt)}</span></div>
+                    )}
+                    <div className="message-row role-tool">
                       <div className="message-avatar">
                         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
@@ -1569,6 +1724,11 @@ export default function ChatPage() {
                             <span className="tool-chain-count">{message.items.length} 步</span>
                             {currentRound > 0 && isLastTechnicalGroup(index) && (
                               <span className="tool-chain-round">轮次 {currentRound}</span>
+                            )}
+                            {msgCreatedAt && (
+                              <span className="tool-chain-time" title={formatFullTime(msgCreatedAt)}>
+                                {formatMessageTime(msgCreatedAt)}
+                              </span>
                             )}
                           </summary>
                           <ol className="execution-chain-list">
@@ -1633,6 +1793,7 @@ export default function ChatPage() {
                         </details>
                       </div>
                     </div>
+                    </React.Fragment>
                   );
                 }
               })}
@@ -1691,8 +1852,8 @@ export default function ChatPage() {
             <aside id="chat-work-files-drawer" className="chat-work-files-drawer">
               <WorkFilesPanel
                 scope={workFilesScope}
-                title="Session Files"
-                description="Managed outputs and deliverables for the current session."
+                title="会话文件"
+                description="当前对话产生的文件"
               />
             </aside>
           )}
@@ -1717,6 +1878,56 @@ export default function ChatPage() {
                   className="dispatch-trace-link"
                   onClick={() => workspace.setActiveSiliconPersonId(trace.personId)}
                 >进入对话</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── 后台研究面板 ── */}
+        {session?.backgroundTask && session.backgroundTask.status === "in_progress" && (
+          <div className="background-task-panel" data-testid="background-task-panel">
+            <span className="background-task-label">后台研究进行中</span>
+            <button type="button" aria-label="立即刷新" onClick={() => void workspace.pollBackgroundTask()}>立即刷新</button>
+            <button type="button" aria-label="取消后台任务" onClick={() => void workspace.cancelBackgroundTask()}>取消后台任务</button>
+          </div>
+        )}
+
+        {/* ── 引用来源列表 ── */}
+        {session?.lastTurnCitations && session.lastTurnCitations.length > 0 && (
+          <div className="citation-panel" data-testid="citation-list">
+            {session.lastTurnCitations.map((cite: any) => (
+              <div key={cite.id} className="citation-item">
+                {cite.url ? <a href={cite.url} target="_blank" rel="noreferrer">{cite.title ?? cite.url}</a> : <span>{cite.title ?? cite.filename}</span>}
+                {cite.sourceType && <span className="citation-badge">{cite.sourceType}</span>}
+                {cite.fileId && <span className="citation-file-id">{cite.fileId}</span>}
+                {cite.snippet && <p className="citation-snippet">{cite.snippet}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── 能力轨迹时间线 ── */}
+        {session?.lastCapabilityEvents && session.lastCapabilityEvents.length > 0 && (
+          <div className="capability-trace" data-testid="capability-trace-timeline">
+            {session.lastCapabilityEvents.map((evt: any, idx: number) => (
+              <div key={idx} className="capability-trace-item">
+                <span className="capability-trace-type">{evt.type}</span>
+                {evt.payload?.queries && (evt.payload.queries as string[]).map((q: string, qi: number) => (
+                  <span key={qi} className="capability-trace-query">{q}</span>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── 计算机操作卡片 ── */}
+        {session?.lastComputerCalls && session.lastComputerCalls.length > 0 && (
+          <div className="computer-call-panel" data-testid="computer-call-list">
+            {session.lastComputerCalls.map((cc: any) => (
+              <div key={cc.id} className="computer-call-card">
+                {cc.actions.map((action: any, ai: number) => (
+                  <span key={ai} className="computer-action-badge">{action.type}</span>
+                ))}
               </div>
             ))}
           </div>
@@ -1811,7 +2022,6 @@ export default function ChatPage() {
               }}
               className="composer-input"
               placeholder={isRunBusy ? "正在响应..." : "输入消息 (Enter 发送, Shift+Enter 换行)，或输入 / 获取快捷命令"}
-              disabled={isRunBusy}
               rows={1}
               onKeyDown={handleComposerKeyDown}
             />
@@ -1838,22 +2048,7 @@ export default function ChatPage() {
                     </div>
                   </>
                 )}
-                {(
-                  <>
-                    <button
-                      type="button"
-                      data-testid="plan-mode-toggle"
-                      className={`effort-btn${planModeEnabled ? " active" : ""}`}
-                      onClick={() => void updateDisplayedSessionRuntimeIntent({
-                        workflowMode: planModeEnabled ? "default" : "plan",
-                        planModeEnabled: !planModeEnabled,
-                      })}
-                      title={planModeEnabled ? "关闭 Plan Mode" : "开启 Plan Mode"}
-                    >
-                      Plan
-                    </button>
-                  </>
-                )}
+                {/* Plan Mode 功能暂时隐藏，待后续完善后重新启用 */}
               </div>
               {!isRunBusy ? (
                 <button
@@ -1946,7 +2141,7 @@ export default function ChatPage() {
         /* ── 时间线容器 (支持文件侧边栏) ── */
         .chat-timeline-container { display: flex; flex: 1; overflow: hidden; min-height: 0; }
         .chat-timeline-container--with-sidebar .timeline-panel { border-right: 1px solid var(--glass-border); }
-        .chat-work-files-drawer { width: 340px; min-width: 320px; background: color-mix(in srgb, var(--bg-card) 94%, transparent); display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; position: relative; z-index: 5; }
+        .chat-work-files-drawer { width: 340px; min-width: 320px; background: color-mix(in srgb, var(--bg-card) 94%, transparent); display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; position: relative; z-index: 5; overflow-y: auto; }
         @media (max-width: 1200px) { .chat-work-files-drawer { width: 300px; min-width: 280px; } }
         .session-list-dropdown { flex: 1; overflow-y: auto; padding: 8px; margin: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
         .session-item { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; padding: 12px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: all 0.2s ease; }
@@ -1972,7 +2167,12 @@ export default function ChatPage() {
         .pending-avatar { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
         .message-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-        .message-header { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; }
+        .message-header { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 2px; display: flex; align-items: baseline; gap: 8px; }
+        .message-time { font-size: 11px; font-weight: 400; color: var(--text-muted); cursor: default; }
+        .tool-chain-time { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--text-muted); cursor: default; }
+        .date-separator { display: flex; align-items: center; gap: 16px; padding: 8px 0; }
+        .date-separator::before, .date-separator::after { content: ""; flex: 1; height: 1px; background: var(--glass-border); }
+        .date-separator span { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
         .message-content { line-height: 1.7; font-size: 14px; color: var(--text-primary); }
         .message-content p { margin: 0 0 16px; }
         .message-content p:last-child { margin-bottom: 0; }
@@ -1990,7 +2190,30 @@ export default function ChatPage() {
         .details-summary:hover { color: var(--text-primary); }
         .details-summary::-webkit-details-marker { display: none; }
         .summary-inner { display: flex; align-items: center; gap: 8px; }
+        .details-toggle-hint { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 11px; letter-spacing: 0.02em; }
+        .details-chevron { font-size: 12px; line-height: 1; color: var(--text-secondary); }
+        .details-toggle-label { white-space: nowrap; }
+        .message-details[open] .details-toggle-hint { color: var(--accent-cyan); }
+        .message-details[open] .details-chevron { color: var(--accent-cyan); }
         .details-content { padding: 16px; border-top: 1px solid var(--glass-border); font-size: 13px; color: var(--text-secondary); line-height: 1.6; background: rgba(0,0,0,0.1); }
+        .reasoning-content p { margin: 0 0 12px; }
+        .reasoning-content p:last-child { margin-bottom: 0; }
+        .reasoning-content ul, .reasoning-content ol { margin: 0 0 12px; padding-left: 22px; }
+        .reasoning-content li { margin-bottom: 4px; }
+        .reasoning-content code { background: rgba(255,255,255,0.06); padding: 2px 5px; border-radius: 3px; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: 0.85em; color: var(--accent-cyan); }
+        .reasoning-content pre { background: var(--bg-sidebar); padding: 14px; border-radius: var(--radius-md); overflow-x: auto; margin: 12px 0; border: 1px solid var(--glass-border); }
+        .reasoning-content pre code { background: transparent; padding: 0; color: inherit; }
+        .reasoning-content h1, .reasoning-content h2, .reasoning-content h3 { margin: 18px 0 8px; color: var(--text-primary); font-weight: 600; font-size: 14px; }
+        .reasoning-content h1 { font-size: 16px; }
+        .reasoning-content h2 { font-size: 15px; }
+        .reasoning-content blockquote { border-left: 3px solid rgba(45,212,191,0.4); margin: 12px 0; padding: 6px 0 6px 14px; color: var(--text-muted); background: rgba(255,255,255,0.02); border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+        .reasoning-content strong { color: var(--text-primary); }
+        .reasoning-content a { color: var(--accent-cyan); text-decoration: none; }
+        .reasoning-content a:hover { text-decoration: underline; }
+        .reasoning-content table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 12px; }
+        .reasoning-content th, .reasoning-content td { padding: 6px 10px; border: 1px solid var(--glass-border); text-align: left; }
+        .reasoning-content th { background: rgba(255,255,255,0.04); color: var(--text-primary); font-weight: 600; }
+        .reasoning-content hr { border: none; border-top: 1px solid var(--glass-border); margin: 14px 0; }
         .tool-chain-details { width: 100%; }
         .tool-chain-summary { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px 12px; border-radius: var(--radius-md); background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); color: var(--text-secondary); font-size: 13px; user-select: none; transition: all 0.2s ease; list-style: none; }
         .tool-chain-summary::-webkit-details-marker { display: none; }
@@ -2140,6 +2363,9 @@ export default function ChatPage() {
         .btn-new-chat:hover { opacity: 0.85; }
         .btn-dismiss { padding: 5px 14px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: background 0.15s; }
         .btn-dismiss:hover { background: var(--glass-reflection); }
+        .model-switch-notice { background: rgba(16,163,127,0.08); border-color: rgba(16,163,127,0.25); }
+        .model-switch-notice > svg { color: var(--accent-cyan); }
+        .model-switch-notice strong { color: var(--text-primary); font-weight: 600; }
       `}</style>
     </section>
   );

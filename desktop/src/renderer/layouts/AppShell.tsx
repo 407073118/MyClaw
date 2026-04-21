@@ -1,14 +1,16 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import TitleBar from "../components/TitleBar";
 import WebPanel from "../components/WebPanel";
 import SiliconRail from "../components/SiliconRail";
+import TimeAssistantCapsule from "../components/time/TimeAssistantCapsule";
 
 import { useAuthStore } from "../stores/auth";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useWorkflowRunsStore } from "../stores/workflow-runs";
 import { sidebarBranding } from "../utils/app-shell-branding";
+import { buildTimeAssistantSnapshot } from "../utils/time-assistant-presence";
 
 // ---------------------------------------------------------------------------
 // 内联 SVG 图标组件
@@ -87,6 +89,15 @@ const IconMeetings = () => (
   </svg>
 );
 
+const IconTime = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20">
+    <path
+      fill="currentColor"
+      d="M15.07 1H5a2 2 0 0 0-2 2v14h2V3h10.07V1zm3.93 4H9a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H9V7h10v14zm-5-3h2v2h-2zm0-10h2v8h-2zm-4 0h2v4h-2z"
+    />
+  </svg>
+);
+
 const IconSettings = () => (
   <svg viewBox="0 0 24 24" width="18" height="18">
     <path
@@ -142,6 +153,7 @@ const navItems: NavItem[] = [
   { to: "/employees", label: "硅基员工", icon: IconEmployees, testId: "nav-employees" },
   { to: "/workflows", label: "Workflows", icon: IconWorkflows, testId: "nav-workflows" },
   { to: "/meetings", label: "会议录音", icon: IconMeetings, testId: "nav-meetings" },
+  { to: "/time", label: "时间中心", icon: IconTime, testId: "nav-time" },
   { to: "/files", label: "Files", icon: IconFiles, testId: "nav-files" },
   // { to: "/publish-drafts", label: "Publish", icon: IconPublish, testId: "nav-publish-drafts" },
 ];
@@ -215,6 +227,7 @@ export default function AppShell() {
   const loading = useWorkspaceStore((state) => state.loading);
   const error = useWorkspaceStore((state) => state.error);
   const requiresInitialSetup = useWorkspaceStore((state) => state.requiresInitialSetup);
+  const time = useWorkspaceStore((state) => state.time);
   const defaultModelName = useWorkspaceStore(
     (state) => state.models.find((m) => m.id === state.defaultModelProfileId)?.name ?? "Offline",
   );
@@ -235,6 +248,16 @@ export default function AppShell() {
   const currentUserDisplayName = auth.session.user?.displayName ?? "未登录用户";
   const currentUserAccount = auth.session.user?.account ?? "未绑定账号";
   const runtimeStatusLabel = !ready ? (error ? "异常" : loading ? "连接中" : "未就绪") : "";
+  const [timeAssistantExpanded, setTimeAssistantExpanded] = useState(false);
+  const [timeAssistantNowIso, setTimeAssistantNowIso] = useState(() => new Date().toISOString());
+  const timeAssistantSnapshot = useMemo(() =>
+    buildTimeAssistantSnapshot({
+      nowIso: timeAssistantNowIso,
+      fallbackTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      calendarEvents: time.calendarEvents,
+      reminders: time.reminders,
+      availabilityPolicy: time.availabilityPolicy,
+    }), [timeAssistantNowIso, time.calendarEvents, time.reminders, time.availabilityPolicy]);
 
   // 已登录但工作区尚未就绪时，主动拉起 bootstrap。
   useEffect(() => {
@@ -268,6 +291,13 @@ export default function AppShell() {
     return () => unsub?.();
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setTimeAssistantNowIso(new Date().toISOString());
+    }, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   /** 执行登出并返回登录页。 */
   async function handleLogout() {
     console.info("[app-shell] 用户请求退出当前账号", {
@@ -281,6 +311,24 @@ export default function AppShell() {
   function handleBootstrapRetry() {
     console.info("[app-shell] 用户请求重新加载桌面端启动引导数据");
     void loadBootstrap();
+  }
+
+  /** 切换全局时间助理胶囊的展开状态，保持标题栏入口始终可见。 */
+  function handleToggleTimeAssistant() {
+    console.info("[app-shell] 切换全局时间助理胶囊", {
+      expanded: !timeAssistantExpanded,
+      routePath: location.pathname,
+    });
+    setTimeAssistantExpanded((current) => !current);
+  }
+
+  /** 统一跳转到时间中心，避免常驻助理与主页面入口割裂。 */
+  function handleOpenTimeCenter() {
+    console.info("[app-shell] 从全局时间助理打开时间中心", {
+      routePath: location.pathname,
+      compactLabel: timeAssistantSnapshot.compactLabel,
+    });
+    void navigate("/time");
   }
 
   /** 判断某个导航项是否处于当前激活状态。 */
@@ -305,7 +353,14 @@ export default function AppShell() {
 
   return (
     <div className="app-root-wrapper">
-      <TitleBar />
+      <TitleBar
+        assistantChip={{
+          tone: timeAssistantSnapshot.tone,
+          label: timeAssistantSnapshot.compactLabel,
+          expanded: timeAssistantExpanded,
+          onClick: handleToggleTimeAssistant,
+        }}
+      />
       <main className="shell">
       <aside data-testid="app-sidebar" className="app-sidebar">
         <div className="sidebar-content">
@@ -413,6 +468,12 @@ export default function AppShell() {
 
       <SiliconRail />
       <WebPanel />
+      <TimeAssistantCapsule
+        open={timeAssistantExpanded}
+        snapshot={timeAssistantSnapshot}
+        onClose={handleToggleTimeAssistant}
+        onOpenTimeCenter={handleOpenTimeCenter}
+      />
 
       <style>{`
         .shell {

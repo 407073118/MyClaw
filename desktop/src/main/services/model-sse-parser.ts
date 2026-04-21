@@ -25,6 +25,8 @@ type SseState = {
   toolCallsByIndex: Map<number, ToolCallAccumulator>;
   finishReason: string | null;
   usage: ParsedTokenUsage | null;
+  /** 是否收到了 [DONE] 信号或有效的 finish_reason，标记流正常结束。 */
+  streamCompleted: boolean;
 };
 
 /** 为指定 index 准备工具调用累积器，确保并行工具调用可以稳定拼装。 */
@@ -219,6 +221,8 @@ function finaliseSseState(state: SseState): {
   toolCalls: ParsedToolCall[];
   finishReason: string | null;
   usage: ParsedTokenUsage | null;
+  /** 流是否正常结束（收到 [DONE] 或有效 finish_reason）。false 表示连接异常截断。 */
+  streamCompleted: boolean;
 } {
   return {
     content: state.contentParts.join(""),
@@ -226,6 +230,7 @@ function finaliseSseState(state: SseState): {
     toolCalls: materializeToolCalls(state),
     finishReason: state.finishReason,
     usage: state.usage,
+    streamCompleted: state.streamCompleted,
   };
 }
 
@@ -240,6 +245,8 @@ export async function consumeSseStream(
   toolCalls: ParsedToolCall[];
   finishReason: string | null;
   usage: ParsedTokenUsage | null;
+  /** 流是否正常结束（收到 [DONE] 或有效 finish_reason）。false 表示连接异常截断。 */
+  streamCompleted: boolean;
 }> {
   const state: SseState = {
     contentParts: [],
@@ -247,6 +254,7 @@ export async function consumeSseStream(
     toolCallsByIndex: new Map(),
     finishReason: null,
     usage: null,
+    streamCompleted: false,
   };
 
   if (!response.body) {
@@ -255,10 +263,13 @@ export async function consumeSseStream(
       const line = rawLine.trim();
       if (!line.startsWith("data:")) continue;
       const payload = line.slice("data:".length).trim();
-      if (!payload || payload === "[DONE]") continue;
+      if (!payload) continue;
+      if (payload === "[DONE]") { state.streamCompleted = true; continue; }
       const parsed = tryParseJson(payload);
       if (parsed !== null) applySseChunk(parsed, state, onDelta, onToolCallDelta);
     }
+    // finish_reason 存在也视为正常完成（部分 provider 不发 [DONE]）
+    if (state.finishReason) state.streamCompleted = true;
     return finaliseSseState(state);
   }
 
@@ -270,7 +281,8 @@ export async function consumeSseStream(
     const trimmed = line.trim();
     if (!trimmed.startsWith("data:")) return;
     const payload = trimmed.slice("data:".length).trim();
-    if (!payload || payload === "[DONE]") return;
+    if (!payload) return;
+    if (payload === "[DONE]") { state.streamCompleted = true; return; }
     const parsed = tryParseJson(payload);
     if (parsed !== null) applySseChunk(parsed, state, onDelta, onToolCallDelta);
   };
@@ -294,6 +306,9 @@ export async function consumeSseStream(
   if (buffer.trim()) {
     processLine(buffer);
   }
+
+  // finish_reason 存在也视为正常完成（部分 provider 不发 [DONE]）
+  if (state.finishReason) state.streamCompleted = true;
 
   return finaliseSseState(state);
 }

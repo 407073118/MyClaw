@@ -218,6 +218,27 @@ export class MeetingRecorder {
     }
   }
 
+  /** 获取导入时间中心所需的会议上下文，统一返回标题、纪要和转写。 */
+  getFollowUpSource(meetingId: string): {
+    meeting: MeetingRecord | null;
+    transcript: StructuredTranscript | null;
+    summary: string | null;
+  } {
+    const meeting = this.get(meetingId) ?? null;
+    if (!meeting) {
+      return {
+        meeting: null,
+        transcript: null,
+        summary: null,
+      };
+    }
+    return {
+      meeting,
+      transcript: this.getTranscript(meetingId),
+      summary: this.getSummaryText(meetingId),
+    };
+  }
+
   /** 开始录音。 */
   async start(title?: string): Promise<string> {
     if (this.activeMeeting) {

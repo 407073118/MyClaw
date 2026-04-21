@@ -603,7 +603,9 @@ describe("sessions execution gateway", () => {
     await expect(resolveHandler?.({}, approvalRequests[0]?.id, "allow-once")).resolves.toEqual({ success: true });
     await expect(resolveHandler?.({}, approvalRequests[1]?.id, "allow-once")).resolves.toEqual({ success: true });
 
-    await expect(sendPromise).resolves.toEqual(expect.objectContaining({ success: true }));
+    await expect(sendPromise).resolves.toEqual(expect.objectContaining({
+      session: expect.objectContaining({ id: "session-1" }),
+    }));
   });
 
   it("replays completed background output back into the session transcript", async () => {

@@ -6,8 +6,11 @@ import type {
   ApprovalPolicy,
   ApprovalRequest,
   AsrConfig,
+  AvailabilityPolicy,
   BuiltinToolApprovalMode,
+  CalendarEvent,
   ChatSession,
+  ExecutionRun,
   McpServer,
   McpServerConfig,
   MeetingEvent,
@@ -16,11 +19,16 @@ import type {
   ModelProfile,
   ModelRouteProbeResult,
   PersonalPromptProfile,
+  Reminder,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
+  ScheduleJob,
   SkillDefinition,
   SiliconPerson,
+  SuggestedTimebox,
   StructuredTranscript,
+  TaskCommitment,
+  TodayBrief,
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
 import type { BrMiniMaxRuntimeDiagnostics } from "../../../shared/br-minimax";
@@ -90,6 +98,15 @@ type BootstrapPayload = {
   approvalRequests: ApprovalRequest[];
   personalPrompt: PersonalPromptProfile;
   updates: AppUpdateState;
+  time: {
+    calendarEvents: CalendarEvent[];
+    taskCommitments: TaskCommitment[];
+    reminders: Reminder[];
+    scheduleJobs: ScheduleJob[];
+    executionRuns: ExecutionRun[];
+    availabilityPolicy: AvailabilityPolicy | null;
+    todayBrief: TodayBrief | null;
+  };
 };
 
 type SessionPayload = {
@@ -169,6 +186,29 @@ declare global {
       quitAndInstallAppUpdate: () => Promise<{ accepted: boolean }>;
       openAppUpdateDownloadPage: () => Promise<{ opened: boolean }>;
       onAppUpdateStateChanged: (callback: (payload: AppUpdateState) => void) => () => void;
+
+      // --- Time orchestration ---
+      time: {
+        listCalendarEvents: () => Promise<{ items: CalendarEvent[] }>;
+        createCalendarEvent: (input: Record<string, unknown>) => Promise<{ item: CalendarEvent }>;
+        updateCalendarEvent: (input: Record<string, unknown>) => Promise<{ item: CalendarEvent }>;
+        listTaskCommitments: () => Promise<{ items: TaskCommitment[] }>;
+        createTaskCommitment: (input: Record<string, unknown>) => Promise<{ item: TaskCommitment }>;
+        updateTaskCommitment: (input: Record<string, unknown>) => Promise<{ item: TaskCommitment }>;
+        listReminders: () => Promise<{ items: Reminder[] }>;
+        createReminder: (input: Record<string, unknown>) => Promise<{ item: Reminder }>;
+        updateReminder: (input: Record<string, unknown>) => Promise<{ item: Reminder }>;
+        deleteReminder: (id: string) => Promise<{ ok: boolean }>;
+        listScheduleJobs: () => Promise<{ items: ScheduleJob[] }>;
+        createScheduleJob: (input: Record<string, unknown>) => Promise<{ item: ScheduleJob }>;
+        updateScheduleJob: (input: Record<string, unknown>) => Promise<{ item: ScheduleJob }>;
+        deleteScheduleJob: (id: string) => Promise<{ ok: boolean }>;
+        getAvailabilityPolicy: () => Promise<{ policy: AvailabilityPolicy | null }>;
+        saveAvailabilityPolicy: (policy: AvailabilityPolicy) => Promise<{ policy: AvailabilityPolicy }>;
+        getTodayBrief: () => Promise<{ brief: TodayBrief }>;
+        suggestTimeboxes: () => Promise<{ items: SuggestedTimebox[] }>;
+        listExecutionRuns: () => Promise<{ items: ExecutionRun[] }>;
+      };
 
       // --- Sessions ---
       createSession: (data?: {
@@ -430,7 +470,7 @@ declare global {
       openSkillsFolder: () => Promise<void>;
 
       // --- Web Panels ---
-      webPanelResolveView: (skillId: string) => Promise<string | null>;
+      webPanelResolvePage: (skillId: string, relativePath: string) => Promise<string | null>;
       onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void) => () => void;
 
       // --- Skill Files ---
@@ -454,6 +494,11 @@ declare global {
           meeting: MeetingRecord | null;
           transcript: StructuredTranscript | null;
           summary: string | null;
+        }>;
+        buildFollowUps: (meetingId: string) => Promise<{
+          commitments: TaskCommitment[];
+          reminders: Reminder[];
+          suggestedEvents: CalendarEvent[];
         }>;
         delete: (meetingId: string) => Promise<{ ok: boolean }>;
         updateSpeaker: (meetingId: string, speakerIndex: number, label: string) => Promise<{ ok: boolean }>;

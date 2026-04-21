@@ -43,5 +43,49 @@ describe("prompt composer", () => {
     // Task planning 引导必须包含工具名和强制工作流
     expect(rendered).toContain("task_create");
     expect(rendered).toContain("Mandatory Workflow");
+    expect(rendered).toContain("reminder_create");
+    expect(rendered).toContain("schedule_job_create");
+    expect(rendered).toContain("today_brief_get");
+    expect(rendered).toContain("Use `reminder_create` for user attention and `schedule_job_create` for autonomous time-based execution.");
+  });
+
+  it("adds a route-specific deep planning overlay for br-minimax responses research turns only", () => {
+    const minimaxRendered = renderPromptSections(composePromptSections({
+      session,
+      workingDir: "/repo",
+      providerFamily: "br-minimax",
+      experienceProfileId: "balanced",
+      promptPolicyId: "minimax.compat.default",
+      toolPolicyId: "minimax.tools.compat",
+      reasoningProfileId: "minimax.reasoning.compat",
+      reasoningEffort: "high",
+      protocolTarget: "openai-responses",
+      deploymentProfile: "br-private",
+      skills: [],
+      mcpTools: [],
+    } as any));
+
+    expect(minimaxRendered).toContain("MiniMax Responses Deep Planning Controller");
+    expect(minimaxRendered).toContain("For research, analysis, comparison, or report requests, the first round is planning-only.");
+    expect(minimaxRendered).toContain("Create the full task set before execution.");
+    expect(minimaxRendered).toContain("Do not describe multiple steps in prose and then create only one task.");
+    expect(minimaxRendered).toContain("If the plan does not yet cover information gathering, core analysis, and output synthesis, continue planning.");
+
+    const controlRendered = renderPromptSections(composePromptSections({
+      session,
+      workingDir: "/repo",
+      providerFamily: "br-minimax",
+      experienceProfileId: "balanced",
+      promptPolicyId: "minimax.compat.default",
+      toolPolicyId: "minimax.tools.compat",
+      reasoningProfileId: "minimax.reasoning.compat",
+      reasoningEffort: "high",
+      protocolTarget: "openai-chat-compatible",
+      deploymentProfile: "br-private",
+      skills: [],
+      mcpTools: [],
+    } as any));
+
+    expect(controlRendered).not.toContain("MiniMax Responses Deep Planning Controller");
   });
 });

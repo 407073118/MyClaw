@@ -100,7 +100,7 @@ describe("phase1 provider adapter contracts", () => {
     const selected = getProviderAdapter(makeProfile({
       providerFlavor: "br-minimax",
       model: "minimax-m2-5",
-      baseUrl: "http://api-pre.cybotforge.100credit.cn",
+      baseUrl: "http://api-cybotforge-pre.brapp.com",
     }));
 
     assertAdapterContract(explicit, "br-minimax");

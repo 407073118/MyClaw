@@ -101,7 +101,7 @@ function buildContext(): RuntimeContext {
         name: "BR MiniMax",
         provider: "openai-compatible",
         providerFlavor: "br-minimax",
-        baseUrl: "http://api-pre.cybotforge.100credit.cn",
+        baseUrl: "http://api-cybotforge-pre.brapp.com",
         apiKey: "test-key",
         model: "minimax-m2-5",
       }],
@@ -1560,6 +1560,140 @@ describe("Phase 3 session planning orchestration", () => {
         },
       ],
     });
+  });
+
+  it("keeps br-minimax deep research turns in planning until additional tasks are created", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+    let modelRound = 0;
+
+    ctx.state.models[0] = {
+      ...ctx.state.models[0],
+      providerFamily: "br-minimax",
+      protocolTarget: "openai-responses",
+      deploymentProfile: "br-private",
+    };
+
+    resolveSessionRuntimeIntentMock.mockReturnValue(runtimeIntent);
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: false,
+        source: "registry",
+      },
+    });
+    buildExecutionPlanMock.mockReturnValue(executionPlan);
+    assembleContextMock.mockImplementation((input: { session: { messages: Array<{ role: string; content: unknown }> } }) => ({
+      messages: input.session.messages.map((message) => ({
+        role: message.role,
+        content: message.content,
+      })),
+      budgetUsed: 10,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    }));
+    callModelMock.mockImplementation(async (input: { messages: Array<{ role: string; content: unknown }> }) => {
+      modelRound++;
+      if (modelRound === 1) {
+        return {
+          content: "I will analyze the annual report step by step.",
+          toolCalls: [
+            {
+              id: "task-call-1",
+              name: "task.create",
+              argumentsJson: JSON.stringify({
+                subject: "Collect annual report basics",
+                description: "Gather the company profile and headline metrics from the annual report",
+                activeForm: "Collecting annual report basics",
+              }),
+              input: {
+                subject: "Collect annual report basics",
+                description: "Gather the company profile and headline metrics from the annual report",
+                activeForm: "Collecting annual report basics",
+              },
+            },
+          ],
+          finishReason: "tool_calls",
+        };
+      }
+
+      if (modelRound === 2) {
+        expect(input.messages).toEqual(expect.arrayContaining([
+          expect.objectContaining({
+            role: "system",
+            content: expect.stringContaining("Planning is incomplete for this research request"),
+          }),
+        ]));
+        return {
+          content: "I need to complete the plan before research.",
+          toolCalls: [
+            {
+              id: "task-call-2",
+              name: "task.create",
+              argumentsJson: JSON.stringify({
+                subject: "Analyze financial performance",
+                description: "Extract revenue, profit, and cash flow trends and explain the changes",
+                activeForm: "Analyzing financial performance",
+              }),
+              input: {
+                subject: "Analyze financial performance",
+                description: "Extract revenue, profit, and cash flow trends and explain the changes",
+                activeForm: "Analyzing financial performance",
+              },
+            },
+            {
+              id: "task-call-3",
+              name: "task.create",
+              argumentsJson: JSON.stringify({
+                subject: "Synthesize industry comparison",
+                description: "Compare industry trends and competitors, then produce the final conclusion",
+                activeForm: "Synthesizing industry comparison",
+              }),
+              input: {
+                subject: "Synthesize industry comparison",
+                description: "Compare industry trends and competitors, then produce the final conclusion",
+                activeForm: "Synthesizing industry comparison",
+              },
+            },
+          ],
+          finishReason: "tool_calls",
+        };
+      }
+
+      return {
+        content: "The plan is complete and ready for execution.",
+        toolCalls: [],
+        finishReason: "stop",
+      };
+    });
+    saveSessionMock.mockResolvedValue(undefined);
+
+    registerSessionHandlers(ctx);
+
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Research Planning" }) as {
+      session: { id: string; runtimeIntent?: typeof runtimeIntent };
+    };
+    created.session.runtimeIntent = runtimeIntent;
+
+    const response = await sendHandler?.({}, created.session.id, { content: "Analyze the 2025 annual report" }) as {
+      session: {
+        messages: Array<{ role: string; content: unknown }>;
+        tasks?: Array<{ subject: string }>;
+      };
+    };
+    const persistedTasks = saveSessionMock.mock.calls.at(-1)?.[1]?.tasks as Array<{ subject: string }> | undefined;
+
+    expect(callModelMock).toHaveBeenCalledTimes(2);
+    expect(persistedTasks?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(persistedTasks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ subject: "Collect annual report basics" }),
+    ]));
+    expect(response.session.messages).toContainEqual(expect.objectContaining({
+      role: "system",
+      content: expect.stringContaining("Planning is incomplete for this research request"),
+    }));
   });
 
   it("allows the main session loop to continue beyond 200 rounds and complete normally", async () => {

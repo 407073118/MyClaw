@@ -11,6 +11,7 @@ import { registerSessionHandlers } from "./sessions";
 import { registerSiliconPersonHandlers } from "./silicon-persons";
 import { registerToolHandlers } from "./tools";
 import { registerSkillFileHandlers } from "./skill-files";
+import { registerTimeOrchestrationHandlers } from "./time-orchestration";
 import { registerUpdateHandlers } from "./update";
 import { registerWebPanelHandlers } from "./web-panel";
 import { registerWorkflowHandlers } from "./workflows";
@@ -35,4 +36,5 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerWebPanelHandlers(ctx);
   registerSkillFileHandlers(ctx);
   registerMeetingHandlers(ctx);
+  registerTimeOrchestrationHandlers(ctx);
 }

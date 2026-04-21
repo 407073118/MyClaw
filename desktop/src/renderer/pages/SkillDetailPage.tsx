@@ -25,6 +25,11 @@ function isImageFile(name: string): boolean {
   return IMAGE_EXTS.has(getExtension(name));
 }
 
+/** 判断当前文件是否为可在 WebPanel 中加载的 HTML 页面。 */
+function isHtmlFile(name: string): boolean {
+  return getExtension(name) === ".html";
+}
+
 /** 根据文件扩展名推断默认展示模式。 */
 function defaultViewMode(name: string): ViewMode {
   const ext = getExtension(name);
@@ -42,6 +47,24 @@ function findSkillMd(nodes: FileTreeNode[]): FileTreeNode | null {
     if (node.children) queue.push(...node.children);
   }
   return null;
+}
+
+/** 按相对路径查找文件节点，便于恢复当前面板对应的 HTML 选中态。 */
+function findFileByRelativePath(nodes: FileTreeNode[], relativePath: string): FileTreeNode | null {
+  const queue = [...nodes];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    if (node.type === "file" && node.relativePath === relativePath) return node;
+    if (node.children) queue.push(...node.children);
+  }
+  return null;
+}
+
+/** 提取 WebPanel 中当前文件的相对路径，用来判断是否需要跟随切换。 */
+function extractPanelRelativePath(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const relativePath = (data as { relativePath?: unknown }).relativePath;
+  return typeof relativePath === "string" ? relativePath : null;
 }
 
 // ── 文件树节点组件 ────────────────────────────────────────────────────────────
@@ -113,6 +136,9 @@ export default function SkillDetailPage() {
   const { id: skillId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const skills = useWorkspaceStore((s) => s.skills);
+  const webPanel = useWorkspaceStore((s) => s.webPanel);
+  const openWebPanel = useWorkspaceStore((s) => s.openWebPanel);
+  const closeWebPanel = useWorkspaceStore((s) => s.closeWebPanel);
 
   const skill = useMemo(() => skills.find((s) => s.id === skillId) ?? null, [skills, skillId]);
 
@@ -137,9 +163,11 @@ export default function SkillDetailPage() {
         if (cancelled) return;
         setTree(nodes);
         // 优先自动选中 `SKILL.md`，让详情页首屏更聚焦。
-        const skillMd = findSkillMd(nodes);
-        if (skillMd) {
-          setSelectedPath(skillMd.relativePath);
+        const panelPath = extractPanelRelativePath(webPanel.data);
+        const initialFile = panelPath ? findFileByRelativePath(nodes, panelPath) : findSkillMd(nodes);
+        const fallbackFile = initialFile ?? findSkillMd(nodes);
+        if (fallbackFile) {
+          setSelectedPath(fallbackFile.relativePath);
         }
       })
       .catch((err) => {
@@ -149,7 +177,7 @@ export default function SkillDetailPage() {
         if (!cancelled) setTreeLoading(false);
       });
     return () => { cancelled = true; };
-  }, [skillId]);
+  }, [skillId, webPanel.data]);
 
   // 文件选择变化后，重新加载文件内容与视图模式。
   useEffect(() => {
@@ -177,6 +205,39 @@ export default function SkillDetailPage() {
     return () => { cancelled = true; };
   }, [skillId, selectedPath]);
 
+  const currentPanelRelativePath = extractPanelRelativePath(webPanel.data);
+
+  /** 显式打开当前选中的 HTML 页面，并同步面板标题与上下文数据。 */
+  const handleOpenHtmlPanel = useCallback(async () => {
+    if (!skillId || !selectedPath || !isHtmlFile(selectedPath)) return;
+    const viewPath = await window.myClawAPI.webPanelResolvePage(skillId, selectedPath);
+    if (!viewPath) {
+      console.warn("[skill-detail] HTML 页面解析失败", { skillId, relativePath: selectedPath });
+      return;
+    }
+    const fileName = selectedPath.split("/").pop() ?? selectedPath;
+    openWebPanel(viewPath, `${skill?.name ?? ""} / ${fileName}`, {
+      skillId,
+      skillName: skill?.name ?? "",
+      relativePath: selectedPath,
+    });
+  }, [openWebPanel, selectedPath, skill?.name, skillId]);
+
+  useEffect(() => {
+    if (!selectedPath) return;
+    if (!isHtmlFile(selectedPath)) {
+      if (webPanel.isOpen) {
+        console.info("[skill-detail] 当前文件不是 HTML，关闭 WebPanel", { selectedPath });
+        closeWebPanel();
+      }
+      return;
+    }
+    if (!webPanel.isOpen) return;
+    if (currentPanelRelativePath === selectedPath) return;
+    console.info("[skill-detail] 当前 HTML 已切换，刷新 WebPanel", { selectedPath });
+    void handleOpenHtmlPanel();
+  }, [closeWebPanel, currentPanelRelativePath, handleOpenHtmlPanel, selectedPath, webPanel.isOpen]);
+
   /** 处理文件节点点击，仅允许选择文件类型节点。 */
   const handleSelectFile = useCallback((node: FileTreeNode) => {
     if (node.type === "file") {
@@ -202,7 +263,20 @@ export default function SkillDetailPage() {
   // ── 渲染内容区域 ───────────────────────────────────────────────────────────
   const selectedFileName = selectedPath?.split("/").pop() ?? "";
   const ext = getExtension(selectedFileName);
+  const selectedHtmlFile = selectedPath && isHtmlFile(selectedFileName) ? selectedPath : null;
+  const panelTracksSelectedHtml = Boolean(selectedHtmlFile && currentPanelRelativePath === selectedHtmlFile);
   const showToggle = shouldShowSkillPreviewToggle(selectedFileName);
+  const fileKindLabel = !selectedPath
+    ? "未选择"
+    : selectedHtmlFile
+      ? "HTML 页面"
+      : ext === ".md"
+        ? "Markdown"
+        : isImageFile(selectedFileName)
+          ? "图片"
+          : ext
+            ? ext.slice(1).toUpperCase()
+            : "文件";
 
   let contentElement: React.ReactNode = null;
   if (!selectedPath) {
@@ -217,11 +291,13 @@ export default function SkillDetailPage() {
     );
   } else if (viewMode === "preview" && ext === ".md") {
     contentElement = (
-      <div
-        className="markdown-preview"
-        data-testid="skill-detail-content"
-        dangerouslySetInnerHTML={{ __html: renderSafeSkillMarkdown(fileContent) }}
-      />
+      <div className="markdown-preview">
+        <article
+          className="markdown-preview__surface"
+          data-testid="skill-detail-content"
+          dangerouslySetInnerHTML={{ __html: renderSafeSkillMarkdown(fileContent) }}
+        />
+      </div>
     );
   } else {
     // 源码模式下展示带行号的只读视图。
@@ -279,9 +355,14 @@ export default function SkillDetailPage() {
         <section className="content-area">
           {/* 内容工具栏 */}
           <div className="content-toolbar">
-            <span className="file-path-label">
-              {selectedPath ?? "..."}
-            </span>
+            <div className="content-toolbar-meta">
+              <span className={`glass-pill ${selectedHtmlFile ? "glass-pill--green" : showToggle ? "glass-pill--accent" : "glass-pill--muted"}`}>
+                {fileKindLabel}
+              </span>
+              <span className="file-path-label">
+              {selectedPath ? `${fileKindLabel} · ${selectedPath}` : "..."}
+              </span>
+            </div>
             {showToggle && (
               <button
                 type="button"
@@ -289,6 +370,15 @@ export default function SkillDetailPage() {
                 onClick={() => setViewMode((v) => (v === "source" ? "preview" : "source"))}
               >
                 {viewMode === "source" ? "预览" : "源码"}
+              </button>
+            )}
+            {selectedHtmlFile && (
+              <button
+                type="button"
+                className={`btn-toggle-view${panelTracksSelectedHtml ? " btn-toggle-view--active" : ""}`}
+                onClick={() => void handleOpenHtmlPanel()}
+              >
+                {panelTracksSelectedHtml ? "已展示" : "展示"}
               </button>
             )}
           </div>
@@ -474,7 +564,7 @@ const styles = `
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    padding: 8px 16px;
+    padding: 10px 16px;
     border-bottom: 1px solid var(--glass-border, #333338);
     background: var(--bg-card, #1e1e24);
     flex-shrink: 0;
@@ -482,19 +572,20 @@ const styles = `
 
   .file-path-label {
     font-size: 12px;
-    color: var(--text-muted, #71717a);
+    color: var(--text-secondary, #b0b0b8);
     font-family: "Cascadia Code", "Fira Code", monospace;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
   }
 
   .btn-toggle-view {
-    background: transparent;
-    border: 1px solid var(--glass-border, #3f3f46);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(16, 163, 127, 0.22);
     color: var(--accent-cyan, #67e8f9);
     cursor: pointer;
-    padding: 3px 10px;
+    padding: 5px 12px;
     border-radius: var(--radius-md, 6px);
     font-size: 12px;
     font-weight: 600;
@@ -506,10 +597,36 @@ const styles = `
     background: rgba(103, 232, 249, 0.08);
   }
 
+  .btn-toggle-view--active {
+    background: rgba(103, 232, 249, 0.12);
+    border-color: rgba(103, 232, 249, 0.32);
+    color: #ffffff;
+  }
+
   .content-body {
     flex: 1;
     overflow: auto;
     padding: 0;
+    scrollbar-width: thin;
+    scrollbar-color: hsla(0, 0%, 100%, 0.15) transparent;
+  }
+
+  .content-body::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .content-body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .content-body::-webkit-scrollbar-thumb {
+    background: hsla(0, 0%, 100%, 0.15);
+    border-radius: 999px;
+  }
+
+  .content-body::-webkit-scrollbar-thumb:hover {
+    background: hsla(0, 0%, 100%, 0.26);
   }
 
   .content-hint {
@@ -517,6 +634,93 @@ const styles = `
     text-align: center;
     color: var(--text-muted, #71717a);
     font-size: 14px;
+  }
+
+  .html-panel-callout {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 24px;
+    padding: 20px 22px 18px;
+    border: 1px solid var(--glass-border, #333338);
+    border-radius: 12px;
+    background:
+      linear-gradient(180deg, rgba(16, 163, 127, 0.08), rgba(16, 163, 127, 0) 56%),
+      rgba(255, 255, 255, 0.03);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+
+  .html-panel-callout__header {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .html-panel-callout h3 {
+    margin: 0;
+    color: var(--text-primary, #fff);
+    font-size: 18px;
+    line-height: 1.2;
+  }
+
+  .html-panel-callout p {
+    margin: 0;
+    color: var(--text-secondary, #b0b0b8);
+    font-size: 13px;
+    line-height: 1.6;
+    max-width: 66ch;
+  }
+
+  .html-panel-callout__footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .html-panel-callout__meta {
+    color: var(--text-muted, #71717a);
+    font-size: 12px;
+  }
+
+  .btn-open-html-panel {
+    flex-shrink: 0;
+    min-width: 112px;
+    justify-content: center;
+  }
+
+  .btn-open-html-panel:hover {
+    transform: translateY(-1px);
+  }
+
+  @media (max-width: 900px) {
+    .content-toolbar {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .file-path-label {
+      width: 100%;
+    }
+
+    .html-panel-callout {
+      margin: 16px;
+      padding: 18px;
+    }
+
+    .html-panel-callout__footer {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .btn-open-html-panel {
+      width: 100%;
+    }
   }
 
   /* ---- 源码视图 ---- */
@@ -569,113 +773,202 @@ const styles = `
 
   /* ---- Markdown 预览 ---- */
   .markdown-preview {
-    padding: 24px 32px;
+    min-height: 100%;
+    padding: 24px;
+    background:
+      radial-gradient(circle at top left, rgba(16, 163, 127, 0.08), transparent 36%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 28%),
+      var(--bg-base, #121214);
     color: var(--text-primary, #fff);
     font-size: 14px;
     line-height: 1.7;
     overflow-wrap: break-word;
   }
 
+  .markdown-preview__surface {
+    width: min(100%, 880px);
+    margin: 0 auto;
+    padding: clamp(24px, 4vw, 40px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    background:
+      linear-gradient(180deg, rgba(16, 163, 127, 0.08), rgba(16, 163, 127, 0) 120px),
+      rgba(18, 18, 22, 0.78);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.04),
+      0 20px 48px rgba(0, 0, 0, 0.24);
+  }
+
+  .markdown-preview__surface > :first-child {
+    margin-top: 0;
+  }
+
+  .markdown-preview__surface > :last-child {
+    margin-bottom: 0;
+  }
+
   .markdown-preview h1 {
-    font-size: 26px;
-    font-weight: 700;
-    margin: 0 0 16px;
-    padding-bottom: 8px;
-    border-bottom: 1px solid var(--glass-border, #333338);
+    font-size: clamp(28px, 4vw, 36px);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    margin: 0 0 20px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .markdown-preview h2 {
-    font-size: 20px;
-    font-weight: 600;
-    margin: 28px 0 12px;
+    font-size: clamp(22px, 3vw, 28px);
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    margin: 36px 0 14px;
   }
 
   .markdown-preview h3 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 24px 0 8px;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
+    margin: 28px 0 10px;
+  }
+
+  .markdown-preview h4,
+  .markdown-preview h5,
+  .markdown-preview h6 {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 22px 0 8px;
+    color: var(--text-primary, #fff);
+  }
+
+  .markdown-preview p,
+  .markdown-preview li,
+  .markdown-preview td {
+    color: var(--text-secondary, #b0b0b8);
   }
 
   .markdown-preview p {
-    margin: 0 0 12px;
+    margin: 0 0 16px;
   }
 
   .markdown-preview a {
     color: var(--accent-cyan, #67e8f9);
-    text-decoration: none;
+    text-decoration-color: rgba(103, 232, 249, 0.38);
+    text-underline-offset: 0.18em;
   }
 
   .markdown-preview a:hover {
-    text-decoration: underline;
+    text-decoration-color: currentColor;
   }
 
   .markdown-preview code {
     font-family: "Cascadia Code", "Fira Code", monospace;
     font-size: 0.9em;
     background: rgba(255, 255, 255, 0.06);
-    padding: 2px 6px;
-    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 2px 7px;
+    border-radius: 6px;
+    color: var(--text-primary, #fff);
   }
 
   .markdown-preview pre {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--glass-border, #333338);
-    border-radius: var(--radius-md, 6px);
-    padding: 14px 16px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 22%),
+      rgba(9, 12, 14, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 14px;
+    padding: 16px 18px;
     overflow-x: auto;
-    margin: 0 0 16px;
+    margin: 0 0 20px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    scrollbar-width: thin;
+    scrollbar-color: hsla(0, 0%, 100%, 0.16) transparent;
+  }
+
+  .markdown-preview pre::-webkit-scrollbar {
+    height: 6px;
+  }
+
+  .markdown-preview pre::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .markdown-preview pre::-webkit-scrollbar-thumb {
+    background: hsla(0, 0%, 100%, 0.16);
+    border-radius: 999px;
   }
 
   .markdown-preview pre code {
     background: none;
+    border: none;
     padding: 0;
     font-size: 13px;
     line-height: 1.6;
+    color: #d4d4d8;
   }
 
   .markdown-preview ul, .markdown-preview ol {
-    margin: 0 0 12px;
-    padding-left: 24px;
+    margin: 0 0 18px;
+    padding-left: 26px;
   }
 
   .markdown-preview li {
-    margin-bottom: 4px;
+    margin-bottom: 8px;
   }
 
   .markdown-preview blockquote {
-    margin: 0 0 12px;
-    padding: 8px 16px;
+    margin: 0 0 20px;
+    padding: 14px 18px;
     border-left: 3px solid var(--accent-cyan, #67e8f9);
-    background: rgba(255, 255, 255, 0.02);
+    border-radius: 0 12px 12px 0;
+    background: rgba(255, 255, 255, 0.03);
     color: var(--text-secondary, #b0b0b8);
   }
 
   .markdown-preview table {
     width: 100%;
     border-collapse: collapse;
-    margin: 0 0 16px;
+    margin: 0 0 20px;
+    overflow: hidden;
+    border-radius: 12px;
+    border-style: hidden;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
   }
 
   .markdown-preview th, .markdown-preview td {
-    border: 1px solid var(--glass-border, #333338);
-    padding: 8px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 10px 12px;
     text-align: left;
     font-size: 13px;
   }
 
   .markdown-preview th {
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(255, 255, 255, 0.05);
     font-weight: 600;
+    color: var(--text-primary, #fff);
   }
 
   .markdown-preview hr {
     border: none;
-    border-top: 1px solid var(--glass-border, #333338);
-    margin: 20px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    margin: 28px 0;
   }
 
   .markdown-preview img {
     max-width: 100%;
-    border-radius: var(--radius-md, 6px);
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: 0 16px 30px rgba(0, 0, 0, 0.22);
+  }
+
+  @media (max-width: 900px) {
+    .markdown-preview {
+      padding: 16px;
+    }
+
+    .markdown-preview__surface {
+      padding: 22px 18px 26px;
+      border-radius: 14px;
+    }
   }
 `;

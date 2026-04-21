@@ -322,6 +322,8 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
       },
       workingDir: ctx.runtime.myClawRootPath,
       providerFamily: turnExecutionPlan.providerFamily,
+      protocolTarget: turnExecutionPlan.protocolTarget,
+      deploymentProfile: turnExecutionPlan.deploymentProfile ?? null,
       experienceProfileId: turnExecutionPlan.experienceProfileId,
       promptPolicyId: turnExecutionPlan.promptPolicyId,
       toolPolicyId: turnExecutionPlan.toolPolicyId,

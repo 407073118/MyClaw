@@ -27,6 +27,7 @@ import type {
 } from "@shared/contracts";
 
 import { createRuntimeContext } from "./services/runtime-context";
+import type { RuntimeContext } from "./services/runtime-context";
 import { ArtifactManager } from "./services/artifact-manager";
 import { ArtifactRegistry } from "./services/artifact-registry";
 import { listBuiltinToolDefinitions } from "./services/builtin-tool-stubs";
@@ -39,6 +40,11 @@ import { AsrClient } from "./services/asr-client";
 import { DirectAsrProvider } from "./services/meeting-intelligence-provider";
 import { MeetingRecorder } from "./services/meeting-recorder";
 import { callModel } from "./services/model-client";
+import { createTimeApplicationService } from "./services/time-application-service";
+import { createTimeJobExecutor } from "./services/time-job-executor";
+import { createTimeNotificationService } from "./services/time-notification-service";
+import { createTimeScheduler } from "./services/time-scheduler";
+import { TimeOrchestrationStore } from "./services/time-orchestration-store";
 
 const log = createLogger("main");
 
@@ -50,7 +56,9 @@ import { getSessionDatabase, loadPersistedState } from "./services/state-persist
 import { syncSessionBackgroundTaskSnapshot } from "./services/session-background-task";
 import { registerAllIpcHandlers } from "./ipc";
 import { McpServerManager } from "./services/mcp-server-manager";
-import { shutdownToolExecutor } from "./ipc/sessions";
+import { invokeRegisteredSessionSendMessage, shutdownToolExecutor } from "./ipc/sessions";
+import { invokeRegisteredWorkflowStartRun } from "./ipc/workflows";
+import { ensureSiliconPersonCurrentSession } from "./services/silicon-person-session";
 import { shutdownAllWorkspaces } from "./services/silicon-person-workspace";
 
 // ---------------------------------------------------------------------------
@@ -69,6 +77,7 @@ redirectUserData();
 // ---------------------------------------------------------------------------
 
 let mainWindow: BrowserWindow | null = null;
+let runtimeContext: RuntimeContext | null = null;
 
 function createMainWindow(): BrowserWindow {
   // 根据平台选择标题栏模式：macOS 用 hiddenInset，Windows 用 hidden + titleBarOverlay
@@ -173,6 +182,62 @@ async function buildRuntimeContext(
   let asrConfig = persisted.asrConfig;
   const artifactRegistry = new ArtifactRegistry(getSessionDatabase());
   const artifactManager = new ArtifactManager(paths, artifactRegistry);
+  const timeStore = await TimeOrchestrationStore.create(paths);
+  const timeApplication = createTimeApplicationService({ store: timeStore });
+  const timeNotificationService = createTimeNotificationService();
+  let runtimeCtxRef: RuntimeContext | null = null;
+  const timeJobExecutor = createTimeJobExecutor({
+    startWorkflowRun: async ({ workflowId, siliconPersonId }) => {
+      if (siliconPersonId) {
+        if (!runtimeCtxRef) {
+          throw new Error("runtime context is unavailable");
+        }
+        const { session } = await ensureSiliconPersonCurrentSession(runtimeCtxRef, {
+          siliconPersonId,
+        });
+        await invokeRegisteredWorkflowStartRun({
+          workflowId,
+          initialState: {
+            siliconPersonId,
+            sessionId: session.id,
+          },
+        });
+        return;
+      }
+      await invokeRegisteredWorkflowStartRun({ workflowId });
+    },
+    sendSiliconPersonMessage: async ({ siliconPersonId, content }) => {
+      if (!runtimeCtxRef) {
+        throw new Error("runtime context is unavailable");
+      }
+      const { session } = await ensureSiliconPersonCurrentSession(runtimeCtxRef, {
+        siliconPersonId,
+      });
+      await invokeRegisteredSessionSendMessage(session.id, {
+        content,
+      });
+    },
+  });
+  const timeScheduler = createTimeScheduler({
+    listDueReminders: async (at) => timeStore.listDueReminders(at),
+    listDueJobs: async (at) => timeStore.listDueScheduleJobs(at),
+    notifyReminder: async (reminder, policy) => {
+      return timeNotificationService.deliverReminder(reminder, policy);
+    },
+    markReminderDelivered: async (id, deliveredAt) => {
+      await timeStore.markReminderDelivered(id, deliveredAt);
+    },
+    recordExecutionRun: async (run) => {
+      await timeStore.recordExecutionRun(run);
+    },
+    getAvailabilityPolicy: async () => timeStore.getAvailabilityPolicy(),
+    saveScheduleJob: async (job) => {
+      await timeStore.upsertScheduleJob(job);
+    },
+    runScheduleJob: async (job) => {
+      await timeJobExecutor.execute(job);
+    },
+  });
 
   // 会议录音：AsrClient + DirectAsrProvider + MeetingRecorder
   const asrClient = new AsrClient();
@@ -199,7 +264,7 @@ async function buildRuntimeContext(
     },
   );
 
-  return createRuntimeContext({
+  const ctx = createRuntimeContext({
     runtime: {
       myClawRootPath: paths.myClawDir,
       skillsRootPath: paths.skillsDir,
@@ -257,6 +322,11 @@ async function buildRuntimeContext(
       mcpManager,
       appUpdater,
       meetingRecorder,
+      timeApplication,
+      timeJobExecutor,
+      timeNotificationService,
+      timeScheduler,
+      timeStore,
     },
     tools: {
       resolveBuiltinTools: () => {
@@ -288,6 +358,8 @@ async function buildRuntimeContext(
       },
     },
   });
+  runtimeCtxRef = ctx;
+  return ctx;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,7 +388,9 @@ app.whenReady().then(async () => {
 
   // 初始化运行时上下文并注册所有 IPC 处理器
   const ctx = await buildRuntimeContext(paths, mcpManager, appUpdater);
+  runtimeContext = ctx;
   registerAllIpcHandlers(ctx);
+  ctx.services.timeScheduler?.start();
 
   // 在后台自动连接所有启用中的 MCP 服务，将 Promise 存入 ctx 以便 bootstrap 等待
   ctx.services.mcpReady = mcpManager.connectAllEnabled().catch((err) => {
@@ -382,6 +456,8 @@ app.on("before-quit", (event) => {
   shutdownToolExecutor().catch(() => {});
   // 关闭所有硅基员工工作空间的 MCP 连接
   shutdownAllWorkspaces().catch(() => {});
+  runtimeContext?.services.timeScheduler?.stop();
+  runtimeContext?.services.timeStore?.close();
 
   const pendingCount = getPendingSavesCount();
   if (pendingCount > 0 && !isQuitting) {
@@ -394,4 +470,5 @@ app.on("before-quit", (event) => {
     return;
   }
   mainWindow = null;
+  runtimeContext = null;
 });

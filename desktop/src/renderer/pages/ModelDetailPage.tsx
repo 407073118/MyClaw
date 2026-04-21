@@ -144,13 +144,13 @@ export default function ModelDetailPage() {
   const managedBrMiniMax = selectedPresetId === "br-minimax";
   const supportsStructuredFileSearch = !managedBrMiniMax && profile.provider === "openai-compatible";
   const brMiniMaxDiagnostics = readBrMiniMaxRuntimeDiagnostics(profile);
-  const requiresModelBeforeProbe = !managedBrMiniMax && !profile.model.trim();
+  const requiresModelBeforeProbe = !profile.model.trim();
   const baseUrlPlaceholder = profile.baseUrlMode === "provider-root"
     ? BR_MINIMAX_BASE_URL
     : "https://gateway.example.com/v1";
 
   const baseUrlHint = managedBrMiniMax
-    ? "BR MiniMax 为企业私有部署托管类型，网关地址由系统固定。"
+    ? "BR MiniMax 企业私有部署，预设值通常无需修改，如有自定义网关可在此调整。"
     : profile.baseUrlMode === "provider-root"
     ? "当前预设只需填写服务根地址，系统会自动补全对应厂商接口路径。"
     : "Custom 模式需要填写完整兼容地址，例如 https://gateway.example.com/v1。";
@@ -317,7 +317,7 @@ export default function ModelDetailPage() {
       baseUrl: profile.baseUrl.trim(),
       baseUrlMode: profile.baseUrlMode,
       apiKey: profile.apiKey.trim(),
-      model: managedBrMiniMax ? BR_MINIMAX_MODEL : profile.model.trim(),
+      model: profile.model.trim() || (managedBrMiniMax ? BR_MINIMAX_MODEL : ""),
       headers: parsedHeaders,
       requestBody: managedBrMiniMax ? BR_MINIMAX_REQUEST_BODY : parsedBody,
     };
@@ -397,7 +397,7 @@ export default function ModelDetailPage() {
       return null;
     }
 
-    const modelId = managedBrMiniMax ? BR_MINIMAX_MODEL : profile.model.trim();
+    const modelId = profile.model.trim() || (managedBrMiniMax ? BR_MINIMAX_MODEL : "");
     if (!modelId) {
       setRouteProbeError("请先选择模型，再进行路线探测。");
       return null;
@@ -549,6 +549,9 @@ export default function ModelDetailPage() {
         ? {
             ...profile,
             ...createBrMiniMaxProfile({ apiKey: profile.apiKey.trim() }),
+            name: profile.name.trim() || BR_MINIMAX_DEFAULT_NAME,
+            model: profile.model.trim() || BR_MINIMAX_MODEL,
+            baseUrl: profile.baseUrl.trim() || BR_MINIMAX_BASE_URL,
             savedProtocolPreferences: savedProtocolPreferences?.length ? savedProtocolPreferences : undefined,
             protocolSelectionSource: persistedSelectionSource,
             protocolTarget: finalProtocolTarget ?? undefined,
@@ -598,8 +601,9 @@ export default function ModelDetailPage() {
 
   /** 基于当前表单配置拉取模型目录，并将首个结果回填到模型输入框。 */
   async function loadModelCatalog() {
-    if (managedBrMiniMax) return;
-    const parsed = parseEditablePayload();
+    const parsed = managedBrMiniMax
+      ? { parsedHeaders: {}, parsedBody: BR_MINIMAX_REQUEST_BODY as Record<string, JsonValue> }
+      : parseEditablePayload();
     if (!parsed) {
       return;
     }
@@ -653,7 +657,7 @@ export default function ModelDetailPage() {
         baseUrl: profile.baseUrl.trim(),
         baseUrlMode: profile.baseUrlMode,
         apiKey: profile.apiKey.trim(),
-        model: managedBrMiniMax ? BR_MINIMAX_MODEL : profile.model.trim(),
+        model: profile.model.trim() || (managedBrMiniMax ? BR_MINIMAX_MODEL : ""),
         headers: parsed.parsedHeaders,
         requestBody: managedBrMiniMax ? BR_MINIMAX_REQUEST_BODY : parsed.parsedBody,
       });
@@ -747,7 +751,6 @@ export default function ModelDetailPage() {
                   value={profile.name}
                   onChange={(e) => setProfile((prev) => ({ ...prev, name: e.target.value }))}
                   placeholder={managedBrMiniMax ? BR_MINIMAX_DEFAULT_NAME : "例如：我的 GPT-4o"}
-                  readOnly={managedBrMiniMax}
                 />
               </label>
               <label className="field">
@@ -781,7 +784,6 @@ export default function ModelDetailPage() {
                   </div>
                 </div>
               </label>
-              {!managedBrMiniMax && (
               <label className="field">
                 <span className="label">模型 ID</span>
                 <input
@@ -843,7 +845,6 @@ export default function ModelDetailPage() {
                   </div>
                 )}
               </label>
-              )}
               <label className="field">
                 <span className="label">接口地址 (Base URL)</span>
                 <input
@@ -854,7 +855,6 @@ export default function ModelDetailPage() {
                   }}
                   data-testid="model-base-url-input"
                   placeholder={baseUrlPlaceholder}
-                  readOnly={managedBrMiniMax}
                 />
                 <input
                   type="hidden"
@@ -923,10 +923,10 @@ export default function ModelDetailPage() {
                     type="button"
                     className="secondary-action-btn"
                     data-testid="model-fetch-list"
-                    disabled={isFetchingModels || managedBrMiniMax}
+                    disabled={isFetchingModels}
                     onClick={loadModelCatalog}
                   >
-                    {managedBrMiniMax ? "托管类型无需拉取" : isFetchingModels ? "加载中..." : "获取模型列表"}
+                    {isFetchingModels ? "加载中..." : "获取模型列表"}
                   </button>
                   <button
                     type="button"

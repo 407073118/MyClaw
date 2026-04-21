@@ -21,7 +21,7 @@ export type OpenAIFunctionTool = {
   };
 };
 
-function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git" | "http" | "web" | "ppt" | "task" | "browser" | null {
+function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git" | "http" | "web" | "ppt" | "task" | "time" | "browser" | null {
   if (functionName.startsWith("fs_")) return "fs";
   if (functionName.startsWith("exec_")) return "exec";
   if (functionName.startsWith("git_")) return "git";
@@ -29,6 +29,9 @@ function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git
   if (functionName.startsWith("web_")) return "web";
   if (functionName.startsWith("ppt_")) return "ppt";
   if (functionName.startsWith("task_")) return "task";
+  if (functionName.startsWith("reminder_")) return "time";
+  if (functionName.startsWith("schedule_job_")) return "time";
+  if (functionName.startsWith("today_brief_")) return "time";
   if (functionName.startsWith("browser_")) return "browser";
   return null;
 }
@@ -441,6 +444,89 @@ export function buildToolSchemas(
         },
       },
     },
+    {
+      type: "function",
+      function: {
+        name: "reminder_create",
+        description: "Create a user-facing reminder for a specific future time. Use this when the assistant should notify the user later, not when the system should execute autonomous work.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Short reminder title shown in Time Center and desktop notifications." },
+            body: { type: "string", description: "Optional reminder note or body text." },
+            triggerAt: { type: "string", description: "Reminder trigger time in ISO-8601 format." },
+            timezone: { type: "string", description: "Optional IANA timezone. Defaults to the current local time policy timezone." },
+            ownerScope: { type: "string", enum: ["personal", "silicon_person"], description: "Reminder owner scope. Defaults to personal." },
+            ownerId: { type: "string", description: "Optional owner id when the reminder belongs to a silicon person." },
+          },
+          required: ["title", "triggerAt"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "reminder_list",
+        description: "List saved reminders from the local desktop time center.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "schedule_job_create",
+        description: "Create a local scheduled job for autonomous time-based execution. Use this for workflows, silicon-person actions, or assistant-driven recurring work.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Short job title shown in Time Center." },
+            description: { type: "string", description: "Optional longer description of what the job does." },
+            scheduleKind: { type: "string", enum: ["once", "interval", "cron"], description: "Scheduling mode." },
+            startsAt: { type: "string", description: "ISO-8601 start time. Required for once/interval jobs." },
+            intervalMinutes: { type: "number", description: "Interval in minutes for interval jobs." },
+            cronExpression: { type: "string", description: "Cron expression for cron jobs." },
+            timezone: { type: "string", description: "Optional IANA timezone. Defaults to the current local time policy timezone." },
+            executor: {
+              type: "string",
+              enum: ["workflow", "silicon_person", "assistant_prompt"],
+              description: "Execution target type.",
+            },
+            executorTargetId: { type: "string", description: "Optional workflow id or silicon person id." },
+            ownerScope: { type: "string", enum: ["personal", "silicon_person"], description: "Job owner scope. Defaults to personal." },
+            ownerId: { type: "string", description: "Optional owner id when the job belongs to a silicon person." },
+          },
+          required: ["title", "scheduleKind"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "schedule_job_list",
+        description: "List local scheduled jobs from the desktop time center.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "today_brief_get",
+        description: "Read the local today brief summary. This is query-only and does not change any time objects.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
 
     // ── browser.* ── 浏览器自动化 ──────────────────────────
     {
@@ -786,6 +872,12 @@ export function functionNameToToolId(name: string): string {
   if (name === "skill_view") {
     return "skill.view";
   }
+  if (name.startsWith("schedule_job_")) {
+    return "schedule_job." + name.slice("schedule_job_".length);
+  }
+  if (name.startsWith("today_brief_")) {
+    return "today_brief." + name.slice("today_brief_".length);
+  }
   // browser 工具：只替换第一个下划线（位于 "browser" 之后）
   // 以保留 press_key 这类多词动作名，映射为 "browser.press_key"
   if (name.startsWith("browser_")) {
@@ -876,6 +968,11 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
     case "task.list":
     case "task.get":
     case "task.update":
+    case "reminder.create":
+    case "reminder.list":
+    case "schedule_job.create":
+    case "schedule_job.list":
+    case "today_brief.get":
       return JSON.stringify(args);
 
     case "skill.view":

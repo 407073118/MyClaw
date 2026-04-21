@@ -55,7 +55,7 @@ function resolveExplicitVendorFamily(
     || explicitProviderFamily === "br-minimax"
     || baseUrl.includes("minimax")
     || baseUrl.includes("minimaxi")
-    || baseUrl.includes("cybotforge.100credit.cn")
+    || baseUrl.includes("cybotforge")
   ) {
     return "minimax";
   }
@@ -173,7 +173,7 @@ function resolveDeploymentProfile(
     vendorFamily === "minimax"
     && (
       profile.providerFlavor === "br-minimax"
-      || profile.baseUrl.toLowerCase().includes("cybotforge.100credit.cn")
+      || profile.baseUrl.toLowerCase().includes("cybotforge")
     )
   ) {
     return "br-private";

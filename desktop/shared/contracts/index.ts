@@ -2,6 +2,7 @@ export * from "./approval";
 export * from "./artifact";
 export * from "./auth";
 export * from "./builtin-tool";
+export * from "./calendar";
 
 export * from "./events";
 export * from "./mcp";
@@ -13,6 +14,8 @@ export * from "./session";
 export * from "./silicon-person";
 export * from "./skill";
 export * from "./task";
+export * from "./time-planning";
+export * from "./time-orchestration";
 export * from "./ui";
 export * from "./web-panel";
 export * from "./workflow";

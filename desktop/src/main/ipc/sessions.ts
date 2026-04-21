@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, ResolvedSessionRuntimeIntent, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, ExperienceProfileId, PromptSection, ProviderFamily, TurnOutcome, McpTool } from "@shared/contracts";
+import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, ResolvedSessionRuntimeIntent, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, ExperienceProfileId, PromptSection, ProtocolTarget, ProviderFamily, TurnOutcome, McpTool } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 import { buildTaskDisplayItems } from "@shared/task-logical";
 
@@ -78,6 +78,7 @@ const PARALLEL_LIMIT = 10;
 const READ_ONLY_TOOLS = new Set([
   "fs.read", "fs.list", "fs.search", "fs.find",
   "git.status", "git.diff", "git.log", "task.list", "task.get",
+  "reminder.list", "schedule_job.list", "today_brief.get",
   "web.search", "http.fetch",  // 网络只读操作，可安全并行
 ]);
 
@@ -152,6 +153,11 @@ const TOOL_RISK_MAP: Record<string, ToolRiskCategory> = {
   "task.list": ToolRiskCategory.Read,
   "task.get": ToolRiskCategory.Read,
   "task.update": ToolRiskCategory.Read,
+  "reminder.create": ToolRiskCategory.Write,
+  "reminder.list": ToolRiskCategory.Read,
+  "schedule_job.create": ToolRiskCategory.Write,
+  "schedule_job.list": ToolRiskCategory.Read,
+  "today_brief.get": ToolRiskCategory.Read,
   // browser.* 工具
   "browser.open": ToolRiskCategory.Network,
   "browser.snapshot": ToolRiskCategory.Read,
@@ -674,6 +680,8 @@ function buildSessionPromptSections(input: {
   meetingContextBlock?: string | null;
   mcpTools?: Array<McpTool & { serverId: string }>;
   providerFamily: ProviderFamily;
+  protocolTarget?: ProtocolTarget | null;
+  deploymentProfile?: string | null;
   experienceProfileId: ExperienceProfileId;
   promptPolicyId?: string | null;
   toolPolicyId?: string | null;
@@ -685,6 +693,8 @@ function buildSessionPromptSections(input: {
     session: input.session,
     workingDir: input.workingDir,
     providerFamily: input.providerFamily,
+    protocolTarget: input.protocolTarget ?? null,
+    deploymentProfile: input.deploymentProfile ?? null,
     experienceProfileId: input.experienceProfileId,
     promptPolicyId: input.promptPolicyId ?? null,
     toolPolicyId: input.toolPolicyId ?? null,
@@ -1089,6 +1099,11 @@ function buildSystemPrompt(
   parts.push(`- Workflow: understand requirements → \`ppt_themes\` to pick a theme → structure slides as JSON → \`ppt_generate\` to create the file.`);
   parts.push(`- Available layouts: cover(封面), section(章节过渡), key_points(要点列表), metrics(数据大字报), comparison(左右对比), closing(结束页).`);
   parts.push(`- If a \`ppt-designer\` skill is available, invoke it first for design methodology guidance.`);
+  parts.push(`## Time`);
+  parts.push(`- \`reminder_create\` / \`reminder_list\` — Manage user-facing reminders in the local desktop time center.`);
+  parts.push(`- \`schedule_job_create\` / \`schedule_job_list\` — Manage autonomous scheduled jobs for workflows, silicon persons, or assistant prompts.`);
+  parts.push(`- \`today_brief_get\` — Read the current local today brief without mutating state.`);
+  parts.push(`- Use \`reminder_create\` for user attention and \`schedule_job_create\` for autonomous time-based execution.`);
 
   // ── MCP 工具分组说明（企业内部系统连接）───────────────────
   if (mcpTools && mcpTools.length > 0) {
@@ -1300,6 +1315,159 @@ type TaskToolResult = {
   mutated: boolean;
 };
 
+type TimeToolResult = {
+  success: boolean;
+  output: string;
+  error?: string;
+  /** 是否写入了时间域存储。 */
+  mutated: boolean;
+};
+
+/** 判断是否属于时间工具家族，避免在 tool loop 中散落字符串判断。 */
+function isTimeToolId(toolId: string): boolean {
+  return toolId.startsWith("reminder.")
+    || toolId.startsWith("schedule_job.")
+    || toolId.startsWith("today_brief.");
+}
+
+/** 统一解析时间工具的目标时区，优先显式参数，其次复用本地时间策略。 */
+async function resolveTimeToolTimezone(
+  ctx: RuntimeContext,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const timezone = typeof args.timezone === "string" ? args.timezone.trim() : "";
+  if (timezone) {
+    return timezone;
+  }
+  const policy = await ctx.services.timeApplication?.getAvailabilityPolicy();
+  return policy?.timezone ?? "Asia/Shanghai";
+}
+
+/** 归一化时间工具中的 owner scope，避免模型传入非法值污染存储。 */
+function resolveTimeToolOwnerScope(args: Record<string, unknown>): "personal" | "silicon_person" {
+  return args.ownerScope === "silicon_person" ? "silicon_person" : "personal";
+}
+
+/**
+ * 执行 reminder / schedule job / today brief 时间工具。
+ * 导出供测试直接复用，也作为 session 工具分发的统一时间入口。
+ */
+export async function executeTimeTool(
+  ctx: RuntimeContext,
+  toolId: string,
+  args: Record<string, unknown>,
+): Promise<TimeToolResult> {
+  const timeApplication = ctx.services.timeApplication;
+  if (!timeApplication) {
+    return {
+      success: false,
+      output: "",
+      error: "timeApplication is unavailable",
+      mutated: false,
+    };
+  }
+
+  try {
+    switch (toolId) {
+      case "reminder.create": {
+        const title = String(args.title ?? "").trim();
+        const triggerAt = String(args.triggerAt ?? "").trim();
+        if (!title) {
+          return { success: false, output: "", error: "title is required", mutated: false };
+        }
+        if (!triggerAt) {
+          return { success: false, output: "", error: "triggerAt is required", mutated: false };
+        }
+        const reminder = await timeApplication.saveReminder({
+          title,
+          body: typeof args.body === "string" ? args.body : undefined,
+          triggerAt,
+          timezone: await resolveTimeToolTimezone(ctx, args),
+          ownerScope: resolveTimeToolOwnerScope(args),
+          ownerId: typeof args.ownerId === "string" ? args.ownerId : undefined,
+          source: "agent",
+          status: "scheduled",
+        });
+        return { success: true, output: JSON.stringify(reminder), mutated: true };
+      }
+
+      case "reminder.list": {
+        const reminders = await timeApplication.listReminders();
+        return { success: true, output: JSON.stringify(reminders), mutated: false };
+      }
+
+      case "schedule_job.create": {
+        const title = String(args.title ?? "").trim();
+        const scheduleKind = String(args.scheduleKind ?? "").trim();
+        if (!title) {
+          return { success: false, output: "", error: "title is required", mutated: false };
+        }
+        if (scheduleKind !== "once" && scheduleKind !== "interval" && scheduleKind !== "cron") {
+          return { success: false, output: "", error: "scheduleKind must be once, interval, or cron", mutated: false };
+        }
+
+        const startsAt = typeof args.startsAt === "string" ? args.startsAt : undefined;
+        const intervalMinutes = args.intervalMinutes !== undefined ? Number(args.intervalMinutes) : undefined;
+        const cronExpression = typeof args.cronExpression === "string" ? args.cronExpression : undefined;
+
+        if ((scheduleKind === "once" || scheduleKind === "interval") && !startsAt) {
+          return { success: false, output: "", error: "startsAt is required for once or interval jobs", mutated: false };
+        }
+        if (scheduleKind === "interval" && (!intervalMinutes || intervalMinutes <= 0)) {
+          return { success: false, output: "", error: "intervalMinutes must be a positive number for interval jobs", mutated: false };
+        }
+        if (scheduleKind === "cron" && !cronExpression) {
+          return { success: false, output: "", error: "cronExpression is required for cron jobs", mutated: false };
+        }
+
+        const executor = args.executor === "workflow"
+          || args.executor === "silicon_person"
+          || args.executor === "assistant_prompt"
+          ? args.executor
+          : "assistant_prompt";
+
+        const job = await timeApplication.saveScheduleJob({
+          title,
+          description: typeof args.description === "string" ? args.description : undefined,
+          scheduleKind,
+          timezone: await resolveTimeToolTimezone(ctx, args),
+          ownerScope: resolveTimeToolOwnerScope(args),
+          ownerId: typeof args.ownerId === "string" ? args.ownerId : undefined,
+          source: "agent",
+          status: "scheduled",
+          startsAt,
+          intervalMinutes,
+          cronExpression,
+          executor,
+          executorTargetId: typeof args.executorTargetId === "string" ? args.executorTargetId : undefined,
+          nextRunAt: startsAt,
+        });
+        return { success: true, output: JSON.stringify(job), mutated: true };
+      }
+
+      case "schedule_job.list": {
+        const jobs = await timeApplication.listScheduleJobs();
+        return { success: true, output: JSON.stringify(jobs), mutated: false };
+      }
+
+      case "today_brief.get": {
+        const brief = await timeApplication.getTodayBrief();
+        return { success: true, output: JSON.stringify(brief), mutated: false };
+      }
+
+      default:
+        return { success: false, output: "", error: `Unknown time tool: ${toolId}`, mutated: false };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      output: "",
+      error: error instanceof Error ? error.message : String(error),
+      mutated: false,
+    };
+  }
+}
+
 /** 给 task 工具构建稳定的序号视图，避免重复任务把执行顺序和进度弄乱。 */
 function buildSerializedTaskList(tasks: Task[]): Array<Record<string, unknown>> {
   const items = buildTaskDisplayItems(tasks);
@@ -1320,6 +1488,78 @@ function buildSerializedTaskList(tasks: Task[]): Array<Record<string, unknown>> 
 /** 给单条 task 输出补上 sequence/total，方便模型按顺序继续推进。 */
 function buildSerializedTask(tasks: Task[], task: Task): Record<string, unknown> {
   return buildSerializedTaskList(tasks).find((item) => item.id === task.id) ?? task;
+}
+
+/** 判断当前回合是否命中百融 MiniMax Responses 深度规划控制路线。 */
+function shouldUseBrMiniMaxPlanningController(input: {
+  providerFamily: ProviderFamily;
+  protocolTarget: ProtocolTarget | string;
+  deploymentProfile?: string | null;
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | null;
+}): boolean {
+  return input.providerFamily === "br-minimax"
+    && input.protocolTarget === "openai-responses"
+    && input.deploymentProfile === "br-private"
+    && (input.reasoningEffort === "high" || input.reasoningEffort === "xhigh");
+}
+
+/** 判断用户请求是否属于需要完整规划的复杂研究/分析类任务。 */
+function isComplexResearchLikeRequest(content: string): boolean {
+  const normalized = content.trim().toLowerCase();
+  if (!normalized) return false;
+  const pattern = /分析|研究|调研|报告|年报|财报|竞品|竞争|行业|对比|拆解|评估|总结|综述|annual report|earnings|financial report|research|analysis|analyze|report|industry|market|compare|comparison|synthesis/iu;
+  return pattern.test(normalized);
+}
+
+/** 构建“规划未完成”时注入给模型的续规划提示。 */
+function buildResearchPlanningContinuationPrompt(): string {
+  return [
+    "Planning is incomplete for this research request.",
+    "Continue creating the remaining tasks before execution.",
+    "Continue task planning only. Do not call work tools yet.",
+    "Ensure the plan covers information gathering, core analysis, and output synthesis.",
+  ].join(" ");
+}
+
+/** 当复杂研究请求的任务数量明显不足时，补齐最小研究骨架任务。 */
+function backfillResearchPlanningTasks(session: ChatSession, now: string): number {
+  const existingTasks = session.tasks ?? [];
+  if (existingTasks.length >= 3) {
+    return 0;
+  }
+
+  const scaffoldTasks: TaskCreateInput[] = [
+    {
+      subject: "Analyze gathered evidence",
+      description: "Review the gathered information, extract the core findings, and identify the main risks or changes.",
+      activeForm: "Analyzing gathered evidence",
+    },
+    {
+      subject: "Synthesize final conclusions",
+      description: "Combine the research findings into a final conclusion with industry context and output-ready takeaways.",
+      activeForm: "Synthesizing final conclusions",
+    },
+  ];
+
+  let nextTasks = existingTasks;
+  let addedCount = 0;
+  for (const taskInput of scaffoldTasks) {
+    if (nextTasks.length >= 3) {
+      break;
+    }
+    const result = createTask(nextTasks, taskInput);
+    const createdTaskId = result.created.id;
+    const alreadyExists = nextTasks.some((task) => task.id === createdTaskId);
+    nextTasks = result.tasks;
+    if (!alreadyExists) {
+      addedCount++;
+    }
+  }
+
+  if (addedCount > 0) {
+    session.tasks = nextTasks;
+  }
+  return addedCount;
 }
 
 function executeTaskTool(
@@ -2392,6 +2632,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           meetingContextBlock: buildMeetingContextBlock(ctx, session),
           mcpTools,
           providerFamily: turnExecutionPlan.providerFamily,
+          protocolTarget: turnExecutionPlan.protocolTarget,
+          deploymentProfile: turnExecutionPlan.deploymentProfile ?? null,
           experienceProfileId: turnExecutionPlan.experienceProfileId,
           promptPolicyId: turnExecutionPlan.promptPolicyId,
           toolPolicyId: turnExecutionPlan.toolPolicyId,
@@ -2657,6 +2899,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
           // 检查模型是否发起了工具调用
           const hasToolCalls = result.toolCalls.length > 0;
+          const existingTaskCountBeforeRound = session.tasks?.length ?? 0;
 
           if (hasToolCalls) {
             // 追加带 tool_calls 的 assistant 消息（content 可能为空）
@@ -2699,6 +2942,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             const hasTaskCreateInThisRound = result.toolCalls.some(
               (tc: ResolvedToolCall) => functionNameToToolId(tc.name) === "task.create",
             );
+            const taskCreateCountInThisRound = result.toolCalls.filter(
+              (tc: ResolvedToolCall) => functionNameToToolId(tc.name) === "task.create",
+            ).length;
             if (hasTaskCreateInThisRound) {
               for (const tc of result.toolCalls) {
                 if (!isTaskFamilyToolCall(tc.name)) {
@@ -2740,6 +2986,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             }
 
             // ---- 第 1 步：检查所有工具调用的审批（串行执行，需要等待用户） ----
+            const shouldContinuePlanningOnly = shouldUseBrMiniMaxPlanningController({
+              providerFamily: turnExecutionPlan.providerFamily,
+              protocolTarget: turnExecutionPlan.protocolTarget,
+              deploymentProfile: turnExecutionPlan.deploymentProfile ?? null,
+              reasoningEffort: runReasoningEffort,
+            })
+              && isComplexResearchLikeRequest(input.content)
+              && hasTaskCreateInThisRound
+              && existingTaskCountBeforeRound + taskCreateCountInThisRound < 3;
+
             type ApprovedTool = { toolCall: ResolvedToolCall; denied: boolean };
             type PendingToolApproval = { toolCall: ResolvedToolCall; approvalId: string; approvalRequest: ApprovalRequest };
             const approvedTools: ApprovedTool[] = [];
@@ -2951,6 +3207,11 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                       tasks: session.tasks ?? [],
                     });
                   }
+                } else if (isTimeToolId(toolId)) {
+                  const timeResult = await executeTimeTool(ctx, toolId, toolCall.input);
+                  toolOutput = timeResult.output;
+                  toolSucceeded = timeResult.success;
+                  if (!timeResult.success) failureReason = timeResult.error;
                 } else if (toolCall.name.startsWith("mcp__")) {
                   const mcpTool = mcpTools.find((t) => {
                     const safeName = t.id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -3151,6 +3412,37 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             });
 
             // ---- 循环检测 ----
+            if (shouldContinuePlanningOnly) {
+              const continuationPrompt = buildResearchPlanningContinuationPrompt();
+              const scaffoldAddedCount = backfillResearchPlanningTasks(session, new Date().toISOString());
+              console.info("[session:planning-controller] 继续停留在规划阶段，要求模型补齐研究任务", {
+                sessionId,
+                round,
+                existingTaskCountBeforeRound,
+                taskCreateCountInThisRound,
+                scaffoldAddedCount,
+                totalTaskCountAfterRound: session.tasks?.length ?? 0,
+              });
+              if (scaffoldAddedCount > 0) {
+                broadcastToRenderers("session:stream", {
+                  type: EventType.TasksUpdated,
+                  sessionId,
+                  tasks: session.tasks ?? [],
+                });
+              }
+              session.messages.push({
+                id: randomUUID(),
+                role: "system",
+                content: continuationPrompt,
+                createdAt: new Date().toISOString(),
+              });
+              broadcastToRenderers("session:stream", {
+                type: EventType.SessionUpdated,
+                sessionId,
+                session,
+              });
+            }
+
             const roundSig = buildRoundSignature(result.toolCalls);
             roundSignatures.push(roundSig);
             const repeats = countConsecutiveRepeats(roundSignatures);

@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 /** 安装器写入到安装目录旁的数据目录配置文件名。 */
 export const INSTALLER_DATA_ROOT_FILENAME = "myclaw-data-root.txt";
@@ -22,6 +22,7 @@ export type MyClawPaths = {
   sessionsDir: string;
   /** `<rootDir>/myClaw/sessions.db` 统一会话数据库。 */
   sessionsDbFile: string;
+  timeDbFile: string;
   /** `<rootDir>/myClaw/models` 模型配置目录。 */
   modelsDir: string;
   /** `<rootDir>/myClaw/settings.json` 设置文件。 */
@@ -57,6 +58,21 @@ function resolveInstallerDataRootConfigPath(): string {
   return join(dirname(app.getPath("exe")), INSTALLER_DATA_ROOT_FILENAME);
 }
 
+/** 规范化路径，便于比较数据目录是否落入安装目录。 */
+function normalizePathForComparison(targetPath: string): string {
+  const normalized = resolve(targetPath).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+/** 判断数据目录是否与安装目录重叠，避免升级安装时把用户数据放进程序目录。 */
+function overlapsInstallDirectory(candidateRoot: string): boolean {
+  const installDir = normalizePathForComparison(dirname(app.getPath("exe")));
+  const candidateDir = normalizePathForComparison(candidateRoot);
+  const separator = process.platform === "win32" ? "\\" : "/";
+
+  return candidateDir === installDir || candidateDir.startsWith(`${installDir}${separator}`);
+}
+
 /** 读取安装器指定的数据根目录，未配置时返回 null。 */
 function readInstallerSelectedDataRoot(): string | null {
   if (!app.isPackaged) {
@@ -73,6 +89,15 @@ function readInstallerSelectedDataRoot(): string | null {
     if (!selectedRoot) {
       console.warn("[directory-service] 安装器数据目录配置为空，忽略该配置", {
         configPath,
+      });
+      return null;
+    }
+
+    if (overlapsInstallDirectory(selectedRoot)) {
+      console.warn("[directory-service] 安装器数据目录与安装目录重叠，忽略该配置并回退默认 userData", {
+        configPath,
+        selectedRoot,
+        installDir: dirname(app.getPath("exe")),
       });
       return null;
     }
@@ -140,6 +165,7 @@ export function derivePaths(rootDir: string): MyClawPaths {
     cacheDir: join(myClawDir, "cache"),
     sessionsDir: join(myClawDir, "sessions"),
     sessionsDbFile: join(myClawDir, "sessions.db"),
+    timeDbFile: join(myClawDir, "time.db"),
     modelsDir: join(myClawDir, "models"),
     settingsFile: join(myClawDir, "settings.json"),
   };
@@ -161,6 +187,20 @@ export function deriveSiliconPersonPaths(
     personFile: join(personDir, "person.json"),
     runtimeDbFile: join(personDir, "runtime.db"),
   };
+}
+
+/** 获取主聊天对话的数据目录路径（懒创建：调用方按需 mkdirSync）。 */
+export function getSessionDataDir(paths: MyClawPaths, sessionId: string): string {
+  return join(paths.myClawDir, "data", sessionId);
+}
+
+/** 获取硅基员工对话的数据目录路径（懒创建：调用方按需 mkdirSync）。 */
+export function getPersonSessionDataDir(
+  paths: MyClawPaths,
+  personId: string,
+  sessionId: string,
+): string {
+  return join(paths.myClawDir, "silicon-persons", personId, "data", sessionId);
 }
 
 /** 确保员工工作空间目录全部存在。 */

@@ -80,12 +80,15 @@ export type ModelCallResult = {
   reasoning?: string;
   toolCalls: ResolvedToolCall[];
   finishReason: string | null;
+  /** 流是否正常结束。false 表示连接异常截断（未收到 [DONE] 或 finish_reason）。 */
+  streamCompleted: boolean;
   usage?: TokenUsage;
   transport?: {
     requestVariantId: string;
     fallbackReason?: string | null;
     retryCount: number;
     variantIndex: number;
+    streamRetryCount?: number;
     fallbackEvents?: Array<{
       fromVariant: string;
       toVariant: string;
@@ -337,11 +340,17 @@ export function buildProtocolRequestHeaders(
 // 重试逻辑
 // ---------------------------------------------------------------------------
 
-/** 临时性 API 错误的最大重试次数。 */
+/** 临时性 API 错误的最大重试次数（transport 层连接阶段）。 */
 const MAX_RETRIES = 3;
 
 /** 指数退避等待时长（毫秒）：1s → 2s → 4s。 */
 const RETRY_DELAYS = [1000, 2000, 4000];
+
+/** 流式响应异常截断后的最大重试次数。 */
+const STREAM_RETRY_MAX = 3;
+
+/** 流式重试退避时长（毫秒）：2s → 4s → 8s，比连接重试更宽松。 */
+const STREAM_RETRY_DELAYS = [2000, 4000, 8000];
 
 /**
  * 判断某个错误或 HTTP 状态码是否适合重试。
@@ -486,57 +495,92 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
   const maskedKey = profile.apiKey
     ? `${profile.apiKey.slice(0, 6)}...${profile.apiKey.slice(-4)} (len=${profile.apiKey.length})`
     : "(empty)";
-  console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model} | adapter=${adapter.id} | reasoningEnabled=${adapterContext.reasoningEnabled ?? "(auto)"} | reasoningEffort=${adapterContext.reasoningEffort ?? "(none)"} | tools=${tools?.length ?? 0}`);
-  const transportResult = await executeRequestVariants({
-    url,
-    headers,
-    requestVariants,
-    signal,
-    timeoutMs,
-    maxRetries: MAX_RETRIES,
-    retryDelaysMs: RETRY_DELAYS,
-    isRetryableError,
-  });
-  const { response } = transportResult;
 
-  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-  const isEventStream = contentType.includes("text/event-stream");
+  // 流级别重试循环：当 SSE 流异常截断（未收到 [DONE] 或 finish_reason）时，
+  // 整体重发请求。对比 transport 层只覆盖连接建立阶段，此处覆盖流式传输阶段。
+  for (let streamAttempt = 0; ; streamAttempt++) {
+    // 在每次重试前检查调用方是否已中止
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("Aborted", "AbortError");
+    }
 
-  if (isEventStream) {
-    const result = await consumeSseStream(response, onDelta, onToolCallDelta);
+    if (streamAttempt > 0) {
+      console.info(`[model-client] Stream retry attempt ${streamAttempt}/${STREAM_RETRY_MAX} for ${profile.model}`);
+    }
+
+    console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model} | adapter=${adapter.id} | reasoningEnabled=${adapterContext.reasoningEnabled ?? "(auto)"} | reasoningEffort=${adapterContext.reasoningEffort ?? "(none)"} | tools=${tools?.length ?? 0}${streamAttempt > 0 ? ` | streamRetry=${streamAttempt}` : ""}`);
+    const transportResult = await executeRequestVariants({
+      url,
+      headers,
+      requestVariants,
+      signal,
+      timeoutMs,
+      maxRetries: MAX_RETRIES,
+      retryDelaysMs: RETRY_DELAYS,
+      isRetryableError,
+    });
+    const { response } = transportResult;
+
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    const isEventStream = contentType.includes("text/event-stream");
+
+    if (isEventStream) {
+      const result = await consumeSseStream(response, onDelta, onToolCallDelta);
+
+      // 流异常截断检测：未收到 [DONE] 且没有 finish_reason
+      if (!result.streamCompleted && streamAttempt < STREAM_RETRY_MAX) {
+        const delay = STREAM_RETRY_DELAYS[Math.min(streamAttempt, STREAM_RETRY_DELAYS.length - 1)] ?? 4000;
+        console.warn(
+          `[model-client] Stream interrupted without completion signal (finishReason=${result.finishReason}, content=${result.content.length} chars, toolCalls=${result.toolCalls.length}). Retrying in ${delay}ms...`,
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      if (!result.streamCompleted) {
+        console.warn(`[model-client] Stream incomplete after ${STREAM_RETRY_MAX} retries, returning partial result`);
+      }
+
+      return {
+        content: result.content,
+        ...(result.reasoning ? { reasoning: result.reasoning } : {}),
+        toolCalls: result.toolCalls,
+        finishReason: result.finishReason,
+        streamCompleted: result.streamCompleted,
+        ...(result.usage ? { usage: result.usage } : {}),
+        transport: {
+          requestVariantId: transportResult.variant.id,
+          fallbackReason: transportResult.variant.fallbackReason ?? null,
+          retryCount: transportResult.attempt,
+          variantIndex: transportResult.variantIndex,
+          streamRetryCount: streamAttempt,
+          fallbackEvents: transportResult.fallbackEvents,
+        },
+      };
+    }
+
+    // 非流式 JSON 响应（例如 stream: false 的连通性测试）
+    const rawBody = await response.text();
+    const parsed = tryParseJson(rawBody);
+    const normalized = adapter.normalizeResponse(parsed);
+
     return {
-      content: result.content,
-      ...(result.reasoning ? { reasoning: result.reasoning } : {}),
-      toolCalls: result.toolCalls,
-      finishReason: result.finishReason,
-      ...(result.usage ? { usage: result.usage } : {}),
+      content: normalized.content ?? "",
+      ...(normalized.reasoning ? { reasoning: normalized.reasoning } : {}),
+      toolCalls: normalized.toolCalls ?? [],
+      finishReason: normalized.finishReason ?? null,
+      streamCompleted: true,
+      ...(normalized.usage ? { usage: normalized.usage } : {}),
       transport: {
         requestVariantId: transportResult.variant.id,
         fallbackReason: transportResult.variant.fallbackReason ?? null,
         retryCount: transportResult.attempt,
         variantIndex: transportResult.variantIndex,
+        streamRetryCount: streamAttempt,
         fallbackEvents: transportResult.fallbackEvents,
       },
     };
   }
-
-  // 非流式 JSON 响应（例如 stream: false 的连通性测试）
-  const rawBody = await response.text();
-  const parsed = tryParseJson(rawBody);
-  const normalized = adapter.normalizeResponse(parsed);
-
-  return {
-    content: normalized.content ?? "",
-    ...(normalized.reasoning ? { reasoning: normalized.reasoning } : {}),
-    toolCalls: normalized.toolCalls ?? [],
-    finishReason: normalized.finishReason ?? null,
-    ...(normalized.usage ? { usage: normalized.usage } : {}),
-    transport: {
-      requestVariantId: transportResult.variant.id,
-      fallbackReason: transportResult.variant.fallbackReason ?? null,
-      retryCount: transportResult.attempt,
-      variantIndex: transportResult.variantIndex,
-      fallbackEvents: transportResult.fallbackEvents,
-    },
-  };
 }

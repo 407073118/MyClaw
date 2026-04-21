@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createBrMiniMaxProfile } from "@shared/br-minimax";
 import type { ModelCatalogItem, ModelProfile, ModelRouteProbeResult } from "@shared/contracts";
 import ModelDetailPage from "../src/renderer/pages/ModelDetailPage";
 
@@ -587,6 +588,27 @@ describe("ModelDetailPage route probe", () => {
         }),
       ),
     );
+  });
+
+  it("allows managed br-minimax profiles to fetch the provider model catalog", async () => {
+    mocks.workspace.models = [
+      createBrMiniMaxProfile({
+        id: "br-profile",
+        apiKey: "br-key",
+      }),
+    ];
+    renderModelDetail("/settings/models/br-profile");
+
+    const fetchButton = screen.getByTestId("model-fetch-list");
+    expect(fetchButton.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(fetchButton);
+
+    await waitFor(() => expect(mocks.workspace.fetchModelCatalog).toHaveBeenCalledTimes(1));
+    expect(mocks.workspace.fetchModelCatalog).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "openai-compatible",
+      providerFlavor: "br-minimax",
+    }));
   });
 
   it("reloads form and route state when navigating to another model in the same router session", async () => {

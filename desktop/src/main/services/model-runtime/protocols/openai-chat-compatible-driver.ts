@@ -81,6 +81,7 @@ export const openAiChatCompatibleDriver: ProtocolDriver = {
       reasoning: result.reasoning,
       toolCalls: result.toolCalls,
       finishReason: result.finishReason,
+      streamCompleted: result.streamCompleted,
       usage: result.usage,
       requestVariantId: result.transport?.requestVariantId ?? "primary",
       fallbackReason: result.transport?.fallbackReason ?? null,

@@ -57,7 +57,7 @@ function resolveExplicitProviderFamily(profile: FamilyPolicyResolutionInput["pro
   const provider = profile.provider.toLowerCase();
   const baseUrl = profile.baseUrl.toLowerCase();
 
-  if (flavor === "br-minimax" || explicitProviderFamily === "br-minimax" || baseUrl.includes("cybotforge.100credit.cn")) {
+  if (flavor === "br-minimax" || explicitProviderFamily === "br-minimax" || baseUrl.includes("cybotforge")) {
     return "br-minimax";
   }
 

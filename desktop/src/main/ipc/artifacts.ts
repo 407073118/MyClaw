@@ -31,11 +31,11 @@ function emitArtifactEvent(
 /** 注册 artifact 元数据与文件操作 IPC。 */
 export function registerArtifactHandlers(ctx: RuntimeContext): void {
   ipcMain.handle("artifact:list-by-scope", async (_event, scope: ArtifactScopeRef) => {
-    return ctx.services.artifactRegistry.listArtifactsByScope(scope);
+    return ctx.services.artifactRegistry.listUserArtifactsByScope(scope);
   });
 
   ipcMain.handle("artifact:list-recent", async (_event, input?: { limit?: number }) => {
-    return ctx.services.artifactRegistry.listRecentArtifacts(input?.limit ?? 20);
+    return ctx.services.artifactRegistry.listRecentUserArtifacts(input?.limit ?? 20);
   });
 
   ipcMain.handle("artifact:mark-final", async (_event, artifactId: string, scope?: ArtifactScopeRef) => {

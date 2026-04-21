@@ -3,14 +3,21 @@ import { ipcMain } from "electron";
 import type {
   ApprovalPolicy,
   ApprovalRequest,
+  AvailabilityPolicy,
+  CalendarEvent,
   ChatSession,
+  ExecutionRun,
   McpServer,
   ModelProfile,
   PersonalPromptProfile,
+  Reminder,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
+  ScheduleJob,
   SkillDefinition,
   SiliconPerson,
+  TaskCommitment,
+  TodayBrief,
   WorkflowRunSummary,
   WorkflowSummary,
 } from "@shared/contracts";
@@ -49,11 +56,35 @@ export type BootstrapPayload = {
   cacheRootPath: string;
   requiresInitialSetup: boolean;
   updates: AppUpdateSnapshot;
+  time: {
+    calendarEvents: CalendarEvent[];
+    taskCommitments: TaskCommitment[];
+    reminders: Reminder[];
+    scheduleJobs: ScheduleJob[];
+    executionRuns: ExecutionRun[];
+    availabilityPolicy: AvailabilityPolicy | null;
+    todayBrief: TodayBrief | null;
+  };
 };
 
 export function registerBootstrapHandlers(ctx: RuntimeContext): void {
   ipcMain.handle("app:bootstrap", async (): Promise<BootstrapPayload> => {
-    const [skills] = await Promise.all([ctx.services.refreshSkills()]);
+    const emptyTimeSnapshot: BootstrapPayload["time"] = {
+      calendarEvents: [],
+      taskCommitments: [],
+      reminders: [],
+      scheduleJobs: [],
+      executionRuns: [],
+      availabilityPolicy: null,
+      todayBrief: null,
+    };
+
+    const [skills, , timeSnapshot] = await Promise.all([
+      ctx.services.refreshSkills(),
+      // 等待 MCP 服务连接完成，确保 bootstrap 能返回已加载的工具列表
+      ctx.services.mcpReady,
+      ctx.services.timeApplication?.getSnapshot() ?? Promise.resolve(emptyTimeSnapshot),
+    ]);
 
     return {
       sessions: ctx.state.sessions,
@@ -79,6 +110,7 @@ export function registerBootstrapHandlers(ctx: RuntimeContext): void {
       cacheRootPath: ctx.runtime.cacheRootPath,
       requiresInitialSetup: !hasConfiguredModel(ctx.state.models),
       updates: ctx.services.appUpdater.getSnapshot(),
+      time: timeSnapshot,
     };
   });
 }

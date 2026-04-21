@@ -103,7 +103,10 @@ vi.mock("../src/main/services/state-persistence", () => ({
   saveWorkflow: saveWorkflowMock,
   saveWorkflowRun: saveWorkflowRunMock,
   saveSession: saveSessionMock,
+  saveSiliconPerson: vi.fn(),
   deleteWorkflowFile: vi.fn(),
+  deleteWorkflowRunFile: vi.fn(),
+  deleteSessionFiles: vi.fn(),
 }));
 
 vi.mock("../src/main/services/model-client", () => ({
@@ -114,12 +117,146 @@ vi.mock("../src/main/services/builtin-tool-executor", () => ({
   BuiltinToolExecutor: class {
     /** 测试里不需要真实 skills。 */
     setSkills(): void {}
+    setAllowExternalPaths(): void {}
 
     /** 测试里不需要真实工具执行。 */
     async execute(): Promise<{ success: boolean; output: string; error?: string }> {
       return { success: true, output: "" };
     }
+
+    isOutsideWorkspace(): boolean {
+      return false;
+    }
+
+    async shutdown(): Promise<void> {}
   },
+}));
+
+vi.mock("../src/main/services/pending-saves", () => ({
+  trackSave: vi.fn((p: Promise<unknown>) => p),
+}));
+
+vi.mock("../src/main/services/artifact-context-builder", () => ({
+  buildArtifactContextBlock: vi.fn(() => ""),
+}));
+
+vi.mock("../src/main/services/model-runtime/canonical-turn-content", () => ({
+  buildCanonicalTurnContent: vi.fn(() => ({ systemSections: [], userSections: [], messages: [], toolCalls: [], toolResults: [], approvalEvents: [], taskState: null, replayHints: {} })),
+}));
+
+vi.mock("../src/main/services/model-runtime/execution-gateway", () => ({
+  createExecutionGateway: vi.fn(() => ({ executeTurn: vi.fn() })),
+}));
+
+vi.mock("../src/main/services/model-runtime/prompt-composer", () => ({
+  composePromptSections: vi.fn(() => []),
+}));
+
+vi.mock("../src/main/services/model-runtime/turn-outcome-store", () => ({
+  loadTurnOutcome: vi.fn(() => null),
+  updateTurnOutcome: vi.fn(),
+}));
+
+vi.mock("../src/main/services/model-runtime/tool-registry", () => ({
+  buildCanonicalToolRegistry: vi.fn(() => ({ specs: [], resolve: vi.fn(), functionNameToToolId: vi.fn((n: string) => n), buildToolLabel: vi.fn((n: string) => n) })),
+  hydrateCanonicalToolRegistryFromLegacyTools: vi.fn(() => []),
+}));
+
+vi.mock("../src/main/services/model-runtime/turn-execution-plan-resolver", () => ({
+  resolveTurnExecutionPlan: vi.fn((input: Record<string, unknown>) => ({
+    providerFamily: "br-minimax",
+    protocolTarget: "openai-chat-compatible",
+    replayPolicy: "assistant-turn",
+    reasoningEffort: "medium",
+    capabilityRoutes: {},
+    telemetryTags: {},
+    experienceProfileId: null,
+    promptPolicyId: null,
+    toolPolicyId: null,
+    reasoningProfileId: null,
+    legacyExecutionPlan: input?.legacyExecutionPlan ?? {
+      adapterId: "br-minimax",
+      replayPolicy: "assistant-turn",
+      reasoningMode: "auto",
+    },
+  })),
+}));
+
+vi.mock("../src/main/services/reasoning-runtime", () => ({
+  resolveSessionRuntimeIntent: vi.fn(),
+  buildExecutionPlan: vi.fn(() => ({
+    runtimeVersion: 1,
+    adapterId: "br-minimax",
+    adapterSelectionSource: "profile",
+    reasoningMode: "auto",
+    replayPolicy: "assistant-turn",
+    fallbackAdapterIds: [],
+  })),
+}));
+
+vi.mock("../src/main/services/model-capability-resolver", () => ({
+  resolveModelCapability: vi.fn(() => ({
+    effective: { supportsReasoning: true, source: "registry" },
+  })),
+}));
+
+vi.mock("../src/main/services/context-assembler", () => ({
+  assembleContext: vi.fn(() => ({
+    messages: [], budgetUsed: 0, wasCompacted: false, compactionReason: null, removedCount: 0,
+  })),
+}));
+
+vi.mock("../src/main/services/tool-schemas", () => ({
+  buildToolSchemas: vi.fn(() => []),
+  functionNameToToolId: vi.fn((name: string) => name),
+  buildToolLabel: vi.fn((name: string) => name),
+}));
+
+vi.mock("../src/main/services/model-runtime/background-task-manager", () => ({
+  createBackgroundTaskManager: vi.fn(() => ({ getSnapshot: () => null, reset: vi.fn(), poll: vi.fn(), cancel: vi.fn() })),
+}));
+
+vi.mock("../src/main/services/model-runtime/computer-action-harness", () => ({
+  createComputerActionHarness: vi.fn(() => ({ getComputerCalls: () => [] })),
+  getComputerActionToolId: vi.fn(() => "computer"),
+  buildComputerActionLabel: vi.fn(() => ""),
+  getComputerActionRisk: vi.fn(() => "write"),
+}));
+
+vi.mock("../src/main/services/session-background-task", () => ({
+  isTerminalBackgroundTaskStatus: vi.fn(() => false),
+  syncSessionBackgroundTaskSnapshot: vi.fn(),
+}));
+
+vi.mock("../src/main/services/silicon-person-session", () => ({
+  syncSiliconPersonExecutionResult: vi.fn(),
+}));
+
+vi.mock("../src/main/services/silicon-person-workspace", () => ({
+  getOrCreateWorkspace: vi.fn(() => null),
+  shutdownAllWorkspaces: vi.fn(),
+}));
+
+vi.mock("../src/main/services/planner-runtime", () => ({
+  blockTask: vi.fn(),
+  completeTask: vi.fn(),
+  createPlanState: vi.fn(() => null),
+  startTask: vi.fn(),
+}));
+
+vi.mock("../src/main/services/personal-prompt-profile", () => ({
+  buildPersonalPromptContext: vi.fn(() => ""),
+}));
+
+vi.mock("../src/main/services/context-enricher", () => ({
+  extractEnrichedContext: vi.fn(() => ({})),
+  buildEnrichedContextBlock: vi.fn(() => ""),
+}));
+
+vi.mock("@shared/task-logical", () => ({
+  buildTaskDisplayItems: vi.fn(() => ""),
+  buildTaskFingerprint: vi.fn((t: Record<string, unknown>) => `${t.subject}`),
+  coalesceTasks: vi.fn((tasks: unknown[]) => ({ tasks, aliasMap: {} })),
 }));
 
 vi.mock("../src/main/services/workflow-engine", () => ({
@@ -271,12 +408,19 @@ function buildContext(): RuntimeContext {
       myClawRootPath: "/tmp/myclaw",
       skillsRootPath: "/tmp/myclaw/skills",
       sessionsRootPath: "/tmp/myclaw/sessions",
+      workspaceRootPath: "/tmp/myclaw/workspace",
+      artifactsRootPath: "/tmp/myclaw/artifacts",
+      cacheRootPath: "/tmp/myclaw/cache",
       paths: {
         rootDir: "/tmp",
         myClawDir: "/tmp/myclaw",
         skillsDir: "/tmp/myclaw/skills",
         sessionsDir: "/tmp/myclaw/sessions",
+        sessionsDbFile: "/tmp/myclaw/sessions.db",
         modelsDir: "/tmp/myclaw/models",
+        workspaceDir: "/tmp/myclaw/workspace",
+        artifactsDir: "/tmp/myclaw/artifacts",
+        cacheDir: "/tmp/myclaw/cache",
         settingsFile: "/tmp/myclaw/settings.json",
       },
     },
@@ -287,7 +431,7 @@ function buildContext(): RuntimeContext {
           name: "BR MiniMax",
           provider: "openai-compatible",
           providerFlavor: "br-minimax",
-          baseUrl: "http://api-pre.cybotforge.100credit.cn",
+          baseUrl: "http://api-cybotforge-pre.brapp.com",
           apiKey: "test-key",
           model: "minimax-m2-5",
         },
@@ -299,8 +443,10 @@ function buildContext(): RuntimeContext {
       },
       workflowRuns: [],
       activeWorkflowRuns: new Map(),
+      activeSessionRuns: new Map(),
       skills: [],
       getDefaultModelProfileId: () => "profile-1",
+      setDefaultModelProfileId: () => {},
       getWorkflows: () => [
         {
           id: workflow.id,
@@ -315,11 +461,34 @@ function buildContext(): RuntimeContext {
           libraryRootId: workflow.libraryRootId,
         },
       ],
+      getApprovals: () => ({
+        mode: "prompt",
+        autoApproveReadOnly: true,
+        autoApproveSkills: true,
+        alwaysAllowedTools: [],
+      }),
+      getApprovalRequests: () => [],
+      setApprovalRequests: () => {},
+      getPersonalPromptProfile: () => ({
+        prompt: "",
+        summary: "",
+        tags: [],
+        updatedAt: null,
+      }),
+      setPersonalPromptProfile: () => {},
     },
     services: {
+      artifactRegistry: { query: vi.fn(() => []) } as any,
+      artifactManager: {} as any,
+      refreshSkills: async () => [],
+      listMcpServers: () => [],
       mcpManager: null,
+      appUpdater: { getSnapshot: () => ({}) } as any,
     },
-    tools: {},
+    tools: {
+      resolveBuiltinTools: () => [],
+      resolveMcpTools: () => [],
+    },
   } as RuntimeContext;
 }
 

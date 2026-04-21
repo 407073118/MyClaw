@@ -145,12 +145,37 @@ export default function WebPanel() {
           position: relative;
           border-left: 1px solid var(--glass-border);
           background: var(--bg-base);
+          color-scheme: dark;
           display: flex;
           flex-direction: column;
           flex-shrink: 0;
           overflow: hidden;
           min-width: 320px;
           max-width: 720px;
+          scrollbar-width: thin;
+          scrollbar-color: hsla(0, 0%, 100%, 0.15) transparent;
+        }
+
+        .web-panel::-webkit-scrollbar,
+        .wp-iframe::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+
+        .web-panel::-webkit-scrollbar-track,
+        .wp-iframe::-webkit-scrollbar-track {
+          background: transparent;
+        }
+
+        .web-panel::-webkit-scrollbar-thumb,
+        .wp-iframe::-webkit-scrollbar-thumb {
+          background: hsla(0, 0%, 100%, 0.15);
+          border-radius: 999px;
+        }
+
+        .web-panel::-webkit-scrollbar-thumb:hover,
+        .wp-iframe::-webkit-scrollbar-thumb:hover {
+          background: hsla(0, 0%, 100%, 0.28);
         }
 
         .web-panel.dragging {
@@ -283,6 +308,7 @@ export default function WebPanel() {
           width: 100%;
           border: none;
           background: #0c0c0c;
+          color-scheme: dark;
           transition: opacity 0.2s ease;
         }
       `}</style>

@@ -85,4 +85,31 @@ describe("directory service path resolution", () => {
     expect(paths.modelsDir).toBe(join(installerSelectedRoot, "myClaw", "models"));
     expect(existsSync(paths.myClawDir)).toBe(true);
   });
+
+  it("ignores installer-selected data roots that match the install directory", async () => {
+    writeFileSync(join(installRoot, "myclaw-data-root.txt"), installRoot, "utf8");
+
+    const { initializeDirectories, redirectUserData } = await import("../src/main/services/directory-service");
+
+    redirectUserData();
+    const paths = await initializeDirectories();
+
+    expect(electronAppMock.setPath).not.toHaveBeenCalled();
+    expect(paths.rootDir).toBe(userDataRoot);
+    expect(paths.myClawDir).toBe(join(userDataRoot, "myClaw"));
+  });
+
+  it("ignores installer-selected data roots nested under the install directory", async () => {
+    const nestedDataRoot = join(installRoot, "data");
+    writeFileSync(join(installRoot, "myclaw-data-root.txt"), nestedDataRoot, "utf8");
+
+    const { initializeDirectories, redirectUserData } = await import("../src/main/services/directory-service");
+
+    redirectUserData();
+    const paths = await initializeDirectories();
+
+    expect(electronAppMock.setPath).not.toHaveBeenCalled();
+    expect(paths.rootDir).toBe(userDataRoot);
+    expect(paths.cacheDir).toBe(join(userDataRoot, "myClaw", "cache"));
+  });
 });

@@ -206,10 +206,12 @@ export function coerceManagedProfileWrite(
 
   const apiKey = (input.apiKey ?? existing?.apiKey ?? "").trim();
   const managedProfile = createBrMiniMaxProfile({ apiKey });
+  const model = (input.model ?? existing?.model ?? managedProfile.model)?.trim() || managedProfile.model;
   const protocolTarget = input.protocolTarget ?? existing?.protocolTarget;
 
   return {
     ...managedProfile,
+    model,
     ...(protocolTarget ? { protocolTarget } : {}),
   };
 }

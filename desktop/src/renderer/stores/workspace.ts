@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import type {
+  AvailabilityPolicy,
   ArtifactRecord,
   ArtifactScopeRef,
   ApprovalDecision,
@@ -9,17 +10,24 @@ import type {
   ApprovalRequest,
   BackgroundTaskHandle,
   BuiltinToolApprovalMode,
+  CalendarEvent,
   ChatSession,
+  ExecutionRun,
   McpServer,
   McpServerConfig,
   ModelCatalogItem,
   ModelProfile,
   ModelRouteProbeResult,
   PersonalPromptProfile,
+  Reminder,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
+  ScheduleJob,
   SkillDefinition,
   SiliconPerson,
+  SuggestedTimebox,
+  TaskCommitment,
+  TodayBrief,
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
 import type { BrMiniMaxRuntimeDiagnostics } from "../../../shared/br-minimax";
@@ -115,6 +123,46 @@ type BackgroundTaskSnapshot = {
 
 type ArtifactScopeMap = Record<string, ArtifactRecord[]>;
 
+export type WorkspaceTimeState = {
+  calendarEvents: CalendarEvent[];
+  taskCommitments: TaskCommitment[];
+  reminders: Reminder[];
+  scheduleJobs: ScheduleJob[];
+  executionRuns: ExecutionRun[];
+  availabilityPolicy: AvailabilityPolicy | null;
+  todayBrief: TodayBrief | null;
+};
+
+function createEmptyTimeState(): WorkspaceTimeState {
+  return {
+    calendarEvents: [],
+    taskCommitments: [],
+    reminders: [],
+    scheduleJobs: [],
+    executionRuns: [],
+    availabilityPolicy: null,
+    todayBrief: null,
+  };
+}
+
+function sortTimeItemsByField<T extends { id: string }>(
+  items: T[],
+  field: keyof T,
+): T[] {
+  return [...items].sort((left, right) =>
+    String(left[field] ?? "9999-12-31T23:59:59.999Z").localeCompare(
+      String(right[field] ?? "9999-12-31T23:59:59.999Z"),
+    ),
+  );
+}
+
+function replaceTimeItem<T extends { id: string }>(items: T[], item: T, field: keyof T): T[] {
+  return sortTimeItemsByField(
+    [...items.filter((candidate) => candidate.id !== item.id), item],
+    field,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Workspace state shape
 // ---------------------------------------------------------------------------
@@ -155,6 +203,9 @@ type WorkspaceState = {
   approvalRequests: ApprovalRequest[];
   personalPrompt: PersonalPromptProfile;
   appUpdate: AppUpdateState | null;
+  time: WorkspaceTimeState;
+  /** 切换默认模型后的通知标记，提示用户新建对话。 */
+  modelSwitchNotice: { fromName: string; toName: string } | null;
 
   // WebPanel
   webPanel: {
@@ -195,6 +246,7 @@ type WorkspaceState = {
   updateModelProfile: (profileId: string, input: Omit<ModelProfile, "id">) => Promise<ModelProfile>;
   deleteModelProfile: (profileId: string) => Promise<unknown>;
   setDefaultModelProfile: (profileId: string) => Promise<void>;
+  dismissModelSwitchNotice: () => void;
   /** Called from SetupPage after creating the first model — updates store so AppShell stops redirecting */
   addModelAndClearSetup: (profile: ModelProfile) => void;
 
@@ -233,6 +285,19 @@ type WorkspaceState = {
   downloadAppUpdate: () => Promise<AppUpdateState>;
   quitAndInstallAppUpdate: () => Promise<{ accepted: boolean }>;
   openAppUpdateDownloadPage: () => Promise<{ opened: boolean }>;
+  createCalendarEvent: (input: Record<string, unknown>) => Promise<CalendarEvent>;
+  updateCalendarEvent: (input: Record<string, unknown>) => Promise<CalendarEvent>;
+  createTaskCommitment: (input: Record<string, unknown>) => Promise<TaskCommitment>;
+  updateTaskCommitment: (input: Record<string, unknown>) => Promise<TaskCommitment>;
+  createReminder: (input: Record<string, unknown>) => Promise<Reminder>;
+  updateReminder: (input: Record<string, unknown>) => Promise<Reminder>;
+  deleteReminder: (id: string) => Promise<void>;
+  createScheduleJob: (input: Record<string, unknown>) => Promise<ScheduleJob>;
+  updateScheduleJob: (input: Record<string, unknown>) => Promise<ScheduleJob>;
+  deleteScheduleJob: (id: string) => Promise<void>;
+  saveAvailabilityPolicy: (policy: AvailabilityPolicy) => Promise<AvailabilityPolicy>;
+  refreshTodayBrief: () => Promise<TodayBrief>;
+  suggestTimeboxes: () => Promise<SuggestedTimebox[]>;
 
   importCloudSkill: (input: { releaseId: string; skillName: string }) => Promise<unknown>;
   importCloudMcp: (input: { releaseId: string; servers: McpServerConfig[] }) => Promise<unknown>;
@@ -289,7 +354,7 @@ type WorkspaceState = {
 
   // Missing actions used by pages
   pushAssistantMessage: (sessionId: string, content: string) => void;
-  patchStreamingMessage: (sessionId: string, messageId: string, deltaContent: string) => void;
+  patchStreamingMessage: (sessionId: string, messageId: string, deltaContent: string | null, deltaReasoning?: string | null) => void;
   applySessionUpdate: (session: ChatSession) => void;
   patchSessionTasks: (sessionId: string, tasks: import("@shared/contracts").Task[]) => void;
   requestExecutionIntent: (intent: any) => Promise<void>;
@@ -492,6 +557,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     updatedAt: null,
   },
   appUpdate: null,
+  time: createEmptyTimeState(),
+  modelSwitchNotice: null,
 
   webPanel: {
     isOpen: false,
@@ -559,6 +626,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
           updatedAt: null,
         },
         appUpdate: payload.updates ?? null,
+        time: payload.time ?? createEmptyTimeState(),
         ready: true,
         error: null,
       });
@@ -579,6 +647,152 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     } finally {
       set({ loading: false });
     }
+  },
+
+  async createCalendarEvent(input) {
+    const { item } = await window.myClawAPI.time.createCalendarEvent(input);
+    set((state) => ({
+      time: {
+        ...state.time,
+        calendarEvents: replaceTimeItem(state.time.calendarEvents, item, "startsAt"),
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async updateCalendarEvent(input) {
+    const { item } = await window.myClawAPI.time.updateCalendarEvent(input);
+    set((state) => ({
+      time: {
+        ...state.time,
+        calendarEvents: replaceTimeItem(state.time.calendarEvents, item, "startsAt"),
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async createTaskCommitment(input) {
+    const { item } = await window.myClawAPI.time.createTaskCommitment(input);
+    set((state) => ({
+      time: {
+        ...state.time,
+        taskCommitments: replaceTimeItem(state.time.taskCommitments, item, "dueAt"),
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async updateTaskCommitment(input) {
+    const { item } = await window.myClawAPI.time.updateTaskCommitment(input);
+    set((state) => ({
+      time: {
+        ...state.time,
+        taskCommitments: replaceTimeItem(state.time.taskCommitments, item, "dueAt"),
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async createReminder(input) {
+    const { item } = await window.myClawAPI.time.createReminder(input);
+    set((state) => ({
+      time: {
+        ...state.time,
+        reminders: replaceTimeItem(state.time.reminders, item, "triggerAt"),
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async updateReminder(input) {
+    const { item } = await window.myClawAPI.time.updateReminder(input);
+    set((state) => ({
+      time: {
+        ...state.time,
+        reminders: replaceTimeItem(state.time.reminders, item, "triggerAt"),
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async deleteReminder(id) {
+    await window.myClawAPI.time.deleteReminder(id);
+    set((state) => ({
+      time: {
+        ...state.time,
+        reminders: state.time.reminders.filter((item) => item.id !== id),
+      },
+    }));
+    await get().refreshTodayBrief();
+  },
+
+  async createScheduleJob(input) {
+    const { item } = await window.myClawAPI.time.createScheduleJob(input);
+    set((state) => ({
+      time: {
+        ...state.time,
+        scheduleJobs: replaceTimeItem(state.time.scheduleJobs, item, "nextRunAt"),
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async updateScheduleJob(input) {
+    const { item } = await window.myClawAPI.time.updateScheduleJob(input);
+    set((state) => ({
+      time: {
+        ...state.time,
+        scheduleJobs: replaceTimeItem(state.time.scheduleJobs, item, "nextRunAt"),
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async deleteScheduleJob(id) {
+    await window.myClawAPI.time.deleteScheduleJob(id);
+    set((state) => ({
+      time: {
+        ...state.time,
+        scheduleJobs: state.time.scheduleJobs.filter((item) => item.id !== id),
+      },
+    }));
+    await get().refreshTodayBrief();
+  },
+
+  async saveAvailabilityPolicy(policy) {
+    const { policy: nextPolicy } = await window.myClawAPI.time.saveAvailabilityPolicy(policy);
+    set((state) => ({
+      time: {
+        ...state.time,
+        availabilityPolicy: nextPolicy,
+      },
+    }));
+    await get().refreshTodayBrief();
+    return nextPolicy;
+  },
+
+  async refreshTodayBrief() {
+    const { brief } = await window.myClawAPI.time.getTodayBrief();
+    set((state) => ({
+      time: {
+        ...state.time,
+        todayBrief: brief,
+      },
+    }));
+    return brief;
+  },
+
+  async suggestTimeboxes() {
+    const { items } = await window.myClawAPI.time.suggestTimeboxes();
+    return items;
   },
 
   // -------------------------------------------------------------------------
@@ -944,8 +1158,22 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   },
 
   async setDefaultModelProfile(profileId) {
+    const { defaultModelProfileId: prevId, models } = get();
     const payload = await window.myClawAPI.setDefaultModelProfile(profileId);
-    set({ defaultModelProfileId: payload.defaultModelProfileId });
+    const nextId = payload.defaultModelProfileId;
+
+    // 如果默认模型确实发生了切换，设置通知以提示用户新建对话。
+    if (prevId && nextId && prevId !== nextId) {
+      const fromName = models.find((m) => m.id === prevId)?.name ?? "未知模型";
+      const toName = models.find((m) => m.id === nextId)?.name ?? "未知模型";
+      set({ defaultModelProfileId: nextId, modelSwitchNotice: { fromName, toName } });
+    } else {
+      set({ defaultModelProfileId: nextId });
+    }
+  },
+
+  dismissModelSwitchNotice() {
+    set({ modelSwitchNotice: null });
   },
 
   // -------------------------------------------------------------------------
@@ -1459,7 +1687,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     });
   },
 
-  patchStreamingMessage(sessionId, messageId, deltaContent) {
+  patchStreamingMessage(sessionId, messageId, deltaContent, deltaReasoning) {
     set((s) => {
       const sessionIndex = s.sessions.findIndex((item) => item.id === sessionId);
       if (sessionIndex < 0) return {};
@@ -1470,14 +1698,20 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       if (msgIndex >= 0) {
         // Append delta to existing streaming message — only copy the messages array
         const existing = session.messages[msgIndex]!;
+        const patched: typeof existing = {
+          ...existing,
+          content: existing.content + (deltaContent ?? ""),
+          ...(deltaReasoning ? { reasoning: (existing.reasoning ?? "") + deltaReasoning } : {}),
+        };
         newMessages = [...session.messages];
-        newMessages[msgIndex] = { ...existing, content: existing.content + deltaContent };
+        newMessages[msgIndex] = patched;
       } else {
         // Create a new in-progress assistant message
         newMessages = [...session.messages, {
           id: messageId,
           role: "assistant" as const,
-          content: deltaContent,
+          content: deltaContent ?? "",
+          ...(deltaReasoning ? { reasoning: deltaReasoning } : {}),
           createdAt: new Date().toISOString(),
         }];
       }

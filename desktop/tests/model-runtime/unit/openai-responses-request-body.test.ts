@@ -361,6 +361,94 @@ describe("openai responses request body", () => {
     });
   });
 
+  it("enables parallel tool calls for br-minimax deep reasoning responses turns with tools", () => {
+    const body = buildOpenAiResponsesRequestBody(
+      "minimax-m2-5",
+      [{ role: "user", content: "analyze this annual report" }],
+      [
+        {
+          type: "function",
+          function: {
+            name: "task_create",
+            description: "Create a task",
+            parameters: {
+              type: "object",
+              properties: {
+                subject: { type: "string" },
+              },
+              required: ["subject"],
+            },
+          },
+        },
+      ],
+      "high",
+      {
+        providerFamily: "br-minimax",
+        deploymentProfile: "br-private",
+      } as any,
+    );
+
+    expect(body).toMatchObject({
+      parallel_tool_calls: true,
+    });
+  });
+
+  it("does not force parallel tool calls for non-deep or non-minimax responses turns", () => {
+    const mediumBody = buildOpenAiResponsesRequestBody(
+      "minimax-m2-5",
+      [{ role: "user", content: "analyze this annual report" }],
+      [
+        {
+          type: "function",
+          function: {
+            name: "task_create",
+            description: "Create a task",
+            parameters: {
+              type: "object",
+              properties: {
+                subject: { type: "string" },
+              },
+              required: ["subject"],
+            },
+          },
+        },
+      ],
+      "medium",
+      {
+        providerFamily: "br-minimax",
+        deploymentProfile: "br-private",
+      } as any,
+    );
+
+    const genericBody = buildOpenAiResponsesRequestBody(
+      "gpt-5.4",
+      [{ role: "user", content: "analyze this annual report" }],
+      [
+        {
+          type: "function",
+          function: {
+            name: "task_create",
+            description: "Create a task",
+            parameters: {
+              type: "object",
+              properties: {
+                subject: { type: "string" },
+              },
+              required: ["subject"],
+            },
+          },
+        },
+      ],
+      "high",
+      {
+        providerFamily: "openai-native",
+      },
+    );
+
+    expect(mediumBody).not.toHaveProperty("parallel_tool_calls");
+    expect(genericBody).not.toHaveProperty("parallel_tool_calls");
+  });
+
   it("adds web_search automatically when qwen-native web_extractor is requested", () => {
     const body = buildOpenAiResponsesRequestBody(
       "qwen3.6-plus",

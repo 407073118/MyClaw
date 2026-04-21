@@ -109,6 +109,7 @@ function createWorkflowTask(tasks: Task[], node: WorkflowNode, workflow: Workflo
     subject: node.label,
     description: buildWorkflowTaskDescription(node, workflow),
     status: "pending",
+    blockedBy: [],
     metadata: {
       source: "workflow",
       workflowId: workflow.id,

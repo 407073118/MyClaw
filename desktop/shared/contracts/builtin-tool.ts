@@ -1,6 +1,6 @@
 import type { ToolRiskCategory } from "./events";
 
-export const BUILTIN_TOOL_GROUPS = ["fs", "exec", "git", "process", "http", "archive", "task", "web", "browser", "ppt"] as const;
+export const BUILTIN_TOOL_GROUPS = ["fs", "exec", "git", "process", "http", "archive", "task", "time", "web", "browser", "ppt"] as const;
 export type BuiltinToolGroup = (typeof BUILTIN_TOOL_GROUPS)[number];
 
 export const BUILTIN_TOOL_APPROVAL_MODES = ["inherit", "always-ask", "always-allow"] as const;

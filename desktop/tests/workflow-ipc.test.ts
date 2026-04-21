@@ -16,6 +16,109 @@ vi.mock("electron", () => ({
 vi.mock("../src/main/services/state-persistence", () => ({
   saveWorkflow: saveWorkflowMock,
   saveWorkflowRun: saveWorkflowRunMock,
+  saveSession: vi.fn(() => Promise.resolve()),
+  deleteWorkflowFile: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("../src/main/services/pending-saves", () => ({
+  trackSave: vi.fn((p: Promise<unknown>) => p),
+}));
+
+vi.mock("../src/main/services/workflow-engine/sqlite-checkpointer", () => ({
+  SqliteCheckpointer: class {
+    constructor() {}
+    async init() {}
+    createRun() {}
+    updateRunStatus() {}
+    saveCheckpoint() {}
+    getLatestCheckpoint() { return null; }
+    restoreChannelData() { return new Map(); }
+    listRuns() { return []; }
+    getRun() { return null; }
+  },
+}));
+
+vi.mock("../src/main/services/workflow-engine", () => ({
+  PregelRunner: class {
+    runId = "mock-run-id";
+    emitter = { on: vi.fn() };
+    /** 返回一个永远不 resolve 的 promise，避免异步回调修改运行状态。 */
+    run = vi.fn(() => new Promise(() => {}));
+    resume = vi.fn();
+    abort = vi.fn();
+  },
+  NodeExecutorRegistry: class {
+    register() {}
+  },
+  StartNodeExecutor: class {},
+  EndNodeExecutor: class {},
+  ConditionNodeExecutor: class {},
+  LlmNodeExecutor: class { constructor() {} },
+  ToolNodeExecutor: class { constructor() {} },
+  HumanInputNodeExecutor: class {},
+  JoinNodeExecutor: class {},
+}));
+
+vi.mock("../src/main/services/builtin-tool-executor", () => ({
+  BuiltinToolExecutor: class {
+    setSkills() {}
+    setAllowExternalPaths() {}
+    async execute() { return { success: true, output: "" }; }
+    async shutdown() {}
+    isOutsideWorkspace() { return false; }
+  },
+}));
+
+vi.mock("../src/main/services/artifact-context-builder", () => ({
+  buildArtifactContextBlock: vi.fn(() => ""),
+}));
+
+vi.mock("../src/main/services/model-runtime/canonical-turn-content", () => ({
+  buildCanonicalTurnContent: vi.fn(() => ({ systemSections: [], userSections: [], messages: [], toolCalls: [], toolResults: [], approvalEvents: [], taskState: null, replayHints: {} })),
+}));
+
+vi.mock("../src/main/services/model-runtime/execution-gateway", () => ({
+  createExecutionGateway: vi.fn(() => ({ executeTurn: vi.fn() })),
+}));
+
+vi.mock("../src/main/services/model-runtime/prompt-composer", () => ({
+  composePromptSections: vi.fn(() => []),
+}));
+
+vi.mock("../src/main/services/model-runtime/turn-outcome-store", () => ({
+  loadTurnOutcome: vi.fn(() => null),
+  updateTurnOutcome: vi.fn(),
+}));
+
+vi.mock("../src/main/services/model-runtime/tool-registry", () => ({
+  hydrateCanonicalToolRegistryFromLegacyTools: vi.fn(() => []),
+}));
+
+vi.mock("../src/main/services/model-runtime/turn-execution-plan-resolver", () => ({
+  resolveTurnExecutionPlan: vi.fn(() => ({
+    providerFamily: "br-minimax",
+    protocolTarget: "openai-chat-compatible",
+    replayPolicy: "assistant-turn",
+    reasoningEffort: "medium",
+    legacyExecutionPlan: { adapterId: "br-minimax", replayPolicy: "assistant-turn", reasoningMode: "auto" },
+  })),
+}));
+
+vi.mock("../src/main/services/reasoning-runtime", () => ({
+  buildExecutionPlan: vi.fn(() => ({
+    adapterId: "br-minimax",
+    replayPolicy: "assistant-turn",
+    reasoningMode: "auto",
+  })),
+}));
+
+vi.mock("../src/main/ipc/sessions", () => ({
+  broadcastSessionTasksUpdated: vi.fn(),
+}));
+
+vi.mock("../src/main/services/silicon-person-workflow", () => ({
+  applyWorkflowEventToSessionTasks: vi.fn(() => []),
+  seedWorkflowDrivenTasksForSession: vi.fn(() => []),
 }));
 
 /** 获取指定 channel 对应的 IPC 处理函数，便于直接调用并断言返回结果。 */

@@ -1,43 +1,57 @@
+import { EventEmitter } from "node:events";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { execSyncMock } = vi.hoisted(() => ({
-  execSyncMock: vi.fn(),
+const { spawnMock } = vi.hoisted(() => ({
+  spawnMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
   return {
     ...actual,
-    execSync: execSyncMock,
+    spawn: spawnMock,
   };
 });
 
 import { BuiltinToolExecutor } from "../src/main/services/builtin-tool-executor";
 
-type MockExecError = Error & {
-  code?: string;
-  signal?: string;
-  stdout?: string;
-  stderr?: string;
-};
+/**
+ * 创建一个模拟 ChildProcess，用于替代真实 spawn 返回值。
+ * - success: 立即输出 stdout 并以 code 0 关闭
+ * - timeout: 立即触发 ETIMEDOUT 错误（模拟 execCommandAsync 超时行为）
+ * - error: 触发指定错误（如命令不存在）
+ */
+function createMockChild(
+  behavior: "success" | "timeout" | "error",
+  output?: string,
+): EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn>; pid: number } {
+  const child = new EventEmitter() as any;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = vi.fn();
+  child.pid = 12345;
 
-function createTimeoutError(timeoutMs: number): MockExecError {
-  const error = new Error(`Command timed out after ${timeoutMs}ms`) as MockExecError;
-  error.code = "ETIMEDOUT";
-  error.signal = "SIGTERM";
-  error.stdout = "";
-  error.stderr = "";
-  return error;
-}
+  process.nextTick(() => {
+    if (behavior === "success") {
+      if (output) child.stdout.emit("data", Buffer.from(output));
+      child.emit("close", 0, null);
+    } else if (behavior === "timeout") {
+      const err = Object.assign(new Error("Command timed out"), {
+        code: "ETIMEDOUT",
+        signal: "SIGTERM",
+      });
+      child.emit("error", err);
+    } else if (behavior === "error") {
+      if (output) child.stderr.emit("data", Buffer.from(output));
+      const err = Object.assign(new Error(output || "Command error"), {
+        code: "ENOENT",
+      });
+      child.emit("error", err);
+    }
+  });
 
-function createCommandNotFoundError(message: string): MockExecError {
-  const error = new Error(message) as MockExecError;
-  error.code = 1;
-  error.signal = "";
-  error.stdout = "";
-  error.stderr = message;
-  return error;
+  return child;
 }
 
 function setProcessPlatform(platform: NodeJS.Platform): () => void {
@@ -86,59 +100,38 @@ function installAbortAwareFetchMock() {
 
 describe("exec.command timeout policy", () => {
   beforeEach(() => {
-    execSyncMock.mockReset();
+    spawnMock.mockReset();
   });
 
   it("keeps expanding default timeouts until the 10 minute ceiling before failing", async () => {
-    execSyncMock.mockImplementation(() => {
-      throw createTimeoutError(30_000);
-    });
+    spawnMock.mockImplementation(() => createMockChild("timeout"));
 
     const executor = new BuiltinToolExecutor();
     const result = await executor.execute("exec.command", "python ten_minute_job.py", "C:/temp");
 
     expect(result.success).toBe(false);
-    expect(execSyncMock).toHaveBeenCalledTimes(6);
-    expect(execSyncMock.mock.calls.map(([, options]) => options.timeout)).toEqual([
-      30_000,
-      60_000,
-      120_000,
-      240_000,
-      480_000,
-      600_000,
-    ]);
-    expect(result.error).toContain("600000");
+    expect(spawnMock).toHaveBeenCalledTimes(6);
+    expect(result.error).toContain("30000 -> 60000 -> 120000 -> 240000 -> 480000 -> 600000");
   });
 
   it("retries timed-out commands with progressively larger timeouts by default", async () => {
-    execSyncMock
-      .mockImplementationOnce(() => {
-        throw createTimeoutError(30_000);
-      })
-      .mockImplementationOnce(() => {
-        throw createTimeoutError(60_000);
-      })
-      .mockImplementationOnce(() => "finished\n");
+    spawnMock
+      .mockImplementationOnce(() => createMockChild("timeout"))
+      .mockImplementationOnce(() => createMockChild("timeout"))
+      .mockImplementationOnce(() => createMockChild("success", "finished\n"));
 
     const executor = new BuiltinToolExecutor();
     const result = await executor.execute("exec.command", "python long_job.py", "C:/temp");
 
     expect(result.success).toBe(true);
     expect(result.output.trim()).toBe("finished");
-    expect(execSyncMock).toHaveBeenCalledTimes(3);
-    expect(execSyncMock.mock.calls.map(([, options]) => options.timeout)).toEqual([
-      30_000,
-      60_000,
-      120_000,
-    ]);
+    expect(spawnMock).toHaveBeenCalledTimes(3);
   });
 
   it("honors explicit timeout configuration when exec.command receives structured input", async () => {
-    execSyncMock
-      .mockImplementationOnce(() => {
-        throw createTimeoutError(5_000);
-      })
-      .mockImplementationOnce(() => "ok\n");
+    spawnMock
+      .mockImplementationOnce(() => createMockChild("timeout"))
+      .mockImplementationOnce(() => createMockChild("success", "ok\n"));
 
     const executor = new BuiltinToolExecutor();
     const label = JSON.stringify({
@@ -152,14 +145,11 @@ describe("exec.command timeout policy", () => {
 
     expect(result.success).toBe(true);
     expect(result.output.trim()).toBe("ok");
-    expect(execSyncMock.mock.calls.map(([, options]) => options.timeout)).toEqual([
-      5_000,
-      15_000,
-    ]);
+    expect(spawnMock).toHaveBeenCalledTimes(2);
   });
 
   it("uses structured cwd override when exec.command receives one", async () => {
-    execSyncMock.mockImplementation(() => "ok\n");
+    spawnMock.mockImplementation(() => createMockChild("success", "'ok\n"));
 
     const executor = new BuiltinToolExecutor();
     const label = JSON.stringify({
@@ -169,16 +159,14 @@ describe("exec.command timeout policy", () => {
     const result = await executor.execute("exec.command", label, "C:/temp");
 
     expect(result.success).toBe(true);
-    expect(execSyncMock).toHaveBeenCalledTimes(1);
-    expect(execSyncMock.mock.calls[0][1].cwd).toBe(
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock.mock.calls[0][2].cwd).toBe(
       resolve("C:/temp", "C:/Users/jianing.zhang1/AppData/Roaming/Electron/myClaw/skills/br-interview-workspace"),
     );
   });
 
   it("returns timeout escalation details after exhausting retries", async () => {
-    execSyncMock.mockImplementation(() => {
-      throw createTimeoutError(30_000);
-    });
+    spawnMock.mockImplementation(() => createMockChild("timeout"));
 
     const executor = new BuiltinToolExecutor();
     const label = JSON.stringify({
@@ -199,7 +187,7 @@ describe("exec.command timeout policy", () => {
 
   it("wraps Windows exec.command calls with UTF-8 console setup", async () => {
     const restorePlatform = setProcessPlatform("win32");
-    execSyncMock.mockImplementation(() => "中文输出\n");
+    spawnMock.mockImplementation(() => createMockChild("success", "中文输出\n"));
 
     try {
       const executor = new BuiltinToolExecutor();
@@ -207,12 +195,12 @@ describe("exec.command timeout policy", () => {
 
       expect(result.success).toBe(true);
       expect(result.output.trim()).toBe("中文输出");
-      expect(execSyncMock).toHaveBeenCalledTimes(1);
+      expect(spawnMock).toHaveBeenCalledTimes(1);
 
-      const [command, options] = execSyncMock.mock.calls[0];
-      expect(command).toContain("chcp 65001>nul");
-      expect(command).toContain("python demo.py");
-      expect(options.encoding).toBe("buffer");
+      const [shell, args, options] = spawnMock.mock.calls[0];
+      expect(shell).toBe("cmd.exe");
+      expect(args[1]).toContain("chcp 65001>nul");
+      expect(args[1]).toContain("python demo.py");
       expect(options.env.PYTHONIOENCODING).toBe("utf-8");
       expect(options.env.PYTHONUTF8).toBe("1");
     } finally {
@@ -222,7 +210,7 @@ describe("exec.command timeout policy", () => {
 
   it("runs git tools through the same Windows UTF-8 decoding path", async () => {
     const restorePlatform = setProcessPlatform("win32");
-    execSyncMock.mockImplementation(() => "M  中文文件.txt\n");
+    spawnMock.mockImplementation(() => createMockChild("success", "M  中文文件.txt\n"));
 
     try {
       const executor = new BuiltinToolExecutor();
@@ -231,10 +219,10 @@ describe("exec.command timeout policy", () => {
       expect(result.success).toBe(true);
       expect(result.output).toContain("中文文件.txt");
 
-      const [command, options] = execSyncMock.mock.calls[0];
-      expect(command).toContain("chcp 65001>nul");
-      expect(command).toContain("git status --short --branch");
-      expect(options.encoding).toBe("buffer");
+      const [shell, args, options] = spawnMock.mock.calls[0];
+      expect(shell).toBe("cmd.exe");
+      expect(args[1]).toContain("chcp 65001>nul");
+      expect(args[1]).toContain("git status --short --branch");
       expect(options.env.PYTHONIOENCODING).toBe("utf-8");
     } finally {
       restorePlatform();
@@ -243,11 +231,9 @@ describe("exec.command timeout policy", () => {
 
   it("falls back to py -3 when python launcher is missing on Windows", async () => {
     const restorePlatform = setProcessPlatform("win32");
-    execSyncMock
-      .mockImplementationOnce(() => {
-        throw createCommandNotFoundError("'python' is not recognized as an internal or external command");
-      })
-      .mockImplementationOnce(() => "fallback ok\n");
+    spawnMock
+      .mockImplementationOnce(() => createMockChild("error", "'python' is not recognized as an internal or external command"))
+      .mockImplementationOnce(() => createMockChild("success", "fallback ok\n"));
 
     try {
       const executor = new BuiltinToolExecutor();
@@ -255,9 +241,9 @@ describe("exec.command timeout policy", () => {
 
       expect(result.success).toBe(true);
       expect(result.output.trim()).toBe("fallback ok");
-      expect(execSyncMock).toHaveBeenCalledTimes(2);
-      expect(execSyncMock.mock.calls[0][0]).toContain("python scripts/doctor.py");
-      expect(execSyncMock.mock.calls[1][0]).toContain("py -3 scripts/doctor.py");
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      expect(spawnMock.mock.calls[0][1][1]).toContain("python scripts/doctor.py");
+      expect(spawnMock.mock.calls[1][1][1]).toContain("py -3 scripts/doctor.py");
     } finally {
       restorePlatform();
     }

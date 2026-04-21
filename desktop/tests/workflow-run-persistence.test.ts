@@ -11,7 +11,11 @@ function buildPaths(rootDir: string) {
     myClawDir: rootDir,
     skillsDir: join(rootDir, "skills"),
     sessionsDir: join(rootDir, "sessions"),
+    sessionsDbFile: join(rootDir, "sessions.db"),
     modelsDir: join(rootDir, "models"),
+    workspaceDir: join(rootDir, "workspace"),
+    artifactsDir: join(rootDir, "artifacts"),
+    cacheDir: join(rootDir, "cache"),
     settingsFile: join(rootDir, "settings.json"),
   };
 }

@@ -207,7 +207,7 @@ useHead({
           v-for="skill in skills"
           :key="skill.id"
           :to="`/skills/${skill.id}`"
-          class="skill-card-nx"
+          class="skill-card-nx glass-card-nx"
         >
           <div class="card-top">
             <div class="skill-avatar" :style="{ background: getAvatarColor(skill.name) }">
@@ -237,6 +237,13 @@ useHead({
             <span class="foot-item">{{ skill.latestVersion ? `v${skill.latestVersion}` : "草稿" }}</span>
             <span class="foot-item">{{ formatDate(skill.updatedAt) }}</span>
           </div>
+          <span class="card-action-nx">
+            查看详情
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14" />
+              <path d="m13 5 7 7-7 7" />
+            </svg>
+          </span>
         </NuxtLink>
       </div>
 
@@ -267,6 +274,13 @@ useHead({
             <span class="v-nx">{{ skill.latestVersion ? `v${skill.latestVersion}` : "草稿" }}</span>
             <span class="date-nx">{{ formatDate(skill.updatedAt) }}</span>
           </div>
+          <span class="list-action-nx">
+            查看详情
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14" />
+              <path d="m13 5 7 7-7 7" />
+            </svg>
+          </span>
         </NuxtLink>
       </div>
 
@@ -549,43 +563,25 @@ useHead({
 
 .skill-card-nx {
   text-decoration: none;
-  padding: 24px;
+  color: inherit;
+  padding: 22px;
   border-radius: 16px;
-  transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  background: var(--bg-main);
-  border: 1px solid var(--border-muted);
-  position: relative;
-  overflow: hidden;
-}
-
-.skill-card-nx::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(var(--nuxt-green-rgb), 0.08) 0%, transparent 100%);
-  opacity: 0;
-  transition: 0.3s;
 }
 
 .skill-card-nx:hover {
-  transform: translateY(-4px);
-  border-color: rgba(var(--nuxt-green-rgb), 0.4);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
-}
-
-.skill-card-nx:hover::before {
-  opacity: 1;
+  transform: translateY(-1px);
+  background: var(--selection-bg);
+  border-color: rgba(var(--nuxt-green-rgb), 0.35);
 }
 
 .card-top {
   display: flex;
   align-items: center;
   gap: 14px;
-  position: relative;
-  z-index: 2;
 }
 
 .skill-avatar {
@@ -650,16 +646,12 @@ useHead({
   line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  position: relative;
-  z-index: 2;
 }
 
 .card-tags-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  position: relative;
-  z-index: 2;
 }
 
 .category-badge {
@@ -688,21 +680,59 @@ useHead({
 
 .skill-card-foot-nx {
   display: flex;
-  justify-content: space-between;
-  border-top: 1px solid var(--border-muted);
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  border-top: 1px solid var(--border-main);
   padding-top: 14px;
   margin-top: auto;
   font-size: 0.75rem;
   font-weight: 700;
   color: var(--text-dim);
-  position: relative;
-  z-index: 2;
 }
 
 .foot-item {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+.card-action-nx,
+.list-action-nx {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--nuxt-green-rgb), 0.24);
+  background: rgba(var(--nuxt-green-rgb), 0.1);
+  color: var(--nuxt-green);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.card-action-nx {
+  align-self: flex-start;
+}
+
+.list-action-nx {
+  margin-left: auto;
+}
+
+.card-action-nx svg,
+.list-action-nx svg {
+  width: 14px;
+  height: 14px;
+}
+
+.skill-card-nx:hover .card-action-nx,
+.list-row-nx:hover .list-action-nx {
+  background: rgba(var(--nuxt-green-rgb), 0.16);
+  border-color: rgba(var(--nuxt-green-rgb), 0.35);
+  color: var(--text-main);
 }
 
 /* 列表视图 */
@@ -716,6 +746,7 @@ useHead({
 
 .list-row-nx {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   padding: 16px 24px;
@@ -771,7 +802,9 @@ useHead({
 .list-right-nx {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   flex-shrink: 0;
   font-size: 0.8rem;
   font-weight: 700;
@@ -881,9 +914,8 @@ useHead({
   }
 
   .list-right-nx {
-    flex-direction: column;
-    gap: 4px;
-    align-items: flex-end;
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 </style>

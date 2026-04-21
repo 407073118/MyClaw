@@ -10,13 +10,21 @@ import type {
   ArtifactScopeRef,
   AsrConfig,
   AuthLoginRequest,
+  AvailabilityPolicy,
+  CalendarEvent,
+  ExecutionRun,
   MeetingEvent,
   MeetingRecord,
   ModelCatalogItem,
   McpServerConfig,
   ModelProfile,
   PersonalPromptProfile,
+  Reminder,
+  ScheduleJob,
+  SuggestedTimebox,
   StructuredTranscript,
+  TaskCommitment,
+  TodayBrief,
   WorkflowDefinition,
 } from "@shared/contracts";
 
@@ -67,6 +75,48 @@ const myClawAPI = {
   openAppUpdateDownloadPage: () => ipcRenderer.invoke("update:open-download-page"),
   onAppUpdateStateChanged: (callback: (payload: Record<string, unknown>) => void): UnsubscribeFn =>
     onChannel("update:state-changed", callback),
+
+  // ---- 时间编排 ------------------------------------------------------------
+  time: {
+    listCalendarEvents: () =>
+      ipcRenderer.invoke("time:list-calendar-events") as Promise<{ items: CalendarEvent[] }>,
+    createCalendarEvent: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:create-calendar-event", input) as Promise<{ item: CalendarEvent }>,
+    updateCalendarEvent: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:update-calendar-event", input) as Promise<{ item: CalendarEvent }>,
+    listTaskCommitments: () =>
+      ipcRenderer.invoke("time:list-task-commitments") as Promise<{ items: TaskCommitment[] }>,
+    createTaskCommitment: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:create-task-commitment", input) as Promise<{ item: TaskCommitment }>,
+    updateTaskCommitment: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:update-task-commitment", input) as Promise<{ item: TaskCommitment }>,
+    listReminders: () =>
+      ipcRenderer.invoke("time:list-reminders") as Promise<{ items: Reminder[] }>,
+    createReminder: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:create-reminder", input) as Promise<{ item: Reminder }>,
+    updateReminder: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:update-reminder", input) as Promise<{ item: Reminder }>,
+    deleteReminder: (id: string) =>
+      ipcRenderer.invoke("time:delete-reminder", id) as Promise<{ ok: boolean }>,
+    listScheduleJobs: () =>
+      ipcRenderer.invoke("time:list-schedule-jobs") as Promise<{ items: ScheduleJob[] }>,
+    createScheduleJob: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:create-schedule-job", input) as Promise<{ item: ScheduleJob }>,
+    updateScheduleJob: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:update-schedule-job", input) as Promise<{ item: ScheduleJob }>,
+    deleteScheduleJob: (id: string) =>
+      ipcRenderer.invoke("time:delete-schedule-job", id) as Promise<{ ok: boolean }>,
+    getAvailabilityPolicy: () =>
+      ipcRenderer.invoke("time:get-availability-policy") as Promise<{ policy: AvailabilityPolicy | null }>,
+    saveAvailabilityPolicy: (policy: AvailabilityPolicy) =>
+      ipcRenderer.invoke("time:save-availability-policy", policy) as Promise<{ policy: AvailabilityPolicy }>,
+    getTodayBrief: () =>
+      ipcRenderer.invoke("time:get-today-brief") as Promise<{ brief: TodayBrief }>,
+    suggestTimeboxes: () =>
+      ipcRenderer.invoke("time:suggest-timeboxes") as Promise<{ items: SuggestedTimebox[] }>,
+    listExecutionRuns: () =>
+      ipcRenderer.invoke("time:list-execution-runs") as Promise<{ items: ExecutionRun[] }>,
+  },
 
   // ---- 认证 ----------------------------------------------------------------
   auth: {
@@ -432,8 +482,8 @@ const myClawAPI = {
     ipcRenderer.invoke("publish:create-draft", input).catch(() => null),
 
   // ---- Web 面板 ------------------------------------------------------------
-  webPanelResolveView: (skillId: string): Promise<string | null> =>
-    ipcRenderer.invoke("web-panel:resolve-view", skillId),
+  webPanelResolvePage: (skillId: string, relativePath: string): Promise<string | null> =>
+    ipcRenderer.invoke("web-panel:resolve-page", skillId, relativePath),
 
   onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void): UnsubscribeFn =>
     onChannel("web-panel:open", callback),
@@ -457,6 +507,12 @@ const myClawAPI = {
         meeting: MeetingRecord | null;
         transcript: StructuredTranscript | null;
         summary: string | null;
+      }>,
+    buildFollowUps: (meetingId: string) =>
+      ipcRenderer.invoke("meeting:build-follow-ups", meetingId) as Promise<{
+        commitments: TaskCommitment[];
+        reminders: Reminder[];
+        suggestedEvents: CalendarEvent[];
       }>,
     delete: (meetingId: string) =>
       ipcRenderer.invoke("meeting:delete", meetingId) as Promise<{ ok: boolean }>,

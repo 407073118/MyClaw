@@ -39,6 +39,8 @@ export type ProtocolExecutionOutput = {
   reasoning?: string;
   toolCalls: ResolvedToolCall[];
   finishReason: string | null;
+  /** 流是否正常结束。undefined/true 表示正常，false 表示异常截断。 */
+  streamCompleted?: boolean;
   usage?: TurnOutcome["usage"];
   responseId?: string | null;
   requestVariantId?: string | null;

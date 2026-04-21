@@ -53,6 +53,12 @@ vi.mock("../src/renderer/stores/workspace", () => ({
 describe("ChatPage", () => {
   afterEach(() => {
     cleanup();
+    mocks.workspace.currentSession = {
+      id: "chat-session-1",
+      title: "Demo Session",
+      messages: [],
+    };
+    mocks.workspace.sessions = [mocks.workspace.currentSession];
     mocks.workspace.deleteSession.mockReset();
     mocks.workspace.selectSession.mockReset();
     mocks.workspace.pushAssistantMessage.mockReset();
@@ -254,6 +260,69 @@ describe("ChatPage", () => {
     });
   });
 
+  it("auto expands the active assistant reasoning and collapses it after the run completes", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+    let sessionStreamHandler: ((event: Record<string, unknown>) => void) | undefined;
+
+    mocks.workspace.currentSession = {
+      id: "chat-session-1",
+      title: "Demo Session",
+      messages: [
+        {
+          id: "assistant-msg-1",
+          role: "assistant",
+          content: "最终回答",
+          reasoning: "先分析，再回答",
+          createdAt: "2026-04-20T10:00:00.000Z",
+        },
+      ],
+      chatRunState: {
+        runId: "run-1",
+        status: "running",
+        phase: "model",
+        activeMessageId: "assistant-msg-1",
+      },
+    };
+    mocks.workspace.sessions = [mocks.workspace.currentSession];
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn((callback: (event: Record<string, unknown>) => void) => {
+          sessionStreamHandler = callback;
+          return sessionStreamUnsubscribe;
+        }),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    const reasoningDetails = await screen.findByTestId("reasoning-assistant-msg-1");
+    expect(reasoningDetails.hasAttribute("open")).toBe(true);
+    expect(screen.getByTestId("reasoning-toggle-label-assistant-msg-1").textContent).toContain("折叠");
+    expect(screen.getByTestId("reasoning-toggle-icon-assistant-msg-1").textContent).toContain("▾");
+
+    await act(async () => {
+      sessionStreamHandler?.({
+        type: "runtime.status",
+        payload: {
+          sessionId: "chat-session-1",
+          runId: "run-1",
+          status: "completed",
+          phase: "model",
+          messageId: "assistant-msg-1",
+        },
+      });
+    });
+
+    await waitFor(() => expect(reasoningDetails.hasAttribute("open")).toBe(false));
+    await waitFor(() => expect(screen.getByTestId("reasoning-toggle-label-assistant-msg-1").textContent).toContain("展开"));
+    expect(screen.getByTestId("reasoning-toggle-icon-assistant-msg-1").textContent).toContain("▸");
+  });
+
   it("sends on plain Enter in the composer", async () => {
     const sessionStreamUnsubscribe = vi.fn();
     const webPanelUnsubscribe = vi.fn();
@@ -274,6 +343,95 @@ describe("ChatPage", () => {
     fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
 
     await waitFor(() => expect(mocks.workspace.sendMessage).toHaveBeenCalledWith("hello"));
+  });
+
+  it("keeps the timeline pinned to the bottom when a new message arrives after the user was already near the bottom", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    });
+
+    mocks.workspace.currentSession = {
+      id: "chat-session-1",
+      title: "Demo Session",
+      messages: [
+        {
+          id: "user-msg-1",
+          role: "user",
+          content: "hello",
+          createdAt: "2026-04-20T10:00:00.000Z",
+        },
+      ],
+    };
+    mocks.workspace.sessions = [mocks.workspace.currentSession];
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => sessionStreamUnsubscribe),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    const view = render(React.createElement(ChatPage));
+
+    const timelinePanel = document.querySelector(".timeline-panel") as HTMLElement | null;
+    expect(timelinePanel).toBeTruthy();
+
+    let scrollHeight = 520;
+    let scrollTop = 20;
+    const scrollToMock = vi.fn();
+
+    Object.defineProperty(timelinePanel!, "clientHeight", {
+      configurable: true,
+      get: () => 400,
+    });
+    Object.defineProperty(timelinePanel!, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(timelinePanel!, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+    Object.defineProperty(timelinePanel!, "scrollTo", {
+      configurable: true,
+      value: scrollToMock,
+    });
+
+    fireEvent.scroll(timelinePanel!);
+    scrollToMock.mockClear();
+
+    scrollHeight = 920;
+    mocks.workspace.currentSession = {
+      ...mocks.workspace.currentSession,
+      messages: [
+        ...(mocks.workspace.currentSession.messages ?? []),
+        {
+          id: "assistant-msg-2",
+          role: "assistant",
+          content: "reply",
+          createdAt: "2026-04-20T10:00:02.000Z",
+        },
+      ],
+    };
+    mocks.workspace.sessions = [mocks.workspace.currentSession];
+
+    view.rerender(React.createElement(ChatPage));
+
+    await waitFor(() => {
+      expect(scrollToMock).toHaveBeenCalledWith(
+        expect.objectContaining({ top: 920 }),
+      );
+    });
+
+    rafSpy.mockRestore();
   });
 
   it("does not send on Ctrl+Enter in the composer", async () => {

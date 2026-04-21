@@ -31,6 +31,7 @@ type BuiltinToolSchemaGroup =
   | "web"
   | "ppt"
   | "task"
+  | "time"
   | "browser";
 
 const PROMPT_POLICY_LINES: Record<string, string[]> = {
@@ -90,14 +91,14 @@ const TOOL_POLICY_BLOCKED_BUILTINS: Record<string, string[]> = {
 };
 
 const TOOL_POLICY_ALLOWED_BUILTIN_GROUPS: Record<string, BuiltinToolSchemaGroup[]> = {
-  "openai.tools.full": ["fs", "exec", "git", "http", "web", "ppt", "task", "browser"],
-  "anthropic.tools.full": ["fs", "exec", "git", "http", "web", "ppt", "task", "browser"],
-  "qwen.tools.conservative": ["fs", "git", "http", "web", "task", "browser"],
-  "kimi.tools.conservative": ["fs", "exec", "git", "http", "web", "task", "browser"],
-  "ark.tools.coding": ["fs", "exec", "git", "http", "web", "task", "browser"],
-  "minimax.tools.compat": ["fs", "git", "http", "web", "task", "browser"],
-  "deepseek.tools.full": ["fs", "exec", "git", "http", "web", "ppt", "task", "browser"],
-  "generic.tools.default": ["fs", "exec", "git", "http", "web", "ppt", "task", "browser"],
+  "openai.tools.full": ["fs", "exec", "git", "http", "web", "ppt", "task", "time", "browser"],
+  "anthropic.tools.full": ["fs", "exec", "git", "http", "web", "ppt", "task", "time", "browser"],
+  "qwen.tools.conservative": ["fs", "git", "http", "web", "task", "time", "browser"],
+  "kimi.tools.conservative": ["fs", "exec", "git", "http", "web", "task", "time", "browser"],
+  "ark.tools.coding": ["fs", "exec", "git", "http", "web", "task", "time", "browser"],
+  "minimax.tools.compat": ["fs", "git", "http", "web", "task", "time", "browser"],
+  "deepseek.tools.full": ["fs", "exec", "git", "http", "web", "ppt", "task", "time", "browser"],
+  "generic.tools.default": ["fs", "exec", "git", "http", "web", "ppt", "task", "time", "browser"],
 };
 
 const TOOL_POLICY_SUMMARY_LINES: Record<string, string[]> = {

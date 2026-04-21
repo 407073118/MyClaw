@@ -4,7 +4,7 @@ import { createBrMiniMaxProfile } from "@shared/br-minimax";
 import { coerceManagedProfileWrite, normalizeFirstClassVendorRoute } from "../src/main/services/managed-model-profile";
 
 describe("coerceManagedProfileWrite", () => {
-  it("locks br-minimax create payload to managed defaults", () => {
+  it("locks br-minimax create payload to managed defaults while preserving the selected model", () => {
     const coerced = coerceManagedProfileWrite(null, {
       name: "User Custom Name",
       provider: "openai-compatible",
@@ -20,13 +20,14 @@ describe("coerceManagedProfileWrite", () => {
 
     expect(coerced).toMatchObject({
       ...createBrMiniMaxProfile({ apiKey: "br-key" }),
+      model: "other-model",
       protocolTarget: "openai-chat-compatible",
       vendorFamily: "minimax",
       deploymentProfile: "br-private",
     });
   });
 
-  it("only allows apiKey to change when updating br-minimax", () => {
+  it("allows apiKey and selected model to change when updating br-minimax", () => {
     const existing = createBrMiniMaxProfile({
       id: "br-profile",
       apiKey: "old-key",
@@ -48,7 +49,7 @@ describe("coerceManagedProfileWrite", () => {
       deploymentProfile: "br-private",
       baseUrl: existing.baseUrl,
       baseUrlMode: existing.baseUrlMode,
-      model: existing.model,
+      model: "changed-model",
       requestBody: existing.requestBody,
     });
   });

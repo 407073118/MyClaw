@@ -300,6 +300,8 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
   const [seekMs, setSeekMs] = useState<number | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [importingFollowUps, setImportingFollowUps] = useState(false);
+  const [followUpNotice, setFollowUpNotice] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const payload = await window.myClawAPI.meetings.get(meetingId);
@@ -356,6 +358,21 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
     await refresh();
   };
 
+  const handleBuildFollowUps = async () => {
+    setImportingFollowUps(true);
+    try {
+      const payload = await window.myClawAPI.meetings.buildFollowUps(meetingId);
+      const total = payload.commitments.length + payload.reminders.length + payload.suggestedEvents.length;
+      setFollowUpNotice(
+        total > 0
+          ? `已导入 ${total} 个跟进事项到时间中心。`
+          : "没有识别到可导入的跟进事项。",
+      );
+    } finally {
+      setImportingFollowUps(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)" }}>加载中...</div>
@@ -402,6 +419,14 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
           </button>
           <button
             type="button"
+            className="btn-premium accent"
+            onClick={handleBuildFollowUps}
+            disabled={processing || importingFollowUps}
+          >
+            {importingFollowUps ? "导入中..." : "导入到时间中心"}
+          </button>
+          <button
+            type="button"
             className="glass-action-btn glass-action-btn--danger"
             onClick={handleDelete}
           >
@@ -422,6 +447,21 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
           }}
         >
           后处理进行中：{pill.text}。该会议将在后台自动完成，无需停留在此页面。
+        </div>
+      )}
+
+      {followUpNotice && (
+        <div
+          style={{
+            padding: "12px 16px",
+            borderRadius: "var(--radius-lg)",
+            background: "rgba(16, 163, 127, 0.12)",
+            border: "1px solid rgba(16, 163, 127, 0.3)",
+            color: "var(--text-primary)",
+            fontSize: 13,
+          }}
+        >
+          {followUpNotice}
         </div>
       )}
 

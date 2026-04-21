@@ -337,6 +337,7 @@ export const anthropicMessagesDriver: ProtocolDriver = {
         reasoning: result.reasoning,
         toolCalls: result.toolCalls,
         finishReason: result.finishReason,
+        streamCompleted: result.streamCompleted,
         usage: result.usage,
         requestVariantId: transportMetadata.requestVariantId,
         fallbackReason: transportMetadata.fallbackReason,

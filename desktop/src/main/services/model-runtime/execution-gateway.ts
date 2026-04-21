@@ -92,6 +92,7 @@ function normalizeModelCallResult(result: ModelCallResult): ProtocolExecutionOut
     reasoning: result.reasoning,
     toolCalls: result.toolCalls,
     finishReason: result.finishReason,
+    streamCompleted: result.streamCompleted,
     usage: result.usage,
     responseId: null,
     requestVariantId: result.transport?.requestVariantId ?? "primary",

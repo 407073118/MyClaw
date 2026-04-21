@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import type { AsrConfig, MeetingEvent } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
+import { extractMeetingFollowUps } from "../services/meeting-follow-up-service";
 import { saveSettings } from "../services/state-persistence";
 
 /**
@@ -55,6 +56,116 @@ export function registerMeetingHandlers(ctx: RuntimeContext): void {
       meeting: meeting ?? null,
       transcript,
       summary,
+    };
+  });
+
+  ipcMain.handle("meeting:build-follow-ups", async (_event, meetingId: string) => {
+    const followUpSource = recorder.getFollowUpSource(meetingId);
+    if (!followUpSource.meeting) {
+      console.warn("[meeting] 未找到会议，无法导入时间中心", { meetingId });
+      return {
+        commitments: [],
+        reminders: [],
+        suggestedEvents: [],
+      };
+    }
+
+    const timeApplication = ctx.services.timeApplication;
+    if (!timeApplication) {
+      throw new Error("timeApplication is unavailable");
+    }
+
+    const summaryText = followUpSource.summary
+      ?? followUpSource.transcript?.segments.map((segment) => segment.text.trim()).filter(Boolean).join("\n")
+      ?? "";
+
+    if (!summaryText.trim()) {
+      console.info("[meeting] 会议没有可导入的纪要或转写文本", {
+        meetingId,
+        title: followUpSource.meeting.title,
+      });
+      return {
+        commitments: [],
+        reminders: [],
+        suggestedEvents: [],
+      };
+    }
+
+    const timezone = (await timeApplication.getAvailabilityPolicy())?.timezone ?? "Asia/Shanghai";
+    console.info("[meeting] 开始导入会议跟进事项到时间中心", {
+      meetingId,
+      title: followUpSource.meeting.title,
+      timezone,
+    });
+
+    const drafts = await extractMeetingFollowUps({
+      meetingId,
+      title: followUpSource.meeting.title,
+      summary: summaryText,
+      timezone,
+    });
+
+    const commitments = await Promise.all(
+      drafts.commitments.map((item) =>
+        timeApplication.saveTaskCommitment({
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          dueAt: item.dueAt,
+          durationMinutes: item.durationMinutes,
+          timezone: item.timezone,
+          ownerScope: item.ownerScope,
+          ownerId: item.ownerId,
+          priority: item.priority,
+          status: item.status,
+          source: item.source,
+          externalRef: item.externalRef,
+        })),
+    );
+    const reminders = await Promise.all(
+      drafts.reminders.map((item) =>
+        timeApplication.saveReminder({
+          id: item.id,
+          title: item.title,
+          body: item.body,
+          triggerAt: item.triggerAt,
+          timezone: item.timezone,
+          ownerScope: item.ownerScope,
+          ownerId: item.ownerId,
+          status: item.status,
+          source: item.source,
+          externalRef: item.externalRef,
+        })),
+    );
+    const suggestedEvents = await Promise.all(
+      drafts.suggestedEvents.map((item) =>
+        timeApplication.saveCalendarEvent({
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          startsAt: item.startsAt,
+          endsAt: item.endsAt,
+          timezone: item.timezone,
+          ownerScope: item.ownerScope,
+          ownerId: item.ownerId,
+          status: item.status,
+          source: item.source,
+          externalRef: item.externalRef,
+          location: item.location,
+        })),
+    );
+
+    console.info("[meeting] 会议跟进事项已导入时间中心", {
+      meetingId,
+      commitments: commitments.length,
+      reminders: reminders.length,
+      suggestedEvents: suggestedEvents.length,
+    });
+
+    return {
+      commitments,
+      reminders,
+      suggestedEvents,
     };
   });
 

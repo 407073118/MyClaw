@@ -256,7 +256,7 @@ function inferProviderFlavor(profile: ModelProfile): ProviderFlavor | undefined 
   if (baseUrl.includes("openrouter.ai")) return "openrouter";
   if (baseUrl.includes("vercel.com") && baseUrl.includes("gateway")) return "vercel-ai-gateway";
   if (baseUrl.includes("anthropic.com") || profile.provider === "anthropic") return "anthropic";
-  if (baseUrl.includes("cybotforge.100credit.cn") || model === "minimax-m2-5") return "br-minimax";
+  if (baseUrl.includes("cybotforge") || model === "minimax-m2-5") return "br-minimax";
   if (baseUrl.includes("moonshot") || model.startsWith("kimi")) return "moonshot";
   if (baseUrl.includes("dashscope.aliyuncs.com") || model.startsWith("qwen")) return "qwen";
   if (baseUrl.includes("api.deepseek.com") || model.startsWith("deepseek")) return "deepseek";

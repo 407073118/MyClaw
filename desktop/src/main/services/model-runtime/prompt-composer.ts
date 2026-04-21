@@ -5,6 +5,7 @@ import type {
   McpTool,
   PersonalPromptProfile,
   PromptSection,
+  ProtocolTarget,
   ProviderFamily,
   SkillDefinition,
 } from "@shared/contracts";
@@ -48,6 +49,8 @@ export type ComposePromptInput = {
   session: ChatSession;
   workingDir: string;
   providerFamily: ProviderFamily;
+  protocolTarget?: ProtocolTarget | null;
+  deploymentProfile?: string | null;
   experienceProfileId: ExperienceProfileId;
   promptPolicyId?: string | null;
   toolPolicyId?: string | null;
@@ -55,13 +58,35 @@ export type ComposePromptInput = {
   skills?: SkillDefinition[];
   gitBranch?: string | null;
   personalPromptProfile?: PersonalPromptProfile | null;
-  reasoningEffort?: "low" | "medium" | "high" | null;
+  reasoningEffort?: "low" | "medium" | "high" | "xhigh" | null;
   enrichedContextBlock?: string | null;
   artifactContextBlock?: string | null;
   /** 关联会议录音的转写稿上下文块，用户选择「对话分析」时由 sessions 主链填入。 */
   meetingContextBlock?: string | null;
   mcpTools?: Array<McpTool & { serverId: string }>;
 };
+
+/** 仅在百融 MiniMax Responses 深度思考路线下注入更强的规划控制提示。 */
+function shouldApplyBrMiniMaxResponsesDeepPlanningOverlay(input: Pick<
+  ComposePromptInput,
+  "providerFamily" | "protocolTarget" | "deploymentProfile" | "reasoningEffort"
+>): boolean {
+  return input.providerFamily === "br-minimax"
+    && input.protocolTarget === "openai-responses"
+    && input.deploymentProfile === "br-private"
+    && (input.reasoningEffort === "high" || input.reasoningEffort === "xhigh");
+}
+
+/** 为百融 MiniMax Responses 深度思考路线构建更硬的规划阶段提示。 */
+function buildBrMiniMaxResponsesDeepPlanningOverlay(): string {
+  return [
+    "For research, analysis, comparison, or report requests, the first round is planning-only.",
+    "Create the full task set before execution.",
+    "Do not describe multiple steps in prose and then create only one task.",
+    "If the plan does not yet cover information gathering, core analysis, and output synthesis, continue planning.",
+    "Do not call work tools until the planning phase is complete.",
+  ].join("\n");
+}
 
 // ── Task Planning 引导内容 ──────────────────────────────────────
 
@@ -230,6 +255,11 @@ function buildToolUsageContent(
     "- Workflow: understand requirements → `ppt_themes` to pick a theme → structure slides as JSON → `ppt_generate` to create the file.",
     "- Available layouts: cover(封面), section(章节过渡), key_points(要点列表), metrics(数据大字报), comparison(左右对比), closing(结束页).",
     "- If a `ppt-designer` skill is available, invoke it first for design methodology guidance.",
+    "## Time",
+    "- `reminder_create` / `reminder_list` — Manage user-facing reminders in the local desktop time center.",
+    "- `schedule_job_create` / `schedule_job_list` — Manage autonomous scheduled jobs for workflows, silicon persons, or assistant prompts.",
+    "- `today_brief_get` — Read the current local today brief without mutating state.",
+    "- Use `reminder_create` for user attention and `schedule_job_create` for autonomous time-based execution.",
   ];
   if (mcpTools && mcpTools.length > 0) {
     lines.push(
@@ -395,6 +425,15 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
     "task",
     buildTaskPlanningContent(effort),
   ));
+
+  if (shouldApplyBrMiniMaxResponsesDeepPlanningOverlay(input)) {
+    sections.push(createSection(
+      "minimax-deep-planning-controller",
+      "MiniMax Responses Deep Planning Controller",
+      "task",
+      buildBrMiniMaxResponsesDeepPlanningOverlay(),
+    ));
+  }
 
   sections.push(createSection(
     "tool-strategy",

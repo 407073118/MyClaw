@@ -14,7 +14,7 @@ import type {
 } from "@shared/contracts";
 
 import type { MyClawPaths } from "./directory-service";
-import { deriveSiliconPersonPaths } from "./directory-service";
+import { deriveSiliconPersonPaths, getSessionDataDir, getPersonSessionDataDir } from "./directory-service";
 import type { ArtifactRegistry } from "./artifact-registry";
 
 export type ArtifactLinkInput = {
@@ -106,10 +106,15 @@ export class ArtifactManager {
     scope: ArtifactScopeRef,
     siliconPersonId?: string | null,
   ): string {
-    if (storageClass === "artifact") {
-      if (scope.scopeKind === "session") {
-        return join(this.paths.artifactsDir, "sessions", scope.scopeId);
+    // 会话产出统一落入 data/<sessionId>/ 目录（懒创建）
+    if (scope.scopeKind === "session") {
+      if (siliconPersonId) {
+        return getPersonSessionDataDir(this.paths, siliconPersonId, scope.scopeId);
       }
+      return getSessionDataDir(this.paths, scope.scopeId);
+    }
+
+    if (storageClass === "artifact") {
       if (scope.scopeKind === "workflowRun") {
         return join(this.paths.artifactsDir, "workflows", scope.scopeId);
       }

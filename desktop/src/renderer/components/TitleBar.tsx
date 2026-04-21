@@ -13,6 +13,7 @@ const PAGE_LABELS: Record<string, string> = {
   "/skills": "Skills",
   "/employees": "硅基员工",
   "/workflows": "Workflows",
+  "/time": "Time Center",
   "/publish-drafts": "Publish",
   "/me/prompt": "My Prompt",
   "/settings": "Settings",
@@ -27,8 +28,19 @@ function resolvePageLabel(pathname: string): string {
   return "MyClaw";
 }
 
+type TitleBarAssistantChip = {
+  tone: "accent" | "warning" | "neutral";
+  label: string;
+  expanded: boolean;
+  onClick: () => void;
+};
+
+type TitleBarProps = {
+  assistantChip?: TitleBarAssistantChip | null;
+};
+
 /** 渲染自定义标题栏，并兼容 macOS 交通灯占位。 */
-export default function TitleBar() {
+export default function TitleBar({ assistantChip = null }: TitleBarProps) {
   const api = window.myClawAPI;
   const isMac = api?.platform === "darwin";
 
@@ -61,6 +73,20 @@ export default function TitleBar() {
 
       {/* 可拖拽区域，覆盖标题栏大部分面积，方便直接拖动窗口。 */}
       <div className="titlebar-drag-region" />
+
+      {assistantChip ? (
+        <div className="titlebar-actions">
+          <button
+            type="button"
+            data-testid="titlebar-time-chip"
+            className={`titlebar-time-chip titlebar-time-chip--${assistantChip.tone} ${assistantChip.expanded ? "is-expanded" : ""}`}
+            onClick={assistantChip.onClick}
+          >
+            <span className="titlebar-time-chip__dot" />
+            <span className="titlebar-time-chip__label">{assistantChip.label}</span>
+          </button>
+        </div>
+      ) : null}
 
       <style>{`
         .titlebar {
@@ -119,6 +145,61 @@ export default function TitleBar() {
           height: 36px;
           -webkit-app-region: drag;
           app-region: drag;
+        }
+
+        .titlebar-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding-right: 12px;
+          -webkit-app-region: no-drag;
+          app-region: no-drag;
+        }
+
+        .titlebar-time-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          height: 26px;
+          max-width: 260px;
+          padding: 0 10px;
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 999px;
+          background: rgba(255,255,255,0.05);
+          color: var(--text-primary, #ededed);
+          cursor: pointer;
+        }
+
+        .titlebar-time-chip--warning {
+          border-color: rgba(245, 158, 11, 0.22);
+          background: rgba(245, 158, 11, 0.12);
+        }
+
+        .titlebar-time-chip--accent {
+          border-color: rgba(16, 163, 127, 0.24);
+          background: rgba(16, 163, 127, 0.12);
+        }
+
+        .titlebar-time-chip.is-expanded {
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+        }
+
+        .titlebar-time-chip__dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 999px;
+          background: currentColor;
+          opacity: 0.8;
+          flex-shrink: 0;
+        }
+
+        .titlebar-time-chip__label {
+          display: block;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 12px;
+          font-weight: 600;
         }
       `}</style>
     </div>

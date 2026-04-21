@@ -130,7 +130,7 @@ describe("vendor runtime policy resolver", () => {
     const policy = resolveVendorRuntimePolicy({
       profile: makeProfile({
         providerFlavor: "br-minimax",
-        baseUrl: "http://api-pre.cybotforge.100credit.cn",
+        baseUrl: "http://api-cybotforge-pre.brapp.com",
         model: "minimax-m2-5",
       }),
       legacyExecutionPlan: makeLegacyExecutionPlan({

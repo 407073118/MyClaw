@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, McpServer, ModelProfile, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
 import { useWorkspaceStore } from "../stores/workspace";
 import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
 import { resolveReasoningControlSpec } from "../utils/reasoning-controls";
+import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
+import { localDateTimeToUtcIso } from "../../../shared/time/local-time";
 
 /** 把消息内容转成可直接展示的文本，兼容字符串和富结构内容。 */
 function textOf(content: unknown): string {
@@ -61,6 +63,15 @@ function workflowRunStatusLabel(status: string): string {
   } as Record<string, string>)[status] ?? status;
 }
 
+/** 把工作时段数组压缩成工作台易读摘要，优先展示首个配置窗口。 */
+function formatWorkingHoursSummary(workingHours: Array<{ start: string; end: string }>): string {
+  if (workingHours.length === 0) {
+    return "未配置";
+  }
+  const primary = workingHours[0];
+  return `${primary.start} - ${primary.end}`;
+}
+
 /** 从松散的 workflowRuns 记录里安全提取可展示的 run。 */
 function readWorkflowRunSummary(value: unknown): {
   id: string;
@@ -100,6 +111,7 @@ function readWorkflowRunSummary(value: unknown): {
 /** 编辑硅基员工实体，同时承载最小私域会话工作台。 */
 export default function SiliconPersonWorkspacePage() {
   const { id: siliconPersonId = "" } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const workspace = useWorkspaceStore();
   const [viewVersion, setViewVersion] = useState(0);
 
@@ -146,6 +158,10 @@ export default function SiliconPersonWorkspacePage() {
   const [activeStudioTab, setActiveStudioTab] = useState<"chat" | "profile" | "tasks" | "capabilities">("chat");
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const [draftMessage, setDraftMessage] = useState("");
+  const [scheduledWorkflowId, setScheduledWorkflowId] = useState("");
+  const [scheduledStartsAt, setScheduledStartsAt] = useState("2026-04-21T09:00");
+  const [scheduledIntervalMinutes, setScheduledIntervalMinutes] = useState("1440");
+  const [scheduleMessage, setScheduleMessage] = useState("");
 
   // 草稿状态，与当前硅基员工实体保持同构。
   const [draftName, setDraftName] = useState("");
@@ -181,6 +197,15 @@ export default function SiliconPersonWorkspacePage() {
         .filter((run) => draftWorkflowIds.includes(run.workflowId)),
     [draftWorkflowIds, workflowRunMap],
   );
+  const siliconPersonScheduleJobs = useMemo(
+    () =>
+      workspace.time.scheduleJobs.filter((job) => job.ownerScope === "silicon_person" && job.ownerId === siliconPersonId),
+    [workspace.time.scheduleJobs, siliconPersonId, viewVersion],
+  );
+  const siliconPersonWorkingHoursSummary = useMemo(
+    () => formatWorkingHoursSummary(workspace.time.availabilityPolicy?.workingHours ?? []),
+    [workspace.time.availabilityPolicy?.workingHours],
+  );
   const activeModelProfile = useMemo<ModelProfile | null>(
     () => workspace.models.find((model) => model.id === (draftModelProfileId || workspace.defaultModelProfileId || "")) ?? null,
     [draftModelProfileId, workspace.defaultModelProfileId, workspace.models],
@@ -206,6 +231,13 @@ export default function SiliconPersonWorkspacePage() {
     setDraftReasoningEnabled(siliconPerson.reasoningEnabled ?? true);
     setDraftReasoningEffort(siliconPerson.reasoningEffort ?? "medium");
   }, [siliconPerson?.id, siliconPerson?.updatedAt, siliconPerson?.approvalMode]);
+
+  // 默认把首个已绑定 workflow 作为定时任务创建目标，减少重复选择。
+  useEffect(() => {
+    if (!scheduledWorkflowId && boundWorkflows[0]?.workflowId) {
+      setScheduledWorkflowId(boundWorkflows[0].workflowId);
+    }
+  }, [boundWorkflows, scheduledWorkflowId]);
 
   // 加载员工独立工作空间的 skills、MCP 服务和路径信息。
   const loadPersonResources = useCallback(async () => {
@@ -400,6 +432,48 @@ export default function SiliconPersonWorkspacePage() {
     }
   }
 
+  /** 为当前硅基员工创建周期性 workflow 计划任务，统一复用时间中心存储。 */
+  async function handleCreateScheduledWorkflowJob() {
+    if (!siliconPersonId || !scheduledWorkflowId) {
+      setScheduleMessage("请先选择要绑定的工作流。");
+      return;
+    }
+
+    const timezone = workspace.time.availabilityPolicy?.timezone ?? "Asia/Shanghai";
+    const intervalMinutes = Number(scheduledIntervalMinutes);
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+      setScheduleMessage("周期分钟必须是大于 0 的数字。");
+      return;
+    }
+
+    const workflow = workspace.workflows.find((item) => item.id === scheduledWorkflowId);
+    const startsAt = localDateTimeToUtcIso(scheduledStartsAt, timezone);
+    console.info("[silicon-person-studio] 创建硅基员工定时工作流", {
+      siliconPersonId,
+      workflowId: scheduledWorkflowId,
+      startsAt,
+      intervalMinutes,
+    });
+
+    await workspace.createScheduleJob({
+      kind: "schedule_job",
+      title: `${workflow?.name ?? scheduledWorkflowId} 定时运行`,
+      description: `硅基员工 ${siliconPerson?.name ?? siliconPersonId} 周期执行 ${workflow?.name ?? scheduledWorkflowId}`,
+      scheduleKind: "interval",
+      timezone,
+      ownerScope: "silicon_person",
+      ownerId: siliconPersonId,
+      status: "scheduled",
+      source: "manual",
+      startsAt,
+      intervalMinutes,
+      executor: "workflow",
+      executorTargetId: scheduledWorkflowId,
+      nextRunAt: startsAt,
+    });
+    setScheduleMessage("已创建定时工作流。");
+  }
+
   /** 保存侧栏中的硅基员工角色卡和 workflow 绑定信息。 */
   async function handleSave() {
     if (!siliconPersonId) return;
@@ -544,6 +618,18 @@ export default function SiliconPersonWorkspacePage() {
       {/* ── Header ── */}
       <header className="ws-header">
         <div className="ws-header-top">
+          <button
+            type="button"
+            className="glass-action-btn ws-back-btn"
+            data-testid="ws-back-btn"
+            onClick={() => navigate("/employees")}
+            title="返回硅基员工列表"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            返回
+          </button>
           <div className="ws-identity">
             <div className="ws-avatar" style={{ background: pickAvatarColor(siliconPerson?.name ?? "?") }}>
               <span>{(siliconPerson?.name ?? "?")[0]}</span>
@@ -674,17 +760,30 @@ export default function SiliconPersonWorkspacePage() {
                     <h4>历史消息</h4>
                     {currentSessionMessages.length > 0 ? (
                       <div className="ws-message-list" data-testid="silicon-person-message-list">
-                        {currentSessionMessages.map((message) => (
-                          <div key={message.id} className={`ws-msg ws-msg--${message.role}`}>
-                            <span className="ws-msg-role">{roleLabel(message.role)}</span>
-                            <div className="ws-msg-body">
-                              <p>{textOf(message.content) || "暂不支持展示的消息内容"}</p>
-                              {typeof message.createdAt === "string" && (
-                                <span className="ws-msg-time">{message.createdAt}</span>
+                        {currentSessionMessages.map((message, index) => {
+                          const prev = currentSessionMessages[index - 1];
+                          const showDateSep = typeof message.createdAt === "string" && (
+                            index === 0 || (typeof prev?.createdAt === "string" && isDifferentDay(prev.createdAt, message.createdAt))
+                          );
+                          return (
+                            <React.Fragment key={message.id}>
+                              {showDateSep && (
+                                <div className="ws-date-separator"><span>{formatDateSeparator(message.createdAt)}</span></div>
                               )}
-                            </div>
-                          </div>
-                        ))}
+                              <div className={`ws-msg ws-msg--${message.role}`}>
+                                <span className="ws-msg-role">{roleLabel(message.role)}</span>
+                                <div className="ws-msg-body">
+                                  <p>{textOf(message.content) || "暂不支持展示的消息内容"}</p>
+                                  {typeof message.createdAt === "string" && (
+                                    <span className="ws-msg-time" title={formatFullTime(message.createdAt)}>
+                                      {formatMessageTime(message.createdAt)}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </React.Fragment>
+                          );
+                        })}
                       </div>
                     ) : (
                       <div className="ws-empty-state">
@@ -740,10 +839,9 @@ export default function SiliconPersonWorkspacePage() {
               <WorkFilesPanel
                 scope={workFilesScope}
                 mode="page"
-                allowGlobalJump
-                title="Current Work Files"
-                description="Drafts, results, and deliverables captured from the current employee session."
-                emptyHint="No managed files for the current employee session yet."
+                title="会话文件"
+                description="当前对话产生的文件"
+                emptyHint="暂无文件——对话产生的文件会显示在这里"
               />
             </article>
           </section>
@@ -999,6 +1097,75 @@ export default function SiliconPersonWorkspacePage() {
               )}
             </article>
 
+            <article className="ws-card">
+              <div className="ws-cap-header">
+                <div>
+                  <h3>定时任务</h3>
+                  <p className="ws-card-desc">为硅基员工绑定周期性 workflow 运行窗口，并复用时间中心的统一调度。</p>
+                </div>
+                <span className="glass-pill glass-pill--muted">工作时段 {siliconPersonWorkingHoursSummary}</span>
+              </div>
+
+              <div className="ws-binding-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginTop: 16 }}>
+                <label className="ws-field">
+                  <span>定时工作流</span>
+                  <select value={scheduledWorkflowId} onChange={(e) => setScheduledWorkflowId(e.target.value)} aria-label="定时工作流">
+                    <option value="">选择工作流</option>
+                    {boundWorkflows.map(({ workflowId, summary }) => (
+                      <option key={workflowId} value={workflowId}>{summary.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="ws-field">
+                  <span>首次运行时间</span>
+                  <input
+                    type="datetime-local"
+                    value={scheduledStartsAt}
+                    onChange={(e) => setScheduledStartsAt(e.target.value)}
+                    aria-label="首次运行时间"
+                  />
+                </label>
+                <label className="ws-field">
+                  <span>周期分钟</span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={scheduledIntervalMinutes}
+                    onChange={(e) => setScheduledIntervalMinutes(e.target.value)}
+                    aria-label="周期分钟"
+                  />
+                </label>
+                <div className="ws-field ws-field--action">
+                  <span>执行策略</span>
+                  <button type="button" className="ws-btn-ghost" onClick={() => void handleCreateScheduledWorkflowJob()}>
+                    创建定时工作流
+                  </button>
+                </div>
+              </div>
+
+              {scheduleMessage ? (
+                <p className="ws-card-desc" style={{ marginTop: 12 }}>{scheduleMessage}</p>
+              ) : null}
+
+              {siliconPersonScheduleJobs.length > 0 ? (
+                <div className="ws-item-list" style={{ marginTop: 16 }}>
+                  {siliconPersonScheduleJobs.map((job) => (
+                    <div key={job.id} className="ws-item">
+                      <div className="ws-item-main">
+                        <strong>{job.title}</strong>
+                        <p>{job.nextRunAt ? `下次运行 ${job.nextRunAt}` : "等待下一次计算"}</p>
+                      </div>
+                      <span className="glass-pill glass-pill--muted">{job.scheduleKind}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="ws-empty-state" style={{ marginTop: 16 }}>
+                  <p>还没有为该硅基员工创建定时任务</p>
+                </div>
+              )}
+            </article>
+
             {boundWorkflowRuns.length > 0 && (
               <article className="ws-card">
                 <h3>运行记录</h3>
@@ -1056,7 +1223,8 @@ export default function SiliconPersonWorkspacePage() {
         /* ── Header ── */
         .ws-header { display: flex; flex-direction: column; gap: 14px; }
         .ws-header-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-        .ws-identity { display: flex; align-items: center; gap: 16px; }
+        .ws-back-btn { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 12px; font-size: 13px; flex-shrink: 0; }
+        .ws-identity { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; }
         .ws-avatar { width: 52px; height: 52px; border-radius: var(--radius-xl); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
         .ws-avatar span { font-size: 1.4rem; font-weight: 900; color: #fff; }
         .ws-identity-text { min-width: 0; }
@@ -1115,7 +1283,10 @@ export default function SiliconPersonWorkspacePage() {
         .ws-msg-role { flex-shrink: 0; width: 56px; font-size: 0.7rem; font-weight: 800; color: var(--text-muted); text-align: right; padding-top: 8px; }
         .ws-msg-body { flex: 1; padding: 10px 14px; border-radius: var(--radius-lg); background: var(--bg-base); border: 1px solid var(--glass-border); min-width: 0; }
         .ws-msg-body p { margin: 0; color: var(--text-primary); font-size: 0.85rem; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-        .ws-msg-time { display: block; margin-top: 6px; font-size: 0.65rem; color: var(--text-muted); }
+        .ws-msg-time { display: block; margin-top: 6px; font-size: 0.65rem; color: var(--text-muted); cursor: default; }
+        .ws-date-separator { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
+        .ws-date-separator::before, .ws-date-separator::after { content: ""; flex: 1; height: 1px; background: var(--glass-border); }
+        .ws-date-separator span { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
         .ws-msg--assistant .ws-msg-body { background: rgba(16,163,127,0.06); border-color: rgba(16,163,127,0.15); }
         .ws-msg--system .ws-msg-body { background: rgba(245,158,11,0.05); border-color: rgba(245,158,11,0.15); }
         .ws-msg--tool .ws-msg-body { background: rgba(139,92,246,0.05); border-color: rgba(139,92,246,0.15); }

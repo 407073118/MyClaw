@@ -104,7 +104,7 @@ function buildContext(): RuntimeContext {
         name: "BR MiniMax",
         provider: "openai-compatible",
         providerFlavor: "br-minimax",
-        baseUrl: "http://api-pre.cybotforge.100credit.cn",
+        baseUrl: "http://api-cybotforge-pre.brapp.com",
         apiKey: "test-key",
         model: "minimax-m2-5",
       }],

@@ -20,7 +20,7 @@ function describeSkillPackage(skill: SkillDefinition): string[] {
   if (skill.hasAssetsDirectory) features.push("assets");
   if (skill.hasTestsDirectory) features.push("tests");
   if (skill.hasAgentsDirectory) features.push("agents");
-  if (skill.hasViewFile) features.push("view.html");
+  if (skill.viewFiles?.length) features.push(...skill.viewFiles);
   return features;
 }
 
@@ -32,7 +32,6 @@ export default function SkillsPage() {
   const refreshSkills = useWorkspaceStore((s) => s.refreshSkills);
   const openSkillsFolder = useWorkspaceStore((s) => s.openSkillsFolder);
   const loadSkillDetail = useWorkspaceStore((s) => s.loadSkillDetail);
-  const openWebPanel = useWorkspaceStore((s) => s.openWebPanel);
   const navigate = useNavigate();
 
   const [selectedSkill, setSelectedSkill] = useState<SkillDefinition | null>(null);
@@ -101,16 +100,6 @@ export default function SkillsPage() {
     }
   }
 
-  /** 为带有 view.html 的 Skill 打开 WebPanel。 */
-  async function handleOpenSkillView(skill: SkillDefinition) {
-    const viewPath = await window.myClawAPI.webPanelResolveView(skill.id);
-    if (!viewPath) {
-      console.warn("[skills-view] No view.html found for skill", skill.id);
-      return;
-    }
-    openWebPanel(viewPath, skill.name, { skillId: skill.id, skillName: skill.name });
-  }
-
   return (
     <main className="page-container" style={{ height: "100%", overflowY: "auto" }}>
       <header className="page-header">
@@ -118,7 +107,7 @@ export default function SkillsPage() {
           <span className="eyebrow">Managed Skills</span>
           <h2 className="page-title">技能管理</h2>
           <p className="page-subtitle">
-            本地 Skills 列表。点击卡片查看详情，点击「预览」在右侧面板中打开。
+            本地 Skills 列表。点击卡片查看详情，在详情页中按需打开 HTML 面板。
           </p>
         </div>
         <div className="header-actions">
@@ -167,33 +156,15 @@ export default function SkillsPage() {
                 </div>
               </button>
 
-              <div className="skill-chips">
-                {describeSkillPackage(skill).map((feature) => (
-                  <span key={`${skill.id}-${feature}`} className="skill-package-chip">
-                    {feature}
-                  </span>
-                ))}
-              </div>
-
               <div className="glass-card__footer skill-actions-footer">
                 <button
                   type="button"
                   className="glass-action-btn"
-                  style={{ flex: 1, justifyContent: "center" }}
+                  style={{ width: "100%", justifyContent: "center" }}
                   onClick={() => navigate(`/skills/${skill.id}`)}
                 >
                   查看详情
                 </button>
-                {skill.hasViewFile && (
-                  <button
-                    type="button"
-                    className="glass-action-btn glass-action-btn--primary"
-                    style={{ flex: 1, justifyContent: "center" }}
-                    onClick={() => handleOpenSkillView(skill)}
-                  >
-                    预览
-                  </button>
-                )}
               </div>
             </div>
           ))}
@@ -299,15 +270,6 @@ export default function SkillsPage() {
           line-clamp: 2;
           -webkit-box-orient: vertical;
           overflow: hidden;
-        }
-
-        .skill-chips {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 6px;
-          padding: 0 20px 14px;
-          position: relative;
-          z-index: 1;
         }
 
         .skill-package-chip {

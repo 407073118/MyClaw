@@ -1,6 +1,7 @@
 !include "MUI2.nsh"
 !include "nsDialogs.nsh"
 !include "LogicLib.nsh"
+!include "FileFunc.nsh"
 
 !ifndef BUILD_UNINSTALLER
 Var DataDirInput
@@ -40,6 +41,49 @@ Function EnsureDefaultDataDirValue
   ${EndIf}
 FunctionEnd
 
+; 中文注释：阻止把数据目录设置为安装目录本身或其子目录，避免覆盖安装时误伤用户数据。
+Function ValidateDataDirAgainstInstallDir
+  Push $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+
+  ${GetFullPathName} $0 "$INSTDIR"
+  ${GetFullPathName} $1 "$DataDirValue"
+
+  StrCpy $2 "$0" "" -1
+  ${If} $2 == "\"
+    StrCpy $0 "$0" -1
+  ${EndIf}
+
+  StrCpy $2 "$1" "" -1
+  ${If} $2 == "\"
+    StrCpy $1 "$1" -1
+  ${EndIf}
+
+  System::Call 'kernel32::lstrcmpi(t r0, t r1)i.r2'
+  ${If} $2 == 0
+    MessageBox MB_ICONSTOP|MB_OK "数据目录不能与安装目录相同。请改为独立目录，例如 D:\MyClawData。"
+    Abort
+  ${EndIf}
+
+  StrCpy $3 "$0\"
+  StrLen $2 $3
+  StrCpy $4 $1 $2
+  System::Call 'kernel32::lstrcmpi(t r3, t r4)i.r2'
+  ${If} $2 == 0
+    MessageBox MB_ICONSTOP|MB_OK "数据目录不能位于安装目录内。请改为安装目录之外的独立目录。"
+    Abort
+  ${EndIf}
+
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+
 ; 中文注释：创建“数据目录”选择页，引导用户把会话、模型、技能等运行数据放到可写目录。
 Function DataDirPageCreate
   !insertmacro MUI_HEADER_TEXT "选择数据目录" "请选择 MyClaw 的数据存储目录"
@@ -65,7 +109,7 @@ Function DataDirPageCreate
   Pop $DataDirBrowseButton
   ${NSD_OnClick} $DataDirBrowseButton DataDirBrowse
 
-  ${NSD_CreateLabel} 0u 84u 100% 30u "建议选择独立目录，例如 D:\MyClawData 或当前用户的 AppData\Local 目录。"
+  ${NSD_CreateLabel} 0u 84u 100% 30u "建议选择独立目录，例如 D:\MyClawData 或当前用户的 AppData\Local 目录。数据目录不能与安装目录相同，也不能放在安装目录里面。"
   Pop $0
 
   nsDialogs::Show
@@ -92,6 +136,8 @@ Function DataDirPageLeave
     Abort
   ${EndIf}
 
+  Call ValidateDataDirAgainstInstallDir
+
   ClearErrors
   CreateDirectory "$DataDirValue"
   IfErrors create_failed
@@ -106,6 +152,7 @@ FunctionEnd
 
 !macro customInstall
   Call EnsureDefaultDataDirValue
+  Call ValidateDataDirAgainstInstallDir
 
   ClearErrors
   FileOpen $0 "$INSTDIR\myclaw-data-root.txt" w

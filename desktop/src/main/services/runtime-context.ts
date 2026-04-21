@@ -23,6 +23,11 @@ import type { McpServerManager } from "./mcp-server-manager";
 import type { ResolvedModelCapability } from "./model-capability-resolver";
 import type { AppUpdaterService } from "./app-updater";
 import type { MeetingRecorder } from "./meeting-recorder";
+import type { TimeApplicationService } from "./time-application-service";
+import type { TimeJobExecutor } from "./time-job-executor";
+import type { TimeNotificationService } from "./time-notification-service";
+import type { TimeScheduler } from "./time-scheduler";
+import type { TimeOrchestrationStore } from "./time-orchestration-store";
 
 export type ActiveSessionRun = {
   runId: string;
@@ -76,6 +81,11 @@ export type RuntimeContext = {
     appUpdater: AppUpdaterService;
     resolveModelCapability?: (profile: ModelProfile) => ResolvedModelCapability;
     meetingRecorder?: MeetingRecorder;
+    timeApplication?: TimeApplicationService;
+    timeJobExecutor?: TimeJobExecutor;
+    timeNotificationService?: TimeNotificationService;
+    timeScheduler?: TimeScheduler;
+    timeStore?: TimeOrchestrationStore;
   };
   tools: {
     resolveBuiltinTools: () => ResolvedBuiltinTool[];

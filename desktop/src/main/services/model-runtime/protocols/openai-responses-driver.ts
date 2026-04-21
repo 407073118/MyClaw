@@ -584,6 +584,7 @@ export function buildOpenAiResponsesRequestBody(
   reasoningEffort?: "low" | "medium" | "high" | "xhigh",
   options?: {
     providerFamily?: BackgroundTaskHandle["providerFamily"];
+    deploymentProfile?: string | null;
     disableResponseStorage?: boolean;
     previousResponseId?: string | null;
     capabilityRoutes?: CapabilityExecutionRoute[];
@@ -611,6 +612,10 @@ export function buildOpenAiResponsesRequestBody(
     options?.nativeFileSearch ?? null,
   );
   const qwenThinkingBudget = resolveQwenResponsesThinkingBudget(reasoningEffort);
+  const enableBrMiniMaxParallelToolCalls = options?.providerFamily === "br-minimax"
+    && options?.deploymentProfile === "br-private"
+    && (reasoningEffort === "high" || reasoningEffort === "xhigh")
+    && normalizedTools.length > 0;
 
   if (options?.providerFamily === "qwen-native") {
     return {
@@ -641,6 +646,7 @@ export function buildOpenAiResponsesRequestBody(
     input,
     tools: normalizedTools,
     stream: options?.backgroundMode?.enabled ? false : true,
+    ...(enableBrMiniMaxParallelToolCalls ? { parallel_tool_calls: true } : {}),
     ...(options?.backgroundMode?.enabled ? { background: true } : {}),
     ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     ...(store !== undefined ? { store } : {}),
@@ -986,6 +992,7 @@ export const openAiResponsesDriver: ProtocolDriver = {
       reasoningEffort,
       {
         providerFamily: input.plan.providerFamily,
+        deploymentProfile: input.plan.deploymentProfile ?? null,
         disableResponseStorage: input.profile.responsesApiConfig?.disableResponseStorage,
         previousResponseId: input.profile.responsesApiConfig?.useServerState ? input.previousResponseId ?? null : null,
         capabilityRoutes: input.plan.capabilityRoutes,
@@ -1018,6 +1025,7 @@ export const openAiResponsesDriver: ProtocolDriver = {
         reasoning: result.reasoning,
         toolCalls: result.toolCalls,
         finishReason: result.finishReason,
+        streamCompleted: result.streamCompleted,
         usage: result.usage,
         responseId: null,
         requestVariantId: transportMetadata.requestVariantId,
@@ -1038,6 +1046,7 @@ export const openAiResponsesDriver: ProtocolDriver = {
         ?? input.profile.defaultReasoningEffort,
       {
         providerFamily: input.plan.providerFamily,
+        deploymentProfile: input.plan.deploymentProfile ?? null,
         disableResponseStorage: input.profile.responsesApiConfig?.disableResponseStorage,
         previousResponseId: input.profile.responsesApiConfig?.useServerState ? input.previousResponseId ?? null : null,
         capabilityRoutes: input.plan.capabilityRoutes,

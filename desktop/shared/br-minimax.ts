@@ -2,7 +2,7 @@ import type { ContextBudgetPolicy, JsonValue, ModelProfile } from "./contracts";
 
 export const BR_MINIMAX_PROVIDER_FLAVOR = "br-minimax" as const;
 export const BR_MINIMAX_DEFAULT_NAME = "BR MiniMax";
-export const BR_MINIMAX_BASE_URL = "http://api-pre.cybotforge.100credit.cn";
+export const BR_MINIMAX_BASE_URL = "http://api-cybotforge-pre.brapp.com";
 export const BR_MINIMAX_MODEL = "minimax-m2-5";
 export const BR_MINIMAX_RUNTIME_RAW_KEY = "brMiniMaxRuntime";
 
@@ -120,7 +120,7 @@ export function isBrMiniMaxProfile(
 
   const baseUrl = profile.baseUrl.trim().toLowerCase();
   const model = profile.model.trim().toLowerCase();
-  return baseUrl.includes("cybotforge.100credit.cn") || model === BR_MINIMAX_MODEL;
+  return baseUrl.includes("cybotforge") || model === BR_MINIMAX_MODEL;
 }
 
 /** 构建 BR MiniMax 托管 profile，除 apiKey 外全部使用受管控默认值。 */

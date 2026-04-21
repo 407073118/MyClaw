@@ -54,11 +54,12 @@ describe("SetupPage BR MiniMax onboarding", () => {
       ),
     );
 
-    expect(screen.getByRole("heading", { name: "连接 BR MiniMax" })).toBeTruthy();
-    expect(screen.getByText(/企业私有部署的 BR MiniMax/)).toBeTruthy();
-    expect(screen.queryByText("模型名称")).toBeNull();
-    expect(screen.queryByText("API 地址")).toBeNull();
-    expect(screen.getByText(/minimax-m2-5/)).toBeTruthy();
+    // 第一步：选择供应商 — 点击 BR MiniMax 卡片
+    expect(screen.getByRole("heading", { name: "选择你的 AI 模型供应商" })).toBeTruthy();
+    fireEvent.click(screen.getByText("BR MiniMax"));
+
+    // 第二步：配置表单 — 只要求 API Key
+    expect(screen.getByRole("heading", { name: "配置 BR MiniMax" })).toBeTruthy();
 
     fireEvent.change(screen.getByPlaceholderText("sk-..."), {
       target: { value: "br-key" },
@@ -69,7 +70,7 @@ describe("SetupPage BR MiniMax onboarding", () => {
     expect(createModelProfile.mock.calls[0]?.[0]).toMatchObject({
       name: "BR MiniMax",
       providerFlavor: "br-minimax",
-      baseUrl: "http://api-pre.cybotforge.100credit.cn",
+      baseUrl: "http://api-cybotforge-pre.brapp.com",
       model: "minimax-m2-5",
       apiKey: "br-key",
     });

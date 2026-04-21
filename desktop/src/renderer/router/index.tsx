@@ -22,6 +22,7 @@ import SiliconPersonWorkspacePage from "../pages/SiliconPersonWorkspacePage";
 import WorkflowsPage from "../pages/WorkflowsPage";
 import WorkflowStudioPage from "../pages/WorkflowStudioPage";
 import MeetingsPage from "../pages/MeetingsPage";
+import TimeCenterPage from "../pages/TimeCenterPage";
 import PublishDraftPage from "../pages/PublishDraftPage";
 import SettingsPage from "../pages/SettingsPage";
 import ModelsPage from "../pages/ModelsPage";
@@ -102,6 +103,7 @@ export function AppRoutes() {
         <Route path="/workflows/:id" element={<WorkflowStudioPage />} />
         <Route path="/meetings" element={<MeetingsPage />} />
         <Route path="/meetings/:id" element={<MeetingsPage />} />
+        <Route path="/time" element={<TimeCenterPage />} />
         <Route path="/publish-drafts" element={<PublishDraftPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/me/prompt" element={<PersonalPromptPage />} />
