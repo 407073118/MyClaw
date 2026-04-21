@@ -1816,7 +1816,9 @@ export default function ChatPage() {
               )}
 
               {/* 审批请求列表 */}
-              {sessionApprovalRequests.map((approval: any) => (
+              {sessionApprovalRequests.map((approval: any) => {
+                const isExternalPath = approval.source === "external-path" && approval.pathMeta;
+                return (
                 <div key={approval.id} className="message-row role-system">
                   <div className="message-avatar">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#eab308" strokeWidth="2">
@@ -1824,27 +1826,60 @@ export default function ChatPage() {
                     </svg>
                   </div>
                   <div className="message-body">
-                    <div className="message-header">需要审批</div>
+                    <div className="message-header">{isExternalPath ? "需要授权访问工作区外路径" : "需要审批"}</div>
                     <article className="approval-card" data-testid={`approval-card-${approval.id}`}>
-                      <h3>是否允许执行 {approval.label}？</h3>
-                      <p>{approval.detail}</p>
-                      {isResolvingApproval(approval.id) ? (
-                        <div className="approval-loading">
-                          <div className="typing-dots"><span></span><span></span><span></span></div>
-                          <span>正在提交审批并继续执行...</span>
-                        </div>
+                      {isExternalPath ? (
+                        <>
+                          <h3>
+                            {approval.pathMeta.operation === "read" ? "读取" : approval.pathMeta.operation === "write" ? "写入" : approval.pathMeta.operation === "delete" ? "删除" : "执行"}{" "}
+                            <code style={{ background: "var(--color-bg-subtle,#1c1d22)", padding: "2px 6px", borderRadius: 4, fontSize: 12 }}>
+                              {approval.pathMeta.path}
+                            </code>
+                          </h3>
+                          <p style={{ fontSize: 12, color: "var(--color-text-secondary,#9ca3af)" }}>
+                            工具 <strong>{approval.toolId}</strong>
+                            {typeof approval.pathMeta.size === "number" ? ` · ${(approval.pathMeta.size / 1024).toFixed(1)} KB` : ""}
+                            {approval.pathMeta.isBinary ? " · 二进制" : ""}
+                          </p>
+                          {isResolvingApproval(approval.id) ? (
+                            <div className="approval-loading">
+                              <div className="typing-dots"><span></span><span></span><span></span></div>
+                              <span>正在提交决策...</span>
+                            </div>
+                          ) : (
+                            <div className="approval-actions" style={{ flexWrap: "wrap" }}>
+                              <button data-testid="approval-action-allow-once" className="primary" onClick={() => void handleApproval(approval.id, "allow-once")}>仅此次</button>
+                              <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>本会话</button>
+                              <button data-testid="approval-action-allow-directory" className="secondary" onClick={() => void handleApproval(approval.id, "allow-directory")}>本目录（始终）</button>
+                              <button data-testid="approval-action-deny" className="secondary" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
+                              <button data-testid="approval-action-deny-persistent" className="secondary" onClick={() => void handleApproval(approval.id, "deny-persistent")}>永久拒绝此路径</button>
+                            </div>
+                          )}
+                        </>
                       ) : (
-                        <div className="approval-actions">
-                          <button data-testid="approval-action-deny" className="secondary" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
-                          <button data-testid="approval-action-allow-once" className="secondary" onClick={() => void handleApproval(approval.id, "allow-once")}>允许一次</button>
-                          <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>允许本次运行</button>
-                          <button data-testid="approval-action-always-allow-tool" className="primary" onClick={() => void handleApproval(approval.id, "always-allow-tool")}>始终允许此工具</button>
-                        </div>
+                        <>
+                          <h3>是否允许执行 {approval.label}？</h3>
+                          <p>{approval.detail}</p>
+                          {isResolvingApproval(approval.id) ? (
+                            <div className="approval-loading">
+                              <div className="typing-dots"><span></span><span></span><span></span></div>
+                              <span>正在提交审批并继续执行...</span>
+                            </div>
+                          ) : (
+                            <div className="approval-actions">
+                              <button data-testid="approval-action-deny" className="secondary" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
+                              <button data-testid="approval-action-allow-once" className="secondary" onClick={() => void handleApproval(approval.id, "allow-once")}>允许一次</button>
+                              <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>允许本次运行</button>
+                              <button data-testid="approval-action-always-allow-tool" className="primary" onClick={() => void handleApproval(approval.id, "always-allow-tool")}>始终允许此工具</button>
+                            </div>
+                          )}
+                        </>
                       )}
                     </article>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
 

@@ -13,6 +13,11 @@ import { saveSession, saveSiliconPerson, saveWorkflowRun, deleteWorkflowRunFile,
 import { trackSave } from "../services/pending-saves";
 import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../services/tool-schemas";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
+import { PathAccessPolicy, type PathPolicyApprovalCallback, type PathApprovalInput, type PathApprovalResponse } from "../services/path-access-policy";
+import { PathAccessAudit } from "../services/path-access-audit";
+import { extractPaths as extractUserMessagePaths } from "@shared/utils/path-extractor";
+import type { ExternalPathMeta, PathGrants } from "@shared/contracts";
+import { join as pathJoin } from "node:path";
 import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
 import { buildArtifactContextBlock } from "../services/artifact-context-builder";
@@ -119,6 +124,39 @@ function countConsecutiveRepeats(signatures: string[]): number {
 /** 共享的工具执行器实例（维护内存中的任务列表状态）。 */
 const toolExecutor = new BuiltinToolExecutor();
 
+/** 每个 chatSession 保留一份 PathAccessPolicy，跨消息累积 T2 / 缓存决策。 */
+const sessionPathPolicies = new Map<string, PathAccessPolicy>();
+
+/** 路径访问审计（全进程共享，日滚动）。 */
+let pathAuditSingleton: PathAccessAudit | null = null;
+function getOrCreatePathAudit(ctx: RuntimeContext): PathAccessAudit {
+  if (pathAuditSingleton) return pathAuditSingleton;
+  // 写到 userData/audit/ 下
+  const auditDir = pathJoin(ctx.runtime.paths.myClawDir, "audit");
+  pathAuditSingleton = new PathAccessAudit(auditDir);
+  return pathAuditSingleton;
+}
+
+function normalizeGrants(p: PathGrants | undefined): PathGrants {
+  return { allowedDirs: p?.allowedDirs ?? [], deniedPaths: p?.deniedPaths ?? [] };
+}
+
+function getOrCreateSessionPathPolicy(
+  sessionId: string,
+  workspaceRoot: string,
+  grants: PathGrants,
+): PathAccessPolicy {
+  let p = sessionPathPolicies.get(sessionId);
+  if (!p) {
+    p = new PathAccessPolicy(workspaceRoot, grants, null);
+    sessionPathPolicies.set(sessionId, p);
+  } else {
+    p.setWorkspaceRoot(workspaceRoot);
+    p.updatePersistentGrants(grants);
+  }
+  return p;
+}
+
 /** 应用退出时关闭浏览器，需在 index.ts 的 before-quit 中调用。 */
 export async function shutdownToolExecutor(): Promise<void> {
   await toolExecutor.shutdown();
@@ -128,9 +166,18 @@ export async function shutdownToolExecutor(): Promise<void> {
 // 审批系统
 // ---------------------------------------------------------------------------
 
+/**
+ * 审批决策联合类型：
+ *   - 通用工具审批："approve" | "deny" | "canceled"
+ *   - 外部路径审批："allow-once" | "allow-session" | "allow-directory" | "deny" | "deny-persistent" | "timeout"
+ */
+export type PendingApprovalDecision =
+  | "approve" | "deny" | "canceled"
+  | "allow-once" | "allow-session" | "allow-directory" | "deny-persistent" | "timeout";
+
 /** 待处理审批映射：approval request ID → { resolve, timeout }。 */
 const pendingApprovals = new Map<string, {
-  resolve: (decision: "approve" | "deny" | "canceled") => void;
+  resolve: (decision: PendingApprovalDecision) => void;
   timeout: ReturnType<typeof setTimeout>;
 }>();
 
@@ -2457,6 +2504,103 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       toolExecutor.setSkills(allSkills);
       toolExecutor.setAllowExternalPaths(allowsExternalPaths(ctx.state.getApprovals().mode));
 
+      // ---- 路径授权策略（五层信任体系）----
+      const approvalPolicyState = ctx.state.getApprovals();
+      const persistentPathGrants = normalizeGrants(approvalPolicyState.pathGrants);
+      const pathPolicy = getOrCreateSessionPathPolicy(sessionId, workingDir, persistentPathGrants);
+
+      // T1：从用户本轮消息里抽路径（Win/POSIX/UNC/WSL/file:// URI），自动放行
+      const turnUserPaths = typeof input.content === "string"
+        ? extractUserMessagePaths(input.content)
+        : [];
+      pathPolicy.setTurnUserReferencedPaths(turnUserPaths);
+      if (turnUserPaths.length > 0) {
+        console.info("[session:path-policy] 本轮消息抽取到外部路径（T1 自动放行）", {
+          sessionId,
+          paths: turnUserPaths.slice(0, 5),
+          totalCount: turnUserPaths.length,
+        });
+      }
+
+      // T4 审批 callback：复用 pendingApprovals 基础设施，120s 超时拒绝
+      const pathAccessCallback: PathPolicyApprovalCallback = async (req: PathApprovalInput): Promise<PathApprovalResponse> => {
+        const approvalId = randomUUID();
+        const risk = req.operation === "read" ? ToolRiskCategory.Read : ToolRiskCategory.Write;
+        const opLabel = req.operation === "read" ? "读取" : req.operation === "write" ? "写入" : req.operation === "delete" ? "删除" : "执行";
+        const meta: ExternalPathMeta = {
+          path: req.canonicalPath,
+          userPath: req.userPath,
+          operation: req.operation,
+          size: req.fileSize,
+          isBinary: req.isBinary,
+        };
+        const approvalRequest: ApprovalRequest = {
+          id: approvalId,
+          sessionId,
+          source: "external-path",
+          toolId: req.toolId,
+          label: `${opLabel} ${req.canonicalPath}`,
+          risk,
+          detail: `工具 ${req.toolId} 尝试${opLabel}工作区外路径：${req.canonicalPath}`,
+          pathMeta: meta,
+        };
+        syncChatRunState(session, sessionId, activeRun, {
+          runId,
+          status: activeRun.cancelRequested ? "canceling" : "running",
+          phase: "approval",
+          messageId: currentMessageId,
+          reason: activeRun.cancelRequested ? "user_requested" : null,
+        });
+        ctx.state.setApprovalRequests([...ctx.state.getApprovalRequests(), approvalRequest]);
+        broadcastToRenderers("session:stream", {
+          type: EventType.ApprovalRequested,
+          sessionId,
+          approvalRequest,
+        });
+        activeRun.pendingApprovalIds.push(approvalId);
+
+        type PathDecisionKind = "allow-once" | "allow-session" | "allow-directory" | "deny" | "deny-persistent" | "timeout";
+        const kind = await new Promise<PathDecisionKind>((resolve) => {
+          const timeout = setTimeout(() => {
+            if (pendingApprovals.has(approvalId)) {
+              pendingApprovals.get(approvalId)?.resolve("timeout");
+              pendingApprovals.delete(approvalId);
+              console.warn(`[approval:external-path] 120s 超时未响应，自动拒绝 ${approvalId}`);
+            }
+          }, 120 * 1000);
+          pendingApprovals.set(approvalId, {
+            resolve: (decision) => resolve(decision as PathDecisionKind),
+            timeout,
+          });
+        });
+
+        const pending = pendingApprovals.get(approvalId);
+        if (pending) clearTimeout(pending.timeout);
+        pendingApprovals.delete(approvalId);
+        activeRun.pendingApprovalIds = activeRun.pendingApprovalIds.filter((id) => id !== approvalId);
+        ctx.state.setApprovalRequests(
+          ctx.state.getApprovalRequests().filter((r) => r.id !== approvalId),
+        );
+
+        if (kind === "allow-directory") {
+          return { kind: "allow-directory" };
+        }
+        if (kind === "deny-persistent") {
+          // 持久化拒绝：更新 ApprovalPolicy.pathGrants.deniedPaths（就地变更，沿用 approvals.ts 的 mutate 约定）
+          const cur = ctx.state.getApprovals();
+          const nextGrants = normalizeGrants(cur.pathGrants);
+          if (!nextGrants.deniedPaths.includes(req.canonicalPath)) {
+            nextGrants.deniedPaths.push(req.canonicalPath);
+          }
+          (cur as ApprovalPolicy).pathGrants = nextGrants;
+          pathPolicy.updatePersistentGrants(nextGrants);
+        }
+        return { kind };
+      };
+      pathPolicy.setApprovalCallback(pathAccessCallback);
+      toolExecutor.setPathPolicy(pathPolicy);
+      toolExecutor.setPathAudit(getOrCreatePathAudit(ctx));
+
       // ----- 预先异步计算 Git 分支（非阻塞） -----
       const gitBranch = await getGitBranchAsync(workingDir);
 
@@ -2587,7 +2731,14 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   console.warn(`[approval] Timed out approval ${approvalId} after 5 minutes`);
                 }
               }, 5 * 60 * 1000);
-              pendingApprovals.set(approvalId, { resolve, timeout });
+              pendingApprovals.set(approvalId, {
+                resolve: (d) => {
+                  // 普通审批只关心 approve/deny/canceled；外部路径走自己的 callback 不经此处
+                  if (d === "approve" || d === "deny" || d === "canceled") resolve(d);
+                  else resolve("deny");
+                },
+                timeout,
+              });
             });
 
             const pending = pendingApprovals.get(approvalId);
@@ -3046,7 +3197,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                     console.warn(`[approval] Timed out approval ${approvalId} after 5 minutes`);
                   }
                 }, 5 * 60 * 1000);
-                pendingApprovals.set(approvalId, { resolve, timeout });
+                pendingApprovals.set(approvalId, {
+                  resolve: (d) => {
+                    if (d === "approve" || d === "deny" || d === "canceled") resolve(d);
+                    else resolve("deny");
+                  },
+                  timeout,
+                });
               });
             };
 
@@ -3165,7 +3322,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                       console.warn(`[approval] Timed out approval ${approvalId} after 5 minutes`);
                     }
                   }, 5 * 60 * 1000);
-                  pendingApprovals.set(approvalId, { resolve, timeout });
+                  pendingApprovals.set(approvalId, {
+                    resolve: (d) => {
+                      if (d === "approve" || d === "deny" || d === "canceled") resolve(d);
+                      else resolve("deny");
+                    },
+                    timeout,
+                  });
                 });
 
                 const pending = pendingApprovals.get(approvalId);
@@ -3264,6 +3427,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 } else {
                   const execResult = await toolExecutor.execute(toolId, label, workingDir, {
                     signal: abortController.signal,
+                    sessionId,
                   });
                   toolSucceeded = execResult.success;
                   toolOutput = execResult.success
@@ -3948,9 +4112,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         return { success: false };
       }
 
-      // "always-allow-tool" / "allow-session": 将 toolId 加入 alwaysAllowedTools 以跳过后续审批
-      if (decision === "always-allow-tool" || decision === "allow-session") {
-        const request = ctx.state.getApprovalRequests().find((r) => r.id === approvalId);
+      const request = ctx.state.getApprovalRequests().find((r) => r.id === approvalId);
+
+      // "always-allow-tool" / "allow-session" for 普通工具：将 toolId 加入 alwaysAllowedTools
+      if (
+        request?.source !== "external-path" &&
+        (decision === "always-allow-tool" || decision === "allow-session")
+      ) {
         if (request) {
           const policy = ctx.state.getApprovals();
           if (!policy.alwaysAllowedTools.includes(request.toolId)) {
@@ -3960,11 +4128,32 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         }
       }
 
+      // external-path: "allow-directory" 持久化：将 dir 写进 pathGrants.allowedDirs
+      if (request?.source === "external-path" && decision === "allow-directory" && request.pathMeta) {
+        const dir = request.pathMeta.suggestedDirectory
+          ?? (request.pathMeta.path.includes("/")
+              ? request.pathMeta.path.slice(0, request.pathMeta.path.lastIndexOf("/"))
+              : request.pathMeta.path.slice(0, request.pathMeta.path.lastIndexOf("\\")));
+        if (dir) {
+          const policy = ctx.state.getApprovals();
+          const grants = policy.pathGrants ?? { allowedDirs: [], deniedPaths: [] };
+          if (!grants.allowedDirs.includes(dir)) {
+            grants.allowedDirs.push(dir);
+            policy.pathGrants = grants;
+            console.info(`[approval:external-path] 持久化目录授权 ${dir}`);
+          }
+        }
+      }
+
       // 用户已响应，清理自动拒绝超时定时器
       clearTimeout(pending.timeout);
 
-      // 映射为 agentic loop 使用的 approve/deny
-      pending.resolve(decision === "deny" ? "deny" : "approve");
+      // external-path: 原样传递决策 kind；其它：映射为 approve/deny
+      if (request?.source === "external-path") {
+        pending.resolve(decision as PendingApprovalDecision);
+      } else {
+        pending.resolve(decision === "deny" ? "deny" : "approve");
+      }
       return { success: true };
     },
   );

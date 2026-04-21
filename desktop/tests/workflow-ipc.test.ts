@@ -63,6 +63,8 @@ vi.mock("../src/main/services/builtin-tool-executor", () => ({
   BuiltinToolExecutor: class {
     setSkills() {}
     setAllowExternalPaths() {}
+  setPathPolicy() {}
+  setPathAudit() {}
     async execute() { return { success: true, output: "" }; }
     async shutdown() {}
     isOutsideWorkspace() { return false; }

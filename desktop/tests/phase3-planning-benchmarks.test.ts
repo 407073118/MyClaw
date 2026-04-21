@@ -69,6 +69,8 @@ vi.mock("../src/main/services/builtin-tool-executor", () => ({
   BuiltinToolExecutor: class {
     setSkills(): void {}
     setAllowExternalPaths(): void {}
+    setPathPolicy(): void {}
+    setPathAudit(): void {}
     async execute(): Promise<{ success: boolean; output: string; error?: string }> {
       return toolExecuteMock();
     }

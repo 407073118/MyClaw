@@ -59,6 +59,8 @@ vi.mock("../../../src/main/services/tool-schemas", () => ({ buildToolSchemas: vi
 vi.mock("../../../src/main/services/builtin-tool-executor", () => ({ BuiltinToolExecutor: class {
   setSkills() {}
   setAllowExternalPaths() {}
+  setPathPolicy() {}
+  setPathAudit() {}
   getBrowserService() {
     return {};
   }

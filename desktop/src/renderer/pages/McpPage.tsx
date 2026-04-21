@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { McpServer, McpServerConfig } from "@shared/contracts";
-import { Plug, Plus, Download, X, Settings2, RefreshCw, Power } from "lucide-react";
+import { Plug, Plus, Download, X, Settings2, RefreshCw, Power, AlertCircle } from "lucide-react";
 
 // ── 辅助方法 ──────────────────────────────────────────────────────────────────
 

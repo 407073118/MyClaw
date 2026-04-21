@@ -274,11 +274,7 @@ type WorkspaceState = {
   addApprovalRequest: (request: ApprovalRequest) => void;
   removeApprovalRequest: (approvalId: string) => void;
   resolveApproval: (approvalId: string, decision: ApprovalDecision) => Promise<unknown>;
-  updateApprovalPolicy: (input: {
-    mode: ApprovalMode;
-    autoApproveReadOnly: boolean;
-    autoApproveSkills: boolean;
-  }) => Promise<ApprovalPolicy>;
+  updateApprovalPolicy: (input: Partial<ApprovalPolicy>) => Promise<ApprovalPolicy>;
   loadPersonalPrompt: () => Promise<PersonalPromptProfile>;
   updatePersonalPrompt: (prompt: string) => Promise<PersonalPromptProfile>;
   checkForAppUpdates: () => Promise<AppUpdateState>;

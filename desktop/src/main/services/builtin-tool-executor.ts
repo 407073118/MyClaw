@@ -13,6 +13,15 @@ import { dirname, join, relative, resolve } from "node:path";
 import type { SkillDefinition } from "@shared/contracts";
 import { BrowserService } from "./browser-service";
 import { PptEngine } from "./ppt/index";
+import {
+  canonicalize as canonicalizePath,
+  PathAccessPolicy,
+  type PathAccessDecision,
+  type PathOperation,
+} from "./path-access-policy";
+import { normalizeToolPath } from "./path-normalizer";
+import { extractPaths as extractShellPaths } from "@shared/utils/path-extractor";
+import { PathAccessAudit } from "./path-access-audit";
 
 export type ToolExecutionResult = {
   success: boolean;
@@ -70,7 +79,39 @@ type ExecSyncError = {
 
 type ToolExecutionOptions = {
   signal?: AbortSignal;
+  /** 可选会话 ID，供 PathAccessPolicy / audit 使用。 */
+  sessionId?: string;
 };
+
+/** 从工具 ID 推断操作类型（读 / 写 / 删 / 执行）。 */
+function inferOperation(toolId: string): PathOperation {
+  if (toolId === "fs.read" || toolId === "fs.list" || toolId === "fs.search" || toolId === "fs.find") return "read";
+  if (toolId === "fs.write") return "write";
+  if (toolId === "exec.command") return "exec";
+  if (toolId === "xlsx.extract") return "read";
+  // ppt.* 等默认读，输出路径另走 write
+  return "read";
+}
+
+/** 拒绝/无策略下给模型的错误消息。机读错误码在前，便于后续结构化处理。 */
+function formatDenialError(decision: PathAccessDecision, path: string, toolId: string): string {
+  const shorten = path.length > 200 ? path.slice(0, 200) + "…" : path;
+  switch (decision.reason) {
+    case "user_denied_once":
+    case "session_denied":
+      return `[E_PATH_DENIED_SESSION] 外部路径访问被用户拒绝："${shorten}"。不要重试本路径，也不要尝试路径变体；如需继续请直接询问用户是否授权。`;
+    case "user_denied_persistent":
+    case "persistent_denied":
+      return `[E_PATH_DENIED_PERSISTENT] 路径在永久拒绝列表："${shorten}"。请让用户在设置 → 路径授权 中解除后再试。`;
+    case "approval_timeout":
+      return `[E_PATH_APPROVAL_TIMEOUT] 外部路径审批超时（120 秒未响应）："${shorten}"。请向用户确认是否授权再重试。`;
+    case "no_path_policy":
+    case "no_approval_callback":
+      return `[E_PATH_POLICY_UNAVAILABLE] 路径 "${shorten}" 在工作区外，且当前会话未启用路径授权。请让用户在消息中明示此路径，或切换到允许外部路径的审批模式。`;
+    default:
+      return `[E_PATH_DENIED] 路径 "${shorten}" 在工作区外，未获授权（${decision.reason}）。${toolId} 无法继续；如需访问请让用户授权。`;
+  }
+}
 
 type AbortSignalScope = {
   signal: AbortSignal;
@@ -131,13 +172,63 @@ function isInsideBase(base: string, target: string): boolean {
   return normalizedTarget === normalizedBase || normalizedTarget.startsWith(`${normalizedBase}/`);
 }
 
+/**
+ * 路径越界错误。由 safeResolve 抛出，executor 外层 try/catch 识别后可触发
+ * PathAccessPolicy 的审批流；非类型化错误意味着上游没意识到"可以征询用户"。
+ */
+export class PathOutOfWorkspaceError extends Error {
+  readonly resolved: string;
+  readonly userPath: string;
+  readonly base: string;
+  constructor(base: string, userPath: string, resolved: string) {
+    super(`路径越界：尝试访问工作区外部路径 ${resolved}`);
+    this.name = "PathOutOfWorkspaceError";
+    this.base = base;
+    this.userPath = userPath;
+    this.resolved = resolved;
+  }
+}
+
 /** 安全解析用户路径，默认不允许越出工作区。 */
 function safeResolve(base: string, userPath: string, allowExternal = false): string {
   const resolved = resolve(base, userPath);
   if (!allowExternal && !isInsideBase(base, resolved)) {
-    throw new Error("路径越界：当前审批模式不允许访问工作区外部路径。");
+    throw new PathOutOfWorkspaceError(base, userPath, resolved);
   }
   return resolved;
+}
+
+/** 按路径扩展名粗判二进制（用于读前拦截 + xlsx/pdf 抽取工具提示）。 */
+const BINARY_EXT_MAP: Record<string, { mime: string; suggestedTool?: string }> = {
+  ".xlsx": { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", suggestedTool: "xlsx.extract" },
+  ".xls": { mime: "application/vnd.ms-excel", suggestedTool: "xlsx.extract" },
+  ".xlsm": { mime: "application/vnd.ms-excel.sheet.macroEnabled.12", suggestedTool: "xlsx.extract" },
+  ".csv": { mime: "text/csv" },
+  ".docx": { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", suggestedTool: "docx.extract" },
+  ".doc": { mime: "application/msword" },
+  ".pdf": { mime: "application/pdf", suggestedTool: "pdf.extract" },
+  ".pptx": { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" },
+  ".png": { mime: "image/png" },
+  ".jpg": { mime: "image/jpeg" },
+  ".jpeg": { mime: "image/jpeg" },
+  ".gif": { mime: "image/gif" },
+  ".webp": { mime: "image/webp" },
+  ".mp3": { mime: "audio/mpeg" },
+  ".wav": { mime: "audio/wav" },
+  ".mp4": { mime: "video/mp4" },
+  ".zip": { mime: "application/zip" },
+  ".tar": { mime: "application/x-tar" },
+  ".gz": { mime: "application/gzip" },
+  ".exe": { mime: "application/x-msdownload" },
+  ".dll": { mime: "application/x-msdownload" },
+};
+
+function detectBinaryByExt(p: string): { mime: string; suggestedTool?: string } | null {
+  const lower = p.toLowerCase();
+  const idx = lower.lastIndexOf(".");
+  if (idx < 0) return null;
+  const ext = lower.slice(idx);
+  return BINARY_EXT_MAP[ext] ?? null;
 }
 
 /** 校验 shell 命令是否命中高危黑名单。 */
@@ -626,11 +717,21 @@ async function findFilesInDir(base: string, root: string, pattern: string, maxRe
   }
 }
 
+/** 当前 execute() 调用内部的 per-call 上下文。*/
+type ExecutionContext = {
+  /** 本次 dispatch 专用：policy 判定通过后把当前 callsite 允许的 canonical paths 放这里。 */
+  readonly allowedCanonicalPaths: Set<string>;
+  /** 本次调用对应的 sessionId（用于 policy / audit）。 */
+  readonly sessionId: string | null;
+};
+
 export class BuiltinToolExecutor {
   private skills: SkillDefinition[] = [];
   private browserService = new BrowserService();
   private pptEngine = new PptEngine();
   private _allowExternalPaths = false;
+  private pathPolicy: PathAccessPolicy | null = null;
+  private pathAudit: PathAccessAudit | null = null;
 
   /** 更新技能列表。 */
   setSkills(skills: SkillDefinition[]): void {
@@ -648,9 +749,19 @@ export class BuiltinToolExecutor {
     await this.pptEngine.shutdown();
   }
 
-  /** 设置是否允许访问工作区外部路径。 */
+  /** 设置是否允许访问工作区外部路径（unrestricted 模式时全开）。 */
   setAllowExternalPaths(allow: boolean): void {
     this._allowExternalPaths = allow;
+  }
+
+  /** 注入 PathAccessPolicy（Phase 6）。若为 null 则回到旧"硬拒"行为。 */
+  setPathPolicy(policy: PathAccessPolicy | null): void {
+    this.pathPolicy = policy;
+  }
+
+  /** 注入审计写入器（Phase 9）。 */
+  setPathAudit(audit: PathAccessAudit | null): void {
+    this.pathAudit = audit;
   }
 
   /** 按工具 ID 执行内置工具。 */
@@ -661,26 +772,137 @@ export class BuiltinToolExecutor {
     options?: ToolExecutionOptions,
   ): Promise<ToolExecutionResult> {
     const cwd = workingDir ? resolve(workingDir) : process.cwd();
+    const ctx: ExecutionContext = {
+      allowedCanonicalPaths: new Set(),
+      sessionId: options?.sessionId ?? null,
+    };
+    // 最多重试一次：首次命中 PathOutOfWorkspaceError → 走 policy → 允许后把 canonical 入 allowlist → 再 dispatch
+    const attemptedApproval = new Set<string>();
 
-    try {
-      return await this.dispatch(toolId, label, cwd, options);
-    } catch (err) {
-      return {
-        success: false,
-        output: "",
-        error: err instanceof Error ? err.message : String(err),
-      };
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        return await this.dispatch(toolId, label, cwd, options, ctx);
+      } catch (err) {
+        if (err instanceof PathOutOfWorkspaceError) {
+          const key = err.resolved;
+          if (attemptedApproval.has(key)) {
+            // 已经征询过用户，仍然抛 → 说明用户拒绝或 allowlist 没生效
+            return { success: false, output: "", error: err.message };
+          }
+          attemptedApproval.add(key);
+
+          const decision = await this.resolveExternalPathDecision({
+            base: err.base,
+            userPath: err.userPath,
+            resolved: err.resolved,
+            toolId,
+            sessionId: ctx.sessionId,
+            operation: inferOperation(toolId),
+          });
+          await this.recordAudit(decision, toolId, ctx.sessionId);
+          if (decision.granted) {
+            ctx.allowedCanonicalPaths.add(decision.canonicalPath);
+            // 继续下一轮 attempt 重试 dispatch
+            continue;
+          }
+          return {
+            success: false,
+            output: "",
+            error: formatDenialError(decision, err.resolved, toolId),
+          };
+        }
+        return {
+          success: false,
+          output: "",
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     }
+    return { success: false, output: "", error: "路径审批重试上限：请刷新会话或拒绝该路径。" };
   }
 
-  /** 安全解析用户路径。 */
-  private resolvePathSafe(base: string, userPath: string): string {
-    return safeResolve(base, userPath, this._allowExternalPaths);
+  /**
+   * 安全解析用户路径。若 per-call 允许清单里已有该路径 canonical，则直接放行；
+   * 否则沿用原先的 base 边界检查（越界会抛 PathOutOfWorkspaceError）。
+   */
+  private resolvePathSafe(base: string, userPath: string, ctx?: ExecutionContext): string {
+    const resolved = resolve(base, userPath);
+    if (this._allowExternalPaths) return resolved;
+    if (ctx && ctx.allowedCanonicalPaths.has(resolved)) return resolved;
+    return safeResolve(base, userPath, false);
   }
 
   /** 判断路径是否位于工作区之外。 */
   isOutsideWorkspace(base: string, targetPath: string): boolean {
     return !isInsideBase(base, resolve(base, targetPath));
+  }
+
+  /** 走 PathAccessPolicy 拿到外部路径的访问决策。 */
+  private async resolveExternalPathDecision(input: {
+    base: string;
+    userPath: string;
+    resolved: string;
+    toolId: string;
+    sessionId: string | null;
+    operation: PathOperation;
+  }): Promise<PathAccessDecision> {
+    if (!this.pathPolicy) {
+      return {
+        tier: 4,
+        granted: false,
+        needsPrompt: false,
+        reason: "no_path_policy",
+        canonicalPath: input.resolved,
+      };
+    }
+    // 进一步 canonicalize（realpath 解 symlink）
+    const canonical = await canonicalizePath(normalizeToolPath(input.resolved, input.base));
+    let fileSize: number | undefined;
+    let isBinary = false;
+    if (input.operation === "read") {
+      const bin = detectBinaryByExt(canonical);
+      isBinary = !!bin;
+      try {
+        if (existsSync(canonical)) {
+          const st = await stat(canonical);
+          fileSize = st.size;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return this.pathPolicy.checkOrPrompt({
+      canonicalPath: canonical,
+      userPath: input.userPath,
+      operation: input.operation,
+      toolId: input.toolId,
+      sessionId: input.sessionId ?? "unknown",
+      fileSize,
+      isBinary,
+    });
+  }
+
+  private async recordAudit(
+    decision: PathAccessDecision,
+    toolId: string,
+    sessionId: string | null,
+  ): Promise<void> {
+    if (!this.pathAudit) return;
+    if (decision.tier === 0) return; // 工作区内不审计
+    try {
+      await this.pathAudit.record({
+        ts: new Date().toISOString(),
+        sessionId: sessionId ?? "unknown",
+        toolId,
+        operation: inferOperation(toolId),
+        path: decision.canonicalPath,
+        tier: decision.tier,
+        decision: decision.granted ? "granted" : "denied",
+        reason: decision.reason,
+      });
+    } catch {
+      // best-effort
+    }
   }
 
   /** 分发具体工具实现。 */
@@ -689,9 +911,27 @@ export class BuiltinToolExecutor {
     label: string,
     cwd: string,
     options?: ToolExecutionOptions,
+    ctx?: ExecutionContext,
   ): Promise<ToolExecutionResult> {
     if (toolId === "fs.read") {
-      const filePath = this.resolvePathSafe(cwd, label.trim());
+      const filePath = this.resolvePathSafe(cwd, label.trim(), ctx);
+      const bin = detectBinaryByExt(filePath);
+      if (bin) {
+        let size = -1;
+        try {
+          if (existsSync(filePath)) size = (await stat(filePath)).size;
+        } catch {
+          // ignore
+        }
+        const hint = bin.suggestedTool
+          ? `建议改用 \`${bin.suggestedTool}\` 工具解析本文件。`
+          : "fs.read 不支持读取二进制文件；若需抽取内容请使用专门工具。";
+        return {
+          success: false,
+          output: "",
+          error: `[E_BINARY_FILE] ${filePath}（${bin.mime}${size >= 0 ? `, ${size} 字节` : ""}）。${hint}`,
+        };
+      }
       const content = await readFile(filePath, "utf8");
       const truncated = content.length > 12000 ? content.slice(0, 12000) + "\n\n...（内容已截断）" : content;
       return { success: true, output: truncated };
@@ -699,7 +939,7 @@ export class BuiltinToolExecutor {
 
     if (toolId === "fs.write") {
       const { path: filePath, content } = parsePathAndContent(label);
-      const resolved = this.resolvePathSafe(cwd, filePath);
+      const resolved = this.resolvePathSafe(cwd, filePath, ctx);
       await mkdir(dirname(resolved), { recursive: true });
       await writeFile(resolved, content, "utf8");
       return {
@@ -710,7 +950,7 @@ export class BuiltinToolExecutor {
 
     if (toolId === "fs.list") {
       const targetPath = label.trim() || ".";
-      const resolved = this.resolvePathSafe(cwd, targetPath);
+      const resolved = this.resolvePathSafe(cwd, targetPath, ctx);
       const entries = await readdir(resolved, { withFileTypes: true });
       const lines = entries
         .map((entry) => (entry.isDirectory() ? "dir " : "file ") + entry.name)
@@ -720,7 +960,7 @@ export class BuiltinToolExecutor {
 
     if (toolId === "fs.search") {
       const { pattern, searchPath } = parseSearchPayload(label);
-      const resolved = this.resolvePathSafe(cwd, searchPath);
+      const resolved = this.resolvePathSafe(cwd, searchPath, ctx);
       const results: string[] = [];
       await searchTextInDir(resolved, pattern, 100, results, { count: 0 }, options?.signal);
       return { success: true, output: results.length > 0 ? results.join("\n") : "(无匹配)" };
@@ -728,14 +968,19 @@ export class BuiltinToolExecutor {
 
     if (toolId === "fs.find") {
       const { pattern, searchPath } = parseSearchPayload(label);
-      const resolved = this.resolvePathSafe(cwd, searchPath);
+      const resolved = this.resolvePathSafe(cwd, searchPath, ctx);
       const results: string[] = [];
       await findFilesInDir(resolved, resolved, pattern, 200, results, { count: 0 }, options?.signal);
       return { success: true, output: results.length > 0 ? results.join("\n") : "(无匹配文件)" };
     }
 
     if (toolId === "fs.edit") {
-      return this.executeFileEdit(label, cwd);
+      return this.executeFileEdit(label, cwd, ctx);
+    }
+
+    // xlsx.extract：用 ExcelJS 读表，返回 Markdown / CSV。外部路径会走 policy。
+    if (toolId === "xlsx.extract") {
+      return this.executeXlsxExtract(label, cwd, ctx);
     }
 
     if (toolId === "exec.command") {
@@ -753,6 +998,10 @@ export class BuiltinToolExecutor {
       if (validationError) {
         return { success: false, output: "", error: validationError };
       }
+
+      // Phase 11: 扫 shell command 里的路径字面量，若命中工作区外则走 policy
+      const shellDenial = await this.precheckShellExternalPaths(request.command, cwd, ctx, options?.sessionId ?? null);
+      if (shellDenial) return shellDenial;
 
       return this.executeShellCommand(request, cwd, options?.signal);
     }
@@ -820,7 +1069,7 @@ export class BuiltinToolExecutor {
       if (typeof input.outputPath !== "string" || !input.outputPath) {
         return { success: false, output: "", error: "缺少 outputPath 参数" };
       }
-      const safePath = this.resolvePathSafe(cwd, input.outputPath as string);
+      const safePath = this.resolvePathSafe(cwd, input.outputPath as string, ctx);
       input.outputPath = safePath;
       const result = await this.pptEngine.generate(input as any);
       if (!result.success) {
@@ -983,7 +1232,7 @@ export class BuiltinToolExecutor {
   }
 
   /** 处理局部文件编辑。 */
-  private async executeFileEdit(label: string, cwd: string): Promise<ToolExecutionResult> {
+  private async executeFileEdit(label: string, cwd: string, ctx?: ExecutionContext): Promise<ToolExecutionResult> {
     let filePath: string;
     let oldString: string;
     let newString: string;
@@ -1010,7 +1259,7 @@ export class BuiltinToolExecutor {
       return { success: false, output: "", error: "缺少 old_string。" };
     }
 
-    const resolved = this.resolvePathSafe(cwd, filePath);
+    const resolved = this.resolvePathSafe(cwd, filePath, ctx);
     if (!existsSync(resolved)) {
       return { success: false, output: "", error: "文件不存在：" + filePath };
     }
@@ -1049,6 +1298,115 @@ export class BuiltinToolExecutor {
         newString.split("\n").length +
         " 行",
     };
+  }
+
+  /** xlsx.extract：抽取 Excel 文件内容为 Markdown 表格。xlsx 包未装时给明确错误。 */
+  private async executeXlsxExtract(
+    label: string,
+    cwd: string,
+    ctx?: ExecutionContext,
+  ): Promise<ToolExecutionResult> {
+    let args: { path?: string; sheet?: string; maxRows?: number };
+    try {
+      args = JSON.parse(label);
+    } catch {
+      args = { path: label.trim() };
+    }
+    const p = (args.path ?? "").trim();
+    if (!p) {
+      return { success: false, output: "", error: 'xlsx.extract 需要参数 {"path": "<xlsx 文件路径>"}。' };
+    }
+    const resolved = this.resolvePathSafe(cwd, p, ctx);
+    if (!existsSync(resolved)) {
+      return { success: false, output: "", error: "文件不存在：" + p };
+    }
+    let xlsxMod: any;
+    try {
+      // 动态 require 避免 xlsx 未装时 main 进程启动失败
+      xlsxMod = require("xlsx");
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: "xlsx 依赖未安装，请在 desktop/ 目录执行 `pnpm install` 后重启桌面端。",
+      };
+    }
+    try {
+      const wb = xlsxMod.readFile(resolved);
+      const sheetName = args.sheet && wb.SheetNames.includes(args.sheet)
+        ? args.sheet
+        : wb.SheetNames[0];
+      const sheet = wb.Sheets[sheetName];
+      const rows: unknown[][] = xlsxMod.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+      const maxRows = Math.max(1, Math.min(args.maxRows ?? 200, 500));
+      const preview = rows.slice(0, maxRows);
+      if (preview.length === 0) {
+        return { success: true, output: `(工作表 "${sheetName}" 为空)` };
+      }
+      const colWidth = Math.max(...preview.map((r) => r.length));
+      const pad = (v: unknown) => String(v ?? "").replace(/\|/g, "\\|").slice(0, 200);
+      const headerRow = preview[0].map(pad);
+      const lines: string[] = [];
+      lines.push("| " + headerRow.concat(Array(Math.max(0, colWidth - headerRow.length)).fill("")).join(" | ") + " |");
+      lines.push("| " + Array(colWidth).fill("---").join(" | ") + " |");
+      for (let i = 1; i < preview.length; i++) {
+        const row = preview[i].map(pad);
+        const padded = row.concat(Array(Math.max(0, colWidth - row.length)).fill(""));
+        lines.push("| " + padded.join(" | ") + " |");
+      }
+      const allSheets = wb.SheetNames.join(", ");
+      const truncated = rows.length > preview.length
+        ? `\n\n（共 ${rows.length} 行，已显示前 ${preview.length} 行；传 maxRows 参数以显示更多）`
+        : "";
+      return {
+        success: true,
+        output: `工作表 "${sheetName}"（可选：${allSheets}）\n\n${lines.join("\n")}${truncated}`,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: `xlsx.extract 读取失败：${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  /**
+   * Phase 11：对 shell 命令里出现的路径字面量做工作区外预检查。
+   * 命中路径走 PathAccessPolicy：拒绝则返回错误，放行则继续执行。
+   */
+  private async precheckShellExternalPaths(
+    command: string,
+    cwd: string,
+    ctx: ExecutionContext | undefined,
+    sessionId: string | null,
+  ): Promise<ToolExecutionResult | null> {
+    if (!this.pathPolicy || this._allowExternalPaths) return null;
+    const paths = extractShellPaths(command);
+    if (paths.length === 0) return null;
+    for (const p of paths) {
+      const canonical = await canonicalizePath(normalizeToolPath(p, cwd));
+      // 工作区内跳过
+      if (!this.isOutsideWorkspace(cwd, canonical)) continue;
+      if (ctx && ctx.allowedCanonicalPaths.has(canonical)) continue;
+      const decision = await this.pathPolicy.checkOrPrompt({
+        canonicalPath: canonical,
+        userPath: p,
+        operation: "exec",
+        toolId: "exec.command",
+        sessionId: sessionId ?? "unknown",
+      });
+      await this.recordAudit(decision, "exec.command", sessionId);
+      if (!decision.granted) {
+        return {
+          success: false,
+          output: "",
+          error: formatDenialError(decision, canonical, "exec.command"),
+        };
+      }
+      if (ctx) ctx.allowedCanonicalPaths.add(canonical);
+    }
+    return null;
   }
 
   /** 执行 Git 命令（异步，不阻塞主进程事件循环）。 */

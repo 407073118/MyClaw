@@ -166,6 +166,53 @@ export default function SettingsPage() {
     });
   }
 
+  /** 路径授权清单子编辑器（T3 allowedDirs / T5 deniedPaths）。 */
+  function PathGrantsEditor({ kind }: { kind: "allowedDirs" | "deniedPaths" }) {
+    const grants = workspace.approvals?.pathGrants ?? { allowedDirs: [], deniedPaths: [] };
+    const list = grants[kind] ?? [];
+    const [draft, setDraft] = useState("");
+    const add = async () => {
+      const t = draft.trim();
+      if (!t) return;
+      const nextList = [...new Set([...list, t])];
+      const nextGrants = { ...grants, [kind]: nextList };
+      await workspace.updateApprovalPolicy({ pathGrants: nextGrants });
+      setDraft("");
+    };
+    const remove = async (target: string) => {
+      const nextList = list.filter((p) => p !== target);
+      const nextGrants = { ...grants, [kind]: nextList };
+      await workspace.updateApprovalPolicy({ pathGrants: nextGrants });
+    };
+    return (
+      <div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <input
+            className="desktop-input"
+            style={{ flex: 1 }}
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder={kind === "allowedDirs" ? "例如: F:\\面试录音" : "例如: C:\\Windows\\System32"}
+          />
+          <button className="btn-secondary" onClick={() => void add()}>添加</button>
+        </div>
+        {list.length === 0 ? (
+          <div style={{ color: "var(--color-text-secondary,#9ca3af)", fontSize: 13 }}>（暂无）</div>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {list.map((p) => (
+              <li key={p} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid var(--color-border,#2a2a2e)" }}>
+                <code style={{ fontSize: 12 }}>{p}</code>
+                <button className="btn-link" onClick={() => void remove(p)} style={{ fontSize: 12 }}>撤销</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+
   function renderAppUpdatePrimaryAction() {
     if (appUpdate.stage === "available") {
       return (
@@ -434,6 +481,23 @@ export default function SettingsPage() {
 
                 <div className="form-actions mt-4">
                   <button data-testid="approval-save" className="btn-primary" onClick={() => void saveApprovalPolicy()}>保存安全策略</button>
+                </div>
+              </div>
+
+              {/* ---- 路径授权（工作区外） ---- */}
+              <div className="settings-group-panel mt-4">
+                <h3>路径授权（工作区外访问）</h3>
+                <p className="description" style={{ marginBottom: 12 }}>
+                  用户消息里提到的路径会被自动放行一次；首次访问工作区外的未授权路径会触发审批。
+                  这里管理你已持久授权 / 拒绝的路径清单。
+                </p>
+                <div className="form-field">
+                  <label>持久允许的目录</label>
+                  <PathGrantsEditor kind="allowedDirs" />
+                </div>
+                <div className="form-field">
+                  <label>持久拒绝的路径</label>
+                  <PathGrantsEditor kind="deniedPaths" />
                 </div>
               </div>
             </div>

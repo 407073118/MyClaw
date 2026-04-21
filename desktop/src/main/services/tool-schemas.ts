@@ -51,13 +51,38 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "fs_read",
-        description: `Read the contents of a text file. Working directory: ${cwd}`,
+        description: `Read the contents of a text file. Supports paths outside the workspace — the user will be prompted to approve the first access to a new external path; paths the user mentioned in the current message are auto-allowed. For Excel files (.xlsx/.xls) use xlsx_extract instead. Working directory: ${cwd}`,
         parameters: {
           type: "object",
           properties: {
             path: {
               type: "string",
-              description: "File path relative to the working directory",
+              description: "File path. Relative paths resolve against the working directory; absolute paths (including workspace-external paths) are supported subject to user approval.",
+            },
+          },
+          required: ["path"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "xlsx_extract",
+        description: `Read an Excel workbook (.xlsx/.xls/.xlsm) and return its contents as a Markdown table. Subject to the same path-access consent rules as fs_read. Working directory: ${cwd}`,
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Path to the Excel file. Absolute or relative to the working directory.",
+            },
+            sheet: {
+              type: "string",
+              description: "Optional sheet name; defaults to the first sheet in the workbook.",
+            },
+            maxRows: {
+              type: "number",
+              description: "Maximum rows to include (default 200, hard cap 500).",
             },
           },
           required: ["path"],
@@ -1004,6 +1029,13 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
 
     case "ppt.generate":
       return JSON.stringify(args);
+
+    case "xlsx.extract":
+      return JSON.stringify({
+        path: args.path ?? "",
+        ...(args.sheet !== undefined ? { sheet: args.sheet } : {}),
+        ...(args.maxRows !== undefined ? { maxRows: args.maxRows } : {}),
+      });
 
     default: {
       // browser.*：以完整 JSON 形式传递，供执行器解析

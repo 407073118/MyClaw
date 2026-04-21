@@ -337,11 +337,7 @@ declare global {
         approvalId: string,
         decision: ApprovalDecision,
       ) => Promise<SessionPayload & { approvals: ApprovalPolicy; approvalRequests: ApprovalRequest[] }>;
-      updateApprovalPolicy: (input: {
-        mode: ApprovalMode;
-        autoApproveReadOnly: boolean;
-        autoApproveSkills: boolean;
-      }) => Promise<ApprovalsPayload>;
+      updateApprovalPolicy: (input: Partial<ApprovalPolicy>) => Promise<ApprovalsPayload>;
 
       // --- 个人长期 Prompt ---
       getPersonalPrompt: () => Promise<PersonalPromptProfile>;

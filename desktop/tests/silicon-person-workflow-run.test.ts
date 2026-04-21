@@ -118,6 +118,8 @@ vi.mock("../src/main/services/builtin-tool-executor", () => ({
     /** 测试里不需要真实 skills。 */
     setSkills(): void {}
     setAllowExternalPaths(): void {}
+    setPathPolicy(): void {}
+    setPathAudit(): void {}
 
     /** 测试里不需要真实工具执行。 */
     async execute(): Promise<{ success: boolean; output: string; error?: string }> {

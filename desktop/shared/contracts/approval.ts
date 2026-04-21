@@ -1,25 +1,53 @@
 import { ToolRiskCategory } from "./events";
 
 export type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
-export type ApprovalDecision = "deny" | "allow-once" | "allow-session" | "always-allow-tool";
+export type ApprovalDecision =
+  | "deny"
+  | "deny-persistent"
+  | "allow-once"
+  | "allow-session"
+  | "allow-directory"
+  | "always-allow-tool";
 export type ApprovalRequestSource =
   | "builtin-tool"
   | "mcp-tool"
   | "skill"
   | "shell-command"
-  | "network-request";
+  | "network-request"
+  | "external-path";
+
+/** 工作区外路径访问的持久化授权。粒度仅到目录，不支持单文件持久授权。 */
+export type PathGrants = {
+  /** 允许访问的目录列表（及其子路径）。 */
+  allowedDirs: string[];
+  /** 永久拒绝的路径列表（及其子路径）。 */
+  deniedPaths: string[];
+};
 
 export type ApprovalPolicy = {
   mode: ApprovalMode;
   autoApproveReadOnly: boolean;
   autoApproveSkills: boolean;
   alwaysAllowedTools: string[];
+  /** 可选：工作区外路径授权（目录级持久 allow / 路径级持久 deny）。 */
+  pathGrants?: PathGrants;
 };
 
 export type McpExecutionContext = {
   serverId?: string;
   toolName?: string;
   arguments?: Record<string, unknown>;
+};
+
+/** 外部路径审批的附带元信息，渲染端审批卡片展示用。 */
+export type ExternalPathMeta = {
+  path: string;
+  userPath: string;
+  operation: "read" | "write" | "delete" | "exec";
+  size?: number;
+  isBinary?: boolean;
+  /** 建议用户可以选择的目录授权粒度（通常是 dirname(path)）。 */
+  suggestedDirectory?: string;
 };
 
 export type ApprovalRequest = {
@@ -31,6 +59,7 @@ export type ApprovalRequest = {
   risk: ToolRiskCategory;
   detail: string;
   resumeConversation?: boolean;
+  pathMeta?: ExternalPathMeta;
 } & McpExecutionContext;
 
 export type ExecutionIntent = {
