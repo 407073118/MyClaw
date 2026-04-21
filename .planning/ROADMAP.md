@@ -95,6 +95,7 @@
 | 5. Structured Action Surfaces | 0/TBD | Not started | - |
 | 6. Advanced Planner Optimization | 0/TBD | Not started | - |
 | 7. Assistant Soul, Identity & System Prompt Foundation | 0/TBD | Not started | - |
+| 8. Document IR + document.read | 0/9 | Not started | - |
 
 ### Phase 7: Assistant Soul, Identity & System Prompt Foundation
 
@@ -105,3 +106,21 @@
 
 Plans:
 - [ ] TBD (run /gsd:plan-phase 7 to break down)
+
+### Phase 8: 统一文档理解能力（Document IR + document.read 门面）
+
+**Goal:** 让 desktop 助手原生（零 Python）理解 office / pdf / pptx / markdown / csv 文档：统一 DocumentIR 中间表示 + 单一 `document.read` 门面（stats / outline / read / search 四种 mode）+ sha256 磁盘缓存 + 安全边界（禁 XXE、禁 PDF JS、50MB 文件闸门、32000 字符硬顶）+ 模型引导（fs_read 硬拒绝、py 文案降级），让模型"遇到文档就写 Python 脚本"的路径被物理堵死。
+**Requirements**: TOOL-04, ASST-04, GOV-02
+**Depends on:** Phase 7
+**Plans:** 9 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — DocumentIR contract + parser registry interface + IR->Markdown renderer
+- [ ] 08-02-PLAN.md — sha256-keyed disk IR cache with LRU eviction (500MB cap)
+- [ ] 08-03-PLAN.md — document.read facade (mode router + 50MB gate + 32000 char cap + audit log) wired into executor and tool-schemas
+- [ ] 08-04-PLAN.md — xlsxParser against DocumentIR + xlsx.extract backward-compat alias
+- [ ] 08-05-PLAN.md — docxParser (mammoth + direct XML for tables / comments / footnotes / images) with XXE blocked
+- [ ] 08-06-PLAN.md — pdfParser (pdfjs-dist legacy build, isEvalSupported:false, honest "scanned page" marker)
+- [ ] 08-07-PLAN.md — pptxParser (slides + notes via jszip + safe XML walker, no external media fetch)
+- [ ] 08-08-PLAN.md — md / txt / csv parsers (marked lexer; BOM + delimiter + quoted-field handling for csv)
+- [ ] 08-09-PLAN.md — fs_read hard-reject for office/pdf/pptx + de-python buildSkillExecutionGuidance + document.read steering examples in schema
