@@ -210,14 +210,14 @@ function safeResolve(base: string, userPath: string, allowExternal = false): str
 
 /** 按路径扩展名粗判二进制（用于读前拦截 + xlsx/pdf 抽取工具提示）。 */
 const BINARY_EXT_MAP: Record<string, { mime: string; suggestedTool?: string }> = {
-  ".xlsx": { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", suggestedTool: "xlsx.extract" },
-  ".xls": { mime: "application/vnd.ms-excel", suggestedTool: "xlsx.extract" },
-  ".xlsm": { mime: "application/vnd.ms-excel.sheet.macroEnabled.12", suggestedTool: "xlsx.extract" },
+  ".xlsx": { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", suggestedTool: "document.read" },
+  ".xls": { mime: "application/vnd.ms-excel", suggestedTool: "document.read" },
+  ".xlsm": { mime: "application/vnd.ms-excel.sheet.macroEnabled.12", suggestedTool: "document.read" },
   ".csv": { mime: "text/csv" },
-  ".docx": { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", suggestedTool: "docx.extract" },
+  ".docx": { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", suggestedTool: "document.read" },
   ".doc": { mime: "application/msword" },
-  ".pdf": { mime: "application/pdf", suggestedTool: "pdf.extract" },
-  ".pptx": { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation" },
+  ".pdf": { mime: "application/pdf", suggestedTool: "document.read" },
+  ".pptx": { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", suggestedTool: "document.read" },
   ".png": { mime: "image/png" },
   ".jpg": { mime: "image/jpeg" },
   ".jpeg": { mime: "image/jpeg" },
@@ -239,6 +239,25 @@ function detectBinaryByExt(p: string): { mime: string; suggestedTool?: string } 
   if (idx < 0) return null;
   const ext = lower.slice(idx);
   return BINARY_EXT_MAP[ext] ?? null;
+}
+
+/**
+ * Phase 8 Plan 09：fs.read 遇到这些文档扩展名时必须硬拒绝并引导到 document.read，
+ * 避免模型回退到 python 脚本或把二进制当文本硬读。
+ */
+const DOC_HARD_REJECT_EXTS = new Set([".xlsx", ".xls", ".xlsm", ".docx", ".pdf", ".pptx"]);
+
+/** 生成可直接粘贴的 document.read 调用模板。pdf / pptx 推荐先看 stats；其他默认 outline。 */
+function buildDocumentReadTemplate(filePath: string, ext: string): string {
+  // docx / xlsx / xls / xlsm 先用 stats 看文档概况，pdf / pptx 同理。
+  // 所有文档格式统一建议 mode=stats 起步，让模型先看规模再决定下一步。
+  return JSON.stringify({ path: filePath, mode: "stats" });
+}
+
+/** 根据扩展名粗判文件路径。 */
+function extractLowerExt(p: string): string {
+  const m = p.match(/\.[^.\\/]+$/);
+  return m ? m[0].toLowerCase() : "";
 }
 
 /** 校验 shell 命令是否命中高危黑名单。 */
@@ -976,7 +995,43 @@ export class BuiltinToolExecutor {
     if (toolId === "fs.read") {
       const filePath = this.resolvePathSafe(cwd, label.trim(), ctx);
       const bin = detectBinaryByExt(filePath);
+      const lowerExt = extractLowerExt(filePath);
       if (bin) {
+        // Phase 8 Plan 09: office / pdf / pptx 硬拒绝，并提供可直接粘贴的 document.read 调用模板。
+        if (DOC_HARD_REJECT_EXTS.has(lowerExt)) {
+          const template = buildDocumentReadTemplate(filePath, lowerExt);
+          const legacyHint = (lowerExt === ".xlsx" || lowerExt === ".xls" || lowerExt === ".xlsm")
+            ? "（遗留用法：xlsx_extract 仍可用，但推荐迁移到 document.read）"
+            : "";
+          return {
+            success: false,
+            output: "",
+            error: [
+              `[E_DOC_USE_DOCUMENT_READ] 不要用 fs_read 读取 ${lowerExt} 文件。`,
+              `请调用 document.read，先用 mode=stats 看文档概况，再决定下一步。`,
+              `示例调用：document.read ${template}`,
+              legacyHint,
+            ].filter(Boolean).join("\n"),
+          };
+        }
+        // .doc 老格式未实现解析器：给出明确的"另存为 .docx"指引。
+        if (lowerExt === ".doc") {
+          return {
+            success: false,
+            output: "",
+            error: `[E_DOC_LEGACY_DOC_UNSUPPORTED] .doc 老格式未支持。请让用户在 Word 中"另存为 .docx"后再读。`,
+          };
+        }
+        // csv：允许读为文本，但追加一个软提示引导到 document.read。
+        if (lowerExt === ".csv") {
+          const content = await readFile(filePath, "utf8");
+          const truncated = content.length > 12000 ? content.slice(0, 12000) + "\n\n...（内容已截断）" : content;
+          return {
+            success: true,
+            output: truncated + "\n\n(tip: for structured access use document.read mode=read)",
+          };
+        }
+        // 其他二进制类型：保留原有 soft-hint 行为。
         let size = -1;
         try {
           if (existsSync(filePath)) size = (await stat(filePath)).size;
