@@ -116,6 +116,8 @@ const myClawAPI = {
       ipcRenderer.invoke("time:suggest-timeboxes") as Promise<{ items: SuggestedTimebox[] }>,
     listExecutionRuns: () =>
       ipcRenderer.invoke("time:list-execution-runs") as Promise<{ items: ExecutionRun[] }>,
+    generateTodayDigest: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("time:generate-today-digest", input) as Promise<{ lines: string[] }>,
   },
 
   // ---- 认证 ----------------------------------------------------------------

@@ -153,7 +153,7 @@ const navItems: NavItem[] = [
   { to: "/employees", label: "硅基员工", icon: IconEmployees, testId: "nav-employees" },
   { to: "/workflows", label: "Workflows", icon: IconWorkflows, testId: "nav-workflows" },
   { to: "/meetings", label: "会议录音", icon: IconMeetings, testId: "nav-meetings" },
-  { to: "/time", label: "时间中心", icon: IconTime, testId: "nav-time" },
+  { to: "/time", label: "时间规划", icon: IconTime, testId: "nav-time" },
   { to: "/files", label: "Files", icon: IconFiles, testId: "nav-files" },
   // { to: "/publish-drafts", label: "Publish", icon: IconPublish, testId: "nav-publish-drafts" },
 ];
@@ -322,9 +322,9 @@ export default function AppShell() {
     setTimeAssistantExpanded((current) => !current);
   }
 
-  /** 统一跳转到时间中心，避免常驻助理与主页面入口割裂。 */
+  /** 统一跳转到时间规划，避免常驻助理与主页面入口割裂。 */
   function handleOpenTimeCenter() {
-    console.info("[app-shell] 从全局时间助理打开时间中心", {
+    console.info("[app-shell] 从全局时间助理打开时间规划", {
       routePath: location.pathname,
       compactLabel: timeAssistantSnapshot.compactLabel,
     });

@@ -670,9 +670,9 @@ export default function ModelDetailPage() {
   }
 
   return (
-    <div className="model-detail-layout">
+    <div className="settings-detail-pane" style={{ background: "#0d0d0f" }}>
       {/* 紧凑顶部栏 */}
-      <header className="detail-topbar">
+      <header className="settings-detail-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 10, padding: "32px 48px 24px", background: "rgba(13, 13, 15, 0.85)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", borderBottom: "1px solid rgba(255, 255, 255, 0.04)" }}>
         <div className="topbar-left">
           <button className="icon-back-btn" onClick={handleBack} title="返回设置">
             <svg viewBox="0 0 24 24" width="20" height="20">
@@ -725,7 +725,7 @@ export default function ModelDetailPage() {
         </div>
       </header>
 
-      <main className="detail-content">
+      <main className="settings-detail-content">
         {error && (
           <div className="error-banner">
             <svg viewBox="0 0 24 24" width="16" height="16">
@@ -1423,13 +1423,13 @@ export default function ModelDetailPage() {
       </main>
 
       <style>{`
-        .model-detail-layout {
+        .settings-detail-pane {
           display: flex;
-          flex-direction: column;
           height: 100%;
-          background: #0d0d0f;
-          color: #fff;
-          overflow: hidden;
+          width: 100%;
+          flex-direction: column;
+          overflow-y: auto;
+          position: relative;
         }
 
         .detail-topbar {
@@ -1522,13 +1522,13 @@ export default function ModelDetailPage() {
 
         .danger-ghost-btn:hover { background: #451a1a; }
 
-        .detail-content {
+        .settings-detail-content {
           flex: 1;
-          padding: 24px;
+          padding: 32px 48px;
           overflow-y: auto;
           display: flex;
           flex-direction: column;
-          gap: 20px;
+          gap: 24px;
         }
 
         .error-banner {
@@ -1556,6 +1556,10 @@ export default function ModelDetailPage() {
           display: flex;
           flex-direction: column;
           gap: 16px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 12px;
+          padding: 24px;
         }
 
         .section-header {
@@ -1594,22 +1598,22 @@ export default function ModelDetailPage() {
         .field.full-width { grid-column: span 2; }
 
         .label {
-          font-size: 12px;
-          color: #71717a;
+          font-size: 13px;
+          color: rgba(255, 255, 255, 0.7);
           font-weight: 500;
         }
 
         .field input, .field select, .field textarea {
-          background: #161618;
-          border: 1px solid #27272a;
-          border-radius: 6px;
-          color: #f4f4f5;
+          background: rgba(0, 0, 0, 0.2);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 8px;
+          color: rgba(255, 255, 255, 0.9);
           padding: 8px 12px;
-          font-size: 14px;
+          font-size: 13px;
           outline: none;
           transition: all 0.2s;
           width: 100%;
-          font: inherit;
+          font-family: inherit;
         }
 
         .field select {
@@ -1638,8 +1642,8 @@ export default function ModelDetailPage() {
         }
 
         .field input:focus, .field select:focus, .field textarea:focus {
-          border-color: #3f3f46;
-          background: #09090b;
+          border-color: rgba(16, 163, 127, 0.5);
+          background: rgba(0, 0, 0, 0.4);
         }
 
         .editor-row {
@@ -1729,8 +1733,8 @@ export default function ModelDetailPage() {
         }
 
         .field-hint {
-          font-size: 11px;
-          color: #52525b;
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.4);
           margin-top: 4px;
         }
 

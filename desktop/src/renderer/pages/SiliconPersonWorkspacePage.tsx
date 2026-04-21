@@ -432,7 +432,7 @@ export default function SiliconPersonWorkspacePage() {
     }
   }
 
-  /** 为当前硅基员工创建周期性 workflow 计划任务，统一复用时间中心存储。 */
+  /** 为当前硅基员工创建周期性 workflow 计划任务，统一复用时间规划存储。 */
   async function handleCreateScheduledWorkflowJob() {
     if (!siliconPersonId || !scheduledWorkflowId) {
       setScheduleMessage("请先选择要绑定的工作流。");
@@ -1101,7 +1101,7 @@ export default function SiliconPersonWorkspacePage() {
               <div className="ws-cap-header">
                 <div>
                   <h3>定时任务</h3>
-                  <p className="ws-card-desc">为硅基员工绑定周期性 workflow 运行窗口，并复用时间中心的统一调度。</p>
+                  <p className="ws-card-desc">为硅基员工绑定周期性 workflow 运行窗口，并复用时间规划的统一调度。</p>
                 </div>
                 <span className="glass-pill glass-pill--muted">工作时段 {siliconPersonWorkingHoursSummary}</span>
               </div>

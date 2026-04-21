@@ -7,7 +7,7 @@ type WeekTimelineProps = {
   suggestions?: SuggestedTimebox[];
 };
 
-/** 渲染时间中心的周视图时间线，首版同时展示固定事件和规划建议。 */
+/** 渲染时间规划的周视图时间线，首版同时展示固定事件和规划建议。 */
 export default function WeekTimeline({ events, suggestions = [] }: WeekTimelineProps) {
   return (
     <div className="time-timeline" data-testid="time-week-timeline">

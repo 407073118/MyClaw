@@ -51,7 +51,7 @@ export default function TimeAssistantCapsule({
 
         <div className="time-assistant-capsule__actions">
           <button type="button" className="time-assistant-capsule__action time-assistant-capsule__action--primary" onClick={onOpenTimeCenter}>
-            打开时间中心
+            打开时间规划
           </button>
           <button type="button" className="time-assistant-capsule__action" onClick={onClose}>
             先隐藏

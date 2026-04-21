@@ -128,7 +128,7 @@ export function buildTimeAssistantSnapshot(input: BuildTimeAssistantSnapshotInpu
       ? `下一项是 ${formatClockLabel(upcomingEvent.startsAt, timezone)} 的 ${upcomingEvent.title}`
       : upcomingReminder
       ? `下一条提醒在 ${formatClockLabel(upcomingReminder.triggerAt, timezone)}`
-      : "可以继续当前工作，或打开时间中心安排接下来的时间块",
+      : "可以继续当前工作，或打开时间规划安排接下来的时间块",
     nowLabel: formatNowLabel(input.nowIso, timezone),
     nextLabel: buildNextLabel({
       timezone,

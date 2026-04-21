@@ -365,7 +365,7 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
       const total = payload.commitments.length + payload.reminders.length + payload.suggestedEvents.length;
       setFollowUpNotice(
         total > 0
-          ? `已导入 ${total} 个跟进事项到时间中心。`
+          ? `已导入 ${total} 个跟进事项到时间规划。`
           : "没有识别到可导入的跟进事项。",
       );
     } finally {
@@ -423,7 +423,7 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
             onClick={handleBuildFollowUps}
             disabled={processing || importingFollowUps}
           >
-            {importingFollowUps ? "导入中..." : "导入到时间中心"}
+            {importingFollowUps ? "导入中..." : "导入到时间规划"}
           </button>
           <button
             type="button"

@@ -298,6 +298,7 @@ type WorkspaceState = {
   saveAvailabilityPolicy: (policy: AvailabilityPolicy) => Promise<AvailabilityPolicy>;
   refreshTodayBrief: () => Promise<TodayBrief>;
   suggestTimeboxes: () => Promise<SuggestedTimebox[]>;
+  generateTodayDigest: (input: Record<string, unknown>) => Promise<string[]>;
 
   importCloudSkill: (input: { releaseId: string; skillName: string }) => Promise<unknown>;
   importCloudMcp: (input: { releaseId: string; servers: McpServerConfig[] }) => Promise<unknown>;
@@ -793,6 +794,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   async suggestTimeboxes() {
     const { items } = await window.myClawAPI.time.suggestTimeboxes();
     return items;
+  },
+
+  async generateTodayDigest(input) {
+    const { lines } = await window.myClawAPI.time.generateTodayDigest(input);
+    return lines;
   },
 
   // -------------------------------------------------------------------------

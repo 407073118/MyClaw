@@ -8,7 +8,7 @@ type TodayBriefPanelProps = {
   timezone: string;
 };
 
-/** 渲染时间中心的今日摘要面板，集中展示今日事项与最近提醒。 */
+/** 渲染时间规划的今日摘要面板，集中展示今日事项与最近提醒。 */
 export default function TodayBriefPanel({
   todayBrief,
   reminders,

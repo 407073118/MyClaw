@@ -1,11 +1,11 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { McpServer, McpServerConfig } from "@shared/contracts";
+import { Plug, Plus, Download, X, Settings2, RefreshCw, Power } from "lucide-react";
 
 // ── 辅助方法 ──────────────────────────────────────────────────────────────────
 
-/** 将运行时中的 MCP 服务对象转换成可提交的配置结构。 */
 function toServerConfig(server: McpServer, enabled = server.enabled): McpServerConfig {
   if (server.transport === "http") {
     return {
@@ -32,70 +32,63 @@ function toServerConfig(server: McpServer, enabled = server.enabled): McpServerC
   };
 }
 
-// ── MCP 卡片组件 ──────────────────────────────────────────────────────────────
+// ── MCP 卡片组件 (高密度列表版) ─────────────────────────────────────────────
 
-interface McpLibraryCardProps {
+interface McpLibraryRowProps {
   server: McpServer;
   onRefresh: (id: string) => void;
   onToggle: (id: string) => void;
 }
 
-/** 渲染单个 MCP 服务卡片，并暴露刷新与启停操作。 */
-function McpLibraryCard({ server, onRefresh, onToggle }: McpLibraryCardProps) {
+function McpLibraryRow({ server, onRefresh, onToggle }: McpLibraryRowProps) {
   const health = server.state?.health ?? server.health ?? "unknown";
-  const connected = server.state?.connected ?? false;
-
-  const healthPillVariant = health === "healthy" ? "green" : health === "error" ? "red" : "muted";
-  const enabledPillVariant = server.enabled ? "green" : "muted";
+  const isHealthy = health === "healthy";
+  const isError = health === "error";
 
   return (
-    <article className="glass-card glass-card--accent">
-      <div className="glass-card__header">
-        <div className="mcp-name-row">
-          <span
-            className={`mcp-health-dot mcp-health-dot--${healthPillVariant}`}
-            title={health === "healthy" ? "已连接" : health === "error" ? "连接失败" : "未知"}
+    <article className={`mcp-row-card ${!server.enabled ? "is-disabled" : ""}`}>
+      <div className="mcp-row-left">
+        <div className="mcp-name-group">
+          {/* 状态指示红绿灯 */}
+          <span 
+            className={`status-dot ${isHealthy ? "status-green" : isError ? "status-red" : "status-muted"}`} 
+            title={isHealthy ? "已连接" : isError ? "连接失败" : "未知状态"} 
           />
-          <Link to={`/mcp/${encodeURIComponent(server.id)}`} className="mcp-card-name">
+          <Link to={`/mcp/${encodeURIComponent(server.id)}`} className="mcp-name-link">
             {server.name}
           </Link>
+          <span className="badge badge-accent shadow-sm">{server.transport.toUpperCase()}</span>
+          {!server.enabled && <span className="badge badge-muted">已停用</span>}
         </div>
-        <div className="mcp-card-badges">
-          <span className="glass-pill glass-pill--accent mcp-transport-pill">{server.transport === "http" ? "HTTP" : "STDIO"}</span>
-          <span className={`glass-pill glass-pill--${enabledPillVariant}`}>
-            {server.enabled ? "已启用" : "已停用"}
-          </span>
-        </div>
-      </div>
-
-      <div className="glass-card__body">
-        <div className="mcp-card-meta">
-          <span className="mcp-card-id">{server.id}</span>
-          <span className="mcp-card-stats">{server.tools?.length ?? 0} 工具</span>
+        <div className="mcp-meta-group">
+          <span className="meta-text text-mono">{server.id}</span>
+          <span className="meta-separator" />
+          <span className="meta-text">{server.tools?.length ?? 0} 个可调用工具</span>
         </div>
       </div>
 
-      <div className="glass-card__footer">
+      <div className="mcp-row-right">
         <button
-          type="button"
-          className="glass-action-btn"
+          className="btn-icon"
+          title="刷新连接"
           onClick={() => onRefresh(server.id)}
         >
-          刷新
+          <RefreshCw size={14} />
         </button>
         <button
-          type="button"
-          className="glass-action-btn"
+          className="btn-icon"
+          title={server.enabled ? "停用服务" : "启用服务"}
           onClick={() => onToggle(server.id)}
+          style={{ color: server.enabled ? "rgba(255,255,255,0.7)" : "#10a37f" }}
         >
-          {server.enabled ? "停用" : "启用"}
+          <Power size={14} />
         </button>
         <Link
           to={`/mcp/${encodeURIComponent(server.id)}`}
-          className="glass-action-btn glass-action-btn--primary"
-          style={{ marginLeft: "auto", textDecoration: "none" }}
+          className="btn-secondary ml-2"
         >
-          详情
+          <Settings2 size={14} />
+          配置
         </Link>
       </div>
     </article>
@@ -104,7 +97,6 @@ function McpLibraryCard({ server, onRefresh, onToggle }: McpLibraryCardProps) {
 
 // ── McpPage 页面 ──────────────────────────────────────────────────────────────
 
-/** 展示全局 MCP 服务列表，并支持导入外部配置。 */
 export default function McpPage() {
   const workspace = useWorkspaceStore();
   const servers = workspace.mcpServers;
@@ -115,68 +107,43 @@ export default function McpPage() {
   const [selectedImports, setSelectedImports] = useState<Set<number>>(new Set());
 
   useEffect(() => {
-    if (workspace.mcpServers.length > 0) {
-      return;
-    }
-
-    console.info("[mcp-view] MCP 服务列表为空，开始加载");
+    if (workspace.mcpServers.length > 0) return;
     workspace.loadMcpServers().catch((error: unknown) => {
-      const msg = error instanceof Error ? error.message : "加载 MCP 服务失败。";
-      setLoadError(msg);
-      console.error("[mcp-view] 加载 MCP 服务失败", { detail: msg });
+      setLoadError(error instanceof Error ? error.message : "加载 MCP 服务失败。");
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 刷新指定 MCP 服务。 */
   async function handleRefresh(serverId: string) {
-    console.info("[mcp-view] 刷新 MCP 服务", { serverId });
     try {
       await workspace.refreshMcpServer(serverId);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "刷新 MCP 服务失败。";
-      setLoadError(msg);
-      console.error("[mcp-view] 刷新 MCP 服务失败", { serverId, detail: msg });
+      setLoadError(error instanceof Error ? error.message : "刷新 MCP 服务失败。");
     }
   }
 
-  /** 切换指定 MCP 服务启用状态。 */
   async function handleToggle(serverId: string) {
     const server = workspace.mcpServers.find((item) => item.id === serverId);
-    if (!server) {
-      setLoadError("未找到要切换的 MCP 服务。");
-      console.error("[mcp-view] 切换 MCP 服务失败", { serverId });
-      return;
-    }
-
-    console.info("[mcp-view] 切换 MCP 服务启用状态", { serverId, enabled: server.enabled });
+    if (!server) return;
     try {
       await workspace.updateMcpServer(serverId, toServerConfig(server, !server.enabled));
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "切换 MCP 服务状态失败。";
-      setLoadError(msg);
-      console.error("[mcp-view] 切换 MCP 服务状态失败", { serverId, detail: msg });
+      setLoadError(error instanceof Error ? error.message : "切换 MCP 服务状态失败。");
     }
   }
 
-  /** 发现外部 MCP 服务（Claude Desktop、Cursor）。 */
   async function handleDiscover() {
     setShowImport(true);
     try {
-      const servers = await window.myClawAPI.discoverExternalMcpServers();
-      setDiscoveredServers(servers);
+      const discovered = await window.myClawAPI.discoverExternalMcpServers();
+      setDiscoveredServers(discovered);
       setSelectedImports(
-        new Set(
-          servers
-            .map((_: any, i: number) => i)
-            .filter((i: number) => !servers[i].alreadyImported),
-        ),
+        new Set(discovered.map((_: any, i: number) => i).filter((i: number) => !discovered[i].alreadyImported))
       );
     } catch (err) {
       setLoadError("发现 MCP 服务失败: " + (err instanceof Error ? err.message : String(err)));
     }
   }
 
-  /** 导入选中的外部 MCP 服务。 */
   async function handleImport() {
     setImporting(true);
     try {
@@ -191,237 +158,468 @@ export default function McpPage() {
     }
   }
 
+  // Effect to close drawer on Esc
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && showImport) {
+        setShowImport(false);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showImport]);
+
   return (
-    <main data-testid="mcp-view" className="page-container" style={{ height: "100%", overflowY: "auto" }}>
-      <header className="page-header">
+    <div className="mcp-desktop-layout">
+      {/* 桌面原生化：固定吸顶 Header */}
+      <header className="mcp-desktop-header">
         <div className="header-text">
-          <span className="eyebrow">全局 MCP</span>
-          <h2 className="page-title">MCP 服务库</h2>
-          <p className="page-subtitle">用卡片统一管理 MCP 服务，进入详情页查看配置、状态与工具。</p>
+          <div className="eyebrow-row">
+            <Plug size={14} className="eyebrow-icon" />
+            <span className="eyebrow">Model Context Protocol</span>
+          </div>
+          <h2 className="pane-title">MCP 工具生态</h2>
+          <p className="pane-subtitle">高性能协议层，将外部工具和本地资源安全接入您的 AI 引擎。</p>
         </div>
         <div className="header-actions">
           <button
             type="button"
             onClick={handleDiscover}
-            className="btn-premium"
+            className="btn-secondary"
             data-testid="mcp-import-button"
           >
-            导入 MCP
+            <Download size={14} />
+            导入配置
           </button>
-          <Link to="/mcp/new" className="btn-premium accent" style={{ textDecoration: "none" }} data-testid="mcp-new-button">
-            新建 MCP
+          <Link to="/mcp/new" className="btn-primary" style={{ textDecoration: "none" }} data-testid="mcp-new-button">
+            <Plus size={16} />
+            新建服务
           </Link>
         </div>
       </header>
 
-      {showImport && (
-        <section className="glass-card glass-card--flat mcp-import-panel" data-testid="mcp-import-panel">
-          <div className="glass-card__header">
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>发现的 MCP 服务</h3>
-            <button type="button" onClick={() => setShowImport(false)} className="glass-action-btn">
-              关闭
-            </button>
+      {/* 列表主体内容 */}
+      <main className="mcp-desktop-content">
+        {loadError ? (
+          <div className="error-banner">
+            <AlertCircle size={16} />
+            {loadError}
           </div>
-          <div className="glass-card__body">
-            {discoveredServers.length === 0 ? (
-              <p style={{ color: "var(--text-secondary)" }}>未发现已配置的 MCP 服务。支持 Claude Desktop 和 Cursor 配置文件。</p>
-            ) : (
-              <>
-                <ul className="mcp-import-list">
-                  {discoveredServers.map((s: any, i: number) => (
-                    <li key={i} className="mcp-import-item">
-                      <label className="mcp-import-label">
-                        <input
-                          type="checkbox"
-                          checked={selectedImports.has(i)}
-                          disabled={s.alreadyImported}
-                          onChange={() => {
-                            setSelectedImports((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(i)) next.delete(i);
-                              else next.add(i);
-                              return next;
-                            });
-                          }}
-                        />
-                        <span className="mcp-import-name">{s.name}</span>
-                        <span className="glass-pill glass-pill--accent">{s.source}</span>
-                        {s.alreadyImported && <span className="mcp-import-exists">已存在</span>}
-                      </label>
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  type="button"
-                  onClick={handleImport}
-                  disabled={importing || selectedImports.size === 0}
-                  className="btn-premium accent"
-                >
-                  {importing ? "导入中..." : `导入 (${selectedImports.size})`}
-                </button>
-              </>
-            )}
+        ) : servers.length === 0 ? (
+          <section className="empty-state-panel">
+            <Plug size={32} className="empty-icon" />
+            <h3>尚未配置任何 MCP 服务</h3>
+            <p>连接工具集、数据库与本地能力，释放工作区潜能。</p>
+            <Link to="/mcp/new" className="btn-primary mt-4" style={{ textDecoration: "none" }}>立即添加</Link>
+          </section>
+        ) : (
+          <div className="mcp-rows-container">
+            {servers.map((server) => (
+              <McpLibraryRow
+                key={server.id}
+                server={server}
+                onRefresh={handleRefresh}
+                onToggle={handleToggle}
+              />
+            ))}
           </div>
-        </section>
-      )}
+        )}
+      </main>
 
-      {loadError ? (
-        <p className="mcp-error-copy">{loadError}</p>
-      ) : servers.length === 0 ? (
-        <section className="mcp-empty-state" data-testid="mcp-empty-state">
-          当前还没有 MCP 服务，先新建一个吧。
-        </section>
-      ) : (
-        <section className="glass-grid glass-grid--md">
-          {servers.map((server) => (
-            <McpLibraryCard
-              key={server.id}
-              server={server}
-              onRefresh={handleRefresh}
-              onToggle={handleToggle}
-            />
-          ))}
-        </section>
+      {/* 桌面原生化：侧滑盖模态 Drawer */}
+      {showImport && (
+        <div className="desktop-drawer-overlay" onClick={() => setShowImport(false)}>
+          <aside className="desktop-drawer" onClick={(e) => e.stopPropagation()}>
+            <header className="drawer-header">
+              <h3>发现的本地配置</h3>
+              <button className="btn-icon" onClick={() => setShowImport(false)} title="关闭 (Esc)">
+                <X size={18} />
+              </button>
+            </header>
+            
+            <div className="drawer-content">
+              {discoveredServers.length === 0 ? (
+                <div className="empty-state-panel minimal">
+                  <p>未发现已搭载的 MCP 配置文件。<br/><small>支持探测 Claude Desktop 和 Cursor 配置。</small></p>
+                </div>
+              ) : (
+                <div className="import-list-box">
+                  {discoveredServers.map((s: any, i: number) => (
+                    <label key={i} className={`import-list-item ${s.alreadyImported ? "already-imported" : ""}`}>
+                      <input
+                        type="checkbox"
+                        checked={selectedImports.has(i)}
+                        disabled={s.alreadyImported}
+                        className="desktop-checkbox"
+                        onChange={() => {
+                          setSelectedImports((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(i)) next.delete(i);
+                            else next.add(i);
+                            return next;
+                          });
+                        }}
+                      />
+                      <div className="import-info">
+                        <span className="import-name">{s.name}</span>
+                        <span className="import-source">源自 {s.source}</span>
+                      </div>
+                      {s.alreadyImported && <span className="badge badge-muted ml-auto">已存在</span>}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            <footer className="drawer-footer">
+              <button
+                type="button"
+                className="btn-primary w-full"
+                onClick={handleImport}
+                disabled={importing || selectedImports.size === 0}
+              >
+                {importing ? "正在导入..." : `导入选中的配置 (${selectedImports.size})`}
+              </button>
+            </footer>
+          </aside>
+        </div>
       )}
 
       <style>{`
-        /* ── MCP Card Inner ── */
-        .mcp-name-row {
+        /* Core Layout */
+        .mcp-desktop-layout {
           display: flex;
-          align-items: center;
-          gap: 8px;
-          min-width: 0;
-        }
-
-        .mcp-card-name {
-          font-size: 15px;
-          font-weight: 600;
-          color: var(--text-primary);
-          text-decoration: none;
+          flex-direction: column;
+          height: 100%;
+          width: 100%;
+          background: #0d0d0f;
+          position: relative;
           overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
         }
 
-        .mcp-card-name:hover {
-          color: var(--accent-cyan);
-        }
-
-        .mcp-card-badges {
-          display: flex;
-          gap: 6px;
+        /* Fixed Sticky Header */
+        .mcp-desktop-header {
           flex-shrink: 0;
-        }
-
-        .mcp-transport-pill {
-          font-family: "Cascadia Code", "Fira Code", monospace;
-        }
-
-        .mcp-card-meta {
           display: flex;
           justify-content: space-between;
+          align-items: flex-end;
+          padding: 32px 48px;
+          background: rgba(13, 13, 15, 0.85);
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+          z-index: 10;
+        }
+        .header-text {
+          display: flex;
+          flex-direction: column;
+        }
+        .eyebrow-row {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: rgba(255,255,255,0.4);
+          margin-bottom: 8px;
+        }
+        .eyebrow {
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+        }
+        .pane-title {
+          font-size: 28px;
+          font-weight: 600;
+          color: #f0f6fc;
+          margin: 0 0 6px 0;
+          letter-spacing: -0.02em;
+        }
+        .pane-subtitle {
+          font-size: 14px;
+          color: rgba(255, 255, 255, 0.5);
+          margin: 0;
+        }
+        .header-actions {
+          display: flex;
           align-items: center;
           gap: 12px;
         }
 
-        .mcp-card-id {
-          font-size: 12px;
-          color: var(--text-muted);
-          font-family: "Cascadia Code", "Fira Code", monospace;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
+        /* Main Content */
+        .mcp-desktop-content {
+          flex: 1;
+          overflow-y: auto;
+          padding: 32px 48px;
         }
 
-        .mcp-card-stats {
-          font-size: 12px;
-          color: var(--text-secondary);
-          flex-shrink: 0;
+        /* High Density Multi-Column Flow */
+        .mcp-rows-container {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
+          gap: 12px;
         }
-
-        /* ── Health Dots ── */
-        .mcp-health-dot {
+        .mcp-row-card {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 14px 20px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 10px;
+          transition: all 0.2s ease;
+        }
+        .mcp-row-card:hover {
+          background: rgba(255, 255, 255, 0.04);
+          border-color: rgba(255, 255, 255, 0.15);
+        }
+        .mcp-row-card.is-disabled {
+          opacity: 0.6;
+          filter: grayscale(100%);
+        }
+        
+        .mcp-row-left {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+        .mcp-name-group {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .status-dot {
           width: 8px;
           height: 8px;
           border-radius: 50%;
-          display: inline-block;
-          flex-shrink: 0;
         }
-        .mcp-health-dot--green {
-          background: var(--status-green);
-          box-shadow: 0 0 4px rgba(34, 197, 94, 0.5);
+        .status-green { background: #10a37f; box-shadow: 0 0 8px rgba(16,163,127,0.5); }
+        .status-red { background: #f85149; box-shadow: 0 0 8px rgba(248,81,73,0.5); }
+        .status-muted { background: rgba(255,255,255,0.2); }
+        
+        .mcp-name-link {
+          font-size: 15px;
+          font-weight: 600;
+          color: #e6edf3;
+          text-decoration: none;
         }
-        .mcp-health-dot--red {
-          background: var(--status-red);
+        .mcp-name-link:hover {
+          color: #58a6ff;
         }
-        .mcp-health-dot--muted {
-          background: var(--text-muted);
+        .badge {
+          font-size: 10px;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-weight: 600;
+        }
+        .badge-accent { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+        .badge-muted { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.6); }
+        
+        .mcp-meta-group {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding-left: 18px; /* Aligns under text */
+        }
+        .meta-text {
+          font-size: 12px;
+          color: rgba(255,255,255,0.4);
+        }
+        .text-mono {
+          font-family: inherit;
+        }
+        .meta-separator {
+          width: 4px;
+          height: 4px;
+          border-radius: 50%;
+          background: rgba(255,255,255,0.1);
         }
 
-        /* ── Import Panel ── */
-        .mcp-import-panel {
-          margin-top: -16px;
+        .mcp-row-right {
+          display: flex;
+          align-items: center;
+          gap: 8px;
         }
 
-        .mcp-import-list {
-          list-style: none;
-          padding: 0;
-          margin: 0 0 16px;
+        /* Drawers Overlay */
+        .desktop-drawer-overlay {
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          background: rgba(0, 0, 0, 0.6);
+          backdrop-filter: blur(4px);
+          -webkit-backdrop-filter: blur(4px);
+          z-index: 100;
+          display: flex;
+          justify-content: flex-end;
+          animation: fadeIn 0.2s ease;
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        
+        .desktop-drawer {
+          width: 420px;
+          background: #161b22;
+          border-left: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: -12px 0 32px rgba(0, 0, 0, 0.5);
+          display: flex;
+          flex-direction: column;
+          animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes slideIn {
+          from { transform: translateX(100%); }
+          to { transform: translateX(0); }
+        }
+        .drawer-header {
+          padding: 24px;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .drawer-header h3 {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 600;
+          color: #f0f6fc;
+        }
+        .drawer-content {
+          flex: 1;
+          overflow-y: auto;
+          padding: 20px;
+        }
+        .drawer-footer {
+          padding: 20px;
+          border-top: 1px solid rgba(255,255,255,0.06);
+          background: rgba(0,0,0,0.2);
+        }
+
+        /* Import List Styling */
+        .import-list-box {
           display: flex;
           flex-direction: column;
           gap: 8px;
         }
-
-        .mcp-import-item {
-          padding: 10px 12px;
-          border-radius: var(--radius-lg);
-          border: 1px solid var(--glass-border);
-          background: color-mix(in srgb, var(--bg-base) 80%, transparent);
-        }
-
-        .mcp-import-label {
+        .import-list-item {
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 12px;
+          padding: 12px 14px;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.08);
+          border-radius: 8px;
           cursor: pointer;
+          transition: all 0.2s;
         }
-
-        .mcp-import-name {
+        .import-list-item:hover:not(.already-imported) {
+          background: rgba(255,255,255,0.06);
+        }
+        .import-list-item.already-imported {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        .desktop-checkbox {
+          accent-color: #10a37f;
+          width: 16px;
+          height: 16px;
+        }
+        .import-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .import-name {
+          font-size: 14px;
           font-weight: 600;
-          color: var(--text-primary);
+          color: #f0f6fc;
+        }
+        .import-source {
+          font-size: 12px;
+          color: rgba(255,255,255,0.5);
         }
 
-        .mcp-import-exists {
-          font-size: 11px;
-          color: var(--status-yellow);
-          margin-left: auto;
-        }
-
-        /* ── Empty & Error ── */
-        .mcp-empty-state {
-          padding: 48px 24px;
-          border-radius: var(--radius-xl);
+        /* Commons / Utilities */
+        .empty-state-panel {
+          padding: 64px 24px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
           text-align: center;
-          border: 1px dashed var(--glass-border);
-          color: var(--text-secondary);
-          background: color-mix(in srgb, var(--bg-card) 70%, transparent);
+          border: 1px dashed rgba(255,255,255,0.1);
+          border-radius: 12px;
+          background: rgba(255,255,255,0.01);
+        }
+        .empty-state-panel.minimal {
+          padding: 32px 16px;
+        }
+        .empty-icon {
+          color: rgba(255,255,255,0.2);
+          margin-bottom: 16px;
+        }
+        .empty-state-panel h3 { margin: 0 0 8px; font-weight: 600; font-size: 16px; }
+        .empty-state-panel p { margin: 0; color: rgba(255,255,255,0.4); font-size: 14px; line-height: 1.5;}
+        
+        .error-banner {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 12px 16px;
+          background: rgba(248, 81, 73, 0.1);
+          border: 1px solid rgba(248, 81, 73, 0.2);
+          border-radius: 8px;
+          color: #f85149;
+          font-size: 13px;
+          margin-bottom: 16px;
         }
 
-        .mcp-error-copy {
-          padding: 48px 24px;
-          border-radius: var(--radius-xl);
-          text-align: center;
-          color: #fca5a5;
-          background: rgba(239, 68, 68, 0.12);
-          border: 1px solid rgba(239, 68, 68, 0.2);
+        .btn-primary, .btn-secondary, .btn-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          border-radius: 6px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+          border: 1px solid transparent;
         }
-
-        @media (max-width: 720px) {
-          .page-header {
-            flex-direction: column;
-          }
+        .btn-primary {
+          height: 32px;
+          padding: 0 16px;
+          background: transparent;
+          color: #10a37f;
+          border-color: #10a37f;
         }
+        .btn-primary:hover:not(:disabled) { 
+          background: rgba(16,163,127,0.08); 
+          box-shadow: 0 0 8px rgba(16,163,127,0.15);
+        }
+        .btn-secondary {
+          height: 32px;
+          padding: 0 16px;
+          background: rgba(255, 255, 255, 0.1);
+          color: #f0f6fc;
+          border-color: rgba(255, 255, 255, 0.05);
+        }
+        .btn-secondary:hover:not(:disabled) { background: rgba(255, 255, 255, 0.15); }
+        .btn-icon {
+          width: 32px;
+          height: 32px;
+          background: transparent;
+          color: rgba(255,255,255,0.6);
+        }
+        .btn-icon:hover {
+          background: rgba(255,255,255,0.1);
+          color: #f0f6fc;
+        }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .w-full { width: 100%; }
+        .mt-4 { margin-top: 16px; }
+        .ml-2 { margin-left: 8px; }
+        .ml-auto { margin-left: auto; }
       `}</style>
-    </main>
+    </div>
   );
 }

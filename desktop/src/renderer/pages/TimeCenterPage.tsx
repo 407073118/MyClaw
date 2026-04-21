@@ -32,7 +32,7 @@ const HOUR_END = 22;
 const SLOT_HEIGHT = 58;
 const TIMELINE_HOURS = Array.from({ length: HOUR_END - HOUR_START }, (_, index) => HOUR_START + index);
 
-type TimeWorkspaceTab = "agenda" | "automation";
+type TimeWorkspaceTab = "today" | "automation";
 type CalendarViewMode = "day" | "week" | "month";
 type ComposerKind = "event" | "task" | "reminder" | "job";
 type CalendarBoardItemKind = "event" | "suggestion";
@@ -47,28 +47,51 @@ type CalendarBoardItem = {
   meta: string;
 };
 
+type AgendaEntryReason =
+  | "awaiting_decision"
+  | "overdue"
+  | "due_today"
+  | "automation_failed"
+  | "team_blocked";
+
 type AgendaEntry = {
   id: string;
-  kind: "calendar_event" | "suggested_timebox" | "task_commitment" | "reminder";
+  kind: "calendar_event" | "suggested_timebox" | "task_commitment" | "reminder" | "schedule_job" | "execution_run";
   title: string;
   summary: string;
   sortAt: string;
   tone: "accent" | "warning" | "muted";
+  /** Pending 模块专用：为什么需要用户处理。团队动态 / 日程不用填。 */
+  reason?: AgendaEntryReason;
+  /** 跨模块去重键，格式 `${kind}:${domainId}`，例如 `task:abc`、`run:xyz`。 */
+  sourceKey?: string;
 };
 
-/** 渲染桌面端时间中心主页，采用日程优先、自动化分层的信息架构。 */
+const REASON_LABEL: Record<AgendaEntryReason, string> = {
+  awaiting_decision: "待拍板",
+  overdue: "已逾期",
+  due_today: "今天到点",
+  automation_failed: "自动任务失败",
+  team_blocked: "团队等你确认",
+};
+
+/** 渲染桌面端时间规划主页，首版优先收敛到“今天”的个人团队总控视角。 */
 export default function TimeCenterPage() {
   const workspace = useWorkspaceStore();
   const time = workspace.time;
   const timezone = time.availabilityPolicy?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const todayDateKey = useMemo(() => isoToDateKey(new Date().toISOString(), timezone), [timezone]);
-  const [activeTab, setActiveTab] = useState<TimeWorkspaceTab>("agenda");
-  const [viewMode, setViewMode] = useState<CalendarViewMode>("week");
+  const [activeTab, setActiveTab] = useState<TimeWorkspaceTab>("today");
   const [selectedDate, setSelectedDate] = useState(todayDateKey);
   const [activeComposer, setActiveComposer] = useState<ComposerKind | null>(null);
   const [suggestedTimeboxes, setSuggestedTimeboxes] = useState<SuggestedTimebox[]>([]);
   const [plannerLoading, setPlannerLoading] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const viewMode: CalendarViewMode = "day";
+  const siliconPersonNameById = useMemo(
+    () => new Map(workspace.siliconPersons.map((person) => [person.id, person.name])),
+    [workspace.siliconPersons],
+  );
 
   useEffect(() => {
     setSelectedDate((current) => current || todayDateKey);
@@ -83,11 +106,7 @@ export default function TimeCenterPage() {
     () => buildCalendarBoardItems(time.calendarEvents, suggestedTimeboxes),
     [time.calendarEvents, suggestedTimeboxes],
   );
-  const visibleDays = useMemo(
-    () => buildVisibleDays(selectedDate, viewMode),
-    [selectedDate, viewMode],
-  );
-  const agendaEntries = useMemo(
+  const myDayEntries = useMemo(
     () => buildAgendaEntries({
       selectedDate,
       timezone,
@@ -106,25 +125,143 @@ export default function TimeCenterPage() {
       events: time.calendarEvents,
       tasks: time.taskCommitments,
       reminders: time.reminders,
+      jobs: time.scheduleJobs,
       suggestions: suggestedTimeboxes,
     }),
-    [todayDateKey, timezone, time.todayBrief, time.calendarEvents, time.taskCommitments, time.reminders, suggestedTimeboxes],
+    [todayDateKey, timezone, time.todayBrief, time.calendarEvents, time.taskCommitments, time.reminders, time.scheduleJobs, suggestedTimeboxes],
   );
   const pendingTaskBacklog = useMemo(
     () => buildPendingTaskBacklog({
       tasks: time.taskCommitments,
       suggestions: suggestedTimeboxes,
+      todayDateKey,
       timezone,
     }),
-    [time.taskCommitments, suggestedTimeboxes, timezone],
+    [time.taskCommitments, suggestedTimeboxes, todayDateKey, timezone],
   );
+  const pendingAttentionEntries = useMemo(
+    () => buildPendingAttentionEntries({
+      selectedDate,
+      timezone,
+      tasks: time.taskCommitments,
+      reminders: time.reminders,
+      jobs: time.scheduleJobs,
+      runs: time.executionRuns,
+      siliconPersonNameById,
+    }),
+    [
+      selectedDate,
+      timezone,
+      time.taskCommitments,
+      time.reminders,
+      time.scheduleJobs,
+      time.executionRuns,
+      siliconPersonNameById,
+    ],
+  );
+  const pendingSourceKeys = useMemo(
+    () => new Set(pendingAttentionEntries.map((entry) => entry.sourceKey).filter((key): key is string => Boolean(key))),
+    [pendingAttentionEntries],
+  );
+  const teamExecutionEntries = useMemo(
+    () => buildTeamExecutionEntries({
+      selectedDate,
+      timezone,
+      events: time.calendarEvents,
+      tasks: time.taskCommitments,
+      jobs: time.scheduleJobs,
+      runs: time.executionRuns,
+      siliconPersonNameById,
+      pendingSourceKeys,
+    }),
+    [
+      selectedDate,
+      timezone,
+      time.calendarEvents,
+      time.taskCommitments,
+      time.scheduleJobs,
+      time.executionRuns,
+      siliconPersonNameById,
+      pendingSourceKeys,
+    ],
+  );
+  const dailyControlFeed = useMemo(
+    () => buildDailyControlFeed({
+      personalEntries: myDayEntries,
+      teamEntries: teamExecutionEntries,
+    }),
+    [myDayEntries, teamExecutionEntries],
+  );
+  const ruleDigest = useMemo(
+    () => buildTodayDigest({
+      todayBrief: time.todayBrief,
+      snapshot: todaySnapshot,
+      pendingEntries: pendingAttentionEntries,
+      teamEntries: teamExecutionEntries,
+      personalEntries: myDayEntries,
+    }),
+    [time.todayBrief, todaySnapshot, pendingAttentionEntries, teamExecutionEntries, myDayEntries],
+  );
+  const [modelDigest, setModelDigest] = useState<string[] | null>(null);
+  const todayDigest = modelDigest && modelDigest.length > 0 ? modelDigest : ruleDigest;
+
+  useEffect(() => {
+    let cancelled = false;
+    const payload = {
+      todayDateKey,
+      timezone,
+      totals: {
+        totalItems: todaySnapshot.totalItems,
+        pendingCount: pendingAttentionEntries.length,
+        teamCount: teamExecutionEntries.length,
+        suggestionCount: todaySnapshot.suggestionCount,
+      },
+      leadBriefTitle: time.todayBrief?.items[0]?.title ?? null,
+      leadPersonalTitle: myDayEntries[0]?.title ?? null,
+      leadPendingTitle: pendingAttentionEntries[0]?.title ?? null,
+      leadPendingReason: pendingAttentionEntries[0]?.reason ?? null,
+      pendingEntries: pendingAttentionEntries.map((entry) => ({
+        title: entry.title,
+        reason: entry.reason ?? null,
+      })),
+      teamEntries: teamExecutionEntries.map((entry) => ({ title: entry.title })),
+    };
+    void (async () => {
+      try {
+        const lines = await workspace.generateTodayDigest(payload);
+        if (!cancelled && Array.isArray(lines) && lines.length > 0) {
+          console.info("[时间规划] 模型摘要已刷新", { lineCount: lines.length });
+          setModelDigest(lines);
+        }
+      } catch (error) {
+        console.warn("[时间规划] 模型摘要生成失败，回退规则摘要", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!cancelled) setModelDigest(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 输入稳定时不反复触发模型调用
+  }, [
+    todayDateKey,
+    timezone,
+    todaySnapshot.totalItems,
+    pendingAttentionEntries.length,
+    teamExecutionEntries.length,
+    todaySnapshot.suggestionCount,
+    time.todayBrief?.items[0]?.id,
+    myDayEntries[0]?.id,
+    pendingAttentionEntries[0]?.id,
+  ]);
   const automationStats = useMemo(
     () => buildAutomationStats(time.reminders, time.scheduleJobs, time.executionRuns),
     [time.reminders, time.scheduleJobs, time.executionRuns],
   );
   const selectedPanelTitle = selectedDate === todayDateKey
-    ? "今日安排"
-    : `${formatDayTitle(selectedDate, timezone)}安排`;
+    ? "今日全局动态"
+    : `${formatDayTitle(selectedDate, timezone)}动态`;
 
   /** 拉取建议时间块，并在失败时保留页面主流程可用。 */
   async function loadSuggestedTimeboxes() {
@@ -140,7 +277,7 @@ export default function TimeCenterPage() {
 
     const plannableTasks = time.taskCommitments.filter((task) => isTaskPlannable(task));
     if (plannableTasks.length === 0) {
-      console.info("[时间中心] 跳过建议时间块刷新", {
+      console.info("[时间规划] 跳过建议时间块刷新", {
         reason: "没有可规划的任务承诺",
         taskCount: time.taskCommitments.length,
       });
@@ -151,13 +288,13 @@ export default function TimeCenterPage() {
     setPlannerLoading(true);
     try {
       const items = await workspace.suggestTimeboxes();
-      console.info("[时间中心] 已刷新建议时间块", {
+      console.info("[时间规划] 已刷新建议时间块", {
         timezone,
         suggestionCount: items.length,
       });
       setSuggestedTimeboxes(items);
     } catch (error) {
-      console.warn("[时间中心] 拉取建议时间块失败", {
+      console.warn("[时间规划] 拉取建议时间块失败", {
         error: error instanceof Error ? error.message : String(error),
       });
       setSuggestedTimeboxes([]);
@@ -168,7 +305,7 @@ export default function TimeCenterPage() {
 
   /** 创建手动日历事件，并在完成后关闭编辑器。 */
   async function handleCreateCalendarEvent(input: CalendarEventEditorSubmitInput) {
-    console.info("[时间中心] 创建日历事件", {
+    console.info("[时间规划] 创建日历事件", {
       title: input.title,
       startsAt: input.startsAt,
       endsAt: input.endsAt,
@@ -192,7 +329,7 @@ export default function TimeCenterPage() {
 
   /** 创建任务承诺，并触发后续时间块刷新。 */
   async function handleCreateTaskCommitment(input: TaskCommitmentEditorSubmitInput) {
-    console.info("[时间中心] 创建任务承诺", {
+    console.info("[时间规划] 创建任务承诺", {
       title: input.title,
       dueAt: input.dueAt ?? null,
       durationMinutes: input.durationMinutes ?? null,
@@ -216,7 +353,7 @@ export default function TimeCenterPage() {
 
   /** 创建提醒对象，并在界面中反馈结果。 */
   async function handleCreateReminder(input: ReminderEditorSubmitInput) {
-    console.info("[时间中心] 创建提醒", {
+    console.info("[时间规划] 创建提醒", {
       title: input.title,
       triggerAt: input.triggerAt,
       timezone: input.timezone,
@@ -237,7 +374,7 @@ export default function TimeCenterPage() {
 
   /** 创建自动任务，并同步回显当前配置。 */
   async function handleCreateScheduleJob(input: ScheduleJobEditorSubmitInput) {
-    console.info("[时间中心] 创建自动任务", {
+    console.info("[时间规划] 创建自动任务", {
       title: input.title,
       scheduleKind: input.scheduleKind,
       executor: input.executor,
@@ -265,7 +402,7 @@ export default function TimeCenterPage() {
 
   /** 保存时间规则，供日历规划和自动化调度共同复用。 */
   async function handleSaveAvailabilityPolicy(policy: AvailabilityPolicy) {
-    console.info("[时间中心] 保存时间规则", {
+    console.info("[时间规划] 保存时间规则", {
       timezone: policy.timezone,
       workingHoursCount: policy.workingHours.length,
       quietHoursEnabled: policy.quietHours.enabled,
@@ -277,7 +414,7 @@ export default function TimeCenterPage() {
   /** 暂停或恢复自动任务，保持页面层只表达用户动作。 */
   async function handleToggleScheduleJob(job: ScheduleJob) {
     const nextStatus = job.status === "paused" ? "scheduled" : "paused";
-    console.info("[时间中心] 切换自动任务状态", {
+    console.info("[时间规划] 切换自动任务状态", {
       id: job.id,
       title: job.title,
       from: job.status,
@@ -292,25 +429,21 @@ export default function TimeCenterPage() {
 
   /** 删除提醒对象，避免无效提醒继续占据时间工作台。 */
   async function handleDeleteReminder(id: string) {
-    console.info("[时间中心] 删除提醒", { id });
+    console.info("[时间规划] 删除提醒", { id });
     await workspace.deleteReminder(id);
     setFeedback("已删除提醒");
   }
 
   /** 删除自动任务对象，并在自动化工作区即时刷新。 */
   async function handleDeleteScheduleJob(id: string) {
-    console.info("[时间中心] 删除自动任务", { id });
+    console.info("[时间规划] 删除自动任务", { id });
     await workspace.deleteScheduleJob(id);
     setFeedback("已删除自动任务");
   }
 
-  /** 推进当前选择日期，支持按视图维度翻页。 */
+  /** 推进当前选择日期，首版只按天翻页。 */
   function handleNavigate(direction: -1 | 1) {
-    if (viewMode === "month") {
-      setSelectedDate(addMonthsToDateKey(selectedDate, direction));
-      return;
-    }
-    setSelectedDate(addDaysToDateKey(selectedDate, viewMode === "week" ? direction * 7 : direction));
+    setSelectedDate(addDaysToDateKey(selectedDate, direction));
   }
 
   /** 将日历游标重置到当前日期。 */
@@ -323,52 +456,56 @@ export default function TimeCenterPage() {
       <main className="page-container time-center-page" data-testid="time-center-page">
         <header className="page-header time-center-header">
           <div className="header-text">
-            <span className="eyebrow">TIME WORKSPACE</span>
-            <h2 className="page-title">时间中心</h2>
-            <p className="page-subtitle">把日历、任务安排、提醒和自动执行拆层管理，默认回到真正可用的周历视角。</p>
+            <span className="eyebrow">TIME PLANNING</span>
+            <h2 className="page-title">时间规划</h2>
+            <p className="page-subtitle">把你自己、硅基员工和自动执行放进同一个今天指挥面板，先处理真正需要你把控的事项。</p>
           </div>
 
           <div className="time-header-actions">
             <MetricBadge label="今日事项" value={String(todaySnapshot.totalItems)} />
-            <MetricBadge label="待排任务" value={String(todaySnapshot.pendingTaskCount)} />
-            <MetricBadge label="自动任务" value={String(automationStats.activeJobCount)} />
+            <MetricBadge label="待我处理" value={String(pendingAttentionEntries.length)} />
+            <MetricBadge label="团队节点" value={String(teamExecutionEntries.length || automationStats.activeJobCount)} />
             {feedback ? <div className="time-feedback-banner">{feedback}</div> : null}
           </div>
         </header>
 
         <section className="time-overview-band" data-testid="time-overview-band">
-          <TodaySnapshotCard
-            todayDateKey={todayDateKey}
-            timezone={timezone}
-            todayBrief={time.todayBrief}
-            snapshot={todaySnapshot}
-            onSelectDate={setSelectedDate}
-          />
-          <MiniMonthNavigatorCard
-            todayDateKey={todayDateKey}
-            selectedDate={selectedDate}
-            timezone={timezone}
-            items={calendarItems}
-            onSelectDate={setSelectedDate}
-          />
-          <FocusSummaryCard
-            timezone={timezone}
-            reminders={time.reminders}
-            tasks={time.taskCommitments}
-            plannerLoading={plannerLoading}
-            suggestionCount={suggestedTimeboxes.length}
-          />
+          <div className="time-overview-slot time-overview-slot--snapshot">
+            <TodaySnapshotCard
+              todayDateKey={todayDateKey}
+              timezone={timezone}
+              todayBrief={time.todayBrief}
+              snapshot={todaySnapshot}
+              digest={todayDigest}
+              digestSource={modelDigest && modelDigest.length > 0 ? "model" : "rule"}
+              pendingCount={pendingAttentionEntries.length}
+              teamExecutionCount={teamExecutionEntries.length}
+              onSelectDate={setSelectedDate}
+            />
+          </div>
+          <div className="time-overview-slot time-overview-slot--pending">
+            <PendingDecisionCard
+              entries={pendingAttentionEntries}
+              dateLabel={formatDayTitle(selectedDate, timezone)}
+            />
+          </div>
+          <div className="time-overview-slot time-overview-slot--team">
+            <TeamExecutionCard
+              entries={teamExecutionEntries}
+              dateLabel={formatDayTitle(selectedDate, timezone)}
+            />
+          </div>
         </section>
 
         <div className="time-main-tabs" role="tablist">
           <button
             type="button"
             role="tab"
-            aria-selected={activeTab === "agenda"}
-            className={`time-main-tab ${activeTab === "agenda" ? "active" : ""}`}
-            onClick={() => setActiveTab("agenda")}
+            aria-selected={activeTab === "today"}
+            className={`time-main-tab ${activeTab === "today" ? "active" : ""}`}
+            onClick={() => setActiveTab("today")}
           >
-            日程
+            今天
           </button>
           <button
             type="button"
@@ -381,15 +518,15 @@ export default function TimeCenterPage() {
           </button>
         </div>
 
-        {activeTab === "agenda" ? (
+        {activeTab === "today" ? (
           <section className="time-agenda-shell" data-testid="time-agenda-shell">
             <section className="time-main-stage">
               <section className="glass-card time-calendar-card">
                 <div className="glass-card__header time-calendar-card__header">
                   <div>
-                    <h3 className="time-section-title">{resolveCalendarCardTitle(viewMode)}</h3>
+                    <h3 className="time-section-title">我的日程</h3>
                     <p className="time-section-subtitle">
-                      {resolveCalendarCardSubtitle(viewMode, selectedDate, timezone, time.calendarEvents.length, suggestedTimeboxes.length)}
+                      {formatDayTitle(selectedDate, timezone)}真正占用你时间的安排、任务节点和建议时间块都放在这里。
                     </p>
                   </div>
 
@@ -406,20 +543,6 @@ export default function TimeCenterPage() {
                       </button>
                     </div>
 
-                    <div className="time-view-switcher" aria-label="日历视图切换">
-                      {(["day", "week", "month"] as const).map((mode) => (
-                        <button
-                          key={mode}
-                          type="button"
-                          className={`time-view-button ${viewMode === mode ? "time-view-button--active" : ""}`}
-                          aria-pressed={viewMode === mode}
-                          onClick={() => setViewMode(mode)}
-                        >
-                          {mode === "day" ? "日" : mode === "week" ? "周" : "月"}
-                        </button>
-                      ))}
-                    </div>
-
                     <button
                       type="button"
                       className="btn-premium accent time-create-button"
@@ -431,22 +554,13 @@ export default function TimeCenterPage() {
                 </div>
 
                 <div className="glass-card__body time-calendar-card__body">
-                  {viewMode === "month" ? (
-                    <MonthCalendarBoard
-                      selectedDate={selectedDate}
-                      timezone={timezone}
-                      items={calendarItems}
-                      onSelectDate={setSelectedDate}
-                    />
-                  ) : (
-                    <TimelineCalendarBoard
-                      mode={viewMode}
-                      selectedDate={selectedDate}
-                      timezone={timezone}
-                      items={calendarItems}
-                      onSelectDate={setSelectedDate}
-                    />
-                  )}
+                  <TimelineCalendarBoard
+                    mode={viewMode}
+                    selectedDate={selectedDate}
+                    timezone={timezone}
+                    items={calendarItems}
+                    onSelectDate={setSelectedDate}
+                  />
                 </div>
               </section>
             </section>
@@ -456,14 +570,22 @@ export default function TimeCenterPage() {
                 <div className="glass-card__header">
                   <div>
                     <h3 className="time-section-title">{selectedPanelTitle}</h3>
-                    <p className="time-section-subtitle">按日期聚合事件、建议时间块、提醒与任务节点。</p>
+                    <p className="time-section-subtitle">把个人安排和团队节点按时间顺序合并，方便你快速决定先盯哪一件。</p>
                   </div>
                   <span className="glass-pill glass-pill--muted">{formatDayTitle(selectedDate, timezone)}</span>
                 </div>
                 <div className="glass-card__body">
-                  <AgendaEntryList entries={agendaEntries} />
+                  <AgendaEntryList entries={dailyControlFeed} emptyText="这一天还没有关键动态，适合提前补齐安排。" />
                 </div>
               </section>
+
+              <MiniMonthNavigatorCard
+                todayDateKey={todayDateKey}
+                selectedDate={selectedDate}
+                timezone={timezone}
+                items={calendarItems}
+                onSelectDate={setSelectedDate}
+              />
 
               <PendingTaskBacklogCard tasks={pendingTaskBacklog} timezone={timezone} />
 
@@ -562,7 +684,10 @@ export default function TimeCenterPage() {
 
         .time-overview-band {
           display: grid;
-          grid-template-columns: minmax(280px, 1.15fr) minmax(260px, 0.95fr) minmax(280px, 1fr);
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          grid-template-areas:
+            "snapshot snapshot"
+            "pending team";
           gap: 18px;
           align-items: start;
         }
@@ -570,6 +695,10 @@ export default function TimeCenterPage() {
         .time-overview-band > * {
           min-width: 0;
         }
+
+        .time-overview-slot--snapshot { grid-area: snapshot; }
+        .time-overview-slot--pending  { grid-area: pending; }
+        .time-overview-slot--team     { grid-area: team; }
 
         .time-main-tab {
           border: 0;
@@ -755,6 +884,26 @@ export default function TimeCenterPage() {
           margin: 0 0 10px;
           font-size: 14px;
           color: var(--text-primary);
+        }
+
+        .time-insight-list {
+          margin: 0;
+          padding: 0;
+          list-style: none;
+          display: grid;
+          gap: 10px;
+        }
+
+        .time-insight-list li {
+          padding: 12px 14px;
+          border-radius: 14px;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          background:
+            radial-gradient(circle at top right, rgba(34, 197, 94, 0.1), transparent 48%),
+            rgba(255, 255, 255, 0.03);
+          color: var(--text-primary);
+          font-size: 13px;
+          line-height: 1.6;
         }
 
         .time-mini-list,
@@ -1298,6 +1447,69 @@ export default function TimeCenterPage() {
           }
         }
 
+        .time-agenda-entry__title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-bottom: 6px;
+        }
+
+        .time-agenda-entry__title strong {
+          margin-bottom: 0;
+        }
+
+        .time-agenda-reason {
+          display: inline-flex;
+          align-items: center;
+          height: 20px;
+          padding: 0 8px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.02em;
+        }
+
+        .time-agenda-reason--automation_failed,
+        .time-agenda-reason--overdue {
+          color: #ffb4b4;
+          background: rgba(239, 68, 68, 0.18);
+          border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .time-agenda-reason--awaiting_decision,
+        .time-agenda-reason--team_blocked {
+          color: #ffd79a;
+          background: rgba(245, 158, 11, 0.18);
+          border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .time-agenda-reason--due_today {
+          color: #b6f3df;
+          background: rgba(16, 163, 127, 0.18);
+          border: 1px solid rgba(16, 163, 127, 0.3);
+        }
+
+        .time-digest-source {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 11px;
+          color: var(--text-muted);
+          margin-top: 6px;
+        }
+
+        .time-digest-source__dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 999px;
+          background: rgba(148, 163, 184, 0.7);
+        }
+
+        .time-digest-source--model .time-digest-source__dot {
+          background: rgba(34, 197, 94, 0.9);
+        }
+
         @media (max-width: 1320px) {
           .time-agenda-shell {
             grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
@@ -1393,7 +1605,7 @@ function MiniMonthNavigatorCard({
   /** 切换迷你月历的当前月份，同时保持主日历日期联动。 */
   function handleShiftMonth(direction: -1 | 1) {
     const nextDate = addMonthsToDateKey(selectedDate, direction);
-    console.info("[时间中心] 切换迷你月历月份", {
+    console.info("[时间规划] 切换迷你月历月份", {
       from: selectedDate,
       to: nextDate,
     });
@@ -1452,26 +1664,34 @@ function MiniMonthNavigatorCard({
   );
 }
 
-/** 渲染左侧今日摘要卡，作为用户进入时间中心后的第一视线区域。 */
+/** 渲染左侧今日摘要卡，作为用户进入时间规划后的第一视线区域。 */
 function TodaySnapshotCard({
   todayDateKey,
   timezone,
   todayBrief,
   snapshot,
+  digest,
+  digestSource,
+  pendingCount,
+  teamExecutionCount,
   onSelectDate,
 }: {
   todayDateKey: string;
   timezone: string;
   todayBrief: TodayBrief | null;
   snapshot: ReturnType<typeof buildTodaySnapshot>;
+  digest: string[];
+  digestSource: "model" | "rule";
+  pendingCount: number;
+  teamExecutionCount: number;
   onSelectDate: (dateKey: string) => void;
 }) {
   return (
     <section className="glass-card">
       <div className="glass-card__header">
         <div>
-          <h3 className="time-section-title">今日节奏</h3>
-          <p className="time-section-subtitle">优先展示今天的会议、任务风险和最近提醒。</p>
+          <h3 className="time-section-title">今日团队摘要</h3>
+          <p className="time-section-subtitle">先给你判断，再让你进入时间线和待处理明细。</p>
         </div>
         <button type="button" className="time-ghost-button" onClick={() => onSelectDate(todayDateKey)}>
           回到今天
@@ -1485,16 +1705,37 @@ function TodaySnapshotCard({
             <h4 style={{ fontSize: 28, marginTop: 6 }}>{snapshot.totalItems}</h4>
           </div>
           <div className="time-highlight-card">
-            <span className="time-muted-copy">待排任务</span>
-            <h4 style={{ fontSize: 28, marginTop: 6 }}>{snapshot.pendingTaskCount}</h4>
+            <span className="time-muted-copy">待我处理</span>
+            <h4 style={{ fontSize: 28, marginTop: 6 }}>{pendingCount}</h4>
+          </div>
+          <div className="time-highlight-card">
+            <span className="time-muted-copy">团队节点</span>
+            <h4 style={{ fontSize: 28, marginTop: 6 }}>{teamExecutionCount}</h4>
+          </div>
+          <div className="time-highlight-card">
+            <span className="time-muted-copy">建议时间块</span>
+            <h4 style={{ fontSize: 28, marginTop: 6 }}>{snapshot.suggestionCount}</h4>
           </div>
         </div>
 
         <div>
-          <h4 className="time-panel-list-title">今日摘要</h4>
+          <h4 className="time-panel-list-title">今日助手摘要</h4>
+          <ul className="time-insight-list">
+            {digest.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+          <div className={`time-digest-source time-digest-source--${digestSource}`}>
+            <span className="time-digest-source__dot" />
+            {digestSource === "model" ? "模型生成" : "规则兜底"}
+          </div>
+        </div>
+
+        <div>
+          <h4 className="time-panel-list-title">今日重点事项</h4>
           {todayBrief?.items?.length ? (
             <ul className="time-mini-list">
-              {todayBrief.items.slice(0, 4).map((item) => (
+              {todayBrief.items.slice(0, 3).map((item) => (
                 <li key={item.id}>
                   <strong>{item.title}</strong>
                   <span>{item.summary}</span>
@@ -1511,21 +1752,71 @@ function TodaySnapshotCard({
               ))}
             </ul>
           ) : (
-            <p className="time-empty-state">今天还没有进入时间中心的事项。</p>
+            <p className="time-empty-state">今天还没有进入时间规划的事项。</p>
           )}
         </div>
 
         <div className="time-focus-strip">
           <span className="time-focus-chip">时区 {timezone}</span>
           <span className="time-focus-chip">提醒 {snapshot.reminderCount}</span>
-          <span className="time-focus-chip">建议块 {snapshot.suggestionCount}</span>
+          <span className="time-focus-chip">待排任务 {snapshot.pendingTaskCount}</span>
         </div>
       </div>
     </section>
   );
 }
 
-/** 渲染右侧待安排任务卡，把还未稳定落到日历的任务单独收束。 */
+/** 渲染顶部待我处理卡，把所有需要用户亲自拍板的事项集中暴露。 */
+function PendingDecisionCard({
+  entries,
+  dateLabel,
+}: {
+  entries: AgendaEntry[];
+  dateLabel: string;
+}) {
+  return (
+    <section className="glass-card">
+      <div className="glass-card__header">
+        <div>
+          <h3 className="time-section-title">待我处理</h3>
+          <p className="time-section-subtitle">{dateLabel}需要你拍板、确认、补资料或先盯住的事项。</p>
+        </div>
+        <span className="glass-pill glass-pill--muted">{entries.length}</span>
+      </div>
+
+      <div className="glass-card__body">
+        <AgendaEntryList entries={entries} emptyText="今天没有明显阻塞，可以先进入你的核心推进项。" />
+      </div>
+    </section>
+  );
+}
+
+/** 渲染顶部团队执行动态卡，把硅基员工相关节点从个人日程里剥出来单看。 */
+function TeamExecutionCard({
+  entries,
+  dateLabel,
+}: {
+  entries: AgendaEntry[];
+  dateLabel: string;
+}) {
+  return (
+    <section className="glass-card">
+      <div className="glass-card__header">
+        <div>
+          <h3 className="time-section-title">团队执行动态</h3>
+          <p className="time-section-subtitle">{dateLabel}由硅基员工推进、回收或触发的关键节点都会集中显示在这里。</p>
+        </div>
+        <span className="glass-pill glass-pill--muted">{entries.length}</span>
+      </div>
+
+      <div className="glass-card__body">
+        <AgendaEntryList entries={entries} emptyText="今天还没有团队回收节点，主导权更多在你自己的时间线上。" />
+      </div>
+    </section>
+  );
+}
+
+/** 渲染右侧未排期任务卡，把还没稳定落位的任务单独收束。 */
 function PendingTaskBacklogCard({
   tasks,
   timezone,
@@ -1537,8 +1828,8 @@ function PendingTaskBacklogCard({
     <section className="glass-card">
       <div className="glass-card__header">
         <div>
-          <h3 className="time-section-title">待安排任务</h3>
-          <p className="time-section-subtitle">这些任务还没有稳定落到日历时间块里，先集中放在右栏任务池。</p>
+          <h3 className="time-section-title">未排期任务池</h3>
+          <p className="time-section-subtitle">这些任务还没有稳定落到今天的时间轴里，适合你稍后统一排位。</p>
         </div>
         <span className="glass-pill glass-pill--muted">{tasks.length}</span>
       </div>
@@ -1555,79 +1846,8 @@ function PendingTaskBacklogCard({
             ))}
           </ul>
         ) : (
-          <p className="time-empty-state">所有待办都已经落到日历或建议时间块里了。</p>
+          <p className="time-empty-state">当前没有悬空待办，今天的任务基本都已经有落位了。</p>
         )}
-      </div>
-    </section>
-  );
-}
-
-/** 渲染左侧关注摘要卡，补充提醒、风险任务和规划器状态。 */
-function FocusSummaryCard({
-  timezone,
-  reminders,
-  tasks,
-  plannerLoading,
-  suggestionCount,
-}: {
-  timezone: string;
-  reminders: Reminder[];
-  tasks: TaskCommitment[];
-  plannerLoading: boolean;
-  suggestionCount: number;
-}) {
-  const upcomingReminders = reminders
-    .slice()
-    .sort((left, right) => left.triggerAt.localeCompare(right.triggerAt))
-    .slice(0, 3);
-  const dueTasks = tasks
-    .filter((task) => task.dueAt && task.status !== "completed" && task.status !== "cancelled")
-    .slice()
-    .sort((left, right) => (left.dueAt ?? "9999").localeCompare(right.dueAt ?? "9999"))
-    .slice(0, 3);
-
-  return (
-    <section className="glass-card">
-      <div className="glass-card__header">
-        <div>
-          <h3 className="time-section-title">本周重点</h3>
-          <p className="time-section-subtitle">把最接近用户操作决策的提醒和任务暴露在顶部概览带。</p>
-        </div>
-        <span className="glass-pill glass-pill--muted">{plannerLoading ? "规划中" : `${suggestionCount} 个建议块`}</span>
-      </div>
-
-      <div className="glass-card__body time-focus-summary">
-        <div>
-          <h4 className="time-panel-list-title">最近提醒</h4>
-          {upcomingReminders.length ? (
-            <ul className="time-mini-list">
-              {upcomingReminders.map((reminder) => (
-                <li key={reminder.id}>
-                  <strong>{reminder.title}</strong>
-                  <span>{formatDateTime(reminder.triggerAt, reminder.timezone)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="time-empty-state">没有待触发提醒。</p>
-          )}
-        </div>
-
-        <div>
-          <h4 className="time-panel-list-title">逼近截止</h4>
-          {dueTasks.length ? (
-            <ul className="time-mini-list">
-              {dueTasks.map((task) => (
-                <li key={task.id}>
-                  <strong>{task.title}</strong>
-                  <span>{formatTaskSummary(task, timezone)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="time-empty-state">没有高风险任务。</p>
-          )}
-        </div>
       </div>
     </section>
   );
@@ -1769,17 +1989,30 @@ function MonthCalendarBoard({
   );
 }
 
-/** 渲染右侧按日期聚合的 agenda 列表。 */
-function AgendaEntryList({ entries }: { entries: AgendaEntry[] }) {
+/** 渲染按日期聚合的动态列表，支持不同空态文案。 */
+function AgendaEntryList({
+  entries,
+  emptyText = "这一天还没有排期与提醒，可以直接从右下角创建安排。",
+}: {
+  entries: AgendaEntry[];
+  emptyText?: string;
+}) {
   if (entries.length === 0) {
-    return <p className="time-empty-state">这一天还没有排期与提醒，可以直接从右下角创建安排。</p>;
+    return <p className="time-empty-state">{emptyText}</p>;
   }
 
   return (
     <ul className="time-agenda-list">
       {entries.map((entry) => (
         <li key={entry.id} className={`time-agenda-entry time-agenda-entry--${entry.tone}`}>
-          <strong>{entry.title}</strong>
+          <div className="time-agenda-entry__title">
+            <strong>{entry.title}</strong>
+            {entry.reason ? (
+              <span className={`time-agenda-reason time-agenda-reason--${entry.reason}`}>
+                {REASON_LABEL[entry.reason]}
+              </span>
+            ) : null}
+          </div>
           <span>{entry.summary}</span>
         </li>
       ))}
@@ -2092,7 +2325,7 @@ function buildCalendarBoardItems(events: CalendarEvent[], suggestions: Suggested
   ].sort((left, right) => left.startsAt.localeCompare(right.startsAt));
 }
 
-/** 构建指定日期的 agenda 条目列表。 */
+/** 构建指定日期的个人 agenda 条目列表，团队节点会单独进入团队动态卡。 */
 function buildAgendaEntries(input: {
   selectedDate: string;
   timezone: string;
@@ -2104,6 +2337,9 @@ function buildAgendaEntries(input: {
   const entries: AgendaEntry[] = [];
 
   for (const event of input.events) {
+    if (event.ownerScope === "silicon_person") {
+      continue;
+    }
     if (resolveItemDateKey(event.startsAt, event.timezone) !== input.selectedDate) {
       continue;
     }
@@ -2132,6 +2368,9 @@ function buildAgendaEntries(input: {
   }
 
   for (const reminder of input.reminders) {
+    if (reminder.ownerScope === "silicon_person") {
+      continue;
+    }
     if (resolveItemDateKey(reminder.triggerAt, reminder.timezone) !== input.selectedDate) {
       continue;
     }
@@ -2146,6 +2385,9 @@ function buildAgendaEntries(input: {
   }
 
   for (const task of input.tasks) {
+    if (task.ownerScope === "silicon_person") {
+      continue;
+    }
     if (!task.dueAt || resolveItemDateKey(task.dueAt, task.timezone) !== input.selectedDate) {
       continue;
     }
@@ -2162,6 +2404,248 @@ function buildAgendaEntries(input: {
   return entries.sort((left, right) => left.sortAt.localeCompare(right.sortAt));
 }
 
+/**
+ * 构建“待我处理”列表，按设计文档 5.2 只收三类：
+ *  A. 需要拍板/确认的事项（高优+逾期的个人任务、硅基员工高优逾期任务）
+ *  B. 今天到点必须关注的提醒/任务
+ *  C. 自动任务失败、执行记录失败
+ * running 的正常节点不视为阻塞，归入团队执行动态。
+ */
+function buildPendingAttentionEntries(input: {
+  selectedDate: string;
+  timezone: string;
+  tasks: TaskCommitment[];
+  reminders: Reminder[];
+  jobs: ScheduleJob[];
+  runs: ExecutionRun[];
+  siliconPersonNameById: ReadonlyMap<string, string>;
+}) {
+  const entries: AgendaEntry[] = [];
+  const jobById = new Map(input.jobs.map((job) => [job.id, job]));
+
+  for (const task of input.tasks) {
+    if (task.status === "completed" || task.status === "cancelled" || !task.dueAt) {
+      continue;
+    }
+    const dueDateKey = resolveItemDateKey(task.dueAt, task.timezone);
+    if (dueDateKey > input.selectedDate) {
+      continue;
+    }
+
+    const ownerLabel = resolveOwnerLabel(task.ownerScope, task.ownerId, input.siliconPersonNameById);
+    const isPersonal = task.ownerScope !== "silicon_person";
+    const isHighPriority = task.priority === "urgent" || task.priority === "high";
+    const isOverdue = dueDateKey < input.selectedDate;
+
+    let reason: AgendaEntryReason | null = null;
+    if (isPersonal) {
+      if (isOverdue) reason = "overdue";
+      else if (isHighPriority) reason = "awaiting_decision";
+      else reason = "due_today";
+    } else if (isHighPriority && (isOverdue || dueDateKey === input.selectedDate)) {
+      reason = "team_blocked";
+    }
+    if (!reason) continue;
+
+    entries.push({
+      id: `attention-task-${task.id}`,
+      sourceKey: `task:${task.id}`,
+      kind: "task_commitment",
+      title: task.title,
+      summary: `${ownerLabel} · ${formatTaskSummary(task, input.timezone)}`,
+      sortAt: task.dueAt,
+      tone: reason === "overdue" || reason === "awaiting_decision" || reason === "team_blocked" ? "warning" : "accent",
+      reason,
+    });
+  }
+
+  for (const reminder of input.reminders) {
+    if (reminder.status !== "scheduled") continue;
+    if (reminder.ownerScope === "silicon_person") continue;
+    if (resolveItemDateKey(reminder.triggerAt, reminder.timezone) !== input.selectedDate) continue;
+
+    const ownerLabel = resolveOwnerLabel(reminder.ownerScope, reminder.ownerId, input.siliconPersonNameById);
+    entries.push({
+      id: `attention-reminder-${reminder.id}`,
+      sourceKey: `reminder:${reminder.id}`,
+      kind: "reminder",
+      title: reminder.title,
+      summary: `${ownerLabel} · ${formatReminderSummary(reminder.triggerAt, reminder.timezone, reminder.status)}`,
+      sortAt: reminder.triggerAt,
+      tone: "accent",
+      reason: "due_today",
+    });
+  }
+
+  for (const job of input.jobs) {
+    if (!job.nextRunAt) continue;
+    if (resolveItemDateKey(job.nextRunAt, job.timezone) !== input.selectedDate) continue;
+    if (job.status !== "failed") continue;
+
+    const ownerLabel = resolveOwnerLabel(job.ownerScope, job.ownerId, input.siliconPersonNameById);
+    entries.push({
+      id: `attention-job-${job.id}`,
+      sourceKey: `job:${job.id}`,
+      kind: "schedule_job",
+      title: job.title,
+      summary: `${ownerLabel} · ${formatJobSummary(job.nextRunAt, job.status, job.scheduleKind, job.timezone)}`,
+      sortAt: job.nextRunAt,
+      tone: "warning",
+      reason: "automation_failed",
+    });
+  }
+
+  for (const run of input.runs) {
+    if (run.status !== "failed") continue;
+    const referenceAt = run.finishedAt ?? run.startedAt;
+    if (resolveItemDateKey(referenceAt, input.timezone) !== input.selectedDate) continue;
+
+    const relatedJob = jobById.get(run.jobId);
+    const ownerLabel = relatedJob
+      ? resolveOwnerLabel(relatedJob.ownerScope, relatedJob.ownerId, input.siliconPersonNameById)
+      : "团队";
+    entries.push({
+      id: `attention-run-${run.id}`,
+      sourceKey: `run:${run.id}`,
+      kind: "execution_run",
+      title: relatedJob?.title ?? formatExecutionRunTitle(run),
+      summary: `${ownerLabel} · ${mapExecutionRunStatus(run.status)} · ${formatExecutionRunSummary(run)}`,
+      sortAt: referenceAt,
+      tone: "warning",
+      reason: "automation_failed",
+    });
+  }
+
+  const reasonRank: Record<AgendaEntryReason, number> = {
+    automation_failed: 0,
+    overdue: 1,
+    awaiting_decision: 2,
+    team_blocked: 3,
+    due_today: 4,
+  };
+
+  return entries
+    .sort((left, right) => {
+      const delta = reasonRank[left.reason ?? "due_today"] - reasonRank[right.reason ?? "due_today"];
+      if (delta !== 0) return delta;
+      return left.sortAt.localeCompare(right.sortAt);
+    })
+    .slice(0, 6);
+}
+
+/**
+ * 构建团队执行动态列表，只保留硅基员工相关的今日节点。
+ * 同一个节点若已进入“待我处理”则跳过，避免两卡重复。
+ */
+function buildTeamExecutionEntries(input: {
+  selectedDate: string;
+  timezone: string;
+  events: CalendarEvent[];
+  tasks: TaskCommitment[];
+  jobs: ScheduleJob[];
+  runs: ExecutionRun[];
+  siliconPersonNameById: ReadonlyMap<string, string>;
+  pendingSourceKeys: ReadonlySet<string>;
+}) {
+  const entries: AgendaEntry[] = [];
+  const jobById = new Map(input.jobs.map((job) => [job.id, job]));
+
+  for (const event of input.events) {
+    if (event.ownerScope !== "silicon_person" || resolveItemDateKey(event.startsAt, event.timezone) !== input.selectedDate) {
+      continue;
+    }
+    const sourceKey = `event:${event.id}`;
+    if (input.pendingSourceKeys.has(sourceKey)) continue;
+    const ownerLabel = resolveOwnerLabel(event.ownerScope, event.ownerId, input.siliconPersonNameById);
+    entries.push({
+      id: `team-event-${event.id}`,
+      sourceKey,
+      kind: "calendar_event",
+      title: event.title,
+      summary: `${ownerLabel} · ${formatDateTimeWindow(event.startsAt, event.endsAt, event.timezone)}`,
+      sortAt: event.startsAt,
+      tone: "accent",
+    });
+  }
+
+  for (const task of input.tasks) {
+    if (task.ownerScope !== "silicon_person" || !task.dueAt || resolveItemDateKey(task.dueAt, task.timezone) !== input.selectedDate) {
+      continue;
+    }
+    const sourceKey = `task:${task.id}`;
+    if (input.pendingSourceKeys.has(sourceKey)) continue;
+    const ownerLabel = resolveOwnerLabel(task.ownerScope, task.ownerId, input.siliconPersonNameById);
+    entries.push({
+      id: `team-task-${task.id}`,
+      sourceKey,
+      kind: "task_commitment",
+      title: task.title,
+      summary: `${ownerLabel} · ${formatTaskSummary(task, input.timezone)}`,
+      sortAt: task.dueAt,
+      tone: task.priority === "urgent" || task.priority === "high" ? "warning" : "muted",
+    });
+  }
+
+  for (const job of input.jobs) {
+    const anchorAt = job.nextRunAt ?? job.startsAt;
+    if (!anchorAt || resolveItemDateKey(anchorAt, job.timezone) !== input.selectedDate) {
+      continue;
+    }
+    if (job.ownerScope !== "silicon_person" && job.executor !== "silicon_person") {
+      continue;
+    }
+    const sourceKey = `job:${job.id}`;
+    if (input.pendingSourceKeys.has(sourceKey)) continue;
+    const ownerLabel = resolveOwnerLabel(job.ownerScope, job.ownerId, input.siliconPersonNameById);
+    entries.push({
+      id: `team-job-${job.id}`,
+      sourceKey,
+      kind: "schedule_job",
+      title: job.title,
+      summary: `${ownerLabel} · ${formatJobSummary(job.nextRunAt ?? job.startsAt, job.status, job.scheduleKind, job.timezone)}`,
+      sortAt: anchorAt,
+      tone: job.status === "failed" ? "warning" : "muted",
+    });
+  }
+
+  for (const run of input.runs) {
+    const relatedJob = jobById.get(run.jobId);
+    if (!relatedJob || (relatedJob.ownerScope !== "silicon_person" && relatedJob.executor !== "silicon_person")) {
+      continue;
+    }
+    const referenceAt = run.finishedAt ?? run.startedAt;
+    if (resolveItemDateKey(referenceAt, relatedJob.timezone) !== input.selectedDate) {
+      continue;
+    }
+    const sourceKey = `run:${run.id}`;
+    if (input.pendingSourceKeys.has(sourceKey)) continue;
+    const ownerLabel = resolveOwnerLabel(relatedJob.ownerScope, relatedJob.ownerId, input.siliconPersonNameById);
+    entries.push({
+      id: `team-run-${run.id}`,
+      sourceKey,
+      kind: "execution_run",
+      title: relatedJob.title,
+      summary: `${ownerLabel} · ${mapExecutionRunStatus(run.status)} · ${formatExecutionRunSummary(run)}`,
+      sortAt: referenceAt,
+      tone: run.status === "failed" ? "warning" : run.status === "running" ? "accent" : "muted",
+    });
+  }
+
+  return entries
+    .sort((left, right) => left.sortAt.localeCompare(right.sortAt))
+    .slice(0, 6);
+}
+
+/** 构建右侧全局动态，把个人日程和团队动态合并成一个顺序视图。 */
+function buildDailyControlFeed(input: {
+  personalEntries: AgendaEntry[];
+  teamEntries: AgendaEntry[];
+}) {
+  return [...input.personalEntries, ...input.teamEntries]
+    .sort((left, right) => left.sortAt.localeCompare(right.sortAt))
+    .slice(0, 10);
+}
+
 /** 构建左侧今日摘要的聚合快照。 */
 function buildTodaySnapshot(input: {
   todayDateKey: string;
@@ -2170,6 +2654,7 @@ function buildTodaySnapshot(input: {
   events: CalendarEvent[];
   tasks: TaskCommitment[];
   reminders: Reminder[];
+  jobs: ScheduleJob[];
   suggestions: SuggestedTimebox[];
 }) {
   const topEntries = buildAgendaEntries({
@@ -2181,13 +2666,70 @@ function buildTodaySnapshot(input: {
     suggestions: input.suggestions,
   }).slice(0, 4);
 
+  const eventCount = input.events.filter(
+    (event) => resolveItemDateKey(event.startsAt, event.timezone) === input.todayDateKey,
+  ).length;
+  const taskCount = input.tasks.filter(
+    (task) => task.dueAt && resolveItemDateKey(task.dueAt, task.timezone) === input.todayDateKey,
+  ).length;
+  const reminderCount = input.reminders.filter(
+    (reminder) => resolveItemDateKey(reminder.triggerAt, reminder.timezone) === input.todayDateKey,
+  ).length;
+  const jobCount = input.jobs.filter(
+    (job) => job.nextRunAt && resolveItemDateKey(job.nextRunAt, job.timezone) === input.todayDateKey,
+  ).length;
+  const suggestionCount = input.suggestions.filter(
+    (suggestion) => resolveItemDateKey(suggestion.startsAt, suggestion.timezone) === input.todayDateKey,
+  ).length;
+
   return {
-    totalItems: input.todayBrief?.items.length ?? topEntries.length,
+    totalItems: eventCount + taskCount + reminderCount + jobCount + suggestionCount,
     pendingTaskCount: input.tasks.filter((task) => task.status === "pending" || task.status === "scheduled").length,
-    reminderCount: input.reminders.length,
-    suggestionCount: input.suggestions.length,
+    reminderCount,
+    suggestionCount,
     topEntries,
   };
+}
+
+/** 基于今日摘要和关键列表生成首页助手判断，首版先用可解释规则收敛成四句。 */
+function buildTodayDigest(input: {
+  todayBrief: TodayBrief | null;
+  snapshot: ReturnType<typeof buildTodaySnapshot>;
+  pendingEntries: AgendaEntry[];
+  teamEntries: AgendaEntry[];
+  personalEntries: AgendaEntry[];
+}) {
+  const lines: string[] = [];
+  const leadBrief = input.todayBrief?.items[0];
+  const leadPersonal = input.personalEntries[0];
+  const leadPending = input.pendingEntries[0];
+
+  lines.push(
+    leadBrief
+      ? `今日目标：优先盯住「${leadBrief.title}」。`
+      : leadPersonal
+      ? `今日目标：先推进「${leadPersonal.title}」。`
+      : "今日目标：今天还比较空，可以先补齐最关键的一条安排。",
+  );
+  lines.push(
+    leadPending
+      ? `当前风险：${leadPending.title} 需要你尽快处理。`
+      : "当前风险：目前没有明显阻塞，可以直接进入连续工作。",
+  );
+  lines.push(
+    input.teamEntries.length > 0
+      ? `团队动态：今天有 ${input.teamEntries.length} 个硅基员工节点会推进或回收到你这里。`
+      : "团队动态：今天暂时没有团队回收节点，重心可以放在你自己的推进节奏上。",
+  );
+  lines.push(
+    input.pendingEntries.length > 0
+      ? `建议动作：先清掉 ${Math.min(input.pendingEntries.length, 2)} 个待我处理项，再进入深度工作。`
+      : input.snapshot.pendingTaskCount > 0
+      ? `建议动作：先给 ${Math.min(input.snapshot.pendingTaskCount, 2)} 个待排任务找落位。`
+      : "建议动作：直接从今天最重要的安排开始，别让首页变成新的待办池。",
+  );
+
+  return lines;
 }
 
 /** 计算自动化工作区顶部要展示的关键统计值。 */
@@ -2229,29 +2771,46 @@ function isTaskPlannable(task: TaskCommitment): boolean {
   );
 }
 
-/** 构建右侧待安排任务池，只保留尚未稳定进入日历的任务。 */
+/**
+ * 构建右侧未排期任务池：按设计 5.5 只收“还没稳定落进今天时间轴”的任务。
+ * 判定口径：个人任务 + 未完成 + 今天 suggestion 未覆盖 + （dueAt≤今天 或 无dueAt但高优）。
+ */
 function buildPendingTaskBacklog(input: {
   tasks: TaskCommitment[];
   suggestions: SuggestedTimebox[];
+  todayDateKey: string;
   timezone: string;
 }) {
-  const suggestedCommitmentIds = new Set(input.suggestions.map((suggestion) => suggestion.commitmentId));
+  const todaySuggestedCommitmentIds = new Set(
+    input.suggestions
+      .filter((suggestion) => resolveItemDateKey(suggestion.startsAt, suggestion.timezone) === input.todayDateKey)
+      .map((suggestion) => suggestion.commitmentId),
+  );
+
+  function shouldShowOnToday(task: TaskCommitment): boolean {
+    if (task.status === "completed" || task.status === "cancelled") return false;
+    if (task.ownerScope === "silicon_person") return false;
+    if (todaySuggestedCommitmentIds.has(task.id)) return false;
+    if (task.dueAt) {
+      const dueKey = resolveItemDateKey(task.dueAt, task.timezone);
+      return dueKey <= input.todayDateKey;
+    }
+    return task.priority === "urgent" || task.priority === "high";
+  }
+
   return input.tasks
-    .filter((task) => task.status !== "completed" && task.status !== "cancelled")
-    .filter((task) => !task.dueAt || !suggestedCommitmentIds.has(task.id))
+    .filter(shouldShowOnToday)
     .slice()
     .sort((left, right) => {
       const priorityDelta = resolveTaskPriorityRank(right.priority) - resolveTaskPriorityRank(left.priority);
-      if (priorityDelta !== 0) {
-        return priorityDelta;
-      }
+      if (priorityDelta !== 0) return priorityDelta;
       return (left.dueAt ?? "9999-12-31T23:59:59.999Z").localeCompare(right.dueAt ?? "9999-12-31T23:59:59.999Z");
     })
     .slice(0, 6)
     .map((task) => ({
       task,
       summary: task.dueAt
-        ? `${formatTaskSummary(task, input.timezone)} · ${suggestedCommitmentIds.has(task.id) ? "等待确认落位" : "未生成建议块"}`
+        ? `${formatTaskSummary(task, input.timezone)} · 未生成建议时间块`
         : `${formatTaskSummary(task, input.timezone)} · 还没有截止时间，建议先补齐约束`,
     }));
 }
@@ -2399,6 +2958,18 @@ function resolveTaskPriorityRank(priority: TaskCommitment["priority"]): number {
   return 1;
 }
 
+/** 解析事项归属人文案，统一给团队视角卡片复用。 */
+function resolveOwnerLabel(
+  ownerScope: "personal" | "silicon_person",
+  ownerId: string | undefined,
+  siliconPersonNameById: ReadonlyMap<string, string>,
+): string {
+  if (ownerScope === "personal") {
+    return "你自己";
+  }
+  return ownerId ? (siliconPersonNameById.get(ownerId) ?? "硅基员工") : "硅基员工";
+}
+
 /** 格式化提醒摘要，汇总提醒时间和状态。 */
 function formatReminderSummary(triggerAt: string, timezone: string, status: string): string {
   return `${formatDateTime(triggerAt, timezone)} · ${mapReminderStatus(status)}`;
@@ -2409,8 +2980,9 @@ function formatJobSummary(
   nextRunAt: string | undefined,
   status: string,
   scheduleKind: string,
+  timezone = Intl.DateTimeFormat().resolvedOptions().timeZone,
 ): string {
-  const nextRunLabel = nextRunAt ? formatDateTime(nextRunAt, Intl.DateTimeFormat().resolvedOptions().timeZone) : "等待首次调度";
+  const nextRunLabel = nextRunAt ? formatDateTime(nextRunAt, timezone) : "等待首次调度";
   return `${mapScheduleKind(scheduleKind)} · ${mapScheduleJobStatus(status)} · ${nextRunLabel}`;
 }
 

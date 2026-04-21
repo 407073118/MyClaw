@@ -7,6 +7,7 @@ import { readBrMiniMaxRuntimeDiagnostics } from "@shared/br-minimax";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
 import { formatCapabilitySource } from "../utils/context-ui-helpers";
 import { getModelVendorLabel } from "../utils/model-profile-display";
+import { Box, Sliders, ShieldCheck, Mic, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
 
 type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
 
@@ -17,12 +18,10 @@ const DEFAULT_APPROVAL_POLICY = {
   alwaysAllowedTools: [] as string[],
 };
 
-/** 基于默认常量创建一份独立的审批策略草稿。 */
 function createDefaultApprovalPolicy() {
   return { ...DEFAULT_APPROVAL_POLICY };
 }
 
-/** 根据完整 profile 推断供应商标签 */
 function getProviderLabel(profile: any): string {
   return getModelVendorLabel(profile);
 }
@@ -42,10 +41,15 @@ function formatProtocolSelectionSourceLabel(source?: "saved" | "probe" | "regist
   return "回退选择";
 }
 
-const TABS = ["模型", "通用", "审批", "语音识别"] as const;
-type TabName = typeof TABS[number];
+const TABS = [
+  { id: "模型", label: "模型与提供商", icon: Box },
+  { id: "通用", label: "通用偏好", icon: Sliders },
+  { id: "审批", label: "执行与审批策略", icon: ShieldCheck },
+  { id: "语音识别", label: "ASR 语音识别", icon: Mic },
+] as const;
 
-/** 渲染个人设置页，管理模型、通用选项与审批策略。 */
+type TabName = typeof TABS[number]["id"];
+
 export default function SettingsPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -63,7 +67,6 @@ export default function SettingsPage() {
     autoApproveSkills: workspace.approvals?.autoApproveSkills ?? defaultApprovalPolicy.autoApproveSkills,
   });
 
-  // ---- ASR 配置 ----------------------------------------------------------
   const [asrDraft, setAsrDraft] = useState<AsrConfig>({ ...DEFAULT_ASR_CONFIG });
   const [asrSaving, setAsrSaving] = useState(false);
   const [asrSaveStatus, setAsrSaveStatus] = useState<string | null>(null);
@@ -93,7 +96,6 @@ export default function SettingsPage() {
     }
   }
 
-  // 工作区审批配置变化后，同步刷新本地编辑草稿。
   useEffect(() => {
     const approvals = workspace.approvals;
     setApprovalDraft({
@@ -126,7 +128,6 @@ export default function SettingsPage() {
   };
   const appUpdateSourceLabel = appUpdate.feedLabel ?? "未配置公开发布仓库";
 
-  /** 测试指定模型配置的连通性并回写状态文案。 */
   async function testModelProfile(profileId: string) {
     setModelConnectivityLoading((prev) => ({ ...prev, [profileId]: true }));
     setModelConnectivityStatus((prev) => ({ ...prev, [profileId]: "测试中..." }));
@@ -157,7 +158,6 @@ export default function SettingsPage() {
     }
   }
 
-  /** 保存当前审批策略草稿。 */
   async function saveApprovalPolicy() {
     await workspace.updateApprovalPolicy({
       mode: approvalDraft.mode,
@@ -166,36 +166,32 @@ export default function SettingsPage() {
     });
   }
 
-  /** 根据当前更新状态渲染主操作按钮，保持设置页交互明确且最小。 */
   function renderAppUpdatePrimaryAction() {
     if (appUpdate.stage === "available") {
       return (
-        <button data-testid="app-update-download" className="primary" onClick={() => void workspace.downloadAppUpdate()}>
+        <button data-testid="app-update-download" className="btn-primary" onClick={() => void workspace.downloadAppUpdate()}>
           下载更新
         </button>
       );
     }
-
     if (appUpdate.stage === "downloading") {
       return (
-        <button data-testid="app-update-downloading" className="secondary" disabled>
+        <button data-testid="app-update-downloading" className="btn-secondary" disabled>
           正在下载 {appUpdate.progressPercent ?? 0}%
         </button>
       );
     }
-
     if (appUpdate.stage === "downloaded") {
       return (
-        <button data-testid="app-update-install" className="primary" onClick={() => void workspace.quitAndInstallAppUpdate()}>
+        <button data-testid="app-update-install" className="btn-primary" onClick={() => void workspace.quitAndInstallAppUpdate()}>
           重启并安装
         </button>
       );
     }
-
     return (
       <button
         data-testid="app-update-check"
-        className="secondary"
+        className="btn-secondary"
         disabled={!appUpdate.enabled}
         onClick={() => void workspace.checkForAppUpdates()}
       >
@@ -204,506 +200,813 @@ export default function SettingsPage() {
     );
   }
 
+  const activeTabDetails = TABS.find((t) => t.id === activeTab);
+
   return (
-    <main className="page-container">
-      <header className="page-header">
-        <div className="header-text">
-          <span className="eyebrow">Settings</span>
-          <h2 className="page-title">个人设置</h2>
-          <p className="page-subtitle">管理您的模型、运行时、审批策略以及应用偏好。</p>
+    <div className="settings-split-pane">
+      {/* 桌面原生化：Master 侧边栏 */}
+      <aside className="settings-sidebar">
+        <div className="sidebar-header">
+          <h2 className="sidebar-title">个人设置</h2>
         </div>
-        <div className="header-actions">
-          <div className="tabs">
-            {TABS.map((tab) => (
+        <nav className="sidebar-nav">
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            return (
               <button
-                key={tab}
-                data-testid={`settings-tab-${tab}`}
-                className={`tab${activeTab === tab ? " active" : ""}`}
-                onClick={() => setActiveTab(tab)}
+                key={tab.id}
+                data-testid={`settings-tab-${tab.id}`}
+                className={`sidebar-item ${activeTab === tab.id ? "active" : ""}`}
+                onClick={() => setActiveTab(tab.id)}
               >
-                {tab}
+                <Icon size={16} strokeWidth={2.5} className="sidebar-item-icon" />
+                <span>{tab.label}</span>
               </button>
-            ))}
-          </div>
-        </div>
-      </header>
+            );
+          })}
+        </nav>
+      </aside>
 
-      {/* 模型页签 */}
-      {activeTab === "模型" && (
-        <article className="card no-padding">
-          {modelConfigNotice && (
-            <div className="settings-notice-banner">
-              {modelConfigNotice}
-            </div>
-          )}
-          <div className="section-header-row">
-            <div className="header-content">
-              <p className="eyebrow">模型列表</p>
-              <h3>已配置模型</h3>
-              <p className="description">管理您的 AI 模型提供商配置。默认模型将用于智能助手回复和工具分析。</p>
-            </div>
-            <button className="primary add-btn" onClick={() => navigate("/settings/models/new")}>
-              <svg viewBox="0 0 24 24" width="18" height="18">
-                <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-              </svg>
-              添加模型配置
-            </button>
+      {/* 桌面原生化：Detail 详情区 */}
+      <main className="settings-detail-pane">
+        <header className="settings-detail-header">
+          <div className="header-breadcrumbs">
+            <span className="eyebrow">Settings</span>
+            <ChevronRight size={14} className="breadcrumb-separator" />
+            <span className="eyebrow active">{activeTabDetails?.label}</span>
           </div>
+          <h3 className="pane-title">{activeTabDetails?.label}</h3>
+        </header>
 
-          <div data-testid="model-cards-container" className="model-cards-container single-column">
-            {(workspace.models ?? []).map((profile: any) => (
-              <div key={profile.id} className={`model-card${workspace.defaultModelProfileId === profile.id ? " is-active" : ""}`}>
-                <div className="card-status-bar">
-                  {workspace.defaultModelProfileId === profile.id ? (
-                    <span className="status-badge active"><span className="dot"></span>当前默认模型</span>
-                  ) : (
-                    <span className="status-badge inactive">未启用</span>
-                  )}
-                  <div className="card-actions-mini">
-                    <button
-                      className="icon-btn"
-                      onClick={() => void testModelProfile(profile.id)}
-                      disabled={modelConnectivityLoading[profile.id]}
-                      title="测试连通性"
-                    >
-                      <svg viewBox="0 0 24 24" width="16" height="16">
-                        <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                      </svg>
-                    </button>
-                    <button className="icon-btn" onClick={() => navigate(`/settings/models/${profile.id}`)} title="编辑">
-                      <svg viewBox="0 0 24 24" width="16" height="16">
-                        <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                      </svg>
-                    </button>
-                  </div>
+        <div className="settings-detail-content">
+          {/* ---- 模型页签 ---- */}
+          {activeTab === "模型" && (
+            <div className="settings-section">
+              {modelConfigNotice && (
+                <div className="settings-notice-banner">
+                  <AlertCircle size={16} />
+                  <span>{modelConfigNotice}</span>
                 </div>
-                <div className="card-body">
-                  <div className="model-info">
-                    <div className="model-name-block">
-                      <div data-testid="model-name-title" className="model-name-title-row">
-                        <strong>{profile.name}</strong>
-                      </div>
-                      <div data-testid="model-name-tags" className="model-name-tags-row">
-                        <span className="provider-tag">{getProviderLabel(profile)}</span>
+              )}
+              
+              <div className="section-header-row">
+                <p className="description">管理您的 AI 模型提供商配置。默认模型将用于智能助手回复和工具分析。</p>
+                <button className="btn-primary add-btn" onClick={() => navigate("/settings/models/new")}>
+                  <svg viewBox="0 0 24 24" width="16" height="16">
+                    <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
+                  </svg>
+                  添加模型
+                </button>
+              </div>
+
+              {/* 高密度列表视图改良：去掉巨型网格，采用行或更紧凑的卡片 */}
+              <div data-testid="model-cards-container" className="model-rows-container">
+                {(workspace.models ?? []).map((profile: any) => (
+                  <div key={profile.id} className={`model-row-card ${workspace.defaultModelProfileId === profile.id ? "is-active" : ""}`}>
+                    <div className="row-card-left">
+                      <div className="model-row-header">
+                        <strong className="model-name">{profile.name}</strong>
+                        {workspace.defaultModelProfileId === profile.id && (
+                          <span className="badge badge-active">当前默认</span>
+                        )}
+                        <span className="badge badge-provider">{getProviderLabel(profile)}</span>
                         {formatProtocolTargetLabel(profile.protocolTarget) && (
-                          <span className="route-tag">{formatProtocolTargetLabel(profile.protocolTarget)}</span>
+                          <span className="badge badge-route">{formatProtocolTargetLabel(profile.protocolTarget)}</span>
                         )}
-                        {formatProtocolSelectionSourceLabel(profile.protocolSelectionSource) && (
-                          <span className="route-source-tag">{formatProtocolSelectionSourceLabel(profile.protocolSelectionSource)}</span>
-                        )}
-                        <span className="route-source-tag capability-source-tag">
-                          {formatCapabilitySource(resolveModelCapability(profile).effective.source)}
-                        </span>
                       </div>
-                    </div>
-                    <div className="model-metrics-grid">
-                      <p className="model-metric"><span>Model ID</span> <strong className="metric-value">{profile.model || "--"}</strong></p>
-                      <p className="model-metric"><span>Base URL</span> <strong className="metric-value">{profile.baseUrl || "--"}</strong></p>
-                      {profile.providerFlavor === "br-minimax" && (
-                        <p className="model-metric">
-                          <span>Thinking</span> <strong className="metric-value">{readBrMiniMaxRuntimeDiagnostics(profile).thinkingPath || "--"}</strong>
-                        </p>
+                      <div className="model-row-meta">
+                        <span className="meta-item">ID: <code>{profile.model || "--"}</code></span>
+                        <span className="meta-item">URL: {profile.baseUrl || "--"}</span>
+                      </div>
+                      {modelConnectivityStatus[profile.id] && (
+                        <div className={`model-row-status ${modelConnectivityStatus[profile.id].includes("可用") ? "ok" : "fail"}`}>
+                          {modelConnectivityStatus[profile.id].includes("可用") ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
+                          <span>{modelConnectivityStatus[profile.id]}</span>
+                        </div>
                       )}
                     </div>
+
+                    <div className="row-card-right">
+                      <div className="row-actions">
+                        {workspace.defaultModelProfileId !== profile.id && (
+                          <button className="btn-ghost-small" onClick={() => workspace.setDefaultModelProfile(profile.id)}>
+                            设为默认
+                          </button>
+                        )}
+                        <button
+                          className="btn-icon"
+                          onClick={() => void testModelProfile(profile.id)}
+                          disabled={modelConnectivityLoading[profile.id]}
+                          title="测试连通性"
+                        >
+                          <svg viewBox="0 0 24 24" width="14" height="14">
+                            <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                          </svg>
+                        </button>
+                        <button className="btn-icon" onClick={() => navigate(`/settings/models/${profile.id}`)} title="编辑">
+                          <svg viewBox="0 0 24 24" width="14" height="14">
+                            <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                  {modelConnectivityStatus[profile.id] && (
-                    <div className="connectivity-info">
-                      <span className={`status-text${modelConnectivityStatus[profile.id].includes("可用") ? " ok" : ""}`}>
-                        {modelConnectivityStatus[profile.id]}
-                      </span>
+                ))}
+              </div>
+
+              <div className="settings-group-panel">
+                <h4>应用更新 (桌面端版本)</h4>
+                <div className="panel-grid meta-grid">
+                  <div className="meta-field">
+                    <span>当前版本</span>
+                    <code>{appUpdate.currentVersion}</code>
+                  </div>
+                  <div className="meta-field">
+                    <span>更新源</span>
+                    <code>{appUpdateSourceLabel}</code>
+                  </div>
+                  {appUpdate.latestVersion && (
+                    <div className="meta-field">
+                      <span>最新版本</span>
+                      <code>{appUpdate.latestVersion}</code>
                     </div>
                   )}
                 </div>
-                <div className="card-footer-actions">
-                  {workspace.defaultModelProfileId !== profile.id ? (
-                    <button className="primary-ghost" onClick={() => workspace.setDefaultModelProfile(profile.id)}>设为默认</button>
-                  ) : (
-                    <button className="primary-ghost disabled" disabled>已设为默认</button>
+                <p className="update-status-text">{appUpdate.message}</p>
+                <div className="update-actions">
+                  {renderAppUpdatePrimaryAction()}
+                  {appUpdate.downloadPageUrl && (
+                    <button data-testid="app-update-open-download-page" className="btn-secondary" onClick={() => void workspace.openAppUpdateDownloadPage()}>
+                      手动下载安装包
+                    </button>
                   )}
                 </div>
               </div>
-            ))}
-          </div>
 
-          <section className="storage-section card">
-            <p className="eyebrow">存储资源</p>
-            <h4>MyClaw 数据目录</h4>
-            <div className="storage-path-list">
-              <div className="storage-path-item">
-                <span className="storage-path-label">根目录</span>
-                <p data-testid="myclaw-root-path" className="path-text">{myClawRootPath}</p>
-              </div>
-              <div className="storage-path-item">
-                <span className="storage-path-label">Skills</span>
-                <p data-testid="skills-root-path" className="path-text">{skillsRootPath}</p>
-              </div>
-              <div className="storage-path-item">
-                <span className="storage-path-label">Sessions</span>
-                <p data-testid="sessions-root-path" className="path-text">{sessionsRootPath}</p>
-              </div>
-            </div>
-            {workspace.requiresInitialSetup && (
-              <p data-testid="initial-setup-hint" className="setup-hint">首次使用请先添加有效模型 Token 并设为默认。</p>
-            )}
-          </section>
-
-          <section data-testid="app-update-section" className="storage-section card update-section">
-            <p className="eyebrow">应用更新</p>
-            <h4>桌面端版本</h4>
-            <div className="update-meta-list">
-              <div className="storage-path-item">
-                <span className="storage-path-label">当前版本</span>
-                <p className="path-text">{appUpdate.currentVersion}</p>
-              </div>
-              <div className="storage-path-item">
-                <span className="storage-path-label">更新源</span>
-                <p className="path-text">{appUpdateSourceLabel}</p>
-              </div>
-              {appUpdate.latestVersion && (
-                <div className="storage-path-item">
-                  <span className="storage-path-label">最新版本</span>
-                  <p className="path-text">{appUpdate.latestVersion}</p>
+              <div className="settings-group-panel">
+                <h4>MyClaw 数据存储路径</h4>
+                <div className="panel-grid path-grid">
+                  <div className="path-field">
+                    <span>Root</span>
+                    <code>{myClawRootPath}</code>
+                  </div>
+                  <div className="path-field">
+                    <span>Skills</span>
+                    <code>{skillsRootPath}</code>
+                  </div>
+                  <div className="path-field">
+                    <span>Sessions</span>
+                    <code>{sessionsRootPath}</code>
+                  </div>
                 </div>
-              )}
-            </div>
-            <p data-testid="app-update-status" className="update-status-text">{appUpdate.message}</p>
-            <div className="update-actions">
-              {renderAppUpdatePrimaryAction()}
-              {appUpdate.downloadPageUrl && (
-                <button
-                  data-testid="app-update-open-download-page"
-                  className="secondary"
-                  onClick={() => void workspace.openAppUpdateDownloadPage()}
-                >
-                  手动下载安装包
-                </button>
-              )}
-            </div>
-          </section>
-        </article>
-      )}
-
-      {/* 通用页签 */}
-      {activeTab === "通用" && (
-        <article className="card">
-          <p className="eyebrow">通用</p>
-          <h3>应用默认项</h3>
-          <p>运行时地址、启动行为和工作区级展示设置会在这里统一管理。</p>
-        </article>
-      )}
-
-      {/* 审批页签 */}
-      {activeTab === "审批" && (
-        <article className="card">
-          <p className="eyebrow">审批</p>
-          <h3>执行策略</h3>
-          <div className="approval-controls">
-            <label className="field">
-              <span>全局审批模式</span>
-              <select
-                data-testid="approval-mode-select"
-                value={approvalDraft.mode}
-                onChange={(e) => setApprovalDraft((prev) => ({ ...prev, mode: e.target.value as ApprovalMode }))}
-              >
-                <option value="prompt">全部询问</option>
-                <option value="auto-read-only">仅高风险询问</option>
-                <option value="auto-allow-all">工作目录自动允许</option>
-                <option value="unrestricted">⚠ 危险模式 — 完全无限制</option>
-              </select>
-            </label>
-
-            <label className="switch-row">
-              <input
-                data-testid="approval-readonly-toggle"
-                type="checkbox"
-                checked={approvalDraft.autoApproveReadOnly}
-                onChange={(e) => setApprovalDraft((prev) => ({ ...prev, autoApproveReadOnly: e.target.checked }))}
-              />
-              <span>只读操作默认自动允许</span>
-            </label>
-
-            <label className="switch-row">
-              <input
-                data-testid="approval-skills-toggle"
-                type="checkbox"
-                checked={approvalDraft.autoApproveSkills}
-                onChange={(e) => setApprovalDraft((prev) => ({ ...prev, autoApproveSkills: e.target.checked }))}
-              />
-              <span>Skills 调用默认直接放行</span>
-            </label>
-
-            <button data-testid="approval-save" className="primary" onClick={() => void saveApprovalPolicy()}>保存审批策略</button>
-          </div>
-
-          <div className="approval-mode-hint">
-            {approvalDraft.mode === "prompt" && <p>所有工具调用均需手动审批确认。</p>}
-            {approvalDraft.mode === "auto-read-only" && <p>只读操作自动放行，写入/执行/网络等高风险操作需审批。</p>}
-            {approvalDraft.mode === "auto-allow-all" && <p>工作目录内的操作全部自动放行。访问外部路径（如桌面、其他盘符）时仍需审批确认。</p>}
-            {approvalDraft.mode === "unrestricted" && <p className="danger-hint">⚠ 危险模式：所有操作全部自动放行，包括访问任意外部路径、执行命令、网络请求等。请确保你信任当前会话的所有操作。</p>}
-          </div>
-
-          <div className="approval-summary">
-            <p>{approvalDraft.autoApproveSkills ? "Skills 调用默认直接放行。" : "Skills 调用需要审批。"}</p>
-            <p>{approvalDraft.autoApproveReadOnly ? "只读操作默认自动允许。" : "只读操作当前也需要审批。"}</p>
-            <p>已设为始终允许的工具：{alwaysAllowedToolsLabel}</p>
-          </div>
-        </article>
-      )}
-
-      {/* 语音识别页签 */}
-      {activeTab === "语音识别" && (
-        <article className="card">
-          <p className="eyebrow">ASR</p>
-          <h3>会议语音识别服务</h3>
-          <p>配置实时流式 ASR 与离线识别服务地址，以及会议纪要生成使用的模型。</p>
-
-          <div className="approval-controls" style={{ marginTop: 20 }}>
-            <label className="field">
-              <span>实时流式 ASR WebSocket 地址</span>
-              <input
-                type="text"
-                value={asrDraft.wsUrl}
-                onChange={(e) => setAsrDraft((p) => ({ ...p, wsUrl: e.target.value }))}
-                placeholder="ws://host:port"
-                style={{
-                  height: 40,
-                  padding: "0 12px",
-                  background: "var(--bg-base)",
-                  border: "1px solid var(--glass-border)",
-                  borderRadius: 8,
-                  color: "var(--text-primary)",
-                  fontSize: 14,
-                }}
-              />
-            </label>
-
-            <label className="field">
-              <span>识别模式</span>
-              <div style={{ display: "flex", gap: 16 }}>
-                <label className="switch-row" style={{ cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    name="asr-mode"
-                    value="online"
-                    checked={asrDraft.mode === "online"}
-                    onChange={() => setAsrDraft((p) => ({ ...p, mode: "online" }))}
-                  />
-                  <span>online（低延迟）</span>
-                </label>
-                <label className="switch-row" style={{ cursor: "pointer" }}>
-                  <input
-                    type="radio"
-                    name="asr-mode"
-                    value="2pass"
-                    checked={asrDraft.mode === "2pass"}
-                    onChange={() => setAsrDraft((p) => ({ ...p, mode: "2pass" }))}
-                  />
-                  <span>2pass（更准确）</span>
-                </label>
               </div>
-            </label>
 
-            <label className="switch-row">
-              <input
-                type="checkbox"
-                checked={asrDraft.ssl}
-                onChange={(e) => setAsrDraft((p) => ({ ...p, ssl: e.target.checked }))}
-              />
-              <span>启用 SSL / WSS</span>
-            </label>
-
-            <label className="field">
-              <span>离线 ASR HTTP 地址</span>
-              <input
-                type="text"
-                value={asrDraft.httpUrl}
-                onChange={(e) => setAsrDraft((p) => ({ ...p, httpUrl: e.target.value }))}
-                placeholder="https://host/recognition"
-                style={{
-                  height: 40,
-                  padding: "0 12px",
-                  background: "var(--bg-base)",
-                  border: "1px solid var(--glass-border)",
-                  borderRadius: 8,
-                  color: "var(--text-primary)",
-                  fontSize: 14,
-                }}
-              />
-            </label>
-
-            <label className="switch-row">
-              <input
-                type="checkbox"
-                checked={asrDraft.enableSpeaker}
-                onChange={(e) => setAsrDraft((p) => ({ ...p, enableSpeaker: e.target.checked }))}
-              />
-              <span>启用说话人识别</span>
-            </label>
-
-            <label className="field">
-              <span>最大说话人数</span>
-              <input
-                type="number"
-                min={1}
-                max={20}
-                value={asrDraft.maxSpeakers}
-                onChange={(e) => setAsrDraft((p) => ({ ...p, maxSpeakers: Number(e.target.value) || 1 }))}
-                style={{
-                  height: 40,
-                  padding: "0 12px",
-                  background: "var(--bg-base)",
-                  border: "1px solid var(--glass-border)",
-                  borderRadius: 8,
-                  color: "var(--text-primary)",
-                  fontSize: 14,
-                  width: 120,
-                }}
-              />
-            </label>
-
-            <label className="field">
-              <span>会议纪要生成模型</span>
-              <select
-                value={asrDraft.summaryModelProfileId ?? ""}
-                onChange={(e) =>
-                  setAsrDraft((p) => ({
-                    ...p,
-                    summaryModelProfileId: e.target.value ? e.target.value : null,
-                  }))
-                }
-              >
-                <option value="">默认模型（跟随 Chat 默认）</option>
-                {(workspace.models ?? []).map((m: any) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} · {m.model}
-                  </option>
-                ))}
-              </select>
-            </label>
-
-            <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-              <button
-                type="button"
-                className="primary"
-                onClick={() => void saveAsrConfig()}
-                disabled={asrSaving}
-              >
-                {asrSaving ? "保存中..." : "保存配置"}
-              </button>
-              {asrSaveStatus && (
-                <span
-                  style={{
-                    fontSize: 13,
-                    color: asrSaveStatus.startsWith("保存失败")
-                      ? "var(--status-red)"
-                      : "var(--status-green)",
-                  }}
-                >
-                  {asrSaveStatus}
-                </span>
-              )}
             </div>
-          </div>
-        </article>
-      )}
+          )}
+
+          {/* ---- 通用页签 ---- */}
+          {activeTab === "通用" && (
+            <div className="settings-section">
+              <div className="settings-group-panel">
+                <h4>应用默认项</h4>
+                <p className="description">运行时地址、启动行为和工作区级展示设置会在这里统一管理。</p>
+                <div className="placeholder-box">
+                  <p>通用设置暂无配置项</p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ---- 审批策略页签 ---- */}
+          {activeTab === "审批" && (
+            <div className="settings-section">
+              <p className="description">管理执行工具和外部插件时的默认安全授权级别。</p>
+              
+              <div className="settings-group-panel">
+                <div className="form-field">
+                  <label>全局审批模式</label>
+                  <select
+                    className="desktop-select"
+                    data-testid="approval-mode-select"
+                    value={approvalDraft.mode}
+                    onChange={(e) => setApprovalDraft((prev) => ({ ...prev, mode: e.target.value as ApprovalMode }))}
+                  >
+                    <option value="prompt">全部询问 (最安全)</option>
+                    <option value="auto-read-only">仅高风险询问 (推荐)</option>
+                    <option value="auto-allow-all">工作目录自动允许</option>
+                    <option value="unrestricted">⚠ 危险模式 — 完全无限制</option>
+                  </select>
+                  <div className="form-hint">
+                    {approvalDraft.mode === "prompt" && "所有工具调用均需手动审批确认。"}
+                    {approvalDraft.mode === "auto-read-only" && "只读操作自动放行，写入/执行/网络等高风险操作需审批。"}
+                    {approvalDraft.mode === "auto-allow-all" && "工作目录内的操作全部自动放行。访问外部路径（如桌面、其他盘符）时仍需审批确认。"}
+                    {approvalDraft.mode === "unrestricted" && <span className="danger-text">警告：所有操作全部自动放行，请确保你完全信任当前的业务环境。</span>}
+                  </div>
+                </div>
+
+                <div className="form-divider" />
+
+                <label className="desktop-checkbox-row">
+                  <input
+                    type="checkbox"
+                    data-testid="approval-readonly-toggle"
+                    checked={approvalDraft.autoApproveReadOnly}
+                    onChange={(e) => setApprovalDraft((prev) => ({ ...prev, autoApproveReadOnly: e.target.checked }))}
+                  />
+                  <div className="desktop-checkbox-label">
+                    <span>只读操作默认自动允许</span>
+                    <small>读取文件、搜索等不会改变系统状态的操作将直接放行。</small>
+                  </div>
+                </label>
+
+                <label className="desktop-checkbox-row">
+                  <input
+                    type="checkbox"
+                    data-testid="approval-skills-toggle"
+                    checked={approvalDraft.autoApproveSkills}
+                    onChange={(e) => setApprovalDraft((prev) => ({ ...prev, autoApproveSkills: e.target.checked }))}
+                  />
+                  <div className="desktop-checkbox-label">
+                    <span>Skills 调用默认直接放行</span>
+                    <small>所有通过审查注册的本地技能套件将不再经过二次弹窗。</small>
+                  </div>
+                </label>
+
+                <div className="form-actions mt-4">
+                  <button data-testid="approval-save" className="btn-primary" onClick={() => void saveApprovalPolicy()}>保存安全策略</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ---- ASR 语音识别 ---- */}
+          {activeTab === "语音识别" && (
+            <div className="settings-section">
+              <p className="description">配置会议流式 ASR 与离线识别服务地址，以及硅基员工使用的纪要生成模型。</p>
+              
+              <div className="settings-group-panel">
+                <div className="form-field">
+                  <label>实时流式 ASR WebSocket</label>
+                  <input
+                    className="desktop-input"
+                    type="text"
+                    value={asrDraft.wsUrl}
+                    onChange={(e) => setAsrDraft((p) => ({ ...p, wsUrl: e.target.value }))}
+                    placeholder="例如: ws://127.0.0.1:8080"
+                  />
+                </div>
+
+                <div className="form-field">
+                  <label>离线 ASR HTTP (批量转写)</label>
+                  <input
+                    className="desktop-input"
+                    type="text"
+                    value={asrDraft.httpUrl}
+                    onChange={(e) => setAsrDraft((p) => ({ ...p, httpUrl: e.target.value }))}
+                    placeholder="例如: https://api.myclaw.local/recognition"
+                  />
+                </div>
+
+                <div className="form-row-multi">
+                  <div className="form-field">
+                    <label>识别模式</label>
+                    <div className="radio-group">
+                      <label className="desktop-radio-row">
+                        <input
+                          type="radio"
+                          name="asr-mode"
+                          value="online"
+                          checked={asrDraft.mode === "online"}
+                          onChange={() => setAsrDraft((p) => ({ ...p, mode: "online" }))}
+                        />
+                        <span>Online (快速呈现)</span>
+                      </label>
+                      <label className="desktop-radio-row">
+                        <input
+                          type="radio"
+                          name="asr-mode"
+                          value="2pass"
+                          checked={asrDraft.mode === "2pass"}
+                          onChange={() => setAsrDraft((p) => ({ ...p, mode: "2pass" }))}
+                        />
+                        <span>2pass (二次纠错)</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="form-field" style={{ width: '120px' }}>
+                    <label>最大分轨人数</label>
+                    <input
+                      className="desktop-input text-center"
+                      type="number"
+                      min={1} max={20}
+                      value={asrDraft.maxSpeakers}
+                      onChange={(e) => setAsrDraft((p) => ({ ...p, maxSpeakers: Number(e.target.value) || 1 }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="form-field">
+                  <label>会议纪要大模型</label>
+                  <select
+                    className="desktop-select"
+                    value={asrDraft.summaryModelProfileId ?? ""}
+                    onChange={(e) => setAsrDraft((p) => ({ ...p, summaryModelProfileId: e.target.value ? e.target.value : null }))}
+                  >
+                    <option value="">跟随 Chat 默认模型</option>
+                    {(workspace.models ?? []).map((m: any) => (
+                      <option key={m.id} value={m.id}>{m.name} · {m.model}</option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div className="form-divider" />
+                
+                <div className="form-row-switches">
+                  <label className="desktop-checkbox-switch">
+                    <input type="checkbox" checked={asrDraft.ssl} onChange={(e) => setAsrDraft((p) => ({ ...p, ssl: e.target.checked }))} />
+                    <span>强制 WSS 加密传输</span>
+                  </label>
+                  <label className="desktop-checkbox-switch">
+                    <input type="checkbox" checked={asrDraft.enableSpeaker} onChange={(e) => setAsrDraft((p) => ({ ...p, enableSpeaker: e.target.checked }))} />
+                    <span>启用说话人声纹识别</span>
+                  </label>
+                </div>
+
+                <div className="form-actions mt-4">
+                  <button className="btn-primary" onClick={() => void saveAsrConfig()} disabled={asrSaving}>
+                    {asrSaving ? "保存中..." : "保存 ASR 配置"}
+                  </button>
+                  {asrSaveStatus && (
+                    <span className={`status-label ${asrSaveStatus.includes("失败") ? "danger-text" : "success-text"}`}>
+                      {asrSaveStatus}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
 
       <style>{`
-        .page-container { flex: 1; overflow-y: auto; padding: 24px 32px; }
-        .card { padding: 32px; border-radius: var(--radius-xl); background: var(--bg-card); border: 1px solid var(--glass-border); backdrop-filter: var(--blur-std); -webkit-backdrop-filter: var(--blur-std); box-shadow: var(--shadow-card), var(--glass-inner-glow); }
-        .no-padding { padding: 0; background: transparent; border: 0; }
-        h3, h4 { font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
-        h3 { font-size: 16px; }
-        h4 { font-size: 14px; margin-bottom: 12px; }
-        .card p { color: var(--text-secondary); font-size: 14px; line-height: 1.5; margin: 0; }
-        .tabs { display: flex; gap: 4px; background: var(--bg-base); padding: 4px; border-radius: var(--radius-md); border: 1px solid var(--glass-border); }
-        .tab { padding: 6px 16px; border: 0; border-radius: 6px; color: var(--text-secondary); cursor: pointer; background: transparent; font-size: 13px; font-weight: 500; transition: all 0.2s; }
-        .tab:hover { color: var(--text-primary); }
-        .tab.active { background: var(--bg-card); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
-        .primary, .secondary { padding: 10px 16px; border: 1px solid transparent; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; display: inline-flex; align-items: center; justify-content: center; }
-        .primary { background: var(--text-primary); color: var(--bg-base); border-color: var(--text-primary); }
-        .primary:hover:not(:disabled) { opacity: 0.9; }
-        .secondary { background: var(--bg-base); color: var(--text-primary); border-color: var(--glass-border); }
-        .secondary:hover:not(:disabled) { background: var(--bg-card); border-color: var(--text-muted); }
-        .primary:disabled, .secondary:disabled { opacity: 0.5; cursor: not-allowed; }
-        .section-header-row { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 32px; padding: 32px 32px 0; }
-        .settings-notice-banner { margin: 24px 32px 0; padding: 12px 14px; border-radius: 10px; border: 1px solid #10a37f44; background: #10a37f14; color: #86efac; font-size: 13px; }
-        .header-content h3 { font-size: 24px; margin: 0 0 8px; }
-        .description { color: var(--text-muted); max-width: 600px; }
-        .add-btn { display: flex; align-items: center; gap: 8px; padding: 12px 20px; }
-        .model-cards-container { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 24px; margin: 0 auto 32px; padding: 0 32px; max-width: 1040px; }
-        .model-card { background: linear-gradient(145deg, var(--bg-card), rgba(0,0,0,0.3)); border: 1px solid var(--glass-border); border-radius: var(--radius-xl); display: flex; flex-direction: column; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); backdrop-filter: var(--blur-std); -webkit-backdrop-filter: var(--blur-std); overflow: hidden; position: relative; }
-        .model-card:hover { border-color: var(--glass-border-hover); transform: translateY(-4px); box-shadow: 0 12px 24px -10px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1); background: linear-gradient(145deg, var(--bg-card), rgba(0,0,0,0.1)); }
-        .model-card.is-active { border-color: var(--status-green); background: linear-gradient(145deg, rgba(46,160,67,0.06), rgba(46,160,67,0.01)); box-shadow: 0 0 0 1px rgba(46,160,67,0.3), inset 0 1px 0 rgba(255,255,255,0.05); }
-        .model-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent); opacity: 0; transition: opacity 0.3s; }
-        .model-card:hover::before { opacity: 1; }
-        .card-status-bar { padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.04); flex-wrap: wrap; background: rgba(0,0,0,0.15); }
-        .status-badge { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
-        .status-badge.active { color: #3fb950; text-shadow: 0 0 10px rgba(63,185,80,0.3); }
-        .status-badge.inactive { color: var(--text-muted); }
-        .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
-        .card-actions-mini { display: flex; gap: 6px; }
-        .icon-btn { width: 32px; height: 32px; border-radius: 8px; border: 1px solid transparent; background: transparent; color: var(--text-muted); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; }
-        .icon-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); border-color: rgba(255,255,255,0.1); }
-        .card-body { padding: 24px 20px; flex: 1; display: flex; flex-direction: column; }
-        .model-info { display: flex; flex-direction: column; gap: 16px; }
-        .model-name-block { display: flex; flex-direction: column; gap: 12px; margin-bottom: 4px; }
-        .model-name-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-        .model-name-tags-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-        .provider-tag, .route-tag, .route-source-tag, .capability-source-tag { font-size: 10px; font-weight: 700; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.05em; line-height: 1; border: 1px solid transparent; display: inline-block; }
-        .provider-tag { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.1); color: var(--text-secondary); }
-        .route-tag { background: rgba(16,163,127,0.1); border-color: rgba(16,163,127,0.2); color: #34d399; }
-        .route-source-tag { background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2); color: #fbbf24; }
-        .capability-source-tag { background: rgba(59,130,246,0.1); border-color: rgba(96,165,250,0.2); color: #93c5fd; }
-        .model-info strong { font-size: 18px; line-height: 1.3; color: #e6edf3; font-weight: 600; letter-spacing: -0.01em; }
-        .model-metrics-grid { display: flex; flex-direction: column; gap: 8px; }
-        .model-info p.model-metric { font-size: 12px; margin: 0; display: flex; flex-direction: column; gap: 4px; color: #8b949e; background: rgba(0,0,0,0.2); padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); }
-        .model-info p.model-metric span { color: #7d8590; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; width: auto; }
-        .model-info p.model-metric strong.metric-value { font-size: 13px; font-weight: 500; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; color: #c9d1d9; word-break: break-all; }
-        .connectivity-info { margin-top: 16px; padding-top: 16px; border-top: 1px dashed rgba(255,255,255,0.1); font-size: 12px; display: flex; align-items: center; gap: 8px; }
-        .status-text { display: flex; align-items: center; gap: 6px; font-weight: 500; color: var(--text-secondary); }
-        .status-text::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); }
-        .status-text.ok { color: #3fb950; }
-        .status-text.ok::before { background: #3fb950; box-shadow: 0 0 8px rgba(63,185,80,0.4); }
-        .card-footer-actions { padding: 16px 20px; background: rgba(0,0,0,0.2); border-top: 1px solid rgba(255,255,255,0.04); margin-top: auto; }
-        .primary-ghost { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); color: #c9d1d9; width: 100%; padding: 10px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; letter-spacing: 0.02em; }
-        .primary-ghost:hover:not(.disabled) { background: rgba(63,185,80,0.1); color: #3fb950; border-color: rgba(63,185,80,0.3); box-shadow: 0 0 12px rgba(63,185,80,0.15); }
-        .model-card.is-active .primary-ghost.disabled { background: transparent; color: #3fb950; font-weight: 600; border-color: transparent; cursor: default; }
-        .storage-section { margin: 0 32px 32px; }
-        .storage-path-list { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
-        .storage-path-item { display: flex; flex-direction: column; gap: 4px; }
-        .storage-path-label { font-size: 12px; color: var(--text-muted); font-weight: 600; }
-        .path-text { font-family: monospace; font-size: 12px; background: var(--bg-base); padding: 8px; border-radius: 4px; border: 1px solid var(--glass-border); margin: 0; color: var(--text-primary) !important; }
-        .setup-hint { margin-top: 16px !important; color: var(--status-yellow) !important; font-size: 13px !important; }
-        .update-section { display: flex; flex-direction: column; gap: 16px; }
-        .update-meta-list { display: flex; flex-direction: column; gap: 12px; }
-        .update-status-text { color: var(--text-primary) !important; }
-        .update-actions { display: flex; flex-wrap: wrap; gap: 12px; }
-        .approval-controls { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
-        .approval-controls .field { display: flex; flex-direction: column; gap: 8px; }
-        .approval-controls .field span { font-size: 13px; color: var(--text-secondary); }
-        .approval-controls select { height: 40px; padding: 0 12px; background: var(--bg-base); border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-primary); font-family: inherit; font-size: 14px; transition: border-color 0.2s, box-shadow 0.2s; }
-        .approval-controls select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.14); }
-        .switch-row { display: flex; align-items: center; gap: 10px; cursor: pointer; color: var(--text-secondary); font-size: 14px; }
-        .switch-row input[type="checkbox"] { accent-color: var(--accent-cyan); cursor: pointer; }
-        .switch-row input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 2px; }
-        .approval-mode-hint { margin-top: 16px; padding: 12px 16px; background: var(--bg-base); border-radius: var(--radius-md); border: 1px solid var(--glass-border); }
-        .approval-mode-hint p { margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-        .approval-mode-hint .danger-hint { color: var(--status-red); font-weight: 500; }
-        .approval-summary { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; padding: 16px; background: var(--bg-base); border-radius: var(--radius-md); border: 1px solid var(--glass-border); }
-        .approval-summary p { font-size: 13px !important; color: var(--text-secondary) !important; }
-        @media (max-width: 900px) {
-          .section-header-row { flex-direction: column; gap: 16px; }
-          .model-cards-container { padding: 0 20px; }
+        /* Core Split Pane Layout */
+        .settings-split-pane {
+          display: flex;
+          height: 100%;
+          width: 100%;
+          background: #0d0d0f; /* Pure dark desktop vibe */
+          overflow: hidden;
         }
-        @media (max-width: 640px) {
-          .page-container { padding: 20px; }
-          .section-header-row { padding: 24px 20px 0; }
-          .model-cards-container { padding: 0 20px; gap: 14px; }
-          .card-status-bar, .card-body, .card-footer-actions { padding-left: 16px; padding-right: 16px; }
-          .model-info p { flex-direction: column; gap: 4px; }
-          .model-info p span { width: auto; }
+
+        /* Sidebar Styling */
+        .settings-sidebar {
+          width: 260px;
+          flex-shrink: 0;
+          background: rgba(255, 255, 255, 0.02);
+          border-right: 1px solid rgba(255, 255, 255, 0.08);
+          display: flex;
+          flex-direction: column;
+          padding: 24px 16px;
+        }
+        .sidebar-header {
+          padding: 0 12px 24px;
+        }
+        .sidebar-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: rgba(255, 255, 255, 0.9);
+          margin: 0;
+        }
+        .sidebar-nav {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .sidebar-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 14px;
+          border-radius: 8px;
+          color: rgba(255, 255, 255, 0.6);
+          font-size: 13px;
+          font-weight: 500;
+          border: 1px solid transparent;
+          background: transparent;
+          cursor: pointer;
+          transition: all 0.15s ease-out;
+          text-align: left;
+        }
+        .sidebar-item:hover {
+          background: rgba(255, 255, 255, 0.04);
+          color: rgba(255, 255, 255, 0.9);
+        }
+        .sidebar-item.active {
+          background: rgba(255, 255, 255, 0.08);
+          color: #fff;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.05);
+          border-color: rgba(255, 255, 255, 0.05);
+        }
+        .sidebar-item-icon {
+          opacity: 0.7;
+        }
+        .sidebar-item.active .sidebar-item-icon {
+          opacity: 1;
+          color: #10a37f; /* A pop of primary accent color for active left nav */
+        }
+
+        /* Detail Pane Styling */
+        .settings-detail-pane {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          overflow-y: auto;
+          position: relative;
+        }
+        .settings-detail-header {
+          position: sticky;
+          top: 0;
+          z-index: 10;
+          padding: 32px 48px 24px;
+          background: rgba(13, 13, 15, 0.85); /* Matches split pane bg with opacity */
+          backdrop-filter: blur(16px);
+          -webkit-backdrop-filter: blur(16px);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+        .header-breadcrumbs {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 8px;
+        }
+        .header-breadcrumbs .eyebrow {
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          color: rgba(255, 255, 255, 0.4);
+        }
+        .header-breadcrumbs .eyebrow.active {
+          color: rgba(255, 255, 255, 0.7);
+        }
+        .breadcrumb-separator {
+          color: rgba(255, 255, 255, 0.3);
+        }
+        .pane-title {
+          font-size: 24px;
+          font-weight: 600;
+          color: #f0f6fc;
+          margin: 0;
+          letter-spacing: -0.01em;
+        }
+
+        /* Content Area */
+        .settings-detail-content {
+          padding: 32px 48px;
+          /* Removed max-width to allow fluid expansion for grids */
+        }
+        .settings-section {
+          display: flex;
+          flex-direction: column;
+          gap: 32px;
+        }
+        .description {
+          font-size: 14px;
+          color: rgba(255, 255, 255, 0.5);
+          line-height: 1.5;
+          margin: 0 0 16px 0;
+        }
+        .section-header-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 16px;
+        }
+
+        /* High Density Model Row Card */
+        .model-rows-container {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+          gap: 16px;
+        }
+        .model-row-card {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px 20px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          transition: all 0.2s ease;
+        }
+        .model-row-card:hover {
+          background: rgba(255, 255, 255, 0.04);
+          border-color: rgba(255, 255, 255, 0.15);
+        }
+        .model-row-card.is-active {
+          background: rgba(16, 163, 127, 0.03);
+          border-color: rgba(16, 163, 127, 0.25);
+          box-shadow: 0 0 0 1px rgba(16, 163, 127, 0.1) inset;
+        }
+        .row-card-left {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .model-row-header {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .model-name {
+          font-size: 15px;
+          font-weight: 600;
+          color: #e6edf3;
+        }
+        .badge {
+          font-size: 10px;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-weight: 600;
+          text-transform: uppercase;
+        }
+        .badge-active { background: rgba(16, 163, 127, 0.15); color: #10a37f; }
+        .badge-provider { background: rgba(255, 255, 255, 0.1); color: rgba(255,255,255,0.7); }
+        .badge-route { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+        
+        .model-row-meta {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.4);
+        }
+        .meta-item code {
+          background: rgba(0,0,0,0.3);
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-family: monospace;
+          color: rgba(255,255,255,0.6);
+        }
+        .model-row-status {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 12px;
+          font-weight: 500;
+          margin-top: 4px;
+        }
+        .model-row-status.ok { color: #10a37f; }
+        .model-row-status.fail { color: #f85149; }
+
+        .row-card-right .row-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+
+        /* Generic Settings Panel */
+        .settings-group-panel {
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 12px;
+          padding: 24px;
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          max-width: 860px; /* Preserve readability max-width for forms */
+        }
+        .settings-group-panel h4 {
+          margin: 0;
+          font-size: 15px;
+          font-weight: 600;
+          color: rgba(255,255,255,0.85);
+        }
+
+        /* Desktop Form Controls */
+        .form-field {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .form-field label {
+          font-size: 13px;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.7);
+        }
+        .desktop-input, .desktop-select {
+          height: 36px;
+          background: rgba(0, 0, 0, 0.2);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 6px;
+          color: #f0f6fc;
+          padding: 0 12px;
+          font-size: 13px;
+          transition: all 0.2s;
+        }
+        .desktop-input:focus, .desktop-select:focus {
+          outline: none;
+          border-color: #10a37f;
+          box-shadow: 0 0 0 2px rgba(16, 163, 127, 0.15);
+        }
+        .form-hint {
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.4);
+          line-height: 1.4;
+        }
+        .danger-text { color: #f85149; font-weight: 500; }
+        .success-text { color: #10a37f; font-weight: 500; }
+        
+        .form-divider {
+          height: 1px;
+          background: rgba(255, 255, 255, 0.06);
+          margin: 8px 0;
+        }
+
+        .desktop-checkbox-row {
+          display: flex;
+          align-items: flex-start;
+          gap: 12px;
+          cursor: pointer;
+        }
+        .desktop-checkbox-row input[type="checkbox"] {
+          margin-top: 4px;
+          accent-color: #10a37f;
+        }
+        .desktop-checkbox-label {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .desktop-checkbox-label span {
+          font-size: 14px;
+          color: rgba(255, 255, 255, 0.85);
+        }
+        .desktop-checkbox-label small {
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.4);
+        }
+
+        .form-row-multi {
+          display: flex;
+          gap: 24px;
+          align-items: flex-end;
+        }
+        .radio-group {
+          display: flex;
+          gap: 16px;
+          height: 36px;
+          align-items: center;
+        }
+        .desktop-radio-row {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 13px;
+          color: rgba(255, 255, 255, 0.7);
+          cursor: pointer;
+        }
+        .desktop-radio-row input { accent-color: #10a37f; }
+        .text-center { text-align: center; }
+
+        .form-row-switches {
+          display: flex;
+          gap: 24px;
+        }
+        .desktop-checkbox-switch {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 13px;
+          color: rgba(255, 255, 255, 0.7);
+          cursor: pointer;
+        }
+
+        .mt-4 { margin-top: 16px; }
+        .form-actions {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        /* Data Grids */
+        .panel-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .meta-field, .path-field {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          font-size: 13px;
+          padding: 8px 12px;
+          background: rgba(0, 0, 0, 0.15);
+          border-radius: 6px;
+          border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+        .meta-field span, .path-field span {
+          color: rgba(255, 255, 255, 0.5);
+          font-weight: 500;
+        }
+        .meta-field code, .path-field code {
+          font-family: monospace;
+          color: rgba(255, 255, 255, 0.9);
+        }
+
+        .update-actions { display: flex; gap: 12px; margin-top: 8px; }
+
+        /* Buttons & Utility */
+        .btn-primary, .btn-secondary, .btn-ghost-small {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          border-radius: 6px;
+          font-size: 13px;
+          font-weight: 500;
+          cursor: pointer;
+          transition: all 0.2s;
+          border: 1px solid transparent;
+        }
+        .btn-primary {
+          height: 32px;
+          padding: 0 16px;
+          background: transparent;
+          color: #10a37f;
+          border-color: #10a37f;
+        }
+        .btn-primary:hover:not(:disabled) {
+          background: rgba(16, 163, 127, 0.08);
+          box-shadow: 0 0 8px rgba(16, 163, 127, 0.15);
+        }
+        .btn-secondary {
+          height: 32px;
+          padding: 0 16px;
+          background: rgba(255, 255, 255, 0.1);
+          color: rgba(255, 255, 255, 0.8);
+          border-color: rgba(255, 255, 255, 0.1);
+        }
+        .btn-secondary:hover:not(:disabled) {
+          background: rgba(255, 255, 255, 0.15);
+        }
+        .btn-ghost-small {
+          height: 28px;
+          padding: 0 12px;
+          background: transparent;
+          color: rgba(255,255,255,0.6);
+        }
+        .btn-ghost-small:hover {
+          background: rgba(255,255,255,0.08);
+          color: rgba(255,255,255,0.9);
+        }
+        .btn-icon {
+          width: 28px;
+          height: 28px;
+          border-radius: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: transparent;
+          color: rgba(255, 255, 255, 0.5);
+          border: 1px solid transparent;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .btn-icon:hover:not(:disabled) {
+          background: rgba(255, 255, 255, 0.1);
+          color: rgba(255, 255, 255, 0.9);
+        }
+        button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .settings-notice-banner {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 12px 16px;
+          background: rgba(56, 189, 248, 0.1);
+          border: 1px solid rgba(56, 189, 248, 0.2);
+          border-radius: 8px;
+          color: #38bdf8;
+          font-size: 13px;
+          margin-bottom: 8px;
+        }
+
+        .placeholder-box {
+          height: 120px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px dashed rgba(255,255,255,0.15);
+          border-radius: 8px;
+          color: rgba(255,255,255,0.3);
+          font-size: 14px;
         }
       `}</style>
-    </main>
+    </div>
   );
 }

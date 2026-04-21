@@ -208,6 +208,7 @@ declare global {
         getTodayBrief: () => Promise<{ brief: TodayBrief }>;
         suggestTimeboxes: () => Promise<{ items: SuggestedTimebox[] }>;
         listExecutionRuns: () => Promise<{ items: ExecutionRun[] }>;
+        generateTodayDigest: (input: Record<string, unknown>) => Promise<{ lines: string[] }>;
       };
 
       // --- Sessions ---

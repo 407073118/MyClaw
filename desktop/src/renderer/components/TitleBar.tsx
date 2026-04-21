@@ -13,7 +13,7 @@ const PAGE_LABELS: Record<string, string> = {
   "/skills": "Skills",
   "/employees": "硅基员工",
   "/workflows": "Workflows",
-  "/time": "Time Center",
+  "/time": "时间规划",
   "/publish-drafts": "Publish",
   "/me/prompt": "My Prompt",
   "/settings": "Settings",

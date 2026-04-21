@@ -504,8 +504,8 @@ export default function McpDetailPage() {
   }
 
   return (
-    <main data-testid="mcp-detail-view" className="page-container">
-      <header className="page-header">
+    <main data-testid="mcp-detail-view" className="settings-detail-pane" style={{ background: "#0d0d0f" }}>
+      <header className="settings-detail-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 10, padding: "32px 48px 24px", background: "rgba(13, 13, 15, 0.85)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", borderBottom: "1px solid rgba(255, 255, 255, 0.04)" }}>
         <div className="header-text">
           <span className="eyebrow">MCP 详情</span>
           <h2 className="page-title">{pageTitle}</h2>
@@ -566,6 +566,7 @@ export default function McpDetailPage() {
         </div>
       </header>
 
+      <div className="mcp-content-wrapper">
       {saveError && <p className="error-banner">{saveError}</p>}
 
       {isCreate || isEditing ? (
@@ -810,21 +811,23 @@ export default function McpDetailPage() {
           </section>
         </>
       )}
+      </div>
 
       <style>{`
-        .page-container {
+        .mcp-content-wrapper { max-width: 900px; margin: 0 auto; width: 100%; padding: 32px 48px; display: flex; flex-direction: column; gap: 24px; }
+
+        .settings-detail-pane {
+          display: flex;
           height: 100%;
+          width: 100%;
+          flex-direction: column;
           overflow-y: auto;
-          padding-bottom: 40px;
+          position: relative;
+          background: #0d0d0f;
+          padding: 0;
         }
 
-        .page-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 20px;
-          margin-bottom: 28px;
-        }
+        
 
         .header-actions {
           display: flex;
@@ -954,10 +957,15 @@ export default function McpDetailPage() {
 
         .detail-card {
           padding: 24px;
-          border-radius: 18px;
-          border: 1px solid var(--glass-border, #30303a);
-          background: var(--bg-card, #18181b);
-          transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+          border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
+          border-radius: 16px;
+          background: linear-gradient(145deg, rgba(20,20,24,0.6), rgba(0,0,0,0.4));
+          backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+          transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
 
         .detail-card:hover {
@@ -1218,53 +1226,18 @@ export default function McpDetailPage() {
           gap: 16px;
         }
 
-        .field {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          color: var(--text-secondary, #a1a1aa);
-          font-size: 13px;
-        }
-
+        .field { display: flex; flex-direction: column; gap: 8px; }
+        .field span { font-size: 13px; font-weight: 600; color: var(--text-muted, #8d8d97); }
         .field.full-width { grid-column: 1 / -1; }
-
-        .checkbox-field {
-          flex-direction: row;
-          align-items: center;
-          gap: 10px;
-          padding: 10px 14px;
-          background: var(--glass-reflection, rgba(255,255,255,0.04));
-          border: 1px solid var(--glass-border, #27272a);
-          border-radius: 8px;
-          cursor: pointer;
-          transition: background 0.15s;
-        }
-        .checkbox-field:hover { background: rgba(255,255,255,0.06); }
-        .checkbox-field input[type="checkbox"] {
-          width: 16px;
-          height: 16px;
-          accent-color: var(--accent-cyan, #10a37f);
-          cursor: pointer;
-        }
-        .checkbox-field span { font-weight: 500; color: var(--text-primary, #ededed); }
-
-        .field input, .field select, .field textarea {
-          background: var(--bg-base, #121214);
-          border: 1px solid var(--glass-border, #27272a);
-          border-radius: 8px;
-          color: var(--text-primary, #fff);
-          padding: 10px 12px;
-          font: inherit;
-          font-size: 14px;
-          outline: none;
-          width: 100%;
-          transition: border-color 0.2s, box-shadow 0.2s;
-        }
-
-        .field input:focus, .field select:focus, .field textarea:focus {
-          border-color: var(--accent-cyan);
-          box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
-        }
+        .checkbox-field { flex-direction: row; align-items: center; gap: 10px; padding: 12px 16px; background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08)); border-radius: 8px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+        .checkbox-field:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.15); }
+        .checkbox-field input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent-cyan, #10a37f); cursor: pointer; }
+        .checkbox-field span { font-weight: 500; font-size: 13px; color: var(--text-primary, #ededed); }
+        .field input, .field select, .field textarea { width: 100%; border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08)); border-radius: 8px; background: rgba(0,0,0,0.15); color: var(--text-primary, #fff); padding: 10px 14px; font: inherit; font-size: 13px; transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); box-sizing: border-box; }
+        .field input:hover, .field textarea:hover, .field select:hover { border-color: rgba(255,255,255,0.15); background: rgba(0,0,0,0.25); }
+        .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent-cyan, #10a37f); box-shadow: 0 0 0 3px rgba(16,163,127,0.15), inset 0 1px 2px rgba(0,0,0,0.2); outline: none; background: rgba(0,0,0,0.3); }
+        .field select { appearance: none; -webkit-appearance: none; padding-right: 36px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; }
+        .field select option { background: var(--bg-card, #1b1b20); color: var(--text-primary, #fff); padding: 8px 12px; }
 
         .field input:disabled { opacity: 0.5; cursor: not-allowed; }
 

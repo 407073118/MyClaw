@@ -2154,16 +2154,16 @@ export default function ChatPage() {
         .session-delete { width: 32px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); border: 1px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; opacity: 0; transition: all 0.2s ease; }
         .session-row:hover .session-delete, .session-row .session-delete:focus-within { opacity: 1; }
         .session-delete:hover:not(:disabled) { background: rgba(239,68,68,0.1); color: #ef4444; }
-        .timeline-panel { flex: 1; overflow-y: auto; padding: 32px; }
-        .timeline { display: flex; flex-direction: column; gap: 32px; max-width: 800px; margin: 0 auto; }
+        .timeline-panel { flex: 1; overflow-y: auto; padding: 32px 48px; }
+        .timeline { display: flex; flex-direction: column; gap: 32px; max-width: 1200px; margin: 0 auto; }
         .message-row { display: flex; align-items: flex-start; gap: 16px; width: 100%; }
         .message-avatar { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: var(--bg-card); border: 1px solid var(--glass-border); color: var(--text-primary); }
         .role-assistant .message-avatar { background: var(--glass-reflection); border-color: var(--glass-border); color: var(--accent-cyan); }
-        .role-user { flex-direction: row-reverse; }
-        .role-user .message-body { align-items: flex-end; }
-        .role-user .message-header { margin-right: 4px; }
-        .role-user .message-content { background: var(--bg-card); padding: 12px 18px; border-radius: var(--radius-lg) var(--radius-lg) 4px var(--radius-lg); border: 1px solid var(--glass-border); max-width: 90%; }
-        .role-user .message-avatar { background: var(--text-primary); color: var(--bg-base); }
+        .role-user { flex-direction: row; }
+        .role-user .message-body { align-items: flex-start; }
+        .role-user .message-header { margin-right: 0; }
+        .role-user .message-content { background: transparent; padding: 0; border: none; max-width: 100%; }
+        .role-user .message-avatar { background: transparent; border-color: var(--glass-border); color: var(--text-primary); }
         .pending-avatar { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
         .message-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
@@ -2262,8 +2262,8 @@ export default function ChatPage() {
         .message-form-footer { margin-top: 24px; display: flex; justify-content: flex-end; }
         .form-submit-btn { width: 100%; display: flex; justify-content: center; align-items: center; padding: 12px 16px; }
         .form-success-badge { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 12px 16px; background: rgba(16,185,129,0.1); color: #10b981; border-radius: var(--radius-md); border: 1px solid rgba(16,185,129,0.2); font-size: 14px; font-weight: 500; }
-        .composer-panel { padding: 24px; background: linear-gradient(transparent, var(--bg-base) 15%); position: sticky; bottom: 0; }
-        .composer-container { position: relative; max-width: 800px; margin: 0 auto; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-lg); box-shadow: 0 8px 32px rgba(0,0,0,0.2); display: flex; flex-direction: column; transition: border-color 0.2s; }
+        .composer-panel { padding: 24px 48px; background: linear-gradient(transparent, var(--bg-base) 15%); position: sticky; bottom: 0; }
+        .composer-container { position: relative; max-width: 1200px; margin: 0 auto; background: rgba(22, 22, 26, 0.4); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid var(--glass-border); border-top-color: rgba(255,255,255,0.12); border-radius: var(--radius-lg); box-shadow: 0 4px 24px rgba(0,0,0,0.6); display: flex; flex-direction: column; transition: border-color 0.2s; }
         .composer-container:focus-within { border-color: var(--text-muted); }
         .slash-menu { position: absolute; bottom: 100%; left: 0; right: 0; max-height: 280px; overflow-y: auto; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-lg); box-shadow: 0 -8px 32px rgba(0,0,0,0.3); margin-bottom: 8px; padding: 6px; z-index: 100; }
         .slash-menu-item { display: flex; align-items: center; gap: 12px; padding: 8px 14px; border-radius: var(--radius-md, 8px); cursor: pointer; transition: background 0.15s; }
@@ -2282,8 +2282,8 @@ export default function ChatPage() {
         .effort-btn:hover { color: var(--text-secondary); background: rgba(255,255,255,0.04); }
         .effort-btn.active { color: var(--accent-cyan); background: rgba(16,163,127,0.15); }
         .effort-btn.active:hover { background: rgba(16,163,127,0.2); }
-        .submit-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: var(--accent-cyan); color: #fff; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(16,163,127,0.3); transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
-        .submit-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(16,163,127,0.4); background: #0ec490; }
+        .submit-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: transparent; color: var(--accent-cyan); border: 1px solid var(--accent-cyan); cursor: pointer; transition: all 0.2s cubic-bezier(0.4,0,0.2,1); }
+        .submit-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(16,163,127,0.15); background: rgba(16,163,127,0.1); }
         .submit-btn:active:not(:disabled) { transform: translateY(0); }
         .submit-btn:disabled { background: var(--bg-sidebar); color: var(--text-muted); box-shadow: none; border: 1px solid var(--glass-border); opacity: 1; cursor: not-allowed; transform: none; }
         .stop-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 0; border-radius: 10px; background: var(--text-primary); color: var(--bg-base); border: none; cursor: pointer; animation: stop-pulse 1.2s cubic-bezier(0.4,0,0.2,1) infinite; transition: transform 0.2s cubic-bezier(0.4,0,0.2,1), box-shadow 0.2s cubic-bezier(0.4,0,0.2,1), background 0.2s cubic-bezier(0.4,0,0.2,1); }
@@ -2346,7 +2346,7 @@ export default function ChatPage() {
         .mention-status-needs_approval { color: var(--status-yellow); border-color: rgba(245,158,11,0.3); }
         .mention-status-done { color: var(--status-green); border-color: rgba(34,197,94,0.3); }
         .mention-status-error { color: var(--status-red); border-color: rgba(239,68,68,0.3); }
-        .dispatch-traces { display: flex; flex-direction: column; gap: 6px; max-width: 800px; margin: 0 auto; padding: 0 24px 8px; }
+        .dispatch-traces { display: flex; flex-direction: column; gap: 6px; max-width: 1200px; margin: 0 auto; padding: 0 48px 8px; }
         .dispatch-trace-card { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-md); font-size: 13px; line-height: 1.4; }
         .dispatch-trace-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-cyan); flex-shrink: 0; }
         .dispatch-trace-text { flex: 1; min-width: 0; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2354,7 +2354,7 @@ export default function ChatPage() {
         .dispatch-trace-link:hover { opacity: 0.8; text-decoration: underline; }
 
         /* ── 上下文压缩警告 ── */
-        .context-limit-warning { padding: 0 24px 16px; max-width: 800px; margin: 0 auto; }
+        .context-limit-warning { padding: 0 48px 16px; max-width: 1200px; margin: 0 auto; }
         .context-limit-warning-content { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.25); border-radius: var(--radius-md); font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
         .context-limit-warning-content > svg { flex-shrink: 0; color: #f59e0b; }
         .context-limit-warning-content > span { flex: 1; min-width: 200px; }
