@@ -629,8 +629,8 @@ function isExecCommandMissingError(err: unknown, output: string): boolean {
   );
 }
 
-/** Windows 下在 python 不可用时回退到 py -3。 */
-function buildWindowsPythonFallbackCommand(command: string): string | null {
+/** Windows 下在 python 不可用时回退到 py -3。保留作为最后手段的 exec fallback，不是推荐首选。 */
+export function buildWindowsPythonFallbackCommand(command: string): string | null {
   if (process.platform !== "win32") {
     return null;
   }
@@ -645,19 +645,26 @@ function buildWindowsPythonFallbackCommand(command: string): string | null {
   return `py -3 ${match[1]}`;
 }
 
-/** 为带 scripts/ 的技能生成更安全的执行提示。 */
-function buildSkillExecutionGuidance(skillPath: string): string {
+/**
+ * 为带 scripts/ 的技能生成执行提示。Phase 8 Plan 09：
+ * - 优先引导到 node 端结构化工具（document.read / xlsx_extract / exec_command）
+ * - py -3 仅作为节点方案均不适用时的最后手段
+ */
+export function buildSkillExecutionGuidance(skillPath: string): string {
   const scriptsDir = join(skillPath, "scripts");
-  const structuredCommandExample = `{"command":"py -3 scripts/<script>.py","cwd":"${skillPath}"}`;
   return [
     "## 执行提示",
     `- 技能目录：${skillPath}`,
+    "- 优先使用结构化工具：",
+    "  - 读 office / pdf / pptx / csv / md → document.read（zero-Python，四个模式 stats/outline/read/search）",
+    "  - 读 xlsx 简要预览 → xlsx_extract（遗留别名；等同于 document.read mode=read）",
+    "  - 运行 shell / node 脚本 → exec_command",
     "- desktop 当前的 exec_command 默认在会话工作目录执行，不会自动切到技能目录。",
     `- 运行 scripts/ 下的命令前，请先切换目录：cd /d "${skillPath}"`,
-    "- Windows 上如果 python 不可用，优先改用 py -3。",
-    `- 推荐写法：cd /d "${skillPath}" && py -3 scripts/<script>.py`,
-    `- 也可以直接执行绝对路径：py -3 "${join(scriptsDir, "<script>.py")}"`,
-    `- structured input 示例：${structuredCommandExample}`,
+    `- structured input 示例：{"command":"node scripts/<script>.js","cwd":"${skillPath}"}`,
+    "- 仅当技能脚本明确要求 Python 环境时，才使用 py -3；不是默认首选。",
+    `- python 最后备选写法（仅当节点方案均不适用）：cd /d "${skillPath}" && py -3 scripts/<script>.py`,
+    `- 绝对路径备选：py -3 "${join(scriptsDir, "<script>.py")}"`,
     "",
   ].join("\n");
 }

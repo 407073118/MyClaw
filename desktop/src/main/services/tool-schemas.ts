@@ -57,7 +57,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "fs_read",
-        description: `Read the contents of a text file. Supports paths outside the workspace — the user will be prompted to approve the first access to a new external path; paths the user mentioned in the current message are auto-allowed. For Excel files (.xlsx/.xls) use xlsx_extract instead. Working directory: ${cwd}`,
+        description: `Read the contents of a text file. Supports paths outside the workspace — the user will be prompted to approve the first access to a new external path; paths the user mentioned in the current message are auto-allowed. For office / pdf / pptx files use \`document_read\` (the native zero-Python reader). For Excel files specifically, \`xlsx_extract\` still works but \`document_read\` is preferred. Working directory: ${cwd}`,
         parameters: {
           type: "object",
           properties: {
@@ -74,7 +74,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "xlsx_extract",
-        description: `Read an Excel workbook (.xlsx/.xls/.xlsm) and return its contents as a Markdown table. Subject to the same path-access consent rules as fs_read. Working directory: ${cwd}`,
+        description: `Read an Excel workbook (.xlsx/.xls/.xlsm) and return its contents as a Markdown table. LEGACY alias — prefer \`document_read\` which also exposes stats/outline/search. Subject to the same path-access consent rules as fs_read. Working directory: ${cwd}`,
         parameters: {
           type: "object",
           properties: {
@@ -99,7 +99,16 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "document_read",
-        description: `Read office / pdf / pptx / markdown / csv documents natively (zero Python required). Use this instead of fs_read for .xlsx/.xls/.xlsm/.docx/.pdf/.pptx/.md/.txt/.csv. Four modes: stats (metadata + counts), outline (table of contents), read (precise section or whole doc), search (keyword lookup). Working directory: ${cwd}`,
+        description: [
+          `Read office / pdf / pptx / markdown / csv documents natively (zero Python required).`,
+          `Use this instead of fs_read for .xlsx/.xls/.xlsm/.docx/.pdf/.pptx/.md/.txt/.csv.`,
+          `Examples:`,
+          `  1. Stats first:   {"path":"./Q4.pptx","mode":"stats"}`,
+          `  2. Outline:       {"path":"./report.docx","mode":"outline"}`,
+          `  3. Precise read:  {"path":"./report.docx","mode":"read","locator":{"heading":"Conclusion"},"maxChars":4000}`,
+          `  4. Search:        {"path":"./book.pdf","mode":"search","query":"revenue"}`,
+          `Working directory: ${cwd}`,
+        ].join("\n"),
         parameters: {
           type: "object",
           properties: {
