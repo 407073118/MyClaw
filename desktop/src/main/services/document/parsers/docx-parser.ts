@@ -26,11 +26,112 @@ import type {
   OutlineItem,
   DocumentNode,
   Locator,
+  CommentNode,
+  FootnoteNode,
 } from "@shared/contracts";
 import type { DocumentParser, ParseInput } from "../parser-registry";
 
 /** docx HTML 输出若出现 DOCTYPE，一律视为被篡改；直接拒绝。 */
 const XXE_MARKER = "<!DOCTYPE";
+
+/** 单个 ZIP entry 解压后最大允许字节数（zip-bomb 防御）。 */
+const MAX_DOCX_ZIP_ENTRY_BYTES = 16 * 1024 * 1024; // 16 MiB
+
+/**
+ * 守门：docx 内部 XML 不得包含 DOCTYPE 声明。
+ * 即便我们不使用完整 XML 解析器，依然在正文里用正则 + DOCTYPE 关键字直接拒绝，
+ * 避免把潜在外部实体声明暴露给下游消费者（ASST-04 提示）。
+ */
+function assertNoDoctype(xml: string): void {
+  if (xml.includes(XXE_MARKER)) {
+    throw new Error(
+      "[E_DOC_XXE_BLOCKED] docx 中检测到外部实体（DOCTYPE）声明。请确认文件未被篡改。",
+    );
+  }
+}
+
+/**
+ * 带大小上限读取 ZIP entry：先拿字节，确认不超限，再转字符串。
+ * 缺失 entry 返回 null，不视为错误。
+ */
+async function readZipEntryCapped(zip: any, path: string): Promise<string | null> {
+  const entry = zip.file(path);
+  if (!entry) return null;
+  const bytes: Uint8Array = await entry.async("uint8array");
+  if (bytes.byteLength > MAX_DOCX_ZIP_ENTRY_BYTES) {
+    throw new Error(
+      `[E_DOC_ZIP_ENTRY_TOO_LARGE] docx 内部 ${path} 超过 16MiB 上限（实际 ${bytes.byteLength} 字节）。请检查文件是否异常。`,
+    );
+  }
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+/** 从一段 XML 中提取所有 `<w:t>...</w:t>` 内文本并拼接。 */
+function extractWtText(xml: string): string {
+  const out: string[] = [];
+  const re = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    out.push(decodeHtmlEntities(m[1]));
+  }
+  return out.join("");
+}
+
+/** 从 attrs 里取某个属性的值（支持 w:id / w:author / w:type 等带冒号命名）。 */
+function getAttr(attrs: string, name: string): string | undefined {
+  const re = new RegExp(`${name.replace(":", "\\:")}\\s*=\\s*"([^"]*)"`);
+  const m = re.exec(attrs);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * 解析 word/comments.xml 为 CommentNode 列表。
+ * 每个 `<w:comment ...>` 块取 w:id / w:author / 内部所有 <w:t> 文本。
+ */
+function parseCommentsXml(xml: string): CommentNode[] {
+  const results: CommentNode[] = [];
+  const commentRe = /<w:comment\b([^>]*)>([\s\S]*?)<\/w:comment>/g;
+  let m: RegExpExecArray | null;
+  while ((m = commentRe.exec(xml)) !== null) {
+    const attrs = m[1];
+    const inner = m[2];
+    const author = getAttr(attrs, "w:author");
+    const text = extractWtText(inner);
+    const node: CommentNode = {
+      kind: "comment",
+      runs: [{ text }],
+      locator: {},
+    };
+    if (author) node.author = author;
+    results.push(node);
+  }
+  return results;
+}
+
+/**
+ * 解析 word/footnotes.xml 为 FootnoteNode 列表。
+ * 跳过 w:type="separator" 和 w:type="continuationSeparator" 自动占位块。
+ */
+function parseFootnotesXml(xml: string): FootnoteNode[] {
+  const results: FootnoteNode[] = [];
+  const footRe = /<w:footnote\b([^>]*)>([\s\S]*?)<\/w:footnote>/g;
+  let m: RegExpExecArray | null;
+  while ((m = footRe.exec(xml)) !== null) {
+    const attrs = m[1];
+    const inner = m[2];
+    const type = getAttr(attrs, "w:type");
+    if (type === "separator" || type === "continuationSeparator") continue;
+    const id = getAttr(attrs, "w:id") ?? "";
+    const text = extractWtText(inner);
+    results.push({
+      kind: "footnote",
+      refId: id,
+      runs: [{ text }],
+      locator: {},
+    });
+  }
+  return results;
+}
 
 /** 解码最小 HTML 实体集合（mammoth 输出基本只覆盖这几个）。 */
 function decodeHtmlEntities(s: string): string {
@@ -346,6 +447,41 @@ export async function parseDocxBuffer(input: ParseInput): Promise<DocumentIR> {
     );
   }
 
+  // 在把 buffer 交给 mammoth 之前先做一次 ZIP 扫描：
+  //   - 任何 word/*.xml entry 或 word/media/* entry 的解压尺寸若超过 16MiB，直接拒绝
+  //   - 这样即便 mammoth 内部会自行读取 footnotes.xml / comments.xml 也不会吃到超大字符串
+  let JSZip: any;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    JSZip = require("jszip");
+  } catch {
+    throw new Error(
+      "[E_DOC_DEP_MISSING] jszip 未安装。请在 desktop/ 下执行 pnpm install 后重启桌面端。",
+    );
+  }
+  const zip = await JSZip.loadAsync(input.buffer);
+  // 预检查关键 entry：尺寸（zip-bomb 防御）+ DOCTYPE（XXE 防御）。
+  // DOCTYPE 必须在 mammoth.convertToHtml 之前拦截 —— mammoth 内部会用 xmldom 读
+  // comments.xml / footnotes.xml，遇到未声明实体会抛 "entity not found" 而非我们的业务错误码。
+  // 预读一次 + 结构化错误，两问题一起解决。
+  const preScan: Record<string, string | null> = {};
+  for (const entryName of ["word/comments.xml", "word/footnotes.xml"]) {
+    const e = zip.file(entryName);
+    if (!e) {
+      preScan[entryName] = null;
+      continue;
+    }
+    const bytes: Uint8Array = await e.async("uint8array");
+    if (bytes.byteLength > MAX_DOCX_ZIP_ENTRY_BYTES) {
+      throw new Error(
+        `[E_DOC_ZIP_ENTRY_TOO_LARGE] docx 内部 ${entryName} 超过 16MiB 上限（实际 ${bytes.byteLength} 字节）。请检查文件是否异常。`,
+      );
+    }
+    const text = new TextDecoder("utf-8").decode(bytes);
+    assertNoDoctype(text);
+    preScan[entryName] = text;
+  }
+
   const result = await mammoth.convertToHtml({ buffer: input.buffer });
   const html: string = String(result?.value ?? "");
 
@@ -358,6 +494,19 @@ export async function parseDocxBuffer(input: ParseInput): Promise<DocumentIR> {
 
   const ctx: BuildContext = { body: [], outline: [], lastHeading: undefined };
   walkHtmlToIr(html, ctx);
+
+  // ─── Task 2：复用上方预扫描得到的 word/comments.xml / word/footnotes.xml 文本 ───
+  const commentsXml = preScan["word/comments.xml"];
+  if (commentsXml) {
+    const comments = parseCommentsXml(commentsXml);
+    for (const c of comments) ctx.body.push(c);
+  }
+
+  const footnotesXml = preScan["word/footnotes.xml"];
+  if (footnotesXml) {
+    const footnotes = parseFootnotesXml(footnotesXml);
+    for (const f of footnotes) ctx.body.push(f);
+  }
 
   return {
     source: {
