@@ -17,6 +17,7 @@ import { createDocCache, type DocCache } from "./document/doc-cache";
 import { executeDocumentRead, type DocumentReadArgs } from "./document/document-read-facade";
 import { getParser, registerParser } from "./document/parser-registry";
 import { xlsParser, xlsmParser, xlsxParser } from "./document/parsers/xlsx-parser";
+import { docxParser } from "./document/parsers/docx-parser";
 import {
   canonicalize as canonicalizePath,
   PathAccessPolicy,
@@ -794,6 +795,7 @@ export class BuiltinToolExecutor {
     if (!getParser("xlsx")) registerParser(xlsxParser);
     if (!getParser("xls")) registerParser(xlsParser);
     if (!getParser("xlsm")) registerParser(xlsmParser);
+    if (!getParser("docx")) registerParser(docxParser);
     this.parsersRegistered = true;
   }
 
