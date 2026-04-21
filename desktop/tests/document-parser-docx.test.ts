@@ -361,3 +361,125 @@ describe("docxParser task 2", () => {
     expect(footnotes).toHaveLength(0);
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Task 3
+// ────────────────────────────────────────────────────────────────────────────
+
+/** 1x1 transparent PNG bytes (base64-decoded). */
+const PNG_1x1_A = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  "base64",
+);
+
+/** Another 1x1 PNG (different bytes so sha differs). */
+const PNG_1x1_B = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+describe("docxParser task 3", () => {
+  it("Test 1: one embedded PNG produces one ImageNode + one MediaRef; mediaDir contains the file", async () => {
+    const buffer = await makeDocxBuffer({
+      documentXml: SIMPLE_DOC_XML,
+      media: [{ name: "image1.png", bytes: PNG_1x1_A }],
+    });
+    const mediaDir = freshMediaDir();
+    const ir = await parseDocxBuffer({
+      path: "/virtual/one-image.docx",
+      buffer,
+      sha256: "sha-img1",
+      mediaDir,
+    });
+    const images = ir.body.filter((n) => n.kind === "image") as ImageNode[];
+    expect(images).toHaveLength(1);
+    expect(ir.media).toHaveLength(1);
+    // mediaId (sha of bytes) is non-empty hex
+    expect(images[0].mediaId).toMatch(/^[0-9a-f]{64}$/);
+    expect(ir.media[0].id).toBe(images[0].mediaId);
+    // cachePath is an absolute path pointing into mediaDir
+    expect(ir.media[0].cachePath.startsWith(mediaDir)).toBe(true);
+    // file exists on disk
+    expect(existsSync(ir.media[0].cachePath)).toBe(true);
+  });
+
+  it("Test 2: media file name uses sha256(bytes) + preserved extension", async () => {
+    const buffer = await makeDocxBuffer({
+      documentXml: SIMPLE_DOC_XML,
+      media: [{ name: "pic.png", bytes: PNG_1x1_A }],
+    });
+    const mediaDir = freshMediaDir();
+    const ir = await parseDocxBuffer({
+      path: "/virtual/x.docx",
+      buffer,
+      sha256: "sha-x",
+      mediaDir,
+    });
+    expect(ir.media).toHaveLength(1);
+    const ref = ir.media[0];
+    // file on disk ends with the sha + .png
+    expect(ref.cachePath).toMatch(new RegExp(`${ref.id}\\.png$`));
+    // Written bytes match original input
+    const written = readFileSync(ref.cachePath);
+    expect(Buffer.compare(written, PNG_1x1_A)).toBe(0);
+  });
+
+  it("Test 3: identical-bytes images dedup — 1 MediaRef on disk, 2 ImageNodes referencing it", async () => {
+    const buffer = await makeDocxBuffer({
+      documentXml: SIMPLE_DOC_XML,
+      media: [
+        { name: "a.png", bytes: PNG_1x1_A },
+        { name: "b.png", bytes: PNG_1x1_A }, // same bytes, different filename
+      ],
+    });
+    const mediaDir = freshMediaDir();
+    const ir = await parseDocxBuffer({
+      path: "/virtual/dup.docx",
+      buffer,
+      sha256: "sha-dup",
+      mediaDir,
+    });
+    const images = ir.body.filter((n) => n.kind === "image") as ImageNode[];
+    expect(images).toHaveLength(2);
+    expect(ir.media).toHaveLength(1);
+    expect(images[0].mediaId).toBe(images[1].mediaId);
+    // And only one file on disk
+    const onDisk = readdirSync(mediaDir);
+    expect(onDisk).toHaveLength(1);
+  });
+
+  it("Test 4: oversized media entry (>16MiB) throws [E_DOC_ZIP_ENTRY_TOO_LARGE]", async () => {
+    // 17MiB "image" bytes (not a valid PNG, but size-cap should fire before any decode)
+    const big = Buffer.alloc(17 * 1024 * 1024, 0x42);
+    const buffer = await makeDocxBuffer({
+      documentXml: SIMPLE_DOC_XML,
+      media: [{ name: "huge.png", bytes: big }],
+    });
+    await expect(
+      parseDocxBuffer({
+        path: "/virtual/huge.docx",
+        buffer,
+        sha256: "sha-huge",
+        mediaDir: freshMediaDir(),
+      }),
+    ).rejects.toThrow(/\[E_DOC_ZIP_ENTRY_TOO_LARGE\]/);
+  }, 30000);
+
+  it("Test 5: no word/media/ entries -> ir.media === [] (empty array, not undefined)", async () => {
+    const buffer = await makeDocxBuffer({ documentXml: SIMPLE_DOC_XML });
+    const ir = await parseDocxBuffer({
+      path: "/virtual/no-media.docx",
+      buffer,
+      sha256: "sha-no-media",
+      mediaDir: freshMediaDir(),
+    });
+    expect(Array.isArray(ir.media)).toBe(true);
+    expect(ir.media).toHaveLength(0);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// Unused-import shim so TypeScript doesn't complain about imports used only in
+// fixture construction (writeFileSync, Buffer imports implicit via node).
+// ────────────────────────────────────────────────────────────────────────────
+void writeFileSync;
