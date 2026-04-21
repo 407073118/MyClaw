@@ -115,7 +115,7 @@ Plans:
 **Plans:** 9 plans
 
 Plans:
-- [ ] 08-01-PLAN.md — DocumentIR contract + parser registry interface + IR->Markdown renderer
+- [x] 08-01-PLAN.md — DocumentIR contract + parser registry interface + IR->Markdown renderer
 - [x] 08-02-PLAN.md — sha256-keyed disk IR cache with LRU eviction (500MB cap)
 - [ ] 08-03-PLAN.md — document.read facade (mode router + 50MB gate + 32000 char cap + audit log) wired into executor and tool-schemas
 - [ ] 08-04-PLAN.md — xlsxParser against DocumentIR + xlsx.extract backward-compat alias

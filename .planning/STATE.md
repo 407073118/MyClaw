@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 08-02-PLAN.md (doc-cache)
-last_updated: "2026-04-21T12:56:42.937Z"
-last_activity: 2026-04-21 -- Phase 08 execution started
+stopped_at: Completed 08-document-ir-document-read/08-01-PLAN.md
+last_updated: "2026-04-21T13:02:57.355Z"
+last_activity: 2026-04-21
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 9
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 08 (document-ir-document-read) — EXECUTING
-Plan: 1 of 9
-Status: Executing Phase 08
-Last activity: 2026-04-21 -- Phase 08 execution started
+Plan: 2 of 9
+Status: Ready to execute
+Last activity: 2026-04-21
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -52,6 +52,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: Not enough data
 
 | Phase 08 P02 | 8 | 1 tasks | 2 files |
+| Phase 08-document-ir-document-read P01 | 8 | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -64,6 +65,8 @@ Recent decisions affecting current work:
 - [Phase 2]: 工具能力扩张必须晚于工具契约、审批边界和统一策略收口。
 - [Phase 4]: 企业数据连接采用 read-first 路线，desktop 通过受治理连接访问企业系统。
 - [Phase 08]: Doc cache 用工厂函数 + 闭包而非模块级单例，保持模块可脱离 Electron 独立单测；LRU 以 meta.lastAccess 字符串时间驱动，避免 fs mtime 被无关文件操作干扰。
+- [Phase 08-document-ir-document-read]: DocumentIR uses a 12-kind discriminated union (heading/paragraph/list/table/image/code/quote/slide/sheet/comment/footnote/pageBreak); renderer uses exhaustive switch with never-type guard
+- [Phase 08-document-ir-document-read]: IR->Markdown renderer is pure (no node:*/electron imports); includeImages refs/inline both emit media: URL placeholder — data-uri inlining is caller's responsibility
 
 ### Pending Todos
 
@@ -82,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-21T12:56:42.924Z
-Stopped at: Completed 08-02-PLAN.md (doc-cache)
+Last session: 2026-04-21T13:02:57.337Z
+Stopped at: Completed 08-document-ir-document-read/08-01-PLAN.md
 Resume file: None
