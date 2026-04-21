@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 08-document-ir-document-read/08-08-PLAN.md
-last_updated: "2026-04-21T14:55:56.025Z"
+stopped_at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
+last_updated: "2026-04-21T15:08:57.167Z"
 last_activity: 2026-04-21
 progress:
   total_phases: 8
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 9
-  completed_plans: 8
+  completed_plans: 9
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 08 (document-ir-document-read) — EXECUTING
-Plan: 8 of 9
+Plan: 9 of 9
 Status: Ready to execute
 Last activity: 2026-04-21
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 08-document-ir-document-read P06 | 13 | 1 tasks | 7 files |
 | Phase 08-document-ir-document-read P07 | 19 | 1 tasks | 5 files |
 | Phase 08-document-ir-document-read P08 | 7 | 2 tasks | 7 files |
+| Phase 08-document-ir-document-read P09 | 7 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,9 @@ Recent decisions affecting current work:
 - [Phase 08-document-ir-document-read]: md/txt/csv parsers land with zero new deps (marked already pinned ^17.0.5); CSV uses hand-rolled RFC4180 char-level parser with manual delimiter char-count (not regex) to avoid '|' metachar foot-gun
 - [Phase 08-document-ir-document-read]: Wave 3 parser set complete (9 formats: xlsx/xls/xlsm/docx/pdf/pptx/md/txt/csv); all DocumentFormat variants now have registered parsers
 - [Phase 08-document-ir-document-read]: BOM stripping added to mdParser too (not just txtParser) — Windows Notepad saves .md with UTF-8 BOM by default, would silently pollute outline entries
+- [Phase 08-document-ir-document-read]: fs_read hard-rejects office/pdf/pptx with [E_DOC_USE_DOCUMENT_READ] + paste-ready JSON template (mode=stats baseline); .doc gets dedicated [E_DOC_LEGACY_DOC_UNSUPPORTED] save-as-docx hint; csv stays readable with soft tip, md pass-through unchanged
+- [Phase 08-document-ir-document-read]: Skill execution guidance leads with node-based structured tools (document.read / xlsx_extract / exec_command); py -3 demoted to last-resort bullet but buildWindowsPythonFallbackCommand preserved intact
+- [Phase 08-document-ir-document-read]: tool-schemas fs_read + xlsx_extract descriptions steer to document_read; document_read description carries all 4 mode examples (stats/outline/read-with-locator/search) as numbered JSON fragments
 
 ### Pending Todos
 
@@ -109,6 +113,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-21T14:55:56.009Z
-Stopped at: Completed 08-document-ir-document-read/08-08-PLAN.md
+Last session: 2026-04-21T15:08:57.154Z
+Stopped at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
 Resume file: None

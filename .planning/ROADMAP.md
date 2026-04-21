@@ -123,4 +123,4 @@ Plans:
 - [x] 08-06-PLAN.md — pdfParser (pdfjs-dist legacy build, isEvalSupported:false, honest "scanned page" marker)
 - [x] 08-07-PLAN.md — pptxParser (slides + notes via jszip + safe XML walker, no external media fetch)
 - [x] 08-08-PLAN.md — md / txt / csv parsers (marked lexer; BOM + delimiter + quoted-field handling for csv)
-- [ ] 08-09-PLAN.md — fs_read hard-reject for office/pdf/pptx + de-python buildSkillExecutionGuidance + document.read steering examples in schema
+- [x] 08-09-PLAN.md — fs_read hard-reject for office/pdf/pptx + de-python buildSkillExecutionGuidance + document.read steering examples in schema
