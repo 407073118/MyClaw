@@ -18,6 +18,7 @@ import { executeDocumentRead, type DocumentReadArgs } from "./document/document-
 import { getParser, registerParser } from "./document/parser-registry";
 import { xlsParser, xlsmParser, xlsxParser } from "./document/parsers/xlsx-parser";
 import { docxParser } from "./document/parsers/docx-parser";
+import { pdfParser } from "./document/parsers/pdf-parser";
 import {
   canonicalize as canonicalizePath,
   PathAccessPolicy,
@@ -796,6 +797,7 @@ export class BuiltinToolExecutor {
     if (!getParser("xls")) registerParser(xlsParser);
     if (!getParser("xlsm")) registerParser(xlsmParser);
     if (!getParser("docx")) registerParser(docxParser);
+    if (!getParser("pdf")) registerParser(pdfParser);
     this.parsersRegistered = true;
   }
 
