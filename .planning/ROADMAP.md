@@ -120,7 +120,7 @@ Plans:
 - [x] 08-03-PLAN.md — document.read facade (mode router + 50MB gate + 32000 char cap + audit log) wired into executor and tool-schemas
 - [x] 08-04-PLAN.md — xlsxParser against DocumentIR + xlsx.extract backward-compat alias
 - [x] 08-05-PLAN.md — docxParser (mammoth + direct XML for tables / comments / footnotes / images) with XXE blocked
-- [ ] 08-06-PLAN.md — pdfParser (pdfjs-dist legacy build, isEvalSupported:false, honest "scanned page" marker)
+- [x] 08-06-PLAN.md — pdfParser (pdfjs-dist legacy build, isEvalSupported:false, honest "scanned page" marker)
 - [ ] 08-07-PLAN.md — pptxParser (slides + notes via jszip + safe XML walker, no external media fetch)
 - [ ] 08-08-PLAN.md — md / txt / csv parsers (marked lexer; BOM + delimiter + quoted-field handling for csv)
 - [ ] 08-09-PLAN.md — fs_read hard-reject for office/pdf/pptx + de-python buildSkillExecutionGuidance + document.read steering examples in schema

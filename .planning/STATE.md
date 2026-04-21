@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 08-document-ir-document-read/08-05-PLAN.md
-last_updated: "2026-04-21T14:00:24.752Z"
+stopped_at: Completed 08-document-ir-document-read/08-06-PLAN.md
+last_updated: "2026-04-21T14:20:29.571Z"
 last_activity: 2026-04-21
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 9
-  completed_plans: 5
+  completed_plans: 6
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 08 (document-ir-document-read) — EXECUTING
-Plan: 5 of 9
+Plan: 6 of 9
 Status: Ready to execute
 Last activity: 2026-04-21
 
@@ -56,6 +56,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 08-document-ir-document-read P03 | 13 | 2 tasks | 7 files |
 | Phase 08-document-ir-document-read P04 | 8 | 2 tasks | 5 files |
 | Phase 08-document-ir-document-read P05 | 17 | 3 tasks | 7 files |
+| Phase 08-document-ir-document-read P06 | 13 | 1 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -78,6 +79,9 @@ Recent decisions affecting current work:
 - [Phase 08-document-ir-document-read]: jszip declared as explicit top-level dep in desktop/package.json, not left as a mammoth transitive — pnpm's isolated node_modules layout requires top-level for require('jszip') resolution; 08-07 pptx reuses this dep
 - [Phase 08-document-ir-document-read]: docx pre-scans comments.xml/footnotes.xml for DOCTYPE + 16MiB cap BEFORE calling mammoth.convertToHtml — mammoth uses xmldom internally and would raise 'entity not found' that masks our [E_DOC_XXE_BLOCKED] / [E_DOC_ZIP_ENTRY_TOO_LARGE] codes
 - [Phase 08-document-ir-document-read]: docx media extraction uses sha256(bytes)-content-addressed dedup: identical image bytes → single on-disk file under mediaDir, N ImageNodes referencing via MediaRef.id; 16MiB cap also applies to media entries
+- [Phase 08-document-ir-document-read]: pdfjs-dist pinned at v3.11.174 (last CJS-friendly release); v4+ is ESM-only and breaks the plan's legacy/build/pdf.js require path
+- [Phase 08-document-ir-document-read]: pdf-parser uses await import() instead of require() so Vitest's vi.mock can intercept; production lazy-load semantics preserved
+- [Phase 08-document-ir-document-read]: PDF security quartet (isEvalSupported/disableStream/disableAutoFetch/disableFontFace) all off; scanned pages emit Chinese marker (扫描页：未抽取到文字) rather than silent empty output
 
 ### Pending Todos
 
@@ -96,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-21T14:00:09.663Z
-Stopped at: Completed 08-document-ir-document-read/08-05-PLAN.md
+Last session: 2026-04-21T14:20:23.205Z
+Stopped at: Completed 08-document-ir-document-read/08-06-PLAN.md
 Resume file: None
