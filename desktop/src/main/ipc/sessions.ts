@@ -2106,7 +2106,19 @@ function markPlanTaskInProgress(
   now: string,
 ): void {
   if (!session.planState) return;
-  if (isPlanTaskBlocked(session, taskId)) return;
+  const task = getPlanTask(session, taskId);
+  if (!task) return;
+  if (task.status === "blocked") return;
+  // completed 是 planner-runtime FSM 的终态（ALLOWED_PLAN_TASK_TRANSITIONS.completed = []）。
+  // 出现这种调用通常是 tool-loop 在 Task V2 续行分支 continue 时没同步 activePlanTaskId，
+  // 硬推进会抛 "completed -> in_progress" 非法转移错误，把整条 session:send-message 拖挂。
+  if (task.status === "completed") {
+    console.warn("[session:planner] 跳过对已完成任务的 in_progress 迁移（activePlanTaskId 可能已过期）", {
+      taskId,
+      round,
+    });
+    return;
+  }
   session.planState = startTask(
     session.planState,
     taskId,
@@ -2136,6 +2148,18 @@ function markPlanTaskBlocked(
   now: string,
 ): void {
   if (!session.planState) return;
+  const task = getPlanTask(session, taskId);
+  if (!task) return;
+  // 已完成任务不应再被改写为 blocked（会抛 "completed -> blocked"）。
+  // 关键在于：外层 catch 处理第一次非法转移抛出后，会再调本函数记录中断状态，
+  // 若不拦截，planner 簿记动作自己会把整条 IPC 调用打挂，报 'session:send-message' 失败。
+  if (task.status === "completed") {
+    console.warn("[session:planner] 跳过对已完成任务的 blocked 迁移", {
+      taskId,
+      blocker,
+    });
+    return;
+  }
   session.planState = blockTask(
     session.planState,
     taskId,
@@ -2171,6 +2195,18 @@ function markPlanTaskToolProgress(
 
   const activeTask = session.planState.tasks.find((task) => task.id === taskId);
   if (!activeTask) return;
+
+  // 已完成任务不再参与工具进度簿记：无论成功还是失败，startTask / blockTask 都会
+  // 撞 planner-runtime FSM 的 "completed -> ..." 非法转移。典型触发条件是 GPT 单任务
+  // plan 在 markPlanTaskCompleted 之后继续发本轮工具结果（tool-loop round+1 续行）。
+  if (activeTask.status === "completed") {
+    console.warn("[session:planner] 跳过对已完成任务的工具进度簿记", {
+      taskId,
+      toolName: input.toolName,
+      succeeded: input.succeeded,
+    });
+    return;
+  }
 
   if (!input.succeeded) {
     session.planState = blockTask(
