@@ -384,13 +384,18 @@ export function isRetryableError(err: unknown, response?: Response | null): bool
 
 /** 解析本轮请求应采用的 replay 策略，优先使用 execution plan。 */
 function resolveReplayPolicy(
-  profile: ModelProfile,
+  _profile: ModelProfile,
   executionPlan?: Pick<ExecutionPlan, "replayPolicy"> | null,
 ): SessionReplayPolicy {
   if (executionPlan?.replayPolicy) {
     return executionPlan.replayPolicy;
   }
-  return isBrMiniMaxProfile(profile) ? "assistant-turn-with-reasoning" : "content-only";
+  // 与 reasoning-runtime.resolveReplayPolicy 默认对齐：
+  // Qwen / Kimi / 火山方舟 / MiniMax 等推理模型的 thinking + tool calls 多轮
+  // 均要求历史 assistant 携带 reasoning，否则返回 400 或思维链泄漏到 content。
+  // 对于不产出 reasoning 的模型，下游 mapAssistantReasoningToReplayField 会
+  // 自动省略字段，无副作用。
+  return "assistant-turn-with-reasoning";
 }
 
 /** 根据 replay 策略物化发送给 adapter 的标准消息数组。 */

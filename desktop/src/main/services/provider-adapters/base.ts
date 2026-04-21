@@ -126,8 +126,16 @@ export function mapAssistantReasoningToReplayField(
       return message;
     }
 
+    // Qwen / Kimi / 火山方舟（豆包、Ark 上的 deepseek-r1）/ DeepSeek-V3.2 thinking
+    // 在 thinking + tool calls 多轮中均要求历史 assistant 携带原文 reasoning_content：
+    // - Qwen 官方文档明确"不允许空串"，Kimi 社区报错为 "reasoning_content is missing"，
+    //   火山方舟报错为 "Missing reasoning_content field"。
+    // - 各家对"省略字段"均接受，对"空串占位"行为不一致（最坏情况触发 400）。
+    // 因此当本地无 reasoning 内容时，应直接省略字段，而不是写入空串。
     const { reasoning, ...rest } = message;
-    (rest as Record<string, unknown>)[fieldName] = reasoning ?? "";
+    if (typeof reasoning === "string" && reasoning.length > 0) {
+      (rest as Record<string, unknown>)[fieldName] = reasoning;
+    }
     return rest as ProviderAdapterMessage;
   });
 }
