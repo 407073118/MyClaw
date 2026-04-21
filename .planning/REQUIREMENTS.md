@@ -10,7 +10,7 @@
 - [ ] **ASST-01**: 员工可以用自然、简短或不完整的语言描述工作需求，助手能够正确理解意图或主动发起澄清
 - [ ] **ASST-02**: 员工在同一任务会话中可以获得连续、一致的上下文理解，而不是每轮都需要重复背景
 - [ ] **ASST-03**: 员工可以看到任务当前处于思考、调用工具、等待审批、完成或失败中的哪一种状态
-- [ ] **ASST-04**: 员工在任务失败时可以获得可理解的失败原因和下一步建议，而不是静默失败或空结果
+- [x] **ASST-04**: 员工在任务失败时可以获得可理解的失败原因和下一步建议，而不是静默失败或空结果
 
 ### Tool Use
 
@@ -76,7 +76,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ASST-01 | Phase 3 | Pending |
 | ASST-02 | Phase 3 | Pending |
 | ASST-03 | Phase 1 | Pending |
-| ASST-04 | Phase 1 | Pending |
+| ASST-04 | Phase 1 | Complete |
 | TOOL-01 | Phase 2 | Pending |
 | TOOL-02 | Phase 1 | Pending |
 | TOOL-03 | Phase 2 | Pending |

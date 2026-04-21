@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 08-document-ir-document-read/08-01-PLAN.md
-last_updated: "2026-04-21T13:02:57.355Z"
+stopped_at: Completed 08-document-ir-document-read/08-03-PLAN.md
+last_updated: "2026-04-21T13:23:54.670Z"
 last_activity: 2026-04-21
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 9
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 08 (document-ir-document-read) — EXECUTING
-Plan: 2 of 9
+Plan: 3 of 9
 Status: Ready to execute
 Last activity: 2026-04-21
 
@@ -53,6 +53,7 @@ Progress: [░░░░░░░░░░] 0%
 
 | Phase 08 P02 | 8 | 1 tasks | 2 files |
 | Phase 08-document-ir-document-read P01 | 8 | 2 tasks | 7 files |
+| Phase 08-document-ir-document-read P03 | 13 | 2 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Recent decisions affecting current work:
 - [Phase 08]: Doc cache 用工厂函数 + 闭包而非模块级单例，保持模块可脱离 Electron 独立单测；LRU 以 meta.lastAccess 字符串时间驱动，避免 fs mtime 被无关文件操作干扰。
 - [Phase 08-document-ir-document-read]: DocumentIR uses a 12-kind discriminated union (heading/paragraph/list/table/image/code/quote/slide/sheet/comment/footnote/pageBreak); renderer uses exhaustive switch with never-type guard
 - [Phase 08-document-ir-document-read]: IR->Markdown renderer is pure (no node:*/electron imports); includeImages refs/inline both emit media: URL placeholder — data-uri inlining is caller's responsibility
+- [Phase 08-document-ir-document-read]: document.read facade accepts already-resolved absolute path; PathAccessPolicy reuse stays at executor dispatch boundary rather than inside the facade, keeping permission logic in one place
+- [Phase 08-document-ir-document-read]: inferBuiltinToolSchemaGroup maps document_* and legacy xlsx_extract into the 'fs' group; avoids extending BuiltinToolSchemaGroup and fixes a pre-existing xlsx_extract visibility gap
+- [Phase 08-document-ir-document-read]: setDocCacheRoot is a lazy-factory setter (mirrors setPathPolicy / setPathAudit); resolveDocCache throws [E_DOC_CACHE_NOT_INITIALIZED] with wiring-site hint if called before injection
 
 ### Pending Todos
 
@@ -85,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-21T13:02:57.337Z
-Stopped at: Completed 08-document-ir-document-read/08-01-PLAN.md
+Last session: 2026-04-21T13:23:54.653Z
+Stopped at: Completed 08-document-ir-document-read/08-03-PLAN.md
 Resume file: None
