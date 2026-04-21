@@ -156,25 +156,28 @@ describe("xlsxParser", () => {
   });
 
   it("Test 6: parser does NOT open the file path — buffer is the only source", async () => {
-    const fsPromises = await import("node:fs/promises");
-    const fsModule = await import("node:fs");
-    const rfSpy = vi.spyOn(fsPromises, "readFile");
-    const rfsSpy = vi.spyOn(fsModule, "readFileSync");
-
+    // Strategy: hand the parser a path that does not exist on disk. If the parser
+    // ever touched fs (readFile/readFileSync), it would raise ENOENT. Since it
+    // consumes ParseInput.buffer exclusively, the parse must succeed.
+    const nonexistentPath = "/absolutely/does/not/exist/on/disk.xlsx";
     const buffer = makeWorkbookBuffer({ sheets: [{ name: "S", aoa: [["a", "b"]] }] });
-    await parseXlsxBuffer({
-      path: "/absolutely/does/not/exist/on/disk.xlsx",
+
+    // Source-level guard: parser file contains no readFile* calls. Cross-check the
+    // file's static source, then execute the parser to confirm runtime behavior.
+    const parserSource = readFileSync(
+      new URL("../src/main/services/document/parsers/xlsx-parser.ts", import.meta.url),
+      "utf-8",
+    );
+    expect(parserSource).not.toMatch(/readFile(Sync)?\s*\(/);
+
+    const ir = await parseXlsxBuffer({
+      path: nonexistentPath,
       buffer,
       sha256: "s",
       mediaDir: "/virtual/media",
     });
-
-    expect(rfSpy).not.toHaveBeenCalled();
-    expect(rfsSpy).not.toHaveBeenCalled();
-
-    // Proof-of-life: ensure the spies actually work by calling through to a real file,
-    // so this test can't silently pass if vi.spyOn broke.
-    void readFileSync; // reference to keep import
+    expect(ir.source.path).toBe(nonexistentPath);
+    expect(ir.body).toHaveLength(1);
   });
 
   it("Test 7: parsers export: xlsxParser / xlsParser / xlsmParser with correct format tags", () => {

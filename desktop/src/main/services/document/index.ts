@@ -9,3 +9,4 @@ export * from "./parser-registry";
 export * from "./ir-to-markdown";
 export * from "./doc-cache";
 export * from "./document-read-facade";
+export * from "./parsers/xlsx-parser";
