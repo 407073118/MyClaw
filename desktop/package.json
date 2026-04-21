@@ -26,7 +26,9 @@
   "dependencies": {
     "electron-updater": "^6.8.3",
     "handlebars": "^4.7.9",
+    "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
+    "mammoth": "^1.8.0",
     "marked": "^17.0.5",
     "playwright-core": "^1.52.0",
     "pptxgenjs": "^4.0.1",
