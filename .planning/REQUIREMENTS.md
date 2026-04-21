@@ -17,7 +17,7 @@
 - [ ] **TOOL-01**: 助手在一次任务中只能看到与当前任务相关且被允许的工具集合，避免无关工具干扰选择
 - [ ] **TOOL-02**: 员工可以看到助手实际调用了哪些工具、每个工具的主要结果，以及任务为何成功或失败
 - [ ] **TOOL-03**: 对企业或本地数据有写入风险的工具操作必须经过审批、预览或显式确认后才能执行
-- [ ] **TOOL-04**: 工具调用参数和结果必须结构化校验，避免因弱契约导致选错工具、参数错误或结果误读
+- [x] **TOOL-04**: 工具调用参数和结果必须结构化校验，避免因弱契约导致选错工具、参数错误或结果误读
 
 ### Context Understanding
 
@@ -36,7 +36,7 @@
 ### Governance And Evaluation
 
 - [ ] **GOV-01**: 企业管理员可以统一管理 desktop 可用的模型、工具、Skills、MCP 与企业连接能力
-- [ ] **GOV-02**: 企业管理员可以审计任务运行、工具调用、审批结果和关键执行轨迹
+- [x] **GOV-02**: 企业管理员可以审计任务运行、工具调用、审批结果和关键执行轨迹
 - [ ] **GOV-03**: 团队可以对任务完成质量、工具选择质量和回答质量建立可回放、可比较的评测基线
 - [ ] **GOV-04**: 任何提升模型“更会做事”的优化都必须能通过指标、回放或评测证明，而不是仅靠主观感觉
 
@@ -80,7 +80,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TOOL-01 | Phase 2 | Pending |
 | TOOL-02 | Phase 1 | Pending |
 | TOOL-03 | Phase 2 | Pending |
-| TOOL-04 | Phase 2 | Pending |
+| TOOL-04 | Phase 2 | Complete |
 | CTX-01 | Phase 3 | Pending |
 | CTX-02 | Phase 3 | Pending |
 | CTX-03 | Phase 3 | Pending |
@@ -90,7 +90,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | DATA-03 | Phase 4 | Pending |
 | DATA-04 | Phase 4 | Pending |
 | GOV-01 | Phase 2 | Pending |
-| GOV-02 | Phase 1 | Pending |
+| GOV-02 | Phase 1 | Complete |
 | GOV-03 | Phase 1 | Pending |
 | GOV-04 | Phase 1 | Pending |
 
