@@ -36,6 +36,28 @@ type ExecCommandRequest = {
   retryOnTimeout: boolean;
 };
 
+/**
+ * 解析 exec.command 时附带的诊断信息。
+ * 由 buildToolLabel 在 command 缺失时生成，用于给模型返回自纠错误消息。
+ */
+type ExecCommandDiagnostics = {
+  /** 模型本次调用实际传入的参数键（如 ["cmd"]、["shell_command"]） */
+  receivedArgKeys?: string[];
+  /** args.command 的实际类型（undefined / string / number / object ...） */
+  commandFieldType?: string;
+  /** command 是非空字符串但去空白后为空（即只有空白字符） */
+  commandIsWhitespace?: boolean;
+  /** exec.command label 本身就是一个非法 JSON（JSON.parse 抛异常时设置） */
+  labelParseFailed?: boolean;
+  /** 原始 label 的前缀片段，用于日志排查（不返回给模型） */
+  rawLabelSnippet?: string;
+};
+
+type ParsedExecCommand = {
+  request: ExecCommandRequest;
+  diagnostics?: ExecCommandDiagnostics;
+};
+
 type ExecSyncError = {
   code?: string | number;
   signal?: string | null;
@@ -146,23 +168,105 @@ function clampPositiveNumber(value: unknown, fallback: number, minimum: number):
   return parsed;
 }
 
-/** 解析 exec.command 输入，兼容纯命令文本与结构化 JSON。 */
-function parseExecCommandRequest(label: string): ExecCommandRequest {
+/** 解析 exec.command 输入，兼容纯命令文本与结构化 JSON，并透出诊断信息。 */
+function parseExecCommandRequest(label: string): ParsedExecCommand {
   const rawLabel = label.trim();
   if (!rawLabel) {
-    return buildExecCommandRequest("", {});
+    return {
+      request: buildExecCommandRequest("", {}),
+      diagnostics: { receivedArgKeys: [], commandFieldType: "undefined" },
+    };
   }
 
-  try {
-    const parsed = JSON.parse(rawLabel) as Record<string, unknown>;
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && typeof parsed.command === "string") {
-      return buildExecCommandRequest(parsed.command, parsed);
+  // 只有 '{' 开头的 label 才当成结构化 JSON 尝试解析；
+  // 其它情况视作旧格式纯命令文本，避免把 "ls -la" 这种误判成 JSON。
+  if (rawLabel.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(rawLabel) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const commandField = parsed.command;
+        const commandValue = typeof commandField === "string" ? commandField : "";
+        const request = buildExecCommandRequest(commandValue, parsed);
+
+        // 由 buildToolLabel 在 command 缺失时写入的诊断字段
+        const embedded =
+          parsed._diagnostics && typeof parsed._diagnostics === "object" && !Array.isArray(parsed._diagnostics)
+            ? (parsed._diagnostics as Record<string, unknown>)
+            : null;
+
+        if (!request.command && embedded) {
+          return {
+            request,
+            diagnostics: {
+              receivedArgKeys: Array.isArray(embedded.receivedArgKeys)
+                ? (embedded.receivedArgKeys as unknown[]).filter((k): k is string => typeof k === "string")
+                : undefined,
+              commandFieldType:
+                typeof embedded.commandFieldType === "string" ? embedded.commandFieldType : undefined,
+              commandIsWhitespace: embedded.commandIsWhitespace === true,
+            },
+          };
+        }
+
+        return { request };
+      }
+    } catch (error) {
+      console.warn("[exec.command] label 解析失败，按原始文本兜底", {
+        error: error instanceof Error ? error.message : String(error),
+        labelSnippet: rawLabel.slice(0, 200),
+      });
+      return {
+        request: buildExecCommandRequest("", {}),
+        diagnostics: {
+          labelParseFailed: true,
+          rawLabelSnippet: rawLabel.slice(0, 200),
+        },
+      };
     }
-  } catch {
-    // 向后兼容：旧格式直接就是命令文本。
   }
 
-  return buildExecCommandRequest(rawLabel, {});
+  return { request: buildExecCommandRequest(rawLabel, {}) };
+}
+
+/** 把诊断信息编译成一条让模型能自我纠错的错误消息。 */
+function formatMissingCommandError(diagnostics: ExecCommandDiagnostics | undefined): string {
+  const header =
+    'exec_command 调用缺少必填参数 `command` (string)。正确示例：{"command": "ls -la"}。';
+
+  if (!diagnostics) {
+    return header;
+  }
+
+  const parts: string[] = [header];
+
+  if (diagnostics.labelParseFailed) {
+    parts.push(
+      `上一次工具调用的 arguments 不是合法 JSON，已被忽略。请重新生成一条完整且合法的 JSON 参数，例如 {"command": "your shell command"}。`,
+    );
+  }
+
+  const receivedKeys = (diagnostics.receivedArgKeys ?? []).filter((k) => !k.startsWith("_"));
+  const hasCommandKey = receivedKeys.includes("command");
+
+  if (diagnostics.commandFieldType && diagnostics.commandFieldType !== "string" && diagnostics.commandFieldType !== "undefined") {
+    parts.push(
+      `参数 command 的类型必须是 string，但你传入的是 ${diagnostics.commandFieldType}。请改成字符串形式。`,
+    );
+  }
+
+  if (diagnostics.commandIsWhitespace) {
+    parts.push("你传入的 command 去掉首尾空白后为空字符串，请提供实际要执行的 shell 命令。");
+  }
+
+  if (!hasCommandKey && receivedKeys.length > 0) {
+    parts.push(
+      `本次调用传入的参数键为 [${receivedKeys.join(", ")}]，其中没有 \`command\`。常见错误是写成 \`cmd\`、\`shell\`、\`command_line\`、\`script\` 等别名，请改用 \`command\`。`,
+    );
+  } else if (!hasCommandKey && receivedKeys.length === 0 && !diagnostics.labelParseFailed) {
+    parts.push("本次调用未传入任何参数，请提供 `command` 字段。");
+  }
+
+  return parts.join(" ");
 }
 
 /** 规范化 exec.command 配置，默认会把梯度超时扩到 10 分钟上限。 */
@@ -635,9 +739,14 @@ export class BuiltinToolExecutor {
     }
 
     if (toolId === "exec.command") {
-      const request = parseExecCommandRequest(label);
+      const { request, diagnostics } = parseExecCommandRequest(label);
       if (!request.command) {
-        return { success: false, output: "", error: "缺少要执行的命令。" };
+        const selfCorrectingError = formatMissingCommandError(diagnostics);
+        console.warn("[exec.command] 模型调用缺少 command 参数，已回传自纠错误", {
+          diagnostics,
+          labelSnippet: label.slice(0, 200),
+        });
+        return { success: false, output: "", error: selfCorrectingError };
       }
 
       const validationError = validateShellCommand(request.command);

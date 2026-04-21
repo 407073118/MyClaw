@@ -146,6 +146,46 @@ describe("buildToolLabel — non-browser tools", () => {
     });
   });
 
+  // 当 command 缺失或非法时，label 必须携带 _diagnostics，
+  // 让执行器可以把"模型传错参数"翻译成可读的自纠错误消息。
+  it("embeds _diagnostics when exec_command is called with wrong parameter name", () => {
+    const label = buildToolLabel("exec_command", { cmd: "ls -la" });
+    const parsed = JSON.parse(label);
+    expect(parsed.command).toBe("");
+    expect(parsed._diagnostics).toEqual({
+      receivedArgKeys: ["cmd"],
+      commandFieldType: "undefined",
+      commandIsWhitespace: false,
+    });
+  });
+
+  it("embeds _diagnostics when exec_command is called with empty command string", () => {
+    const label = buildToolLabel("exec_command", { command: "" });
+    const parsed = JSON.parse(label);
+    expect(parsed.command).toBe("");
+    expect(parsed._diagnostics.receivedArgKeys).toEqual(["command"]);
+    expect(parsed._diagnostics.commandFieldType).toBe("string");
+    expect(parsed._diagnostics.commandIsWhitespace).toBe(false);
+  });
+
+  it("embeds _diagnostics when exec_command command is whitespace-only", () => {
+    const label = buildToolLabel("exec_command", { command: "   " });
+    const parsed = JSON.parse(label);
+    expect(parsed._diagnostics.commandIsWhitespace).toBe(true);
+  });
+
+  it("embeds _diagnostics when exec_command command is wrong type", () => {
+    const label = buildToolLabel("exec_command", { command: 42 as unknown as string });
+    const parsed = JSON.parse(label);
+    expect(parsed.command).toBe("");
+    expect(parsed._diagnostics.commandFieldType).toBe("number");
+  });
+
+  it("does NOT embed _diagnostics when exec_command command is valid", () => {
+    // 合法调用必须保留旧契约：纯字符串 label，不带任何诊断字段
+    expect(buildToolLabel("exec_command", { command: "echo hi" })).toBe("echo hi");
+  });
+
   it("serializes task_create as JSON", () => {
     const label = buildToolLabel("task_create", {
       subject: "Run tests",

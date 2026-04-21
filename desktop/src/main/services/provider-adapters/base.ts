@@ -167,6 +167,32 @@ export function omitBodyKeys(
   return next;
 }
 
+/**
+ * 把 provider 返回的 function call arguments JSON 解析成对象，
+ * 解析失败时打 warn 并降级为空对象，避免把"参数丢失"静默转给下游工具。
+ */
+function parseToolCallArguments(
+  argumentsJson: string,
+  context: { source: "openai-tool-calls" | "openai-legacy-function-call" | "openai-output-items"; toolName: string },
+): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(argumentsJson);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return {};
+  } catch (error) {
+    console.warn("[provider-adapter] 工具调用 arguments JSON 解析失败，已降级为空对象", {
+      source: context.source,
+      toolName: context.toolName,
+      error: error instanceof Error ? error.message : String(error),
+      argumentsSnippet: argumentsJson.slice(0, 300),
+      argumentsLength: argumentsJson.length,
+    });
+    return {};
+  }
+}
+
 /** 默认响应归一化仅保留原始负载，供 Phase 1 传输层后续接入。 */
 export function normalizeAdapterResponse(payload: unknown): ProviderAdapterNormalizedResponse {
   const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
@@ -242,18 +268,11 @@ export function normalizeAdapterResponse(payload: unknown): ProviderAdapterNorma
           ? toolCall.function as Record<string, unknown>
           : {};
         const argumentsJson = typeof fn.arguments === "string" ? fn.arguments : "{}";
-        let input: Record<string, unknown> = {};
-        try {
-          const parsed = JSON.parse(argumentsJson);
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            input = parsed as Record<string, unknown>;
-          }
-        } catch {
-          input = {};
-        }
+        const toolName = typeof fn.name === "string" ? fn.name : "";
+        const input = parseToolCallArguments(argumentsJson, { source: "openai-tool-calls", toolName });
         return {
           id: typeof toolCall.id === "string" ? toolCall.id : "toolcall-unknown",
-          name: typeof fn.name === "string" ? fn.name : "",
+          name: toolName,
           argumentsJson,
           input,
         };
@@ -263,18 +282,11 @@ export function normalizeAdapterResponse(payload: unknown): ProviderAdapterNorma
     ? (() => {
         const fn = message.function_call as Record<string, unknown>;
         const argumentsJson = typeof fn.arguments === "string" ? fn.arguments : "{}";
-        let input: Record<string, unknown> = {};
-        try {
-          const parsed = JSON.parse(argumentsJson);
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            input = parsed as Record<string, unknown>;
-          }
-        } catch {
-          input = {};
-        }
+        const toolName = typeof fn.name === "string" ? fn.name : "";
+        const input = parseToolCallArguments(argumentsJson, { source: "openai-legacy-function-call", toolName });
         return [{
           id: "toolcall-legacy-function",
-          name: typeof fn.name === "string" ? fn.name : "",
+          name: toolName,
           argumentsJson,
           input,
         }];
@@ -285,22 +297,15 @@ export function normalizeAdapterResponse(payload: unknown): ProviderAdapterNorma
       .filter((item) => item.type === "function_call")
       .map((item) => {
         const argumentsJson = typeof item.arguments === "string" ? item.arguments : "{}";
-        let input: Record<string, unknown> = {};
-        try {
-          const parsed = JSON.parse(argumentsJson);
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-            input = parsed as Record<string, unknown>;
-          }
-        } catch {
-          input = {};
-        }
+        const toolName = typeof item.name === "string" ? item.name : "";
+        const input = parseToolCallArguments(argumentsJson, { source: "openai-output-items", toolName });
         return {
           id: typeof item.call_id === "string"
             ? item.call_id
             : typeof item.id === "string"
               ? item.id
               : "toolcall-unknown",
-          name: typeof item.name === "string" ? item.name : "",
+          name: toolName,
           argumentsJson,
           input,
         };

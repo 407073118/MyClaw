@@ -925,26 +925,46 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
       return searchPath !== "." ? `${pattern}::${searchPath}` : pattern;
     }
 
-    case "exec.command":
-      if (
+    case "exec.command": {
+      // 判定是否需要附带配置字段，触发 JSON 形式
+      const hasConfig =
         "cwd" in args ||
         "timeoutMs" in args ||
         "maxAttempts" in args ||
         "maxTimeoutMs" in args ||
         "timeoutMultiplier" in args ||
-        "retryOnTimeout" in args
-      ) {
-        return JSON.stringify({
-          command: args.command ?? "",
-          ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
-          ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
-          ...(args.maxAttempts !== undefined ? { maxAttempts: args.maxAttempts } : {}),
-          ...(args.maxTimeoutMs !== undefined ? { maxTimeoutMs: args.maxTimeoutMs } : {}),
-          ...(args.timeoutMultiplier !== undefined ? { timeoutMultiplier: args.timeoutMultiplier } : {}),
-          ...(args.retryOnTimeout !== undefined ? { retryOnTimeout: args.retryOnTimeout } : {}),
-        });
+        "retryOnTimeout" in args;
+
+      const commandValue = typeof args.command === "string" ? args.command : "";
+      const commandMissing = !commandValue.trim();
+
+      // command 合法且无配置：保留旧契约的纯字符串 label（覆盖 90% 调用路径）
+      if (!commandMissing && !hasConfig) {
+        return commandValue;
       }
-      return String(args.command ?? "");
+
+      // 其它情况一律走 JSON。command 缺失时额外塞入诊断字段，
+      // 让执行器给模型回一条自纠错误消息，而不是抛一句"缺少要执行的命令"。
+      const payload: Record<string, unknown> = {
+        command: commandValue,
+        ...(args.cwd !== undefined ? { cwd: args.cwd } : {}),
+        ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
+        ...(args.maxAttempts !== undefined ? { maxAttempts: args.maxAttempts } : {}),
+        ...(args.maxTimeoutMs !== undefined ? { maxTimeoutMs: args.maxTimeoutMs } : {}),
+        ...(args.timeoutMultiplier !== undefined ? { timeoutMultiplier: args.timeoutMultiplier } : {}),
+        ...(args.retryOnTimeout !== undefined ? { retryOnTimeout: args.retryOnTimeout } : {}),
+      };
+
+      if (commandMissing) {
+        payload._diagnostics = {
+          receivedArgKeys: Object.keys(args),
+          commandFieldType: args.command === undefined ? "undefined" : typeof args.command,
+          commandIsWhitespace: typeof args.command === "string" && args.command.length > 0,
+        };
+      }
+
+      return JSON.stringify(payload);
+    }
 
     case "git.status":
       return String(args.target ?? ".");

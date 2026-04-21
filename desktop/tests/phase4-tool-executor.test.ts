@@ -171,6 +171,71 @@ describe("exec.command", () => {
     expect(result.success).toBe(false);
     expect(result.error).toContain("安全策略拒绝");
   });
+
+  // -------------------------------------------------------------------------
+  // 自纠错误消息：当 label 缺失 command 时，返回给模型可读的引导
+  // -------------------------------------------------------------------------
+
+  it("returns self-correcting error when label is empty", async () => {
+    const result = await executor.execute("exec.command", "", testDir);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("exec_command");
+    expect(result.error).toContain("`command`");
+    expect(result.error).toContain('{"command":');
+  });
+
+  it("returns self-correcting error listing wrong parameter name", async () => {
+    // 模拟 buildToolLabel 在模型用了 `cmd` 而不是 `command` 时产生的 label
+    const label = JSON.stringify({
+      command: "",
+      _diagnostics: {
+        receivedArgKeys: ["cmd"],
+        commandFieldType: "undefined",
+        commandIsWhitespace: false,
+      },
+    });
+    const result = await executor.execute("exec.command", label, testDir);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("[cmd]");
+    expect(result.error).toContain("`command`");
+    expect(result.error).toMatch(/cmd|shell|command_line|script/);
+  });
+
+  it("returns self-correcting error when command is whitespace-only", async () => {
+    const label = JSON.stringify({
+      command: "   ",
+      _diagnostics: {
+        receivedArgKeys: ["command"],
+        commandFieldType: "string",
+        commandIsWhitespace: true,
+      },
+    });
+    const result = await executor.execute("exec.command", label, testDir);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("空白");
+  });
+
+  it("returns self-correcting error when command is wrong type", async () => {
+    const label = JSON.stringify({
+      command: "",
+      _diagnostics: {
+        receivedArgKeys: ["command"],
+        commandFieldType: "number",
+        commandIsWhitespace: false,
+      },
+    });
+    const result = await executor.execute("exec.command", label, testDir);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("string");
+    expect(result.error).toContain("number");
+  });
+
+  it("returns self-correcting error when the label itself is malformed JSON", async () => {
+    // `{` 开头但解析失败 → 走 labelParseFailed 分支
+    const result = await executor.execute("exec.command", '{"command": "ls', testDir);
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("JSON");
+  });
 });
 
 // ---------------------------------------------------------------------------

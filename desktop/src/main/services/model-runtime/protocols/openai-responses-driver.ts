@@ -684,7 +684,13 @@ function materializeToolCalls(toolCalls: Map<string, ResponsesToolCallAccumulato
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         input = parsed as Record<string, unknown>;
       }
-    } catch {
+    } catch (error) {
+      console.warn("[openai-responses-driver] 工具调用 arguments JSON 解析失败，已降级为空对象", {
+        toolName: toolCall.name,
+        error: error instanceof Error ? error.message : String(error),
+        argumentsSnippet: argumentsJson.slice(0, 300),
+        argumentsLength: argumentsJson.length,
+      });
       input = {};
     }
 

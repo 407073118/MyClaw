@@ -207,7 +207,17 @@ function materializeToolCalls(state: SseState): ParsedToolCall[] {
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           input = parsed as Record<string, unknown>;
         }
-      } catch {
+      } catch (error) {
+        // 流式累积出的 arguments 不是合法 JSON（Qwen/Kimi/Ark 等模型在 thinking +
+        // tool call 多轮里偶发截断或未转义）。打 warn 便于排查，同时保持原流程。
+        // 下游 buildToolLabel 的诊断字段（如 exec.command 的 receivedArgKeys）
+        // 会把"参数丢失"翻译成模型可读的自纠错误。
+        console.warn("[model-sse-parser] 工具调用 arguments JSON 解析失败，已降级为空对象", {
+          toolName: acc.name,
+          error: error instanceof Error ? error.message : String(error),
+          argumentsSnippet: argumentsJson.slice(0, 300),
+          argumentsLength: argumentsJson.length,
+        });
         input = {};
       }
       return { id: acc.id, name: acc.name, argumentsJson, input };
