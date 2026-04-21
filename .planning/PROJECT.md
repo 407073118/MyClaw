@@ -20,8 +20,8 @@ MyClaw 是一个企业级 AI 工作平台，包含企业内部统一管理能力
 
 ### Active
 
-- [ ] 优化 desktop 侧模型使用体验，让模型更稳定地完成复杂任务
-- [ ] 强化模型工具使用能力，让模型更会选择、组合并执行可用工具
+- [ ] 优化 desktop 侧模型使用体验，让模型更稳定地完成复杂任务 — Phase 08 推进：统一的 `document.read` 工具替换散乱的 xlsx/pdf/python 脚本组合
+- [ ] 强化模型工具使用能力，让模型更会选择、组合并执行可用工具 — Phase 08 推进：9 种文档格式统一入口 + 硬拒绝 `fs_read` 引导 + 去 Python 优先
 - [ ] 提升模型对不同长度、不同质量用户输入的需求理解能力
 - [ ] 让模型能够结合用户职业角色与工作语境给出更贴合的协助
 - [ ] 强化 desktop 与企业内部系统的公共数据连接能力，减少数据孤岛
@@ -77,4 +77,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-04 after initialization*
+*Last updated: 2026-04-21 after Phase 08 (document-ir-document-read) completion*
