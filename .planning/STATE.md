@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 08-document-ir-document-read/08-04-PLAN.md
-last_updated: "2026-04-21T13:36:59.057Z"
+stopped_at: Completed 08-document-ir-document-read/08-05-PLAN.md
+last_updated: "2026-04-21T14:00:24.752Z"
 last_activity: 2026-04-21
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 9
-  completed_plans: 4
+  completed_plans: 5
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 08 (document-ir-document-read) — EXECUTING
-Plan: 4 of 9
+Plan: 5 of 9
 Status: Ready to execute
 Last activity: 2026-04-21
 
@@ -55,6 +55,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 08-document-ir-document-read P01 | 8 | 2 tasks | 7 files |
 | Phase 08-document-ir-document-read P03 | 13 | 2 tasks | 7 files |
 | Phase 08-document-ir-document-read P04 | 8 | 2 tasks | 5 files |
+| Phase 08-document-ir-document-read P05 | 17 | 3 tasks | 7 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,9 @@ Recent decisions affecting current work:
 - [Phase 08-document-ir-document-read]: setDocCacheRoot is a lazy-factory setter (mirrors setPathPolicy / setPathAudit); resolveDocCache throws [E_DOC_CACHE_NOT_INITIALIZED] with wiring-site hint if called before injection
 - [Phase 08-document-ir-document-read]: xlsx parsers register lazily at dispatch entry via idempotent getParser guard; keeps test replacements safe and avoids startup dep load
 - [Phase 08-document-ir-document-read]: Legacy xlsx.extract body preserved byte-for-byte; only a 3-line deprecation comment added, traceable to tests/document-xlsx-extract-alias.test.ts
+- [Phase 08-document-ir-document-read]: jszip declared as explicit top-level dep in desktop/package.json, not left as a mammoth transitive — pnpm's isolated node_modules layout requires top-level for require('jszip') resolution; 08-07 pptx reuses this dep
+- [Phase 08-document-ir-document-read]: docx pre-scans comments.xml/footnotes.xml for DOCTYPE + 16MiB cap BEFORE calling mammoth.convertToHtml — mammoth uses xmldom internally and would raise 'entity not found' that masks our [E_DOC_XXE_BLOCKED] / [E_DOC_ZIP_ENTRY_TOO_LARGE] codes
+- [Phase 08-document-ir-document-read]: docx media extraction uses sha256(bytes)-content-addressed dedup: identical image bytes → single on-disk file under mediaDir, N ImageNodes referencing via MediaRef.id; 16MiB cap also applies to media entries
 
 ### Pending Todos
 
@@ -92,6 +96,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-21T13:36:44.578Z
-Stopped at: Completed 08-document-ir-document-read/08-04-PLAN.md
+Last session: 2026-04-21T14:00:09.663Z
+Stopped at: Completed 08-document-ir-document-read/08-05-PLAN.md
 Resume file: None
