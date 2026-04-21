@@ -2600,6 +2600,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       pathPolicy.setApprovalCallback(pathAccessCallback);
       toolExecutor.setPathPolicy(pathPolicy);
       toolExecutor.setPathAudit(getOrCreatePathAudit(ctx));
+      // Phase 8：注入 doc-cache 根目录，供 document.read 惰性构建 DocCache 实例。
+      toolExecutor.setDocCacheRoot(ctx.runtime.paths.cacheDir);
 
       // ----- 预先异步计算 Git 分支（非阻塞） -----
       const gitBranch = await getGitBranchAsync(workingDir);

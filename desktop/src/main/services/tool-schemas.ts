@@ -23,6 +23,12 @@ export type OpenAIFunctionTool = {
 
 function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git" | "http" | "web" | "ppt" | "task" | "time" | "browser" | null {
   if (functionName.startsWith("fs_")) return "fs";
+  // document.read（Phase 8）共用 fs 授权策略（路径审批同一 PathAccessPolicy），
+  // 所以分组归入 fs，跟随 fs_* 一起被 tool policy 允许或屏蔽。
+  if (functionName === "document_read" || functionName.startsWith("document_")) return "fs";
+  // xlsx_extract 历史上未归组（pre-existing gap），随 document.read 一起归入 fs，
+  // 保持与 fs_read 同一暴露策略；向后兼容无改动。
+  if (functionName === "xlsx_extract") return "fs";
   if (functionName.startsWith("exec_")) return "exec";
   if (functionName.startsWith("git_")) return "git";
   if (functionName.startsWith("http_")) return "http";
@@ -86,6 +92,63 @@ export function buildToolSchemas(
             },
           },
           required: ["path"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "document_read",
+        description: `Read office / pdf / pptx / markdown / csv documents natively (zero Python required). Use this instead of fs_read for .xlsx/.xls/.xlsm/.docx/.pdf/.pptx/.md/.txt/.csv. Four modes: stats (metadata + counts), outline (table of contents), read (precise section or whole doc), search (keyword lookup). Working directory: ${cwd}`,
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Absolute or relative file path. Subject to path-access approval (same rules as fs_read).",
+            },
+            mode: {
+              type: "string",
+              enum: ["stats", "outline", "read", "search"],
+              description: "stats=document metadata; outline=table of contents; read=precise section or whole doc; search=keyword lookup.",
+            },
+            locator: {
+              type: "object",
+              description: "Pinpoint what to read in mode=read. Omit for whole-doc read.",
+              properties: {
+                page: { type: "number", description: "PDF page number (1-based)." },
+                slide: { type: "number", description: "PPTX slide number (1-based)." },
+                sheet: { type: "string", description: "XLSX sheet name." },
+                heading: { type: "string", description: "DOCX/MD heading text to anchor on." },
+                range: {
+                  type: "array",
+                  items: { type: "number" },
+                  minItems: 2,
+                  maxItems: 2,
+                  description: "[startIndex, endExclusive] over the body node array.",
+                },
+              },
+            },
+            query: {
+              type: "string",
+              description: "Search keyword; required when mode=search.",
+            },
+            maxChars: {
+              type: "number",
+              description: "Output character budget; default 8000, hard cap 32000.",
+            },
+            format: {
+              type: "string",
+              enum: ["markdown", "json"],
+              description: "Output format for mode=read; default markdown.",
+            },
+            includeImages: {
+              type: "string",
+              enum: ["none", "refs", "inline"],
+              description: "Image handling; default refs. Use inline only for multimodal models.",
+            },
+          },
+          required: ["path", "mode"],
         },
       },
     },
@@ -1035,6 +1098,17 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
         path: args.path ?? "",
         ...(args.sheet !== undefined ? { sheet: args.sheet } : {}),
         ...(args.maxRows !== undefined ? { maxRows: args.maxRows } : {}),
+      });
+
+    case "document.read":
+      return JSON.stringify({
+        path: args.path ?? "",
+        mode: args.mode ?? "stats",
+        ...(args.locator !== undefined ? { locator: args.locator } : {}),
+        ...(args.query !== undefined ? { query: args.query } : {}),
+        ...(args.maxChars !== undefined ? { maxChars: args.maxChars } : {}),
+        ...(args.format !== undefined ? { format: args.format } : {}),
+        ...(args.includeImages !== undefined ? { includeImages: args.includeImages } : {}),
       });
 
     default: {

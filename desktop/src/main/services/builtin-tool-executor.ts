@@ -13,6 +13,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import type { SkillDefinition } from "@shared/contracts";
 import { BrowserService } from "./browser-service";
 import { PptEngine } from "./ppt/index";
+import { createDocCache, type DocCache } from "./document/doc-cache";
+import { executeDocumentRead, type DocumentReadArgs } from "./document/document-read-facade";
 import {
   canonicalize as canonicalizePath,
   PathAccessPolicy,
@@ -89,6 +91,7 @@ function inferOperation(toolId: string): PathOperation {
   if (toolId === "fs.write") return "write";
   if (toolId === "exec.command") return "exec";
   if (toolId === "xlsx.extract") return "read";
+  if (toolId === "document.read") return "read";
   // ppt.* 等默认读，输出路径另走 write
   return "read";
 }
@@ -732,6 +735,8 @@ export class BuiltinToolExecutor {
   private _allowExternalPaths = false;
   private pathPolicy: PathAccessPolicy | null = null;
   private pathAudit: PathAccessAudit | null = null;
+  private _docCacheRoot: string | null = null;
+  private _docCache: DocCache | null = null;
 
   /** 更新技能列表。 */
   setSkills(skills: SkillDefinition[]): void {
@@ -762,6 +767,29 @@ export class BuiltinToolExecutor {
   /** 注入审计写入器（Phase 9）。 */
   setPathAudit(audit: PathAccessAudit | null): void {
     this.pathAudit = audit;
+  }
+
+  /**
+   * 注入 doc-cache 根目录（Phase 8）。
+   * 由 desktop/src/main/ipc/sessions.ts 在 setPathPolicy 同一处注入 MyClawPaths.cacheDir。
+   */
+  setDocCacheRoot(root: string): void {
+    this._docCacheRoot = root;
+    this._docCache = null; // 若 root 在会话中被改写，下次 resolveDocCache 会重新构建
+  }
+
+  /** 惰性解析 doc-cache 实例；未初始化时抛出带下一步提示的错误（ASST-04）。 */
+  private resolveDocCache(): DocCache {
+    const root = this._docCacheRoot;
+    if (!root) {
+      throw new Error(
+        "[E_DOC_CACHE_NOT_INITIALIZED] doc-cache 尚未初始化。请确认 desktop/src/main/ipc/sessions.ts 在 setPathPolicy 之后也调用了 setDocCacheRoot(ctx.runtime.paths.cacheDir)。",
+      );
+    }
+    if (!this._docCache) {
+      this._docCache = createDocCache({ rootDir: root });
+    }
+    return this._docCache;
   }
 
   /** 按工具 ID 执行内置工具。 */
@@ -978,7 +1006,46 @@ export class BuiltinToolExecutor {
       return this.executeFileEdit(label, cwd, ctx);
     }
 
+    // document.read：统一文档读取门面（Phase 8）。路径审批已在 execute() 外层通过 PathAccessPolicy 完成，
+    // 这里拿到的 resolved 是已获授权的绝对路径；facade 只负责 mode 路由 + 缓存 + 解析。
+    if (toolId === "document.read") {
+      let args: DocumentReadArgs;
+      try {
+        args = JSON.parse(label);
+      } catch {
+        return {
+          success: false,
+          output: "",
+          error: "[E_DOC_INVALID_ARGS] document.read 参数必须是 JSON 对象，例如 {\"path\":\"...\",\"mode\":\"stats\"}。请检查 label 是否为合法 JSON。",
+        };
+      }
+      if (!args.path || !args.mode) {
+        return {
+          success: false,
+          output: "",
+          error: "[E_DOC_INVALID_ARGS] document.read 需要 path 和 mode。请传入 {\"path\":\"<文件路径>\",\"mode\":\"stats|outline|read|search\"}。",
+        };
+      }
+      const resolved = this.resolvePathSafe(cwd, args.path, ctx);
+      let cache: DocCache;
+      try {
+        cache = this.resolveDocCache();
+      } catch (err) {
+        return {
+          success: false,
+          output: "",
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+      return executeDocumentRead(args, {
+        cache,
+        resolvedPath: resolved,
+        sessionId: options?.sessionId ?? null,
+      });
+    }
+
     // xlsx.extract：用 ExcelJS 读表，返回 Markdown / CSV。外部路径会走 policy。
+    // 向后兼容：保留 alias 过渡期；Phase 8 后续迁移到 document.read。
     if (toolId === "xlsx.extract") {
       return this.executeXlsxExtract(label, cwd, ctx);
     }
