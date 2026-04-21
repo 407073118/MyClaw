@@ -227,3 +227,137 @@ describe("docxParser task 1", () => {
     expect(getParser("docx")?.format).toBe("docx");
   });
 });
+
+// ────────────────────────────────────────────────────────────────────────────
+// Task 2
+// ────────────────────────────────────────────────────────────────────────────
+
+const COMMENTS_XML_OK = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:comment w:id="0" w:author="Alice" w:date="2026-01-01T00:00:00Z">
+    <w:p><w:r><w:t>Needs rewrite</w:t></w:r></w:p>
+  </w:comment>
+  <w:comment w:id="1" w:author="Bob">
+    <w:p><w:r><w:t>Looks good.</w:t></w:r></w:p>
+  </w:comment>
+</w:comments>`;
+
+const FOOTNOTES_XML_OK = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:footnote w:type="separator" w:id="-1">
+    <w:p><w:r><w:t>---sep---</w:t></w:r></w:p>
+  </w:footnote>
+  <w:footnote w:type="continuationSeparator" w:id="0">
+    <w:p><w:r><w:t>---cont---</w:t></w:r></w:p>
+  </w:footnote>
+  <w:footnote w:id="1">
+    <w:p><w:r><w:t>Real footnote body.</w:t></w:r></w:p>
+  </w:footnote>
+</w:footnotes>`;
+
+const COMMENTS_XML_XXE = `<?xml version="1.0"?>
+<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:comment w:id="0" w:author="Mallory"><w:p><w:r><w:t>&xxe;</w:t></w:r></w:p></w:comment>
+</w:comments>`;
+
+describe("docxParser task 2", () => {
+  it("Test 1: comments surface as CommentNode with author + text", async () => {
+    const buffer = await makeDocxBuffer({
+      documentXml: SIMPLE_DOC_XML,
+      commentsXml: COMMENTS_XML_OK,
+    });
+    const ir = await parseDocxBuffer({
+      path: "/virtual/with-comments.docx",
+      buffer,
+      sha256: "sha-comments",
+      mediaDir: freshMediaDir(),
+    });
+    const comments = ir.body.filter((n) => n.kind === "comment") as CommentNode[];
+    expect(comments).toHaveLength(2);
+    const alice = comments.find((c) => c.author === "Alice");
+    const bob = comments.find((c) => c.author === "Bob");
+    expect(alice).toBeDefined();
+    expect(bob).toBeDefined();
+    expect(alice!.runs.map((r) => r.text).join("")).toContain("Needs rewrite");
+    expect(bob!.runs.map((r) => r.text).join("")).toContain("Looks good");
+  });
+
+  it("Test 2: footnotes surface as FootnoteNode; separator / continuationSeparator are skipped", async () => {
+    const buffer = await makeDocxBuffer({
+      documentXml: SIMPLE_DOC_XML,
+      footnotesXml: FOOTNOTES_XML_OK,
+    });
+    const ir = await parseDocxBuffer({
+      path: "/virtual/with-footnotes.docx",
+      buffer,
+      sha256: "sha-foot",
+      mediaDir: freshMediaDir(),
+    });
+    const footnotes = ir.body.filter((n) => n.kind === "footnote") as FootnoteNode[];
+    expect(footnotes).toHaveLength(1);
+    expect(footnotes[0].refId).toBe("1");
+    expect(footnotes[0].runs.map((r) => r.text).join("")).toContain("Real footnote body");
+  });
+
+  it("Test 3: XXE DOCTYPE in comments.xml throws [E_DOC_XXE_BLOCKED] with Chinese hint", async () => {
+    const buffer = await makeDocxBuffer({
+      documentXml: SIMPLE_DOC_XML,
+      commentsXml: COMMENTS_XML_XXE,
+    });
+    await expect(
+      parseDocxBuffer({
+        path: "/virtual/xxe.docx",
+        buffer,
+        sha256: "sha-xxe",
+        mediaDir: freshMediaDir(),
+      }),
+    ).rejects.toThrow(/\[E_DOC_XXE_BLOCKED\]/);
+
+    // Re-trigger to assert the Chinese hint sentence is present.
+    try {
+      await parseDocxBuffer({
+        path: "/virtual/xxe.docx",
+        buffer,
+        sha256: "sha-xxe",
+        mediaDir: freshMediaDir(),
+      });
+      throw new Error("should not reach");
+    } catch (err) {
+      const msg = (err as Error).message;
+      expect(msg).toContain("[E_DOC_XXE_BLOCKED]");
+      expect(msg).toMatch(/请.*。/); // ASST-04 hint sentence
+    }
+  });
+
+  it("Test 4: oversized word/footnotes.xml (>16MiB) throws [E_DOC_ZIP_ENTRY_TOO_LARGE]", async () => {
+    // 17MiB payload
+    const big = "A".repeat(17 * 1024 * 1024);
+    const buffer = await makeDocxBuffer({
+      documentXml: SIMPLE_DOC_XML,
+      footnotesXml: big,
+    });
+    await expect(
+      parseDocxBuffer({
+        path: "/virtual/toobig.docx",
+        buffer,
+        sha256: "sha-big",
+        mediaDir: freshMediaDir(),
+      }),
+    ).rejects.toThrow(/\[E_DOC_ZIP_ENTRY_TOO_LARGE\]/);
+  }, 30000);
+
+  it("Test 5: absent comments/footnotes means neither CommentNode nor FootnoteNode appear", async () => {
+    const buffer = await makeDocxBuffer({ documentXml: SIMPLE_DOC_XML });
+    const ir = await parseDocxBuffer({
+      path: "/virtual/no-extras.docx",
+      buffer,
+      sha256: "sha-no-extras",
+      mediaDir: freshMediaDir(),
+    });
+    const comments = ir.body.filter((n) => n.kind === "comment");
+    const footnotes = ir.body.filter((n) => n.kind === "footnote");
+    expect(comments).toHaveLength(0);
+    expect(footnotes).toHaveLength(0);
+  });
+});
