@@ -30,6 +30,7 @@
     "lucide-react": "^0.468.0",
     "mammoth": "^1.8.0",
     "marked": "^17.0.5",
+    "pdfjs-dist": "^3.11.174",
     "playwright-core": "^1.52.0",
     "pptxgenjs": "^4.0.1",
     "react": "^18.3.1",
