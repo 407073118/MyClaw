@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 08-document-ir-document-read/08-03-PLAN.md
-last_updated: "2026-04-21T13:23:54.670Z"
+stopped_at: Completed 08-document-ir-document-read/08-04-PLAN.md
+last_updated: "2026-04-21T13:36:59.057Z"
 last_activity: 2026-04-21
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 9
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 ## Current Position
 
 Phase: 08 (document-ir-document-read) — EXECUTING
-Plan: 3 of 9
+Plan: 4 of 9
 Status: Ready to execute
 Last activity: 2026-04-21
 
@@ -54,6 +54,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 08 P02 | 8 | 1 tasks | 2 files |
 | Phase 08-document-ir-document-read P01 | 8 | 2 tasks | 7 files |
 | Phase 08-document-ir-document-read P03 | 13 | 2 tasks | 7 files |
+| Phase 08-document-ir-document-read P04 | 8 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Recent decisions affecting current work:
 - [Phase 08-document-ir-document-read]: document.read facade accepts already-resolved absolute path; PathAccessPolicy reuse stays at executor dispatch boundary rather than inside the facade, keeping permission logic in one place
 - [Phase 08-document-ir-document-read]: inferBuiltinToolSchemaGroup maps document_* and legacy xlsx_extract into the 'fs' group; avoids extending BuiltinToolSchemaGroup and fixes a pre-existing xlsx_extract visibility gap
 - [Phase 08-document-ir-document-read]: setDocCacheRoot is a lazy-factory setter (mirrors setPathPolicy / setPathAudit); resolveDocCache throws [E_DOC_CACHE_NOT_INITIALIZED] with wiring-site hint if called before injection
+- [Phase 08-document-ir-document-read]: xlsx parsers register lazily at dispatch entry via idempotent getParser guard; keeps test replacements safe and avoids startup dep load
+- [Phase 08-document-ir-document-read]: Legacy xlsx.extract body preserved byte-for-byte; only a 3-line deprecation comment added, traceable to tests/document-xlsx-extract-alias.test.ts
 
 ### Pending Todos
 
@@ -89,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-21T13:23:54.653Z
-Stopped at: Completed 08-document-ir-document-read/08-03-PLAN.md
+Last session: 2026-04-21T13:36:44.578Z
+Stopped at: Completed 08-document-ir-document-read/08-04-PLAN.md
 Resume file: None
