@@ -20,6 +20,7 @@ import { xlsParser, xlsmParser, xlsxParser } from "./document/parsers/xlsx-parse
 import { docxParser } from "./document/parsers/docx-parser";
 import { pdfParser } from "./document/parsers/pdf-parser";
 import { pptxParser } from "./document/parsers/pptx-parser";
+import { mdParser, txtParser } from "./document/parsers/md-txt-parser";
 import {
   canonicalize as canonicalizePath,
   PathAccessPolicy,
@@ -800,6 +801,8 @@ export class BuiltinToolExecutor {
     if (!getParser("docx")) registerParser(docxParser);
     if (!getParser("pdf")) registerParser(pdfParser);
     if (!getParser("pptx")) registerParser(pptxParser);
+    if (!getParser("md")) registerParser(mdParser);
+    if (!getParser("txt")) registerParser(txtParser);
     this.parsersRegistered = true;
   }
 

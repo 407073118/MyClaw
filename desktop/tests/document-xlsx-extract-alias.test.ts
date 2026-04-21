@@ -148,9 +148,9 @@ describe("xlsx.extract alias + document.read registration", () => {
     expect(r1.success).toBe(true);
     expect(r2.success).toBe(true);
 
-    // Parser registry has xlsx/xls/xlsm/docx/pdf/pptx registered — not multiplied by call count.
-    // (docx landed in 08-05, pdf in 08-06, pptx in 08-07; this list grows as Wave 3 plans add more parsers.)
+    // Parser registry has xlsx/xls/xlsm/docx/pdf/pptx/md/txt registered — not multiplied by call count.
+    // (docx landed in 08-05, pdf in 08-06, pptx in 08-07, md+txt in 08-08; csv also lands in 08-08.)
     const formats = listRegisteredFormats().sort();
-    expect(formats).toEqual(["docx", "pdf", "pptx", "xls", "xlsm", "xlsx"]);
+    expect(formats).toEqual(["docx", "md", "pdf", "pptx", "txt", "xls", "xlsm", "xlsx"]);
   });
 });
