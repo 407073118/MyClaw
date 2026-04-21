@@ -12,3 +12,4 @@ export * from "./document-read-facade";
 export * from "./parsers/xlsx-parser";
 export * from "./parsers/docx-parser";
 export * from "./parsers/pdf-parser";
+export * from "./parsers/pptx-parser";

@@ -17,7 +17,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as childProcess from "node:child_process";
 
 import {
   parsePptxBuffer,
@@ -92,7 +91,10 @@ function escapeXml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-async function makePptxBuffer(slides: SlideSpec[]): Promise<Buffer> {
+async function makePptxBuffer(
+  slides: SlideSpec[],
+  opts: { compress?: boolean } = {},
+): Promise<Buffer> {
   const zip = new JSZip();
 
   zip.file(
@@ -115,10 +117,13 @@ async function makePptxBuffer(slides: SlideSpec[]): Promise<Buffer> {
       xml = buildSlideXml(spec.paragraphs);
     }
     if (spec.paddedToBytes !== undefined) {
-      // Pad xml with a harmless <a:p><a:t>x</a:t></a:p> filler stream so the
-      // uncompressed entry exceeds the size cap once loaded.
-      const filler = "<!-- pad " + "x".repeat(1024) + " -->";
-      while (Buffer.byteLength(xml, "utf8") < spec.paddedToBytes) {
+      // Single-shot padding: allocate a comment filler of the required byte
+      // length directly (vs incremental concat, which copies the full string
+      // on every iteration and is O(n^2) for large paddings).
+      const needed = spec.paddedToBytes - Buffer.byteLength(xml, "utf8");
+      if (needed > 0) {
+        // XML comment is inert; parser never descends into it.
+        const filler = "<!-- " + "x".repeat(needed - 9) + " -->";
         xml = xml + filler;
       }
     }
@@ -128,7 +133,16 @@ async function makePptxBuffer(slides: SlideSpec[]): Promise<Buffer> {
     }
   }
 
-  return zip.generateAsync({ type: "nodebuffer" }).then((b: Buffer) => b);
+  const compress = opts.compress ?? true;
+  // For oversized test fixtures we disable compression to keep the builder fast
+  // (JSZip's pure-JS DEFLATE on a 17MiB payload takes minutes); STORE is fine
+  // because the parser's 16MiB cap checks UNCOMPRESSED size post-inflation.
+  return zip
+    .generateAsync({
+      type: "nodebuffer",
+      compression: compress ? "DEFLATE" : "STORE",
+    })
+    .then((b: Buffer) => b);
 }
 
 function makeParseInput(buffer: Buffer, mediaDir: string): {
@@ -251,42 +265,57 @@ describe("pptxParser (Phase 8 Plan 07)", () => {
   });
 
   it("Test 7: Parser does not invoke fetch or spawn processes", async () => {
+    // Source-level assertion: the parser must not reference outbound-HTTP or
+    // child-process APIs. Combined with the positive parse below, this gives
+    // us a strong "no side-channel" guarantee without relying on ESM-hostile
+    // spyOn of node:child_process (which is non-configurable under Vitest).
+    const { readFileSync } = await import("node:fs");
+    const parserSource = readFileSync(
+      new URL("../src/main/services/document/parsers/pptx-parser.ts", import.meta.url),
+      "utf8",
+    );
+    expect(parserSource).not.toMatch(/\bfetch\s*\(/);
+    expect(parserSource).not.toMatch(/child_process/);
+    // Disallow child_process.spawn / top-level spawn calls; we accept pregex.exec(xml)
+    // on RegExp objects because that is a pure in-process string match.
+    expect(parserSource).not.toMatch(/\bspawn\s*\(/);
+    expect(parserSource).not.toMatch(/\brequire\s*\(\s*['\"]child_process['\"]\s*\)/);
+    // Reject python invocation patterns (python3 foo, py -3 bar) while still
+    // permitting doc comments that state "零 Python 依赖" / "no python".
+    expect(parserSource).not.toMatch(/python\s*[\w.-]*\.\s*(spawn|exec)/i);
+    expect(parserSource).not.toMatch(/['"]python(?:3|2)?['"]/);
+    expect(parserSource).not.toMatch(/['"]py['"]\s*,\s*\[[^\]]*-3/);
+    expect(parserSource).not.toMatch(/\bpy\s+-3\b/);
+
+    // Plus a positive run: fetch spy must never fire during a real parse.
     const buf = await makePptxBuffer([
       { paragraphs: ["Safe"], notes: ["Safe notes"] },
     ]);
-    const fetchSpy = vi
-      .spyOn(globalThis, "fetch")
-      .mockImplementation(() => {
-        throw new Error("unexpected fetch");
-      });
-    const execSpy = vi
-      .spyOn(childProcess, "exec")
-      .mockImplementation((() => {
-        throw new Error("unexpected exec");
-      }) as any);
-    const spawnSpy = vi
-      .spyOn(childProcess, "spawn")
-      .mockImplementation((() => {
-        throw new Error("unexpected spawn");
-      }) as any);
-
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(() => {
+      throw new Error("unexpected fetch");
+    });
     await parsePptxBuffer(makeParseInput(buf, mediaDir));
-
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(execSpy).not.toHaveBeenCalled();
-    expect(spawnSpy).not.toHaveBeenCalled();
   });
 
-  it("Test 8: slide1.xml > 16MiB → [E_DOC_ZIP_ENTRY_TOO_LARGE] before XML decoded", async () => {
-    // 17 MiB padding puts slide1.xml above the 16 MiB cap.
-    const SEVENTEEN_MB = 17 * 1024 * 1024;
-    const buf = await makePptxBuffer([
-      { paragraphs: ["header"], paddedToBytes: SEVENTEEN_MB },
-    ]);
-    await expect(parsePptxBuffer(makeParseInput(buf, mediaDir))).rejects.toThrow(
-      /\[E_DOC_ZIP_ENTRY_TOO_LARGE\][\s\S]*16MiB/,
-    );
-  });
+  it(
+    "Test 8: slide1.xml > 16MiB → [E_DOC_ZIP_ENTRY_TOO_LARGE] before XML decoded",
+    async () => {
+      // 17 MiB padding puts slide1.xml above the 16 MiB cap.
+      // Use STORE compression: JSZip's pure-JS DEFLATE on 17MiB is O(minutes);
+      // the parser only checks uncompressed byteLength so the compression
+      // method does not affect the behavior under test.
+      const SEVENTEEN_MB = 17 * 1024 * 1024;
+      const buf = await makePptxBuffer(
+        [{ paragraphs: ["header"], paddedToBytes: SEVENTEEN_MB }],
+        { compress: false },
+      );
+      await expect(parsePptxBuffer(makeParseInput(buf, mediaDir))).rejects.toThrow(
+        /\[E_DOC_ZIP_ENTRY_TOO_LARGE\][\s\S]*16MiB/,
+      );
+    },
+    30000,
+  );
 
   it("Test 9: jszip is resolvable as a top-level dep from desktop/", () => {
     // Resolving from desktop/ confirms 08-05 declared jszip at the top level.
