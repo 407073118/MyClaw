@@ -119,6 +119,22 @@ async function createHttpError(response: Response): Promise<Error> {
   return new Error(`Model API error ${response.status} ${response.statusText}: ${detail}`);
 }
 
+/** 把 fetch/SystemError cause 渲染成可读字符串，保留 code 优先于 message。 */
+function formatCause(cause: unknown): string {
+  if (cause == null) return "(no cause)";
+  if (typeof cause === "string") return cause;
+  if (cause instanceof Error) {
+    const code = (cause as { code?: unknown }).code;
+    const codeStr = typeof code === "string" || typeof code === "number" ? String(code) : "";
+    return codeStr ? `${codeStr}: ${cause.message || cause.name}` : (cause.message || cause.name);
+  }
+  try {
+    return JSON.stringify(cause);
+  } catch {
+    return String(cause);
+  }
+}
+
 /** 读取指定 attempt 的退避时长；超出配置时复用最后一档。 */
 function resolveRetryDelay(retryDelaysMs: number[], attempt: number): number {
   if (retryDelaysMs.length === 0) {
@@ -206,11 +222,32 @@ export async function executeRequestVariants(
           }
 
           if (isRetryableError(err) && attempt < maxRetries) {
-            lastError = err instanceof Error ? err : new Error(String(err));
+            const baseErr = err instanceof Error ? err : new Error(String(err));
+            const causeText = formatCause((err as { cause?: unknown })?.cause);
+            // 使用 ES2022 Error cause 选项，并把 cause 摘要拼到 message，方便日志和 toast 同时看到
+            lastError = new Error(
+              `${baseErr.message} (cause: ${causeText})`,
+              { cause: (err as { cause?: unknown })?.cause },
+            );
+            console.warn("[model-transport] fetch 失败，准备重试", {
+              variantId: variant.id,
+              attempt,
+              cause: causeText,
+            });
             await sleep(resolveRetryDelay(retryDelaysMs, attempt));
             continue;
           }
 
+          // 不可重试或重试耗尽：同样保留 cause，避免 native fetch 的 TypeError("fetch failed") 把底层 SystemError code 吞掉
+          if (err instanceof Error) {
+            const causeText = formatCause((err as { cause?: unknown }).cause);
+            if (causeText !== "(no cause)") {
+              throw new Error(
+                `${err.message} (cause: ${causeText})`,
+                { cause: (err as { cause?: unknown }).cause },
+              );
+            }
+          }
           throw err;
         }
       }
