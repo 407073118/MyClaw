@@ -471,6 +471,21 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     executionPlan,
   } = options;
 
+  // 契约断言：把 fetch 之前的"配置缺失"失败状态明确出来；
+  // 否则空 baseUrl 会让 native fetch 直接抛 TypeError("fetch failed")，
+  // cause 在 transport 层被折叠掉，用户什么都看不到。
+  if (!profile) {
+    throw new Error("模型配置不完整：profile 为 null/undefined");
+  }
+  if (typeof profile.baseUrl !== "string" || profile.baseUrl.trim() === "") {
+    throw new Error(`模型配置不完整：profile=${profile.id ?? "(missing)"} baseUrl 为空`);
+  }
+  if (typeof profile.apiKey !== "string" || profile.apiKey.trim() === "") {
+    // 当前代码库所有 ModelProfile 都需要 apiKey（buildRequestHeaders 不区分提供商都会写 Authorization 或 x-api-key）；
+    // 若未来有 provider schema 显式标记 apiKey 可选，再在此处放行；目前保持严格。
+    throw new Error(`模型配置不完整：profile=${profile.id ?? "(missing)"} apiKey 为空`);
+  }
+
   const url = resolveModelEndpointUrl(profile);
   const headers = buildRequestHeaders(profile);
   const adapter = getProviderAdapter(executionPlan?.adapterId ?? profile);
