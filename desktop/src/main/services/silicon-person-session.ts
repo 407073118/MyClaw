@@ -82,6 +82,17 @@ function buildSiliconPersonSession(
   if (!modelProfileId) {
     modelProfileId = ctx.state.getDefaultModelProfileId() || "";
   }
+  // 终态守卫：若回退链全部失败，直接抛错，不让空 modelProfileId 穿透到 ChatSession，
+  // 避免后续 callModel 撞到空 baseUrl 被 native fetch 折叠成 "fetch failed"。
+  if (!modelProfileId || !ctx.state.models.find((m) => m.id === modelProfileId)) {
+    console.error("[silicon-person-session] 无可用 modelProfileId，拒绝构建会话", {
+      siliconPersonId: input.siliconPerson.id,
+      ownField: input.siliconPerson.modelProfileId ?? null,
+      snapshotField: input.siliconPerson.modelBindingSnapshot?.modelProfileId ?? null,
+      globalDefault: ctx.state.getDefaultModelProfileId() ?? null,
+    });
+    throw new Error(`硅基员工 ${input.siliconPerson.id} 未配置可用模型，请先在员工设置中选择模型`);
+  }
   const session: ChatSession = {
     id: randomUUID(),
     title: input.title?.trim() || input.fallbackTitle,
