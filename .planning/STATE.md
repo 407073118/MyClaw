@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
-last_updated: "2026-05-06T07:42:30.000Z"
+last_updated: "2026-05-06T08:00:30.000Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 8
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-06 - Completed quick task 260506-ldw: fix silicon person fetch failed: enforce modelProfileId contract end-to-end (6-layer fix)
+Last activity: 2026-05-06 - Completed quick task 260506-m4g: ChatPage UI 微调（投递条内联消息流 + 用户消息靠右）
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -118,6 +118,7 @@ None yet.
 | 260506-foh | 挂载 HubModule 到 cloud-api app.module.ts，并补全 hub item icon 端点，修复 cloud-web /hub 页面与 skills 详情下载链路 | 2026-05-06 | dac598c | [260506-foh-hubmodule-cloud-api-app-module-ts-hub-it](./quick/260506-foh-hubmodule-cloud-api-app-module-ts-hub-it/) |
 | 260506-gdn | 收敛 desktop main 进程里的 .catch(() => {}) 错误吞噬，改为 logger.warn，保留容错不抛出但失败不再静默 | 2026-05-06 | a9e4cd6 | [260506-gdn-desktop-main-catch-logger-warn](./quick/260506-gdn-desktop-main-catch-logger-warn/) |
 | 260506-ldw | 修复硅基员工对话 [模型调用失败] fetch failed：从 UI 到 fetch 全链路 6 层契约补齐（创建/会话/客户端断言/transport cause 透传/启动期回填/UI 强约束） | 2026-05-06 | 7f1d879 | [260506-ldw-fix-silicon-person-fetch-failed-enforce-](./quick/260506-ldw-fix-silicon-person-fetch-failed-enforce-/) |
+| 260506-m4g | ChatPage UI 微调：投递痕迹卡片移入消息流并 5s 自动消失，用户消息整行 row-reverse 气泡靠右区分用户/AI | 2026-05-06 | 40ff367 | [260506-m4g-chatpage-ui-dispatch-trace-inline-user](./quick/260506-m4g-chatpage-ui-dispatch-trace-inline-user/) |
 
 ## Session Continuity
 
