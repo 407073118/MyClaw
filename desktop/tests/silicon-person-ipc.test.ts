@@ -160,6 +160,8 @@ function buildSiliconPerson(): SiliconPerson {
     hasUnread: false,
     needsApproval: false,
     workflowIds: [],
+    // 必须绑定 ctx.state.models 中存在的 profile，否则 buildSiliconPersonSession 终态守卫会拒绝构建会话
+    modelProfileId: "profile-1",
     updatedAt: "2026-04-08T00:00:00.000Z",
   };
 }

@@ -31,7 +31,15 @@ function buildContext(input?: {
       },
     },
     state: {
-      models: [],
+      models: [{
+        id: "profile-1",
+        name: "BR MiniMax",
+        provider: "openai-compatible",
+        providerFlavor: "br-minimax",
+        baseUrl: "http://api-cybotforge-pre.brapp.com",
+        apiKey: "test-key",
+        model: "minimax-m2-5",
+      }],
       sessions: input?.sessions ?? [],
       siliconPersons: input?.siliconPersons ?? [],
       skills: [],
@@ -87,6 +95,8 @@ function buildSiliconPerson(): SiliconPerson {
     hasUnread: false,
     needsApproval: false,
     workflowIds: [],
+    // 必须绑定 ctx.state.models 中存在的 profile，否则 buildSiliconPersonSession 终态守卫会拒绝构建会话
+    modelProfileId: "profile-1",
     updatedAt: "2026-04-08T00:00:00.000Z",
   };
 }

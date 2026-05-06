@@ -163,12 +163,14 @@ describe("SiliconPersonCreatePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
 
     await waitFor(() => {
+      // modelProfileId 现在直接通过 createSiliconPerson 入参传给 IPC，不再走"先 create 再 update"的两步链
       expect(mocks.workspace.createSiliconPerson).toHaveBeenCalledWith(
         expect.objectContaining({
           name: "Ada",
           title: "Ada",
           description: "擅长结构化分析，沟通直接，优先给结论。",
           soul: "擅长结构化分析，沟通直接，优先给结论。",
+          modelProfileId: "model-2",
         }),
       );
     });
@@ -178,7 +180,6 @@ describe("SiliconPersonCreatePage", () => {
         "sp-new",
         expect.objectContaining({
           approvalMode: "auto_approve",
-          modelProfileId: "model-2",
           reasoningEffort: "high",
         }),
       );
@@ -201,6 +202,10 @@ describe("SiliconPersonCreatePage", () => {
     });
     fireEvent.change(screen.getByTestId("silicon-person-create-soul"), {
       target: { value: "长于复杂规划，能承担更深层推理任务。" },
+    });
+    // 模型必选：未选时 canCreate=false，提交按钮 disabled
+    fireEvent.change(screen.getByTestId("silicon-person-create-model"), {
+      target: { value: "model-1" },
     });
     fireEvent.click(screen.getByRole("button", { name: "极深" }));
     fireEvent.click(screen.getByRole("button", { name: "创建" }));
