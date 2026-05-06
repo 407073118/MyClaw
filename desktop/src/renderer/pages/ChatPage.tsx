@@ -428,6 +428,21 @@ export default function ChatPage() {
     return models.find((m) => m.id === defaultId) ?? models[0] ?? null;
   }, [(workspace as any).models, (workspace as any).defaultModelProfileId]);
 
+  /** 当前硅基员工是否缺少有效 modelProfileId（空或不在已配置模型列表里）。 */
+  const siliconPersonModelMissing = useMemo(() => {
+    if (!isSiliconPersonView) return false;
+    const sid = (session as { siliconPersonId?: string | null } | null)?.siliconPersonId ?? null;
+    if (!sid) return false;
+    const person = siliconPersons.find((p) => p.id === sid);
+    if (!person) return false;
+    const profileId = person.modelProfileId?.trim();
+    if (!profileId) return true;
+    const models = (workspace as any).models as Array<Record<string, unknown>> | undefined;
+    if (!models || models.length === 0) return true;
+    return !models.find((m) => m.id === profileId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSiliconPersonView, session, siliconPersons, (workspace as any).models]);
+
   activeViewSessionIdRef.current = session?.id ?? null;
   activeViewSiliconPersonIdRef.current = selectedSiliconPerson?.id ?? null;
 
@@ -449,6 +464,17 @@ export default function ChatPage() {
       });
     });
   }, [activeSiliconPersonId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** 切换到硅基员工视图后，effort selector 不再渲染，清掉 runtimeIntent 里残留的 reasoningEffort，
+   * 避免发送时仍把上次的 effort 偷偷带进 wire 请求。 */
+  useEffect(() => {
+    if (!isSiliconPersonView) return;
+    if (!session) return;
+    const intent = session.runtimeIntent as Record<string, unknown> | undefined;
+    if (!intent || intent.reasoningEffort === undefined) return;
+    void updateDisplayedSessionRuntimeIntent({ reasoningEffort: undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSiliconPersonView, session?.id]);
 
   /** 查看硅基员工当前会话时立即消费未读，保持侧边栏和页内状态一致。 */
   useEffect(() => {
@@ -2037,6 +2063,11 @@ export default function ChatPage() {
                 })}
               </div>
             )}
+            {siliconPersonModelMissing && (
+              <div className="composer-warn" data-testid="silicon-person-model-missing-banner">
+                该员工未配置模型
+              </div>
+            )}
             <textarea
               ref={composerRef}
               data-testid="composer-input"
@@ -2056,7 +2087,12 @@ export default function ChatPage() {
                 }
               }}
               className="composer-input"
-              placeholder={isRunBusy ? "正在响应..." : "输入消息 (Enter 发送, Shift+Enter 换行)，或输入 / 获取快捷命令"}
+              disabled={siliconPersonModelMissing}
+              placeholder={
+                siliconPersonModelMissing
+                  ? "该员工未配置模型，请先在员工设置中选择模型"
+                  : (isRunBusy ? "正在响应..." : "输入消息 (Enter 发送, Shift+Enter 换行)，或输入 / 获取快捷命令")
+              }
               rows={1}
               onKeyDown={handleComposerKeyDown}
             />
@@ -2089,7 +2125,7 @@ export default function ChatPage() {
                 <button
                   data-testid="composer-submit"
                   className="submit-btn"
-                  disabled={!composerDraft.trim() || !session}
+                  disabled={!composerDraft.trim() || !session || siliconPersonModelMissing}
                   onClick={() => void submitMessage()}
                   title="发送消息"
                 >
@@ -2309,6 +2345,8 @@ export default function ChatPage() {
         .slash-divider { height: 1px; background: var(--glass-border); margin: 4px 8px; }
         .composer-input { width: 100%; padding: 16px 16px 12px; background: transparent; border: none; color: var(--text-primary); font-size: 14px; line-height: 1.6; resize: none; outline: none; min-height: 60px; font-family: inherit; }
         .composer-input::placeholder { color: var(--text-muted); }
+        .composer-input:disabled { cursor: not-allowed; opacity: 0.6; }
+        .composer-warn { margin: 8px 12px 0; padding: 6px 10px; border-radius: var(--radius-md, 7px); background: rgba(255, 90, 90, 0.08); border: 1px solid rgba(255, 90, 90, 0.24); color: var(--status-red); font-size: 12px; }
         .composer-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 16px 16px; }
         .composer-toolbar-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
         .composer-hints { font-size: 12px; color: var(--text-muted); }
