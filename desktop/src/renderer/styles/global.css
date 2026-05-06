@@ -29,8 +29,8 @@
   --status-red: #ef4444;
   --status-yellow: #f59e0b;
 
-  /* Radii — v2 desktop-native scale (was sm=4 / md=7 / lg=11 / xl=14 in v1).
-     Tighter corners feel more system-like; visible delta on glass-card only. */
+  /* Radii — desktop-native scale. Tighter than typical web defaults.
+     The only visible delta on existing pages is on .glass-card. */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 10px;
@@ -499,16 +499,15 @@ h2.page-title {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
-   Desktop UI v2 — see desktop/docs/ui-style-guide.md
+   Desktop UI utilities — see desktop/docs/ui-style-guide.md
    ════════════════════════════════════════════════════════════════════════
-   Anchored on McpPage's existing dense-list pattern. New pages use these
-   classes; v1 classes above are kept for backwards compat and documented
-   as legacy in the style guide. v2 落地路线：第二阶段（本块）→ MCP 迁
-   出 inline <style> → SkillsPage / SiliconPersonEntryPage 迁移。
+   Anchored on McpPage's dense-list pattern. The classes above (.glass-card,
+   .glass-pill, .btn-premium, .glass-action-btn, .glass-grid--*) are legacy
+   kept for backwards compat; new pages should use the patterns below.
    ──────────────────────────────────────────────────────────────────── */
 
 :root {
-  /* v2 tokens (additive — does not break v1) */
+  /* Additive tokens — leave existing tokens above untouched */
   --bg-surface: rgba(255, 255, 255, 0.02);
   --bg-surface-hover: rgba(255, 255, 255, 0.04);
   --bg-drawer: #161b22;
@@ -840,8 +839,8 @@ a.list-row__title:hover {
   border-color: rgba(255, 255, 255, 0.10);
 }
 
-/* ── v2 Buttons ────────────────────────────────────────────────────────
-   Replaces .btn-premium / .glass-action-btn for new pages. */
+/* ── Buttons ───────────────────────────────────────────────────────────
+   Replace .btn-premium / .glass-action-btn for new pages. */
 
 .btn-primary {
   display: inline-flex;

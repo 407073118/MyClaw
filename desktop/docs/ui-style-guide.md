@@ -2,7 +2,7 @@
 
 > 桌面端原生设计规范。本规范的灵感来自 Linear、Things 3、Reflect、Raycast、Arc、Tower、GitHub Desktop 等专业桌面应用——专注、紧凑、信息密度高、键盘优先。
 >
-> v1（早期）按网页设计范式制定（大圆角卡片、32px 标题、999px 全圆 pill、富留白）。v2（本版，2026-05）以 McpPage 的现行设计为基线，将基线调整为桌面级密集列表，并保留卡片网格作为 **浏览/画廊** 场景的备选。
+> 以 McpPage 的现行设计为基线：**桌面级密集列表是默认形态**，卡片网格仅用于 **浏览 / 画廊** 场景。规范末尾的"旧类 → 新类"表格记录了仍在代码里、需要逐步迁出的早期类。
 
 ---
 
@@ -61,7 +61,7 @@
 | `--radius-xl` | `12px` | 详情卡片、Drawer |
 | `--radius-2xl` | `16px` | 模态、对话框 |
 
-> v1 默认 `--radius-xl: 14px` 在新规范下视为偏软。新代码用 10/12 区间；列表行卡使用 `--radius-lg`。
+> 桌面页面统一在 10-12px 区间，避免 14px+ 的"大泡泡"卡片观感；列表行卡用 `--radius-lg`。
 
 ### 字号 / 字重
 
@@ -77,7 +77,7 @@
 | 辅助说明 | 12px | 400 | `--text-muted` |
 | 等宽（id、path） | 12px | 400 | mono stack |
 
-> v1 的 page-title 32px 属于 **网页级** 大标题，仅保留给营销/外部展示。**桌面页面统一 22-24px**——侧边栏导航已经告诉你"在哪"，无需再用大字宣告。
+> 32px 是网页级大标题，桌面应用不需要——侧边栏导航已经在指示当前位置。**桌面页面统一 22-24px。**
 
 ### 模糊 / 阴影
 
@@ -157,7 +157,7 @@
 
 ## List Row（核心模式）
 
-`.list-row` 是密集列表的默认容器，**取代** v1 中"列表页用 `.glass-card`"的规则。MCP、Skills、硅基员工、Workflows、Tools 等列表页全部用此模式。
+`.list-row` 是密集列表的默认容器。MCP、Skills、硅基员工、Workflows、Tools 等列表页全部用此模式；**列表场景不要用 `.glass-card` + `.glass-grid` 卡片网格。**
 
 ### 容器：`.list-rows`
 
@@ -386,9 +386,9 @@
 - `background: transparent; border: 1px solid var(--glass-border)`
 - `--danger` 变体：边框/文字 `var(--status-red)`
 
-### v1 兼容
+### 旧按钮类
 
-`.btn-premium`、`.glass-action-btn` 仍存在，旧页面无需立刻迁移；**新页面统一用 `.btn-primary` / `.btn-toolbar` / `.icon-btn` / `.btn-ghost`**。
+`.btn-premium`、`.glass-action-btn` 是旧类，仍可运行，旧页面无需立刻迁移；**新页面统一用 `.btn-primary` / `.btn-toolbar` / `.icon-btn` / `.btn-ghost`**。
 
 ---
 
@@ -400,9 +400,9 @@
 2. **详情页面里的功能模块卡** —— 设置分组、表单分区
 3. **Empty state 占位卡** —— 见下文
 
-**参数（v2 调整）：**
-- `border-radius: var(--radius-xl)` (12px) — v1 的 14px 略软，新页面用 12
-- 其他参数（背景、边框、hover lift）保持 v1 不变
+**参数：**
+- `border-radius: var(--radius-xl)` (12px) — 比早期的 14px 更紧凑、系统化
+- 背景 / 边框 / hover lift / inner glow 沿用 `.glass-card` 现有样式
 
 **禁止：** 列表页用 `.glass-card` 网格替代 `.list-row`。
 
@@ -548,7 +548,7 @@
 
 ## 视觉禁区（Don'ts）
 
-强观点列表。出现这些一律视为 v2 不合规：
+强观点列表。出现这些一律视为不合规：
 
 - ❌ **emoji 当图标**（如 🚀、✨、👤）。所有图标用 lucide-react。
 - ❌ **彩虹/渐变背景**。背景一律纯色或半透明 alpha。
@@ -582,11 +582,11 @@
 
 ---
 
-## 迁移指南：v1 → v2
+## 旧类 → 新类（迁移参考）
 
-**v1 的页面无需立即推倒重做。** 触碰到该页面时再迁移。优先级：MCP（已基线）→ Skills → 硅基员工 → Workflows → 其他。
+**旧页面无需立即推倒重做。** 触碰到该页面时再迁移。优先级：MCP（已基线）→ Skills → 硅基员工 → Workflows → 其他。
 
-| v1 类 | v2 替代 | 说明 |
+| 旧类 | 现行替代 | 说明 |
 |---|---|---|
 | `.page-container` | `.page-shell` + `.page-header--sticky` | 新页面优先；旧页保留 |
 | `.glass-grid--sm/md/lg`（列表场景） | `.list-rows` | 强制迁移 |
@@ -631,13 +631,13 @@
 
 ---
 
-## 实施次序（v2 落地路线）
+## 实施次序
 
-新规范要落地到代码：
+落地到代码分四步：
 
-1. **第一阶段（本规范发布时）：** MCP 已是基线（无需改）。新页面按 v2 标准开发。
-2. **第二阶段：** 把 v2 新增的类（`.list-row`、`.list-rows`、`.status-dot`、`.tag`、`.icon-btn`、`.btn-primary`、`.btn-toolbar`、`.btn-ghost`、`.page-shell`、`.page-header--sticky`、`.drawer`、`.empty-state`、`.banner`）沉淀到 `desktop/src/renderer/styles/global.css`，并把 MCP 现有的 inline `<style>` 替换为这些 global 类。
-3. **第三阶段：** 迁移 SkillsPage 与 SiliconPersonEntryPage 到 `.list-row` 模式。
-4. **第四阶段：** 触碰其余列表页（WorkflowsPage、ToolsPage 等）时按需迁移。
+1. **第一步（本规范发布时）：** MCP 已是基线（无需改）。新页面按本规范开发。
+2. **第二步：** 把规范定义的类（`.list-row`、`.list-rows`、`.status-dot`、`.tag`、`.icon-btn`、`.btn-primary`、`.btn-toolbar`、`.btn-ghost`、`.page-shell`、`.page-header--sticky`、`.drawer`、`.empty-state`、`.banner`）沉淀到 `desktop/src/renderer/styles/global.css`，并把 MCP 现有的 inline `<style>` 替换为这些 global 类。
+3. **第三步：** 迁移 SkillsPage 与 SiliconPersonEntryPage 到 `.list-row` 模式。
+4. **第四步：** 触碰其余列表页（WorkflowsPage、ToolsPage 等）时按需迁移。
 
 旧页面"碰到再改"，不强制一次性大重构。
