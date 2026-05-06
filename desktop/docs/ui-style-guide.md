@@ -167,11 +167,10 @@
 </div>
 ```
 
-- `display: grid`
-- `grid-template-columns: repeat(auto-fill, minmax(440px, 1fr))`
-- `gap: 10px`
+- `display: flex; flex-direction: column`
+- `gap: 8px`
 
-> 460px 是 MCP 现行值，440-480px 都可接受；选 440 让 13" MacBook 视口也能容纳两列。
+> **单列布局**：每行占满内容宽度，便于上下扫读 + 键盘 ↑↓ 导航 + trailing 操作槽稳定在右侧（不会因列宽差异而错位）。多列网格仅用于浏览 / 画廊场景，使用 `.glass-grid--sm/md/lg`。
 
 ### 行卡：`.list-row`
 

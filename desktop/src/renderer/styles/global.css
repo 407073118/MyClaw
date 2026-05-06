@@ -612,9 +612,9 @@ h2.page-title {
    Replaces .glass-card + .glass-grid for list-style content. */
 
 .list-rows {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .list-row {
@@ -750,7 +750,7 @@ a.list-row__title:hover {
 }
 
 [data-density="compact"] .list-rows {
-  gap: 6px;
+  gap: 4px;
 }
 
 /* ── Status Dot ───────────────────────────────────────────────────────── */
