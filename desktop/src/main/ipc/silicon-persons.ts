@@ -165,6 +165,16 @@ export function registerSiliconPersonHandlers(ctx: RuntimeContext): void {
       _event,
       input: { name: string; title?: string; description: string; [key: string]: unknown },
     ): Promise<{ siliconPerson: SiliconPerson; items: SiliconPerson[] }> => {
+      // 入口契约：硅基员工必须绑定一个有效的、已配置的模型；
+      // 否则后续 buildSiliconPersonSession / callModel 都会撞到空 baseUrl，被折叠成 "fetch failed"。
+      const rawModelProfileId = (input.modelProfileId as string | undefined)?.trim();
+      if (!rawModelProfileId) {
+        throw new Error("硅基员工创建失败：必须指定有效的模型 (modelProfileId)");
+      }
+      if (!ctx.state.models.find((m) => m.id === rawModelProfileId)) {
+        throw new Error(`硅基员工创建失败：modelProfileId=${rawModelProfileId} 不在已配置模型列表中`);
+      }
+
       const now = new Date().toISOString();
       const siliconPerson: SiliconPerson = {
         id: `sp-${randomUUID()}`,
@@ -183,9 +193,15 @@ export function registerSiliconPersonHandlers(ctx: RuntimeContext): void {
         baseIdentity: (input.baseIdentity as string | undefined)?.trim() || undefined,
         rolePersona: (input.rolePersona as string | undefined)?.trim() || undefined,
         soul: (input.soul as string | undefined)?.trim() || undefined,
-        modelBindingSnapshot: buildModelBindingSnapshot(ctx, input.modelProfileId as string | undefined),
+        modelProfileId: rawModelProfileId,
+        modelBindingSnapshot: buildModelBindingSnapshot(ctx, rawModelProfileId),
         updatedAt: now,
       };
+
+      console.info("[silicon-person:create] modelProfileId 已锁定", {
+        siliconPersonId: siliconPerson.id,
+        modelProfileId: rawModelProfileId,
+      });
 
       // 初始化员工独立工作空间目录（skills/、sessions/、内置技能种子）
       initializeWorkspaceDirectories(ctx.runtime.paths, siliconPerson.id);
@@ -226,6 +242,21 @@ export function registerSiliconPersonHandlers(ctx: RuntimeContext): void {
       }
 
       const current = ctx.state.siliconPersons[index]!;
+
+      // 入口契约：若调用方显式传入 modelProfileId 字段（哪怕传空串），必须落在已配置模型列表里；
+      // 未传则保持原值，避免静默清空。
+      if (Object.prototype.hasOwnProperty.call(input, "modelProfileId")) {
+        const incoming = (input.modelProfileId as string | undefined)?.trim();
+        if (!incoming) {
+          throw new Error("硅基员工更新失败：modelProfileId 不能为空");
+        }
+        if (!ctx.state.models.find((m) => m.id === incoming)) {
+          throw new Error(`硅基员工更新失败：modelProfileId=${incoming} 不在已配置模型列表中`);
+        }
+        // 写回 trim 后的值，避免 spread 时把首尾空白带入磁盘
+        (input as { modelProfileId?: string }).modelProfileId = incoming;
+      }
+
       const siliconPerson: SiliconPerson = {
         ...current,
         ...input,
