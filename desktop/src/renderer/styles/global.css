@@ -29,10 +29,13 @@
   --status-red: #ef4444;
   --status-yellow: #f59e0b;
 
-  --radius-xl: 14px;
-  --radius-lg: 11px;
-  --radius-md: 7px;
+  /* Radii — v2 desktop-native scale (was sm=4 / md=7 / lg=11 / xl=14 in v1).
+     Tighter corners feel more system-like; visible delta on glass-card only. */
   --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
 
   --blur-std: blur(16px);
   --blur-heavy: blur(24px);
@@ -493,4 +496,609 @@ h2.page-title {
   .bootstrap-brand {
     flex-direction: column;
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Desktop UI v2 — see desktop/docs/ui-style-guide.md
+   ════════════════════════════════════════════════════════════════════════
+   Anchored on McpPage's existing dense-list pattern. New pages use these
+   classes; v1 classes above are kept for backwards compat and documented
+   as legacy in the style guide. v2 落地路线：第二阶段（本块）→ MCP 迁
+   出 inline <style> → SkillsPage / SiliconPersonEntryPage 迁移。
+   ──────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* v2 tokens (additive — does not break v1) */
+  --bg-surface: rgba(255, 255, 255, 0.02);
+  --bg-surface-hover: rgba(255, 255, 255, 0.04);
+  --bg-drawer: #161b22;
+  --row-border: rgba(255, 255, 255, 0.06);
+  --row-border-hover: rgba(255, 255, 255, 0.15);
+  --shadow-drawer: -12px 0 32px rgba(0, 0, 0, 0.5);
+  --shadow-modal: 0 20px 40px rgba(0, 0, 0, 0.45);
+}
+
+/* ── Page Shell ─────────────────────────────────────────────────────────
+   Sticky header + scrollable content. Replaces .page-container for new
+   pages; both can coexist. */
+
+.page-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  background: var(--bg-base);
+  position: relative;
+  overflow: hidden;
+}
+
+.page-header--sticky {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 24px;
+  padding: 28px 48px 24px;
+  background: rgba(13, 13, 15, 0.85);
+  backdrop-filter: var(--blur-std);
+  -webkit-backdrop-filter: var(--blur-std);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  z-index: 10;
+}
+
+.page-header__lead {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.page-header__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.page-header__eyebrow span {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.page-header__title {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 6px;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.page-header__subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.page-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.page-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 48px 32px;
+}
+
+@media (max-width: 768px) {
+  .page-header--sticky {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 20px 24px;
+  }
+  .page-content {
+    padding: 20px 24px;
+  }
+}
+
+/* ── List Row (the core dense-list pattern) ────────────────────────────
+   Use this for MCP / Skills / 硅基员工 / Workflows / Tools list pages.
+   Replaces .glass-card + .glass-grid for list-style content. */
+
+.list-rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 10px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  min-height: 64px;
+  background: var(--bg-surface);
+  border: 1px solid var(--row-border);
+  border-radius: var(--radius-lg);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.list-row:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--row-border-hover);
+}
+
+.list-row.is-disabled {
+  opacity: 0.55;
+  filter: grayscale(70%);
+}
+
+.list-row.is-selected {
+  border-color: var(--accent-cyan);
+  background: rgba(16, 163, 127, 0.06);
+}
+
+.list-row__lead {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+}
+
+.list-row--with-avatar > .list-row__lead {
+  width: 36px;
+}
+
+.list-row__avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.list-row__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.list-row__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.list-row__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+a.list-row__title:hover {
+  color: var(--text-primary);
+}
+
+.list-row__meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.list-row__meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.list-row__meta--mono {
+  font-family: "Cascadia Code", "Fira Code", ui-monospace, "SFMono-Regular", monospace;
+}
+
+.list-row__meta-sep {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.10);
+  flex-shrink: 0;
+}
+
+.list-row__description {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.list-row__trailing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Density variants */
+[data-density="compact"] .list-row {
+  min-height: 48px;
+  padding: 10px 16px;
+}
+
+[data-density="compact"] .list-rows {
+  gap: 6px;
+}
+
+/* ── Status Dot ───────────────────────────────────────────────────────── */
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.status-dot--green {
+  background: var(--status-green);
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+}
+
+.status-dot--red {
+  background: var(--status-red);
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+}
+
+.status-dot--yellow {
+  background: var(--status-yellow);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+}
+
+.status-dot--accent {
+  background: var(--accent-cyan);
+  box-shadow: 0 0 8px rgba(16, 163, 127, 0.5);
+  animation: status-dot-pulse 1.5s ease-in-out infinite;
+}
+
+.status-dot--muted {
+  background: rgba(255, 255, 255, 0.20);
+}
+
+@keyframes status-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Tag (rectangular state/type label, replaces .glass-pill in lists) ─ */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.tag--accent {
+  color: var(--accent-cyan);
+  background: rgba(16, 163, 127, 0.12);
+  border-color: rgba(16, 163, 127, 0.20);
+}
+
+.tag--green {
+  color: var(--status-green);
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.20);
+}
+
+.tag--yellow {
+  color: var(--status-yellow);
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.20);
+}
+
+.tag--red {
+  color: var(--status-red);
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.20);
+}
+
+.tag--muted {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.10);
+}
+
+/* ── v2 Buttons ────────────────────────────────────────────────────────
+   Replaces .btn-premium / .glass-action-btn for new pages. */
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--accent-cyan);
+  border: 1px solid var(--accent-cyan);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+  text-decoration: none;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: rgba(16, 163, 127, 0.08);
+  box-shadow: 0 0 8px rgba(16, 163, 127, 0.15);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-toolbar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-primary);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-decoration: none;
+}
+
+.btn-toolbar:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.10);
+}
+
+.btn-toolbar:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  text-decoration: none;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: var(--glass-border-hover);
+  color: var(--text-primary);
+}
+
+.btn-ghost--danger {
+  color: var(--status-red);
+  border-color: rgba(239, 68, 68, 0.30);
+}
+
+.btn-ghost--danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.50);
+  color: var(--status-red);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: -2px;
+}
+
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Drawer (right slide-out) ──────────────────────────────────────────
+   Canonical detail surface for new pages. Use over center modal. */
+
+.drawer-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+  animation: drawer-fade-in 0.2s ease;
+}
+
+.drawer {
+  width: 440px;
+  max-width: 100vw;
+  background: var(--bg-drawer);
+  border-left: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: var(--shadow-drawer);
+  display: flex;
+  flex-direction: column;
+  animation: drawer-slide-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.drawer__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.drawer__header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.drawer__content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.drawer__footer {
+  padding: 16px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.20);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+@keyframes drawer-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes drawer-slide-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+/* ── Empty State ───────────────────────────────────────────────────── */
+
+.empty-state {
+  padding: 64px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.10);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.01);
+}
+
+.empty-state--minimal {
+  padding: 32px 16px;
+  border: none;
+  background: transparent;
+}
+
+.empty-state__icon {
+  color: rgba(255, 255, 255, 0.20);
+  margin-bottom: 4px;
+}
+
+.empty-state__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.empty-state__body {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  max-width: 360px;
+}
+
+/* ── Banner (inline status notice) ────────────────────────────────── */
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.banner svg {
+  flex-shrink: 0;
+}
+
+.banner--error {
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.20);
+  color: var(--status-red);
+}
+
+.banner--warning {
+  background: rgba(245, 158, 11, 0.10);
+  border: 1px solid rgba(245, 158, 11, 0.20);
+  color: var(--status-yellow);
+}
+
+.banner--info {
+  background: rgba(16, 163, 127, 0.08);
+  border: 1px solid rgba(16, 163, 127, 0.20);
+  color: var(--accent-cyan);
 }
