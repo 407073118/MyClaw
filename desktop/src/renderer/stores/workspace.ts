@@ -1735,7 +1735,40 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       } else {
         sessions.unshift(updatedSession);
       }
-      return { sessions };
+
+      // 同步 patch 对应硅基员工的 session summary：仅推导 needsApproval
+      // （chatRunState.phase === "approval" 即 pending approval），
+      // unreadCount/hasUnread/status 等字段由 loadSiliconPersonById 兜底刷新。
+      const siliconPersonId = updatedSession.siliconPersonId;
+      if (!siliconPersonId) {
+        return { sessions };
+      }
+      const personIndex = s.siliconPersons.findIndex((p) => p.id === siliconPersonId);
+      if (personIndex < 0) {
+        return { sessions };
+      }
+      const person = s.siliconPersons[personIndex]!;
+      const summaryIndex = person.sessions.findIndex((it) => it.id === updatedSession.id);
+      if (summaryIndex < 0) {
+        return { sessions };
+      }
+
+      const phase = updatedSession.chatRunState?.phase;
+      const nextNeedsApproval = phase === "approval";
+      const prevSummary = person.sessions[summaryIndex]!;
+      if (prevSummary.needsApproval === nextNeedsApproval) {
+        return { sessions };
+      }
+      const nextSummaries = person.sessions.map((item, i) =>
+        i === summaryIndex ? { ...item, needsApproval: nextNeedsApproval } : item,
+      );
+      const nextPerson = {
+        ...person,
+        sessions: nextSummaries,
+        needsApproval: nextSummaries.some((it) => it.needsApproval),
+      };
+      const siliconPersons = s.siliconPersons.map((p, i) => (i === personIndex ? nextPerson : p));
+      return { sessions, siliconPersons };
     });
   },
 
