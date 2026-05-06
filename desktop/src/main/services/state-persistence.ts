@@ -262,6 +262,42 @@ export async function loadPersistedState(paths: MyClawPaths): Promise<PersistedS
     // 不可读时从空数据启动
   }
 
+  // ---- silicon persons modelProfileId 回填 -----------------------------
+  // 历史数据（创建时 create handler 还没强制写 modelProfileId）的 person.json
+  // 可能 modelProfileId 缺失/为空，但 modelBindingSnapshot 里有有效 id。
+  // 启动期一次性补齐，避免后续 buildSiliconPersonSession 抛错或走默认模型。
+  {
+    const backfilled: string[] = [];
+    for (const person of siliconPersons) {
+      const own = (person.modelProfileId ?? "").trim();
+      if (own) continue;
+      const snapshotId = person.modelBindingSnapshot?.modelProfileId;
+      if (!snapshotId) continue;
+      if (!models.find((m) => m.id === snapshotId)) continue;
+      person.modelProfileId = snapshotId;
+      backfilled.push(person.id);
+    }
+    if (backfilled.length > 0) {
+      console.info("[state-persistence:backfill] 已为历史硅基员工补齐 modelProfileId", {
+        count: backfilled.length,
+        ids: backfilled,
+      });
+      // 顺序写盘，避免并发写同一目录的 .tmp 文件
+      for (const id of backfilled) {
+        const target = siliconPersons.find((p) => p.id === id);
+        if (!target) continue;
+        try {
+          await saveSiliconPerson(paths, target);
+        } catch (err) {
+          console.warn("[state-persistence:backfill] 回填写盘失败（内存仍已修正）", {
+            siliconPersonId: id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+  }
+
   // ---- sessions (SQLite) ------------------------------------------------
   // 关闭此前可能由上一次 loadPersistedState 打开的连接
   if (_sessionDb) {
