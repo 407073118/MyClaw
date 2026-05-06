@@ -2247,10 +2247,10 @@ export default function ChatPage() {
         .message-row { display: flex; align-items: flex-start; gap: 16px; width: 100%; }
         .message-avatar { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; background: var(--bg-card); border: 1px solid var(--glass-border); color: var(--text-primary); }
         .role-assistant .message-avatar { background: var(--glass-reflection); border-color: var(--glass-border); color: var(--accent-cyan); }
-        .role-user { flex-direction: row; }
-        .role-user .message-body { align-items: flex-start; }
-        .role-user .message-header { margin-right: 0; }
-        .role-user .message-content { background: transparent; padding: 0; border: none; max-width: 100%; }
+        .role-user { flex-direction: row-reverse; }
+        .role-user .message-body { align-items: flex-end; max-width: 72%; }
+        .role-user .message-header { justify-content: flex-end; margin-right: 0; }
+        .role-user .message-content { background: var(--accent-soft, rgba(64, 180, 220, 0.08)); padding: 10px 14px; border-radius: var(--radius-xl); border: 1px solid var(--glass-border); }
         .role-user .message-avatar { background: transparent; border-color: var(--glass-border); color: var(--text-primary); }
         .pending-avatar { animation: pulse 2s cubic-bezier(0.4,0,0.6,1) infinite; }
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
