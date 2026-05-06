@@ -4,6 +4,9 @@ import type { McpServer, McpServerConfig } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
 import type { DiscoveredMcpServer } from "../services/mcp-server-manager";
+import { createLogger } from "../services/logger";
+
+const log = createLogger("desktop-mcp");
 
 type CreateMcpServerInput = McpServerConfig;
 type UpdateMcpServerInput = Partial<Omit<McpServerConfig, "id">>;
@@ -74,7 +77,10 @@ export function registerMcpHandlers(ctx: RuntimeContext): void {
 
   // 从外部工具配置中发现 MCP 服务。
   ipcMain.handle("mcp:discover-external", async (): Promise<DiscoveredMcpServer[]> => {
-    if (!ctx.services.mcpManager) return [];
+    if (!ctx.services.mcpManager) {
+      log.warn("[mcp:discover-external] mcpManager 未初始化，返回空发现列表");
+      return [];
+    }
     return ctx.services.mcpManager.discoverExternalServers();
   });
 
@@ -82,7 +88,10 @@ export function registerMcpHandlers(ctx: RuntimeContext): void {
   ipcMain.handle(
     "mcp:import-servers",
     async (_event, servers: DiscoveredMcpServer[]): Promise<McpServer[]> => {
-      if (!ctx.services.mcpManager) return [];
+      if (!ctx.services.mcpManager) {
+        log.warn("[mcp:import-servers] mcpManager 未初始化，跳过导入", { requested: servers.length });
+        return [];
+      }
       return ctx.services.mcpManager.importServers(servers);
     },
   );
