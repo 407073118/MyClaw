@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
-last_updated: "2026-05-06T03:17:22.990Z"
+last_updated: "2026-05-06T03:47:35.118Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 8
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-06 - Completed quick task 260506-foh: 挂载 HubModule 到 cloud-api app.module.ts，并补全 hub item icon 端点，修复 cloud-web /hub 页面与 skills 详情下载链路
+Last activity: 2026-05-06 - Completed quick task 260506-gdn: 收敛 desktop main 进程里的 .catch(() => {}) 错误吞噬
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -116,6 +116,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260506-foh | 挂载 HubModule 到 cloud-api app.module.ts，并补全 hub item icon 端点，修复 cloud-web /hub 页面与 skills 详情下载链路 | 2026-05-06 | dac598c | [260506-foh-hubmodule-cloud-api-app-module-ts-hub-it](./quick/260506-foh-hubmodule-cloud-api-app-module-ts-hub-it/) |
+| 260506-gdn | 收敛 desktop main 进程里的 .catch(() => {}) 错误吞噬，改为 logger.warn，保留容错不抛出但失败不再静默 | 2026-05-06 | a9e4cd6 | [260506-gdn-desktop-main-catch-logger-warn](./quick/260506-gdn-desktop-main-catch-logger-warn/) |
 
 ## Session Continuity
 
