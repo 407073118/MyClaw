@@ -42,30 +42,44 @@ function SiliconRailAvatar({
   const statusColor = STATUS_COLOR[person.status] ?? "var(--text-muted)";
   const statusLabel = STATUS_LABEL[person.status] ?? person.status;
 
+  // 单点视觉提示优先级：needsApproval > done + hasUnread > running > 静态。
+  let attentionVariant: "yellow" | "green" | null = null;
+  if (person.needsApproval) {
+    attentionVariant = "yellow";
+  } else if (person.status === "done" && person.hasUnread) {
+    attentionVariant = "green";
+  }
+
+  const dotClassName = [
+    "status-dot",
+    person.status === "running" && !attentionVariant ? "is-running" : null,
+    attentionVariant ? `status-dot--attention status-dot--attention-${attentionVariant}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  let titleText = `${person.name} — ${statusLabel}`;
+  if (person.needsApproval) {
+    titleText = `${person.name} — 待审批`;
+  } else if (person.status === "done" && person.hasUnread) {
+    titleText = `${person.name} — 已完成，待查看（${person.unreadCount} 条更新）`;
+  }
+
   return (
     <button
       data-testid={`silicon-rail-avatar-${person.id}`}
       className="silicon-rail-avatar"
       onClick={onClick}
-      title={`${person.name} — ${statusLabel}`}
+      title={titleText}
       type="button"
     >
       <div className="avatar-circle">
         <span className="avatar-initial">{initial}</span>
         <span
-          className={`status-dot${person.status === "running" ? " is-running" : ""}`}
+          className={dotClassName}
           style={{ background: statusColor }}
         />
       </div>
-
-      {person.needsApproval && (
-        <span className="rail-badge approval-badge" title="待审批">!</span>
-      )}
-      {person.hasUnread && !person.needsApproval && (
-        <span className="rail-badge unread-badge" title={`${person.unreadCount} 条未读`}>
-          {person.unreadCount > 9 ? "9+" : person.unreadCount}
-        </span>
-      )}
     </button>
   );
 }
@@ -192,29 +206,32 @@ export default function SiliconRail() {
           50% { opacity: 0.4; }
         }
 
-        .rail-badge {
-          position: absolute;
-          top: -4px;
-          right: -4px;
-          min-width: 16px;
-          height: 16px;
-          border-radius: 999px;
-          font-size: 10px;
-          font-weight: 700;
-          line-height: 16px;
-          text-align: center;
-          padding: 0 4px;
-          color: #fff;
-          pointer-events: none;
+        .status-dot--attention {
+          animation: silicon-rail-attention 1.4s ease-out infinite;
+          transform-origin: center;
         }
 
-        .approval-badge {
-          background: var(--status-yellow);
-          color: #000;
+        .status-dot--attention-yellow {
+          --rail-attention-color: var(--status-yellow);
         }
 
-        .unread-badge {
-          background: var(--accent-cyan);
+        .status-dot--attention-green {
+          --rail-attention-color: var(--status-green);
+        }
+
+        @keyframes silicon-rail-attention {
+          0% {
+            transform: scale(1);
+            box-shadow: 0 0 0 0 color-mix(in srgb, var(--rail-attention-color, var(--status-yellow)) 60%, transparent);
+          }
+          70% {
+            transform: scale(1.08);
+            box-shadow: 0 0 0 6px color-mix(in srgb, var(--rail-attention-color, var(--status-yellow)) 0%, transparent);
+          }
+          100% {
+            transform: scale(1);
+            box-shadow: 0 0 0 0 color-mix(in srgb, var(--rail-attention-color, var(--status-yellow)) 0%, transparent);
+          }
         }
       `}</style>
     </aside>
