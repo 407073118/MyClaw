@@ -59,7 +59,7 @@ export default function SiliconPersonCreatePage() {
     [activeModelProfile],
   );
 
-  const canCreate = Boolean(name.trim() && soul.trim());
+  const canCreate = Boolean(name.trim() && soul.trim() && selectedModelId);
 
   useEffect(() => {
     if (personList.length === 0) {
@@ -81,11 +81,15 @@ export default function SiliconPersonCreatePage() {
     setReasoningEffort(source.reasoningEffort ?? "medium");
   }
 
-  /** 提交创建请求，并在创建后补写模型、审批与推理配置。 */
+  /** 提交创建请求，并在创建后补写审批与推理配置（模型在 create 阶段直接写入）。 */
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim() || !soul.trim()) {
       setCreateError("名称和身份与人格不能为空。");
+      return;
+    }
+    if (!selectedModelId) {
+      setCreateError("请选择硅基员工使用的模型，再继续创建。");
       return;
     }
 
@@ -100,21 +104,20 @@ export default function SiliconPersonCreatePage() {
         title: trimmedName,
         description: deriveDescriptionFromSoul(trimmedSoul, trimmedName),
         soul: trimmedSoul,
+        modelProfileId: selectedModelId,
       });
 
-      // 创建接口当前只负责基础资料，扩展策略字段在创建后补写。
+      // 创建接口当前只负责基础资料 + 模型，其余扩展策略字段在创建后补写。
       if (
         created?.id &&
         (
           approvalMode !== "inherit" ||
-          Boolean(selectedModelId) ||
           reasoningEnabled !== true ||
           reasoningEffort !== "medium"
         )
       ) {
         await workspace.updateSiliconPerson(created.id, {
           approvalMode,
-          modelProfileId: selectedModelId || undefined,
           reasoningEnabled,
           reasoningEffort,
         });
@@ -249,6 +252,12 @@ export default function SiliconPersonCreatePage() {
                   </span>
                 ))}
               </div>
+            )}
+
+            {!selectedModelId && (
+              <span className="spc-field-hint spc-field-hint--required" data-testid="silicon-person-create-model-required">
+                请选择模型
+              </span>
             )}
 
             <label className="spc-field spc-field--compact">
@@ -472,6 +481,12 @@ export default function SiliconPersonCreatePage() {
           margin: 0;
           color: var(--status-red);
           font-size: 13px;
+        }
+
+        .spc-field-hint--required {
+          color: var(--status-red);
+          font-size: 12px;
+          margin-top: 2px;
         }
 
         @media (max-width: 760px) {
