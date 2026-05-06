@@ -9,7 +9,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 
 const STATUS_COLOR: Record<SiliconPersonStatus, string> = {
   idle: "var(--text-muted)",
-  running: "var(--accent-cyan)",
+  running: "var(--status-yellow)",
   needs_approval: "var(--status-yellow)",
   done: "var(--status-green)",
   error: "var(--status-red)",
@@ -42,13 +42,20 @@ function SiliconRailAvatar({
   const statusColor = STATUS_COLOR[person.status] ?? "var(--text-muted)";
   const statusLabel = STATUS_LABEL[person.status] ?? person.status;
 
-  // 单点视觉提示优先级：needsApproval > hasUnread > running > 静态。
-  // 注意：硅基员工 @ 投递后的 done 不一定是终态，只要 hasUnread 就拉响注意。
+  // 视觉优先级：needsApproval > running > hasUnread > 静态。
+  // - needsApproval：黄环脉冲 + 角点（需要用户介入）
+  // - running：黄环脉冲，无角点（正在工作，不要求介入）
+  // - hasUnread：绿环脉冲 + 角点（已完成或等待查看）
   let attentionVariant: "yellow" | "green" | null = null;
+  let showCornerDot = false;
   if (person.needsApproval) {
+    attentionVariant = "yellow";
+    showCornerDot = true;
+  } else if (person.status === "running") {
     attentionVariant = "yellow";
   } else if (person.hasUnread) {
     attentionVariant = "green";
+    showCornerDot = true;
   }
 
   const buttonClassName = [
@@ -58,16 +65,11 @@ function SiliconRailAvatar({
     .filter(Boolean)
     .join(" ");
 
-  const dotClassName = [
-    "status-dot",
-    person.status === "running" && !attentionVariant ? "is-running" : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
-
   let titleText = `${person.name} — ${statusLabel}`;
   if (person.needsApproval) {
     titleText = `${person.name} — 待审批`;
+  } else if (person.status === "running") {
+    titleText = `${person.name} — 执行中`;
   } else if (person.hasUnread) {
     titleText = `${person.name} — 有新消息（${person.unreadCount} 条）`;
   }
@@ -80,11 +82,11 @@ function SiliconRailAvatar({
       title={titleText}
       type="button"
     >
-      {attentionVariant && <span className="attention-dot" aria-hidden="true" />}
+      {showCornerDot && <span className="attention-dot" aria-hidden="true" />}
       <div className="avatar-circle">
         <span className="avatar-initial">{initial}</span>
         <span
-          className={dotClassName}
+          className="status-dot"
           style={{ background: statusColor }}
         />
       </div>
@@ -249,14 +251,6 @@ export default function SiliconRail() {
           transition: background 0.2s ease;
         }
 
-        .status-dot.is-running {
-          animation: silicon-rail-pulse 1.5s ease-in-out infinite;
-        }
-
-        @keyframes silicon-rail-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
-        }
       `}</style>
     </aside>
   );
