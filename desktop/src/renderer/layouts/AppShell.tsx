@@ -71,15 +71,6 @@ const IconWorkflows = () => (
   </svg>
 );
 
-const IconPublish = () => (
-  <svg viewBox="0 0 24 24" width="20" height="20">
-    <path
-      fill="currentColor"
-      d="M5 20h14v-2H5zm7-18l-5.5 5.5 1.41 1.41L11 5.83V16h2V5.83l3.09 3.08 1.41-1.41z"
-    />
-  </svg>
-);
-
 const IconMeetings = () => (
   <svg viewBox="0 0 24 24" width="20" height="20">
     <path
@@ -155,7 +146,6 @@ const navItems: NavItem[] = [
   { to: "/meetings", label: "会议录音", icon: IconMeetings, testId: "nav-meetings" },
   { to: "/time", label: "时间规划", icon: IconTime, testId: "nav-time" },
   { to: "/files", label: "Files", icon: IconFiles, testId: "nav-files" },
-  // { to: "/publish-drafts", label: "Publish", icon: IconPublish, testId: "nav-publish-drafts" },
 ];
 
 // ---------------------------------------------------------------------------
