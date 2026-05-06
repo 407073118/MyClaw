@@ -1,210 +1,643 @@
 # Desktop UI Style Guide
 
-> 渐进式设计规范文档。新页面和组件必须使用全局 CSS 类，不得重新发明按钮、卡片、徽章等基础组件。
+> 桌面端原生设计规范。本规范的灵感来自 Linear、Things 3、Reflect、Raycast、Arc、Tower、GitHub Desktop 等专业桌面应用——专注、紧凑、信息密度高、键盘优先。
+>
+> v1（早期）按网页设计范式制定（大圆角卡片、32px 标题、999px 全圆 pill、富留白）。v2（本版，2026-05）以 McpPage 的现行设计为基线，将基线调整为桌面级密集列表，并保留卡片网格作为 **浏览/画廊** 场景的备选。
 
-## Design Tokens (`global.css :root`)
+---
+
+## 设计哲学
+
+桌面专业应用 ≠ 移动端缩放版的网页。它服务于**重复使用同一应用、追求效率、专注当前任务**的用户。
+
+**五条原则：**
+
+1. **信息密度优先。** 1440×900 视口里，列表页默认应能展示 ≥ 8 个可操作条目，无需滚动。卡片网格是浏览场景的特例，不是默认。
+2. **状态点 > 状态徽章。** 8px 圆点 + glow 比 999px pill 在密集列表里识别更快、视觉更安静。
+3. **悬停揭示。** 行级二级操作（refresh、toggle、删除）默认低对比，hover 才显形——避免视觉噪声，保证主信息阅读不被打扰。
+4. **键盘优先。** 每个页面都应可键盘完成主流程：Esc 关弹层、Enter 提交主操作、↑↓ 浏览、⌘K 命令面板（规划中）。
+5. **不堆装饰。** 不用 emoji 当图标、不用渐变背景、不要圆角到 14px+ 的"大泡泡"卡（除模态外）、不要弹簧动画、不要 transform: scale 1.05+。
+
+**参考应用（看到争议时回到这些）：**
+- **Linear** — issue 列表的状态图标 + 密集行 + 命令面板
+- **Things 3** — todo 列表的字体层级、留白节奏
+- **Reflect** — note 列表的微妙分隔线
+- **Raycast** — 通用 list pattern：leading icon → name → accessory → trailing
+- **Tower** — git client 的 sidebar 列表 + 行内状态
+- **Arc** — sidebar tab 的 favicon + 微 hover
+
+---
+
+## Design Tokens
+
+### 颜色（`global.css :root`）
 
 | Token | Value | Usage |
 |---|---|---|
 | `--bg-base` | `#0c0c0c` | 页面背景 |
 | `--bg-sidebar` | `#121212` | 侧边栏背景 |
-| `--bg-card` | `rgba(22, 22, 26, 0.72)` | 卡片背景 |
-| `--glass-border` | `rgba(255, 255, 255, 0.09)` | 默认边框 |
-| `--glass-border-hover` | `rgba(255, 255, 255, 0.18)` | Hover 边框 |
+| `--bg-surface` | `rgba(255, 255, 255, 0.02)` | **行卡 / 列表项默认背景** |
+| `--bg-surface-hover` | `rgba(255, 255, 255, 0.04)` | 行卡 hover 背景 |
+| `--bg-card` | `rgba(22, 22, 26, 0.72)` | 卡片背景（详情/浏览场景） |
+| `--bg-drawer` | `#161b22` | 抽屉、模态实体背景 |
+| `--glass-border` | `rgba(255, 255, 255, 0.06)` | **行卡默认边框** |
+| `--glass-border-hover` | `rgba(255, 255, 255, 0.15)` | hover 边框 |
+| `--glass-border-strong` | `rgba(255, 255, 255, 0.18)` | 焦点 / 选中边框 |
 | `--accent-cyan` | `#10a37f` | 主强调色 |
 | `--text-primary` | `#ededed` | 主文本 |
 | `--text-secondary` | `#a3a3a3` | 次级文本 |
-| `--text-muted` | `#737373` | 辅助文本 |
-| `--status-green` | `#22c55e` | 成功/已完成 |
-| `--status-red` | `#ef4444` | 错误/危险 |
-| `--status-yellow` | `#f59e0b` | 警告/待审批 |
-| `--radius-xl` | `14px` | 卡片圆角 |
-| `--radius-lg` | `11px` | 大元素圆角 |
-| `--radius-md` | `7px` | 按钮/输入框圆角 |
-| `--radius-sm` | `4px` | 小元素圆角 |
-| `--blur-std` | `blur(16px)` | 标准毛玻璃模糊 |
-| `--shadow-card` | multi-layer | 卡片阴影 |
+| `--text-muted` | `#737373` | 辅助文本 / meta |
+| `--status-green` | `#22c55e` | 成功 / 已完成 / 已启用 |
+| `--status-red` | `#ef4444` | 错误 / 异常 |
+| `--status-yellow` | `#f59e0b` | 警告 / 待审批 |
 
-## Page Layout
+### 圆角
 
-所有页面必须使用全局 `.page-container` 布局：
+| Token | Value | Usage |
+|---|---|---|
+| `--radius-sm` | `4px` | **Tag、chip、小图标按钮**、表单 chip |
+| `--radius-md` | `6px` | **按钮、输入框**、行卡内子元素 |
+| `--radius-lg` | `10px` | **`.list-row` 行卡**、面板、empty-state |
+| `--radius-xl` | `12px` | 详情卡片、Drawer |
+| `--radius-2xl` | `16px` | 模态、对话框 |
 
-```tsx
-<main className="page-container" style={{ height: "100%", overflowY: "auto" }}>
-  <header className="page-header">
-    <div className="header-text">
-      <span className="eyebrow">SECTION NAME</span>
-      <h2 className="page-title">页面标题</h2>
-      <p className="page-subtitle">页面描述文本。</p>
-    </div>
-    <div className="header-actions">
-      <button className="btn-premium accent">操作按钮</button>
-    </div>
-  </header>
-  {/* 页面内容 */}
-</main>
-```
+> v1 默认 `--radius-xl: 14px` 在新规范下视为偏软。新代码用 10/12 区间；列表行卡使用 `--radius-lg`。
 
-**关键参数：**
-- 容器：`padding: 40px 48px`, `max-width: 1400px`, `gap: 32px`
-- 标题：`font-size: 32px`, `font-weight: 700`, `letter-spacing: -0.03em`
-- Eyebrow：`font-size: 11px`, `font-weight: 700`, `letter-spacing: 0.1em`, `text-transform: uppercase`, `color: var(--accent-cyan)`
-- 副标题：`font-size: 15px`, `color: var(--text-secondary)`
-
-**禁止：** 自定义 `sp-page-container`、`ws` 等替代布局类。
-
-## Buttons
-
-### `.btn-premium` — 页面级操作按钮
-
-用于页面头部的主操作（新建、导入等）。
-
-```tsx
-<button className="btn-premium">默认按钮</button>
-<button className="btn-premium accent">强调按钮</button>
-```
-
-**参数：**
-- 背景：transparent（描边风格，非实心填充）
-- 边框：`1px solid var(--text-primary)`（默认）或 `var(--accent-cyan)`（accent 变体）
-- 圆角：`var(--radius-md)` (7px)
-- 字号：`14px`, `font-weight: 600`
-- Padding：`10px 24px`
-- Hover：`translateY(-1px)` + `box-shadow`
-
-**禁止：** 使用实心 `background: var(--accent-cyan)` 的自定义主按钮。全项目按钮风格统一为描边。
-
-### `.glass-action-btn` — 卡片/表单操作按钮
-
-用于卡片 footer、列表行操作、返回按钮等小操作。
-
-```tsx
-<button className="glass-action-btn">默认操作</button>
-<button className="glass-action-btn glass-action-btn--primary">主操作</button>
-<button className="glass-action-btn glass-action-btn--danger">危险操作</button>
-```
-
-**参数：**
-- 高度：`30px`
-- 圆角：`var(--radius-md)` (7px)
-- 字号：`12px`, `font-weight: 500`
-- 背景：transparent
-- 边框：`1px solid var(--glass-border)`
-- Hover：`rgba(255,255,255,0.06)` 背景 + border 变亮
-- `--primary` 变体：cyan 边框/文字
-- `--danger` 变体：red 边框/文字
-
-## Cards
-
-### `.glass-card` — 标准卡片
-
-所有列表页卡片必须使用 `.glass-card`，不要自定义 `mcp-card`、`skill-card`、`sp-card`、`ws-card` 等替代类。
-
-```tsx
-{/* 标准列表卡片结构 */}
-<div className="glass-card glass-card--accent">
-  <div className="glass-card__header">
-    <h3>标题</h3>
-    <span className="glass-pill glass-pill--green">已启用</span>
-  </div>
-  <div className="glass-card__body">
-    <p>描述文本...</p>
-  </div>
-  <div className="glass-card__footer">
-    <button className="glass-action-btn">操作</button>
-    <button className="glass-action-btn glass-action-btn--primary" style={{ marginLeft: "auto" }}>
-      主操作
-    </button>
-  </div>
-</div>
-```
-
-**列表页卡片一致性规则：**
-- MCP、Skills、硅基员工等列表页的卡片必须使用相同的 `.glass-card` 容器
-- 卡片内部分区使用 `__header`、`__body`、`__footer` 三段结构
-- 状态标签统一使用 `.glass-pill` 而非自定义 badge 类
-- Footer 操作按钮统一使用 `.glass-action-btn`
-- 网格统一使用 `.glass-grid--sm` (280px) 或 `.glass-grid--md` (320px)
-
-**变体：**
-- `.glass-card--accent` — hover 时 cyan 边框 + glow
-- `.glass-card--flat` — 无 hover lift（用于容器卡片）
-
-**参数：**
-- 背景：`var(--bg-card)` + `backdrop-filter: var(--blur-std)`
-- 边框：`1px solid var(--glass-border)`
-- 圆角：`var(--radius-xl)` (14px)
-- 阴影：`var(--shadow-card), var(--glass-inner-glow)`
-- Hover：border 变亮, shadow 加深, `translateY(-2px)`
-- `::before` 伪元素：gradient reflection overlay
-
-**禁止：** 卡片使用 `border-radius: 10px` 或 `18px` 等非标准圆角值。
-
-## Grid
-
-```tsx
-<div className="glass-grid glass-grid--sm">  {/* 280px min */}
-<div className="glass-grid glass-grid--md">  {/* 320px min */}
-<div className="glass-grid glass-grid--lg">  {/* 400px min */}
-```
-
-**禁止：** 自定义 `sp-card-grid`、`ws-wf-grid` 等替代网格。
-
-## Status Pills / Badges
-
-### `.glass-pill` — 状态徽章
-
-```tsx
-<span className="glass-pill glass-pill--green">已完成</span>
-<span className="glass-pill glass-pill--yellow">待审批</span>
-<span className="glass-pill glass-pill--red">异常</span>
-<span className="glass-pill glass-pill--accent">运行中</span>
-<span className="glass-pill glass-pill--muted">空闲</span>
-```
-
-**参数：**
-- 圆角：`999px`（全圆）
-- 字号：`11px`, `font-weight: 600`
-- Padding：`3px 10px`
-- 边框：`1px solid` + 对应状态色半透明
-
-**禁止：** 使用 `border-radius: 4px` 的矩形 pill。全项目 pill 统一为全圆。
-
-## Form Controls
-
-输入框、下拉框、文本域：
-
-- 边框：`1px solid var(--glass-border)`
-- 圆角：`var(--radius-md)` (7px)
-- 背景：`var(--bg-base)`
-- Focus：`border-color: var(--accent-cyan)` + `box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14)`
-
-## Typography 速查
+### 字号 / 字重
 
 | 场景 | 字号 | 字重 | 颜色 |
 |---|---|---|---|
-| 页面标题 | 32px | 700 | `--text-primary` |
-| 卡片标题 | 15px | 700 | `--text-primary` |
-| 正文 | 13-14px | 400-500 | `--text-primary` |
-| 标签/字段名 | 13px | 500-600 | `--text-secondary` |
-| Eyebrow | 11px | 700 | `--accent-cyan` |
-| 代码/等宽 | 12px | — | mono stack |
-| Pill 文字 | 11px | 600 | 对应状态色 |
+| 页面标题（`.page-header__title`） | **22-24px** | 600-700 | `--text-primary` |
+| 副标题 | 13-14px | 400 | `--text-secondary` |
+| Eyebrow（小标） | 11px | 700 | `--text-muted` |
+| 列表行主文字（`.list-row__title`） | 14-15px | 600 | `--text-primary` |
+| 列表行 meta | 12px | 400 | `--text-muted` |
+| Tag 文字 | 10-11px | 600 | 状态色 |
+| 正文段落 | 13-14px | 400 | `--text-primary` |
+| 辅助说明 | 12px | 400 | `--text-muted` |
+| 等宽（id、path） | 12px | 400 | mono stack |
 
-## Transitions
+> v1 的 page-title 32px 属于 **网页级** 大标题，仅保留给营销/外部展示。**桌面页面统一 22-24px**——侧边栏导航已经告诉你"在哪"，无需再用大字宣告。
 
-- 卡片/大元素：`0.25s ease` 或 `0.3s cubic-bezier(0.4, 0, 0.2, 1)`
-- 按钮/小元素：`0.2s ease`
-- Hover lift：卡片 `translateY(-2px)`，按钮 `translateY(-1px)`
+### 模糊 / 阴影
 
-## Checklist：新页面自查
+| Token | Value | Usage |
+|---|---|---|
+| `--blur-std` | `blur(16px)` | sticky header、drawer overlay |
+| `--shadow-card` | `0 4px 16px rgba(0, 0, 0, 0.24)` | 卡片阴影（轻） |
+| `--shadow-drawer` | `-12px 0 32px rgba(0, 0, 0, 0.5)` | 右滑抽屉 |
+| `--shadow-modal` | `0 20px 40px rgba(0, 0, 0, 0.45)` | 居中模态 |
 
-- [ ] 使用 `.page-container` + `.page-header` 布局
-- [ ] 头部操作按钮使用 `.btn-premium` 或 `.btn-premium.accent`
-- [ ] 卡片使用 `.glass-card` 及其子类
-- [ ] 网格使用 `.glass-grid--sm/md/lg`
-- [ ] 状态标签使用 `.glass-pill--green/yellow/red/accent/muted`
-- [ ] 按钮圆角为 `var(--radius-md)` (7px)，卡片圆角为 `var(--radius-xl)` (14px)
-- [ ] 表单控件 focus 使用 cyan border + cyan glow
-- [ ] 无实心填充按钮（除特殊审批按钮外，全部使用描边风格）
-- [ ] 字号使用 px 而非 rem（与现有代码一致）
+阴影克制：单层、低不透明度。**不允许** 多层堆叠或 `0 8px 30px+` 的"飘浮卡"阴影。
+
+### 过渡
+
+| 元素 | 时长 | Easing |
+|---|---|---|
+| 行卡 / 卡片 hover | 0.15s | `ease` |
+| 按钮 hover / 状态切换 | 0.15s | `ease` |
+| Drawer 入场 | 0.3s | `cubic-bezier(0.16, 1, 0.3, 1)` |
+| 模态背景淡入 | 0.2s | `ease` |
+
+不超过 0.3s。不用弹簧。不用 `transform: scale()` 大于 1.02。
+
+---
+
+## Page Layout
+
+### 标准布局：`.page-shell`
+
+桌面页的统一壳层，flex 纵向，**header 吸顶 + main 滚动**。
+
+```tsx
+<div className="page-shell">
+  <header className="page-header page-header--sticky">
+    <div className="page-header__lead">
+      <div className="page-header__eyebrow">
+        <Icon size={14} className="page-header__eyebrow-icon" />
+        <span>SECTION NAME</span>
+      </div>
+      <h2 className="page-header__title">页面标题</h2>
+      <p className="page-header__subtitle">页面描述。</p>
+    </div>
+    <div className="page-header__actions">
+      <button className="btn-toolbar"><Icon size={14}/>次要操作</button>
+      <button className="btn-primary"><Icon size={14}/>主要操作</button>
+    </div>
+  </header>
+  <main className="page-content">
+    {/* 列表 / 卡片网格 / 详情等 */}
+  </main>
+</div>
+```
+
+**`.page-shell`：** `display: flex; flex-direction: column; height: 100%; overflow: hidden; background: var(--bg-base);`
+
+**`.page-header--sticky`：**
+- `flex-shrink: 0`
+- `padding: 28px 48px 24px`
+- `background: rgba(13, 13, 15, 0.85)`
+- `backdrop-filter: var(--blur-std)`
+- `border-bottom: 1px solid rgba(255, 255, 255, 0.04)`
+- `display: flex; justify-content: space-between; align-items: flex-end;`
+- `z-index: 10`
+- 在 `.page-shell` 中天然吸顶（因为 main 是滚动容器，header 不滚）
+
+**`.page-header__title`：** 22-24px / 600-700 / `letter-spacing: -0.02em`
+
+**`.page-header__eyebrow`：** flex 布局，包 lucide 图标（14px）+ 文字（11px / 700 / uppercase / `letter-spacing: 0.08em`）。颜色用 `--text-muted`，**不再强制 cyan**——eyebrow 是位置指示，不该抢主操作的视觉焦点。
+
+**`.page-content`：** `flex: 1; overflow-y: auto; padding: 28px 48px;`
+
+### 兼容：`.page-container`
+
+旧页面用的 `.page-container` + `.page-header` 仍可用（不会推倒重做）。新页面优先 `.page-shell`。两套布局视觉上应一致——核心差异是 sticky 行为。
+
+---
+
+## List Row（核心模式）
+
+`.list-row` 是密集列表的默认容器，**取代** v1 中"列表页用 `.glass-card`"的规则。MCP、Skills、硅基员工、Workflows、Tools 等列表页全部用此模式。
+
+### 容器：`.list-rows`
+
+```tsx
+<div className="list-rows">
+  {/* 多个 .list-row */}
+</div>
+```
+
+- `display: grid`
+- `grid-template-columns: repeat(auto-fill, minmax(440px, 1fr))`
+- `gap: 10px`
+
+> 460px 是 MCP 现行值，440-480px 都可接受；选 440 让 13" MacBook 视口也能容纳两列。
+
+### 行卡：`.list-row`
+
+```tsx
+<article className="list-row">
+  {/* 1. 左侧前导槽（状态点 / 头像 / 图标） */}
+  <div className="list-row__lead">
+    <span className="status-dot status-dot--green" title="已连接" />
+  </div>
+
+  {/* 2. 主信息区（标题行 + meta 行） */}
+  <div className="list-row__main">
+    <div className="list-row__title-row">
+      <Link to="/x/123" className="list-row__title">My Server</Link>
+      <span className="tag tag--accent">HTTP</span>
+    </div>
+    <div className="list-row__meta-row">
+      <span className="list-row__meta">server-id-123</span>
+      <span className="list-row__meta-sep" />
+      <span className="list-row__meta">12 个工具</span>
+    </div>
+  </div>
+
+  {/* 3. 右侧操作槽 */}
+  <div className="list-row__trailing">
+    <button className="icon-btn" title="刷新"><RefreshCw size={14}/></button>
+    <button className="icon-btn" title="停用"><Power size={14}/></button>
+    <Link to="/x/123" className="btn-toolbar"><Settings2 size={14}/>配置</Link>
+  </div>
+</article>
+```
+
+**参数：**
+- `display: flex; align-items: center; gap: 16px`
+- `padding: 14px 20px`（comfortable 默认）
+- `min-height: 64px`
+- `background: var(--bg-surface)`
+- `border: 1px solid var(--glass-border)`
+- `border-radius: var(--radius-lg)` (10px)
+- `transition: background 0.15s ease, border-color 0.15s ease`
+- Hover：`background: var(--bg-surface-hover); border-color: var(--glass-border-hover);`
+- 禁用态（`.is-disabled`）：`opacity: 0.55; filter: grayscale(70%);`
+
+**槽位：**
+- `.list-row__lead` —— 24-36px 宽，居中。承载 `.status-dot`、`.list-row__avatar`（28-32px）、或 lucide 图标。
+- `.list-row__main` —— `flex: 1; min-width: 0;` 容纳标题行 + meta 行。
+- `.list-row__title-row` —— `display: flex; align-items: center; gap: 10px; min-width: 0;`
+- `.list-row__title` —— 14-15px / 600；当链接时 `text-decoration: none`，hover 颜色不变（hover 反馈给整行卡）。
+- `.list-row__meta-row` —— `display: flex; align-items: center; gap: 8px;` 间距由 `__meta-sep` 控制。
+- `.list-row__meta` —— 12px / 400 / `--text-muted`。
+- `.list-row__meta-sep` —— 4px 圆点，颜色 `rgba(255, 255, 255, 0.1)`，作为视觉分隔。
+- `.list-row__trailing` —— `display: flex; align-items: center; gap: 8px;`
+
+### 变体
+
+| Modifier | 用途 | 关键参数 |
+|---|---|---|
+| `.list-row--single` | 单行（无 meta） | `min-height: 48px`，main 区只渲染 title-row |
+| `.list-row--double` | 双行（默认） | min-height 64px，title + meta |
+| `.list-row--with-avatar` | 带头像（硅基员工） | `__lead` 宽 36px，承载 32×32 圆角头像 |
+| `.list-row--with-description` | 含描述（Skills） | main 区追加单行截断描述 13px / `--text-secondary` |
+| `.is-disabled` | 停用态 | 见参数 |
+| `.is-selected` | 选中态 | `border-color: var(--accent-cyan); background: rgba(16, 163, 127, 0.06);` |
+
+### 容器密度
+
+通过 main 上 `data-density` 切换（可选，默认 comfortable）：
+
+```tsx
+<main className="page-content" data-density="compact">
+  <div className="list-rows">{/* ... */}</div>
+</main>
+```
+
+- `comfortable`（默认）：行高 64px、padding 14×20、gap 10
+- `compact`：行高 48px、padding 10×16、gap 6
+
+### 信息密度准则
+
+每个 `.list-row` 在不悬停的情况下应至少传达：
+1. **身份**（名称 + 主链接）
+2. **状态**（用 `.status-dot` 或 `.tag`）
+3. **关键 meta**（≥ 1 条：id / 数量 / 时间 / 类型）
+4. **可执行操作的入口**（trailing 槽至少 1 个按钮）
+
+不允许"点击卡片才看到信息"。**点击应是动作，不是阅读触发器。**
+
+---
+
+## Status Dot
+
+```tsx
+<span className="status-dot status-dot--green" title="已连接" />
+```
+
+**参数：**
+- `width: 8px; height: 8px; border-radius: 50%`
+- `box-shadow: 0 0 8px <state-color>/0.5`（glow）
+- `flex-shrink: 0`
+
+**变体：**
+- `.status-dot--green` — 健康 / 运行中 / 已启用
+- `.status-dot--red` — 异常 / 失败
+- `.status-dot--yellow` — 警告 / 待审批
+- `.status-dot--accent` — 活跃（cyan，配合 pulse 动画提示进行中）
+- `.status-dot--muted` — 未知 / 空闲
+
+**Pulse 变体（仅用于进行中状态）：**
+```css
+.status-dot--accent { animation: status-pulse 1.5s ease-in-out infinite; }
+@keyframes status-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.5 } }
+```
+
+---
+
+## Tags
+
+`.tag` 是行内状态/类型标签，**矩形**，4px 圆角。在密集列表里比 999px 圆 pill 更安静、更系统化。
+
+```tsx
+<span className="tag tag--accent">HTTP</span>
+<span className="tag tag--muted">已停用</span>
+<span className="tag tag--green">运行中</span>
+<span className="tag tag--yellow">待审批</span>
+<span className="tag tag--red">异常</span>
+```
+
+**参数：**
+- `font-size: 10-11px; font-weight: 600`
+- `padding: 2px 7px`
+- `border-radius: var(--radius-sm)` (4px)
+- `border: 1px solid <state-color>/0.20`
+- `background: <state-color>/0.12`
+- `color: <state-color>`（饱和原色）
+- `text-transform: uppercase`（可选，用于类型标签如 HTTP / STDIO）
+- `letter-spacing: 0.04em`
+
+### Tag vs Pill 的区分原则
+
+`.tag` 和 `.glass-pill` 共存，**用途不同**：
+
+| 维度 | `.tag` | `.glass-pill` |
+|---|---|---|
+| 形状 | 矩形 4px 圆角 | 全圆 999px |
+| 字号 | 10-11px | 11px |
+| 用途 | **行内**：列表行、卡片 header 内的状态/类型/数量标签 | **独立**：通知性场景，例如未读数、审批徽章、聊天会话状态 |
+| 视觉权重 | 安静、系统化 | 抢眼、引导注意 |
+
+**判断规则：** 如果它跟在标题旁、用于补充身份信息——用 `.tag`。如果它独立浮现、为了让用户回头看——用 `.glass-pill`。
+
+---
+
+## Buttons
+
+### `.btn-primary` — 页面主操作
+
+页面级关键操作（新建、提交、立即执行）。**描边风格**（不实心填充）。
+
+```tsx
+<button className="btn-primary"><Plus size={14}/>新建服务</button>
+```
+
+- `height: 32px`（紧凑）/ `36px`（强调）
+- `padding: 0 16px`
+- `display: inline-flex; align-items: center; gap: 6px`
+- `background: transparent; color: var(--accent-cyan); border: 1px solid var(--accent-cyan);`
+- `border-radius: var(--radius-md)` (6px)
+- `font-size: 13px; font-weight: 500`
+- Hover：`background: rgba(16, 163, 127, 0.08); box-shadow: 0 0 8px rgba(16, 163, 127, 0.15);`
+- Disabled：`opacity: 0.5; cursor: not-allowed`
+
+### `.btn-toolbar` — 次要 / 工具栏操作
+
+页面 header 的次要操作（导入、刷新、打开目录）；列表行 trailing 槽的文字按钮。
+
+```tsx
+<button className="btn-toolbar"><Download size={14}/>导入配置</button>
+```
+
+- `height: 32px`
+- `padding: 0 14px`
+- `background: rgba(255, 255, 255, 0.06); color: var(--text-primary); border: 1px solid rgba(255, 255, 255, 0.06);`
+- `border-radius: var(--radius-md)` (6px)
+- `font-size: 13px; font-weight: 500`
+- Hover：`background: rgba(255, 255, 255, 0.10);`
+
+### `.icon-btn` — 32×32 图标按钮
+
+行内二级操作（refresh、toggle、删除）。无文字，靠 `title` 提供可访问名称。
+
+```tsx
+<button className="icon-btn" title="刷新连接"><RefreshCw size={14}/></button>
+```
+
+- `width: 32px; height: 32px`
+- `display: inline-flex; align-items: center; justify-content: center`
+- `background: transparent; color: var(--text-muted); border: none`
+- `border-radius: var(--radius-md)` (6px)
+- Hover：`background: rgba(255, 255, 255, 0.08); color: var(--text-primary);`
+- Focus-visible：`outline: 2px solid var(--accent-cyan); outline-offset: -2px`
+
+### `.btn-ghost` — 透明描边
+
+危险/破坏性、Drawer 内取消按钮。
+
+```tsx
+<button className="btn-ghost">取消</button>
+<button className="btn-ghost btn-ghost--danger">删除</button>
+```
+
+- 同 `.btn-toolbar` 尺寸
+- `background: transparent; border: 1px solid var(--glass-border)`
+- `--danger` 变体：边框/文字 `var(--status-red)`
+
+### v1 兼容
+
+`.btn-premium`、`.glass-action-btn` 仍存在，旧页面无需立刻迁移；**新页面统一用 `.btn-primary` / `.btn-toolbar` / `.icon-btn` / `.btn-ghost`**。
+
+---
+
+## Cards（重新定位）
+
+`.glass-card` **不再是列表默认**。它适用于：
+
+1. **浏览/画廊场景** —— Hub 商品列表、技能商店（图片占主导，每张卡是"内容产品"而不是"可操作条目"）
+2. **详情页面里的功能模块卡** —— 设置分组、表单分区
+3. **Empty state 占位卡** —— 见下文
+
+**参数（v2 调整）：**
+- `border-radius: var(--radius-xl)` (12px) — v1 的 14px 略软，新页面用 12
+- 其他参数（背景、边框、hover lift）保持 v1 不变
+
+**禁止：** 列表页用 `.glass-card` 网格替代 `.list-row`。
+
+---
+
+## Drawer（右侧滑出）
+
+详情、导入、配置等弹层一律用右侧 drawer，不用居中模态——drawer 不打断列表上下文。
+
+```tsx
+<div className="drawer-overlay" onClick={close}>
+  <aside className="drawer" onClick={(e) => e.stopPropagation()}>
+    <header className="drawer__header">
+      <h3>标题</h3>
+      <button className="icon-btn" title="关闭 (Esc)" onClick={close}>
+        <X size={18}/>
+      </button>
+    </header>
+    <div className="drawer__content">{/* ... */}</div>
+    <footer className="drawer__footer">
+      <button className="btn-primary">确认</button>
+    </footer>
+  </aside>
+</div>
+```
+
+**参数：**
+- `.drawer-overlay`：`position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); backdrop-filter: blur(4px); z-index: 100; display: flex; justify-content: flex-end;` + `animation: fadeIn 0.2s ease`
+- `.drawer`：宽 420-480px、`background: var(--bg-drawer)`、`border-left: 1px solid rgba(255, 255, 255, 0.1)`、`box-shadow: var(--shadow-drawer)`、`animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1)`
+- `.drawer__header` / `.drawer__footer`：padding 20-24px，`border-{bottom,top}: 1px solid rgba(255, 255, 255, 0.06)`
+- `.drawer__content`：`flex: 1; overflow-y: auto; padding: 20px;`
+
+**交互必备：**
+- Esc 关闭
+- 点击 overlay 关闭
+- Tab 焦点陷阱（参考 `useDialogA11y` hook）
+- 入场聚焦到 drawer 内首个可聚焦元素
+
+**居中模态** 只用于：确认操作、不可关闭的阻塞流程、详情查看且没有"取消并继续浏览"的语义。其余一律 drawer。
+
+---
+
+## Empty State
+
+```tsx
+<section className="empty-state">
+  <Icon className="empty-state__icon" size={32}/>
+  <h3 className="empty-state__title">尚未配置任何 MCP 服务</h3>
+  <p className="empty-state__body">连接工具集、数据库与本地能力，释放工作区潜能。</p>
+  <button className="btn-primary">立即添加</button>
+</section>
+```
+
+**参数：**
+- `padding: 64px 24px`
+- `display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px`
+- `border: 1px dashed rgba(255, 255, 255, 0.1)`
+- `border-radius: var(--radius-lg)` (10px)
+- `background: rgba(255, 255, 255, 0.01)`
+- `.empty-state__icon`：`color: rgba(255, 255, 255, 0.2)`
+- `.empty-state__title`：16px / 600 / `--text-primary`
+- `.empty-state__body`：13-14px / 400 / `--text-muted`
+
+**精简变体** `.empty-state--minimal`：用于 drawer 内、卡片内的空态，padding 32px 16px，去掉图标。
+
+---
+
+## Error Banner
+
+行级错误，显示在列表/内容顶部，**不阻塞页面**：
+
+```tsx
+<div className="banner banner--error">
+  <AlertCircle size={16}/>
+  <span>加载 MCP 服务失败：连接超时</span>
+</div>
+```
+
+- `display: flex; align-items: center; gap: 8px`
+- `padding: 12px 16px`
+- `background: rgba(239, 68, 68, 0.10)`
+- `border: 1px solid rgba(239, 68, 68, 0.20)`
+- `border-radius: var(--radius-md)` (6px)
+- `color: var(--status-red)`
+- `font-size: 13px`
+- `margin-bottom: 16px`
+
+变体：`.banner--info`（cyan）、`.banner--warning`（yellow）。
+
+---
+
+## Form Controls
+
+```tsx
+<input className="input" placeholder="搜索..." />
+<select className="select">{/* ... */}</select>
+<textarea className="textarea" />
+```
+
+- `border: 1px solid var(--glass-border)`
+- `border-radius: var(--radius-md)` (6px)
+- `background: var(--bg-base)`
+- `padding: 8-10px 12-14px`
+- `font-size: 13px`
+- Focus：`border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14); outline: none`
+- Hover：`border-color: var(--glass-border-hover)`
+
+---
+
+## Toolbar / Filter Bar（列表上方）
+
+列表页若需筛选/搜索，加在 `.page-content` 顶部：
+
+```tsx
+<div className="toolbar">
+  <input className="input toolbar__search" placeholder="搜索..." />
+  <button className="btn-toolbar"><Filter size={14}/>筛选</button>
+  <span className="toolbar__count">42 条</span>
+</div>
+```
+
+- `display: flex; align-items: center; gap: 12px`
+- `margin-bottom: 16px`
+- `.toolbar__search` 占主要空间
+- `.toolbar__count`：12px / `--text-muted`，靠右
+
+---
+
+## Keyboard Shortcuts（约定）
+
+| 键 | 行为 |
+|---|---|
+| `Esc` | 关闭最上层 drawer / 模态 / popover |
+| `Enter` | 提交主操作（在表单/弹层焦点内） |
+| `↑` / `↓` | 列表中的上下移动（计划中） |
+| `⌘K` / `Ctrl+K` | 命令面板（规划中） |
+| `⌘Backspace` | 删除选中项（带确认） |
+| `Tab` / `Shift+Tab` | 焦点陷阱内的循环 |
+
+新组件应实现 Esc 关闭、Tab 焦点陷阱（drawer / modal）、focus-visible outline。
+
+---
+
+## 视觉禁区（Don'ts）
+
+强观点列表。出现这些一律视为 v2 不合规：
+
+- ❌ **emoji 当图标**（如 🚀、✨、👤）。所有图标用 lucide-react。
+- ❌ **彩虹/渐变背景**。背景一律纯色或半透明 alpha。
+- ❌ **圆角 ≥ 14px 的卡片**（除模态/对话框外）。桌面应用应紧凑。
+- ❌ **实心填充 CTA**（`background: cyan; color: white`）。**全部用描边或 ghost 风格**——实心填充看起来像营销 banner，与系统 chrome 冲突。
+- ❌ **多层堆叠阴影** / `0 8px 30px+` 的飘浮卡感。
+- ❌ **同屏 4+ 种字号**。建议把字号控制在 3 种以内（标题 / 正文 / meta）。
+- ❌ **列表页用 `.glass-card` 网格**。用 `.list-row`。
+- ❌ **列表行内用 `.glass-pill` 圆 pill**。用 `.tag`。
+- ❌ **page-title ≥ 28px**。桌面侧栏已经在指示当前页，不需要大字。
+- ❌ **弹簧动画 / `transform: scale(1.05)+`**。过渡用 0.15-0.30s ease/cubic-bezier。
+- ❌ **将关键信息隐藏在 hover 后**——行卡上不悬停就应能看清身份/状态/操作入口；只有"二级操作"可以悬停揭示。
+- ❌ **占位文本 = 标签**。表单 label 用 `<span>`，不要用 placeholder 兼任。
+
+---
+
+## 新页面 Checklist
+
+- [ ] 使用 `.page-shell` + `.page-header--sticky` 布局（或兼容旧的 `.page-container`）
+- [ ] page-title 22-24px（不是 32px）
+- [ ] eyebrow 含 lucide leading icon
+- [ ] 列表用 `.list-rows` + `.list-row`（**不是** `.glass-card` + `.glass-grid`）
+- [ ] Lead 槽用 `.status-dot`、`.list-row__avatar` 或 lucide icon
+- [ ] 标签用 `.tag`（4px 圆角矩形），独立通知用 `.glass-pill`
+- [ ] 行级二级操作用 `.icon-btn`，文字按钮用 `.btn-toolbar`
+- [ ] 主操作用 `.btn-primary`（描边 cyan）
+- [ ] Empty / Error / Drawer / Form 走规范模式
+- [ ] Esc 关弹层、Enter 提交主操作
+- [ ] focus-visible 有清晰描边
+- [ ] 1440×900 视口能展示 ≥ 8 个列表条目，无需滚动
+
+---
+
+## 迁移指南：v1 → v2
+
+**v1 的页面无需立即推倒重做。** 触碰到该页面时再迁移。优先级：MCP（已基线）→ Skills → 硅基员工 → Workflows → 其他。
+
+| v1 类 | v2 替代 | 说明 |
+|---|---|---|
+| `.page-container` | `.page-shell` + `.page-header--sticky` | 新页面优先；旧页保留 |
+| `.glass-grid--sm/md/lg`（列表场景） | `.list-rows` | 强制迁移 |
+| `.glass-card`（列表场景） | `.list-row` | 强制迁移 |
+| `.glass-card`（浏览/详情场景） | `.glass-card`（圆角 12px） | 保留，调圆角 |
+| `.glass-pill`（行内 inline） | `.tag` | 强制迁移 |
+| `.glass-pill`（独立通知） | `.glass-pill` | 不变 |
+| `.btn-premium` / `.btn-premium accent` | `.btn-toolbar` / `.btn-primary` | 新页统一 |
+| `.glass-action-btn` | `.btn-toolbar`（文字）/ `.icon-btn`（图标） | 取决于场景 |
+| `--radius-xl: 14px`（列表卡） | `--radius-lg: 10px` | 桌面化 |
+| page-title 32px | 22-24px | 桌面化 |
+
+---
+
+## 反例（What bad looks like）
+
+为了让规范有判断力，给出三个常见的"看起来很像样但其实不对"的设计：
+
+**反例 1：列表页用大卡片网格**
+```
+┌─────────┐ ┌─────────┐ ┌─────────┐
+│  [icon] │ │  [icon] │ │  [icon] │
+│  My MCP │ │  Search │ │  Slack  │
+│  Server │ │  Tool   │ │  Server │
+│  ...    │ │  ...    │ │  ...    │
+│ [按钮]  │ │ [按钮]  │ │ [按钮]  │
+└─────────┘ └─────────┘ └─────────┘
+```
+错在哪：1440 视口只能显示 6-8 张卡，浪费空间；服务身份在卡内多行展开，扫读慢；卡间隙太大破坏密集感。**改用 `.list-row`。**
+
+**反例 2：圆 pill 状态徽章在密集列表里**
+```
+●  My Server   (HTTP)  (已启用)  (12 工具)  ...
+```
+当 (HTTP) (已启用) 都是 999px 圆 pill 时，它们看起来像项目符号，干扰扫读。**改用矩形 `.tag`：** `My Server  HTTP  ENABLED  12 工具`。
+
+**反例 3：实心填充 CTA**
+```
+[ + 新建服务 ]  ← 实心 cyan 背景白字
+```
+看起来像 SaaS 落地页的 "Get Started" 按钮，与 macOS/Windows 系统按钮冲突。**改用描边：** transparent + cyan 边框 + cyan 文字。
+
+---
+
+## 实施次序（v2 落地路线）
+
+新规范要落地到代码：
+
+1. **第一阶段（本规范发布时）：** MCP 已是基线（无需改）。新页面按 v2 标准开发。
+2. **第二阶段：** 把 v2 新增的类（`.list-row`、`.list-rows`、`.status-dot`、`.tag`、`.icon-btn`、`.btn-primary`、`.btn-toolbar`、`.btn-ghost`、`.page-shell`、`.page-header--sticky`、`.drawer`、`.empty-state`、`.banner`）沉淀到 `desktop/src/renderer/styles/global.css`，并把 MCP 现有的 inline `<style>` 替换为这些 global 类。
+3. **第三阶段：** 迁移 SkillsPage 与 SiliconPersonEntryPage 到 `.list-row` 模式。
+4. **第四阶段：** 触碰其余列表页（WorkflowsPage、ToolsPage 等）时按需迁移。
+
+旧页面"碰到再改"，不强制一次性大重构。
