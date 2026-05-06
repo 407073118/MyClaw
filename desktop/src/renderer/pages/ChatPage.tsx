@@ -895,10 +895,7 @@ export default function ChatPage() {
         scrollToBottomRef.current("smooth");
       } else if (type === "session.updated" && updatedSession) {
         ws.applySessionUpdate(updatedSession);
-        if (
-          updatedSession.siliconPersonId
-          && updatedSession.siliconPersonId === activeViewSiliconPersonIdRef.current
-        ) {
+        if (updatedSession.siliconPersonId) {
           void ws.loadSiliconPersonById(updatedSession.siliconPersonId).catch((error) => {
             console.error("[chat-page] 刷新硅基员工摘要失败", {
               siliconPersonId: updatedSession.siliconPersonId,
