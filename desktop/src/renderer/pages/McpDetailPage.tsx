@@ -3,6 +3,20 @@ import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import type { McpServer, McpServerConfig, McpSource, McpTool } from "@shared/contracts";
 import { ToolRiskCategory } from "@shared/contracts";
+import {
+  Activity,
+  AlertCircle,
+  ChevronLeft,
+  Edit3,
+  Link2,
+  Plug,
+  Power,
+  RefreshCw,
+  Settings,
+  Settings2,
+  Trash2,
+  Wrench,
+} from "lucide-react";
 
 // ── 内联 McpServerForm 组件 ──────────────────────────────────────────────────
 
@@ -16,7 +30,14 @@ interface McpServerFormProps {
 }
 
 /** 渲染 MCP 服务表单，并兼容 stdio/http 两种传输方式。 */
-function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubmit, onCancel }: McpServerFormProps) {
+function McpServerForm({
+  initialValue,
+  isCreate,
+  submitting,
+  submitLabel,
+  onSubmit,
+  onCancel,
+}: McpServerFormProps) {
   const [transport, setTransport] = useState<"stdio" | "http">(
     initialValue?.transport ?? "stdio",
   );
@@ -26,7 +47,6 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
     (initialValue?.source as McpSource) ?? "manual",
   );
   const [enabled, setEnabled] = useState(initialValue?.enabled ?? true);
-  // `stdio` 模式表单字段。
   const [command, setCommand] = useState(
     initialValue?.transport === "stdio" ? initialValue.command ?? "" : "",
   );
@@ -41,7 +61,6 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
       ? initialValue.env ? JSON.stringify(initialValue.env, null, 2) : ""
       : "",
   );
-  // `http` 模式表单字段。
   const [url, setUrl] = useState(
     initialValue?.transport === "http" ? initialValue.url ?? "" : "",
   );
@@ -95,9 +114,9 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
   }
 
   return (
-    <form className="server-form" onSubmit={handleSubmit}>
-      <div className="form-grid">
-        <label className="field">
+    <form className="mcp-form" onSubmit={handleSubmit}>
+      <div className="mcp-form-grid">
+        <label className="mcp-form-field">
           <span>服务 ID</span>
           <input
             type="text"
@@ -108,7 +127,7 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
           />
         </label>
 
-        <label className="field">
+        <label className="mcp-form-field">
           <span>服务名称</span>
           <input
             type="text"
@@ -119,17 +138,25 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
           />
         </label>
 
-        <label className="field">
+        <label className="mcp-form-field">
           <span>传输方式</span>
-          <select value={transport} onChange={(e) => setTransport(e.target.value as "stdio" | "http")} disabled={submitting}>
+          <select
+            value={transport}
+            onChange={(e) => setTransport(e.target.value as "stdio" | "http")}
+            disabled={submitting}
+          >
             <option value="stdio">STDIO</option>
             <option value="http">HTTP</option>
           </select>
         </label>
 
-        <label className="field">
+        <label className="mcp-form-field">
           <span>来源</span>
-          <select value={source} onChange={(e) => setSource(e.target.value as McpSource)} disabled={submitting}>
+          <select
+            value={source}
+            onChange={(e) => setSource(e.target.value as McpSource)}
+            disabled={submitting}
+          >
             <option value="manual">manual</option>
             <option value="claude">claude</option>
             <option value="codex">codex</option>
@@ -138,7 +165,7 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
         </label>
       </div>
 
-      <label className="field checkbox-field">
+      <label className="mcp-form-checkbox">
         <input
           type="checkbox"
           checked={enabled}
@@ -149,8 +176,8 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
       </label>
 
       {transport === "stdio" ? (
-        <div className="form-grid">
-          <label className="field full-width">
+        <div className="mcp-form-grid">
+          <label className="mcp-form-field mcp-form-field--full">
             <span>命令</span>
             <input
               type="text"
@@ -160,8 +187,8 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
               disabled={submitting}
             />
           </label>
-          <label className="field full-width">
-            <span>参数 (空格分隔)</span>
+          <label className="mcp-form-field mcp-form-field--full">
+            <span>参数（空格分隔）</span>
             <input
               type="text"
               value={argsText}
@@ -170,8 +197,8 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
               disabled={submitting}
             />
           </label>
-          <label className="field">
-            <span>工作目录 (可选)</span>
+          <label className="mcp-form-field">
+            <span>工作目录（可选）</span>
             <input
               type="text"
               value={cwd}
@@ -180,8 +207,8 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
               disabled={submitting}
             />
           </label>
-          <label className="field">
-            <span>环境变量 JSON (可选)</span>
+          <label className="mcp-form-field">
+            <span>环境变量 JSON（可选）</span>
             <textarea
               rows={4}
               value={envText}
@@ -192,8 +219,8 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
           </label>
         </div>
       ) : (
-        <div className="form-grid">
-          <label className="field full-width">
+        <div className="mcp-form-grid">
+          <label className="mcp-form-field mcp-form-field--full">
             <span>URL</span>
             <input
               type="text"
@@ -203,8 +230,8 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
               disabled={submitting}
             />
           </label>
-          <label className="field full-width">
-            <span>请求头 JSON (可选)</span>
+          <label className="mcp-form-field mcp-form-field--full">
+            <span>请求头 JSON（可选）</span>
             <textarea
               rows={4}
               value={headersText}
@@ -216,13 +243,13 @@ function McpServerForm({ initialValue, isCreate, submitting, submitLabel, onSubm
         </div>
       )}
 
-      {formError && <p className="form-error">{formError}</p>}
+      {formError && <p className="mcp-form-error">{formError}</p>}
 
-      <div className="form-actions">
-        <button type="button" className="secondary-button" onClick={onCancel} disabled={submitting}>
+      <div className="mcp-form-actions">
+        <button type="button" className="btn-toolbar" onClick={onCancel} disabled={submitting}>
           取消
         </button>
-        <button type="submit" className="primary-button" disabled={submitting}>
+        <button type="submit" className="btn-primary" disabled={submitting}>
           {submitLabel}
         </button>
       </div>
@@ -250,6 +277,14 @@ function riskLabel(risk: McpTool["risk"]): string {
   if (risk === ToolRiskCategory.Install) return "安装";
   if (risk === ToolRiskCategory.Network) return "网络";
   return "未知";
+}
+
+/** 把工具风险枚举映射为状态色变体。 */
+function riskVariant(risk: McpTool["risk"]): "green" | "yellow" | "red" | "muted" {
+  if (risk === ToolRiskCategory.Read) return "green";
+  if (risk === ToolRiskCategory.Write || risk === ToolRiskCategory.Network) return "yellow";
+  if (risk === ToolRiskCategory.Exec || risk === ToolRiskCategory.Install) return "red";
+  return "muted";
 }
 
 /** 判断工具输入 schema 是否包含 `properties` 定义。 */
@@ -372,6 +407,8 @@ export default function McpDetailPage() {
   const healthLabelKey = currentServer?.state?.health ?? currentServer?.health ?? "unknown";
   const healthLabel =
     healthLabelKey === "healthy" ? "正常" : healthLabelKey === "error" ? "异常" : "未知";
+  const healthVariant: "green" | "red" | "muted" =
+    healthLabelKey === "healthy" ? "green" : healthLabelKey === "error" ? "red" : "muted";
 
   const lastCheckedLabel = useMemo(() => {
     const value = currentServer?.state?.lastCheckedAt ?? currentServer?.lastCheckedAt ?? null;
@@ -420,7 +457,11 @@ export default function McpDetailPage() {
     if (!currentServer) return;
     const nextEnabled = !currentServer.enabled;
     const action = nextEnabled ? "启用" : "停用";
-    if (!window.confirm(`确认${action}该 MCP 服务？${nextEnabled ? "启用后将尝试重新连接服务。" : "停用后将断开与服务的连接。"}`)) {
+    if (
+      !window.confirm(
+        `确认${action}该 MCP 服务？${nextEnabled ? "启用后将尝试重新连接服务。" : "停用后将断开与服务的连接。"}`,
+      )
+    ) {
       return;
     }
     console.info("[mcp-detail] 切换 MCP 服务启用状态", {
@@ -433,7 +474,6 @@ export default function McpDetailPage() {
         toServerConfig(currentServer, nextEnabled),
       );
       if (nextEnabled) {
-        // 启用后自动尝试重连
         try {
           await workspace.refreshMcpServer(currentServer.id);
         } catch {
@@ -466,7 +506,10 @@ export default function McpDetailPage() {
   }
 
   function handleCancelEdit() {
-    console.info("[mcp-detail] 取消 MCP 编辑", { serverId: currentServer?.id ?? null, isCreate });
+    console.info("[mcp-detail] 取消 MCP 编辑", {
+      serverId: currentServer?.id ?? null,
+      isCreate,
+    });
     setSaveError("");
     if (isCreate) {
       navigate("/mcp");
@@ -477,7 +520,11 @@ export default function McpDetailPage() {
 
   async function handleSave(config: McpServerConfig) {
     if (isSaving) return;
-    console.info("[mcp-detail] 保存 MCP 服务", { serverId: config.id, isCreate, transport: config.transport });
+    console.info("[mcp-detail] 保存 MCP 服务", {
+      serverId: config.id,
+      isCreate,
+      transport: config.transport,
+    });
     setIsSaving(true);
     setSaveError("");
     try {
@@ -504,61 +551,57 @@ export default function McpDetailPage() {
   }
 
   return (
-    <main data-testid="mcp-detail-view" className="settings-detail-pane" style={{ background: "#0d0d0f" }}>
-      <header className="settings-detail-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 10, padding: "32px 48px 24px", background: "rgba(13, 13, 15, 0.85)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", borderBottom: "1px solid rgba(255, 255, 255, 0.04)" }}>
-        <div className="header-text">
-          <span className="eyebrow">MCP 详情</span>
-          <h2 className="page-title">{pageTitle}</h2>
-          <p className="page-subtitle">{pageSubtitle}</p>
+    <div className="page-shell" data-testid="mcp-detail-view">
+      <header className="page-header page-header--sticky">
+        <div className="page-header__lead">
+          <div className="page-header__eyebrow">
+            <Plug size={14} />
+            <span>MCP 详情</span>
+          </div>
+          <h2 className="page-header__title">{pageTitle}</h2>
+          <p className="page-header__subtitle">{pageSubtitle}</p>
         </div>
-        <div className="header-actions">
-          <Link to="/mcp" className="secondary-link">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
+        <div className="page-header__actions">
+          <Link to="/mcp" className="btn-toolbar">
+            <ChevronLeft size={14} />
             返回列表
           </Link>
           {currentServer && !isEditing && (
             <>
               <button
                 type="button"
-                className="secondary-button"
+                className="btn-toolbar"
                 data-testid="mcp-detail-refresh"
                 onClick={handleRefresh}
               >
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="23 4 23 10 17 10" />
-                  <polyline points="1 20 1 14 7 14" />
-                  <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                </svg>
+                <RefreshCw size={14} />
                 刷新
               </button>
               <button
                 type="button"
-                className="secondary-button"
+                className="btn-toolbar"
                 data-testid="mcp-detail-toggle"
                 onClick={handleToggle}
               >
+                <Power size={14} />
                 {currentServer.enabled ? "停用" : "启用"}
               </button>
               <button
                 type="button"
-                className="primary-button"
+                className="btn-primary"
                 data-testid="mcp-detail-edit"
                 onClick={enterEditMode}
               >
+                <Edit3 size={14} />
                 编辑
               </button>
               <button
                 type="button"
-                className="danger-button"
+                className="btn-ghost btn-ghost--danger"
                 data-testid="mcp-detail-delete"
                 onClick={handleDelete}
               >
-                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                </svg>
+                <Trash2 size={14} />
                 删除
               </button>
             </>
@@ -566,695 +609,511 @@ export default function McpDetailPage() {
         </div>
       </header>
 
-      <div className="mcp-content-wrapper">
-      {saveError && <p className="error-banner">{saveError}</p>}
+      <main className="page-content">
+        <div className="mcp-detail-content">
+          {saveError && (
+            <div className="banner banner--error">
+              <AlertCircle size={16} />
+              <span>{saveError}</span>
+            </div>
+          )}
 
-      {isCreate || isEditing ? (
-        <section className="detail-card">
-          <h3 className="section-title">{isCreate ? "新建 MCP 服务" : "编辑 MCP 服务"}</h3>
-          <McpServerForm
-            initialValue={formValue}
-            isCreate={isCreate}
-            submitting={isSaving}
-            submitLabel={isSaving ? "保存中..." : (isCreate ? "创建服务" : "保存修改")}
-            onSubmit={handleSave}
-            onCancel={handleCancelEdit}
-          />
-        </section>
-      ) : !currentServer ? (
-        <section className="empty-state">
-          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.5" className="empty-icon">
-            <circle cx="12" cy="12" r="10" />
-            <path d="M12 8v4M12 16h.01" />
-          </svg>
-          <h3>未找到 MCP 服务</h3>
-          <p>请返回列表检查所选服务 ID 是否正确。</p>
-        </section>
-      ) : (
-        <>
-          {/* 概览 + 连接配置 */}
-          <section className="detail-grid">
-            <article className="detail-card overview-card">
-              <div className="card-head">
-                <h3 className="section-title">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="3" />
-                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                  </svg>
-                  概览
-                </h3>
-              </div>
-              <dl className="info-grid">
-                <div className="info-item">
-                  <dt>服务 ID</dt>
-                  <dd className="mono-text">{currentServer.id}</dd>
-                </div>
-                <div className="info-item">
-                  <dt>名称</dt>
-                  <dd>{currentServer.name}</dd>
-                </div>
-                <div className="info-item">
-                  <dt>健康状态</dt>
-                  <dd>
-                    <span className="inline-badge" data-health={healthLabelKey}>{healthLabel}</span>
-                  </dd>
-                </div>
-                <div className="info-item">
-                  <dt>启用状态</dt>
-                  <dd>
-                    <span className="inline-badge" data-enabled={String(currentServer.enabled)}>
-                      {currentServer.enabled ? "已启用" : "已停用"}
-                    </span>
-                  </dd>
-                </div>
-              </dl>
+          {isCreate || isEditing ? (
+            <article className="glass-card glass-card--flat mcp-info-card">
+              <h3 className="mcp-section-title">
+                <Settings2 size={14} />
+                {isCreate ? "新建 MCP 服务" : "编辑 MCP 服务"}
+              </h3>
+              <McpServerForm
+                initialValue={formValue}
+                isCreate={isCreate}
+                submitting={isSaving}
+                submitLabel={isSaving ? "保存中..." : isCreate ? "创建服务" : "保存修改"}
+                onSubmit={handleSave}
+                onCancel={handleCancelEdit}
+              />
             </article>
-
-            <article className="detail-card connection-card">
-              <div className="card-head">
-                <h3 className="section-title">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                  </svg>
-                  连接配置
-                </h3>
-              </div>
-              <dl className="info-grid">
-                <div className="info-item">
-                  <dt>传输方式</dt>
-                  <dd>
-                    <span className="transport-badge">
-                      {currentServer.transport === "http" ? "HTTP" : "STDIO"}
-                    </span>
-                  </dd>
-                </div>
-                {currentServer.transport === "stdio" ? (
-                  <>
-                    <div className="info-item">
-                      <dt>命令</dt>
-                      <dd className="mono-text">{currentServer.command}</dd>
+          ) : !currentServer ? (
+            <section className="empty-state">
+              <AlertCircle size={32} className="empty-state__icon" />
+              <h3 className="empty-state__title">未找到 MCP 服务</h3>
+              <p className="empty-state__body">请返回列表检查所选服务 ID 是否正确。</p>
+              <Link to="/mcp" className="btn-toolbar">
+                <ChevronLeft size={14} />
+                返回列表
+              </Link>
+            </section>
+          ) : (
+            <>
+              <div className="mcp-detail-grid">
+                <article className="glass-card glass-card--flat mcp-info-card">
+                  <h3 className="mcp-section-title">
+                    <Settings size={14} />
+                    概览
+                  </h3>
+                  <dl className="mcp-info-list">
+                    <div>
+                      <dt>服务 ID</dt>
+                      <dd className="mcp-mono">{currentServer.id}</dd>
                     </div>
-                    <div className="info-item full-width">
-                      <dt>参数</dt>
-                      <dd className="mono-text">{(currentServer.args ?? []).join(" ") || "—"}</dd>
+                    <div>
+                      <dt>名称</dt>
+                      <dd>{currentServer.name}</dd>
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="info-item full-width">
-                      <dt>URL</dt>
-                      <dd className="mono-text">{currentServer.url}</dd>
-                    </div>
-                    <div className="info-item full-width">
-                      <dt>请求头</dt>
-                      <dd className="mono-text">
-                        {currentServer.headers
-                          ? JSON.stringify(currentServer.headers, null, 2)
-                          : "—"}
+                    <div>
+                      <dt>健康状态</dt>
+                      <dd>
+                        <span className={`tag tag--${healthVariant}`}>{healthLabel}</span>
                       </dd>
                     </div>
-                  </>
-                )}
-              </dl>
-            </article>
-          </section>
+                    <div>
+                      <dt>启用状态</dt>
+                      <dd>
+                        <span
+                          className={`tag tag--${currentServer.enabled ? "green" : "muted"}`}
+                        >
+                          {currentServer.enabled ? "已启用" : "已停用"}
+                        </span>
+                      </dd>
+                    </div>
+                  </dl>
+                </article>
 
-          {/* 工具列表 + 运行状态 */}
-          <section className="detail-grid">
-            <article className="detail-card tools-card">
-              <div className="card-head">
-                <h3 className="section-title">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                  </svg>
-                  工具列表
-                  <span className="tool-count-badge">{currentServer.tools.length}</span>
-                </h3>
-                <button
-                  type="button"
-                  className="sync-button"
-                  data-testid="mcp-detail-sync-tools"
-                  disabled={syncing}
-                  onClick={handleSyncTools}
-                >
-                  <svg
-                    className={syncing ? "spinning" : ""}
-                    viewBox="0 0 24 24"
-                    width="14"
-                    height="14"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                  >
-                    <polyline points="23 4 23 10 17 10" />
-                    <polyline points="1 20 1 14 7 14" />
-                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                  </svg>
-                  {syncing ? "同步中..." : "同步工具"}
-                </button>
+                <article className="glass-card glass-card--flat mcp-info-card">
+                  <h3 className="mcp-section-title">
+                    <Link2 size={14} />
+                    连接配置
+                  </h3>
+                  <dl className="mcp-info-list">
+                    <div>
+                      <dt>传输方式</dt>
+                      <dd>
+                        <span className="tag tag--accent">
+                          {currentServer.transport.toUpperCase()}
+                        </span>
+                      </dd>
+                    </div>
+                    {currentServer.transport === "stdio" ? (
+                      <>
+                        <div>
+                          <dt>命令</dt>
+                          <dd className="mcp-mono">{currentServer.command}</dd>
+                        </div>
+                        <div>
+                          <dt>参数</dt>
+                          <dd className="mcp-mono">
+                            {(currentServer.args ?? []).join(" ") || "—"}
+                          </dd>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <dt>URL</dt>
+                          <dd className="mcp-mono">{currentServer.url}</dd>
+                        </div>
+                        <div>
+                          <dt>请求头</dt>
+                          <dd className="mcp-mono mcp-mono--block">
+                            {currentServer.headers
+                              ? JSON.stringify(currentServer.headers, null, 2)
+                              : "—"}
+                          </dd>
+                        </div>
+                      </>
+                    )}
+                  </dl>
+                </article>
               </div>
 
-              {currentServer.tools.length > 0 ? (
-                <div className="tool-grid">
-                  {currentServer.tools.map((tool) => (
-                    <div key={tool.id} className="tool-card">
-                      <div className="tool-header">
-                        <div className="tool-name">
-                          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
-                            <path d="M16 3h-8l-2 4h12z" />
-                          </svg>
-                          {tool.name}
-                        </div>
-                        <span className="risk-badge" data-risk={tool.risk ?? "unknown"}>
-                          {riskLabel(tool.risk)}
-                        </span>
-                      </div>
-                      {tool.description && <p className="tool-desc">{tool.description}</p>}
-                      {tool.inputSchema && hasSchemaProperties(tool.inputSchema) && (
-                        <div className="tool-schema">
-                          <div className="schema-header">
-                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2">
-                              <polyline points="4 7 4 4 20 4 20 7" />
-                              <line x1="9" y1="20" x2="15" y2="20" />
-                              <line x1="12" y1="4" x2="12" y2="20" />
-                            </svg>
-                            输入参数
-                          </div>
-                          <div className="schema-params">
-                            {Object.entries(getSchemaProperties(tool.inputSchema)).map(([paramName, paramDef]) => (
-                              <div key={paramName} className="param-row">
-                                <span className="param-name">{paramName}</span>
-                                <span className="param-type">{resolveParamType(paramDef)}</span>
-                                {isRequiredParam(tool.inputSchema!, paramName) && (
-                                  <span className="param-required">required</span>
-                                )}
-                                {resolveParamDesc(paramDef) && (
-                                  <span className="param-desc">{resolveParamDesc(paramDef)}</span>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+              <article className="glass-card glass-card--flat mcp-info-card">
+                <div className="mcp-section-head">
+                  <h3 className="mcp-section-title">
+                    <Wrench size={14} />
+                    工具列表
+                    <span className="tag tag--muted" style={{ marginLeft: 4 }}>
+                      {currentServer.tools.length}
+                    </span>
+                  </h3>
+                  <button
+                    type="button"
+                    className="btn-toolbar"
+                    data-testid="mcp-detail-sync-tools"
+                    disabled={syncing}
+                    onClick={handleSyncTools}
+                  >
+                    <RefreshCw size={14} className={syncing ? "mcp-spin" : ""} />
+                    {syncing ? "同步中..." : "同步工具"}
+                  </button>
                 </div>
-              ) : (
-                <div className="placeholder-state">
-                  <svg viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="currentColor" strokeWidth="1.5" className="placeholder-icon">
-                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                  </svg>
-                  <p>暂未发现工具，点击"同步工具"尝试重新拉取。</p>
-                </div>
-              )}
-            </article>
 
-            <article className="detail-card runtime-card">
-              <div className="card-head">
-                <h3 className="section-title">
-                  <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-                  </svg>
+                {currentServer.tools.length > 0 ? (
+                  <div className="list-rows">
+                    {currentServer.tools.map((tool) => {
+                      const hasSchema =
+                        tool.inputSchema && hasSchemaProperties(tool.inputSchema);
+                      const params = hasSchema
+                        ? Object.entries(getSchemaProperties(tool.inputSchema!))
+                        : [];
+
+                      return (
+                        <article
+                          key={tool.id}
+                          className="list-row list-row--with-description"
+                        >
+                          <div className="list-row__lead">
+                            <Wrench size={14} style={{ color: "var(--text-muted)" }} />
+                          </div>
+                          <div className="list-row__main">
+                            <div className="list-row__title-row">
+                              <span className="list-row__title">{tool.name}</span>
+                              <span className={`tag tag--${riskVariant(tool.risk)}`}>
+                                {riskLabel(tool.risk)}
+                              </span>
+                            </div>
+                            {tool.description && (
+                              <div className="list-row__description">{tool.description}</div>
+                            )}
+                            {hasSchema && (
+                              <details className="mcp-tool-schema">
+                                <summary>输入参数（{params.length}）</summary>
+                                <ul className="mcp-tool-params">
+                                  {params.map(([paramName, paramDef]) => (
+                                    <li key={paramName} className="mcp-tool-param">
+                                      <code className="mcp-param-name">{paramName}</code>
+                                      <span className="mcp-param-type">
+                                        {resolveParamType(paramDef)}
+                                      </span>
+                                      {isRequiredParam(tool.inputSchema!, paramName) && (
+                                        <span className="mcp-param-required">required</span>
+                                      )}
+                                      {resolveParamDesc(paramDef) && (
+                                        <span className="mcp-param-desc">
+                                          {resolveParamDesc(paramDef)}
+                                        </span>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+                            )}
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="empty-state empty-state--minimal">
+                    <p className="empty-state__body">
+                      暂未发现工具，点击「同步工具」尝试重新拉取。
+                    </p>
+                  </div>
+                )}
+              </article>
+
+              <article className="glass-card glass-card--flat mcp-info-card">
+                <h3 className="mcp-section-title">
+                  <Activity size={14} />
                   运行状态
                 </h3>
-              </div>
-              <dl className="info-grid">
-                <div className="info-item">
-                  <dt>连接状态</dt>
-                  <dd>
-                    <span
-                      className="inline-badge"
-                      data-connected={String(currentServer.state?.connected ?? false)}
+                <dl className="mcp-info-list">
+                  <div>
+                    <dt>连接状态</dt>
+                    <dd>
+                      <span
+                        className={`tag tag--${currentServer.state?.connected ? "green" : "muted"}`}
+                      >
+                        {currentServer.state?.connected ? "已连接" : "未连接"}
+                      </span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>工具数量</dt>
+                    <dd className="mcp-stat-value">
+                      {currentServer.state?.toolCount ?? currentServer.tools.length}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>最近检查时间</dt>
+                    <dd className="mcp-mono">{lastCheckedLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>最近错误</dt>
+                    <dd
+                      className={recentErrorLabel !== "—" ? "mcp-error-text" : ""}
                     >
-                      {currentServer.state?.connected ? "已连接" : "未连接"}
-                    </span>
-                  </dd>
-                </div>
-                <div className="info-item">
-                  <dt>工具数量</dt>
-                  <dd className="stat-value">
-                    {currentServer.state?.toolCount ?? currentServer.tools.length}
-                  </dd>
-                </div>
-                <div className="info-item">
-                  <dt>最近检查时间</dt>
-                  <dd>{lastCheckedLabel}</dd>
-                </div>
-                <div className="info-item full-width">
-                  <dt>最近错误</dt>
-                  <dd className={recentErrorLabel !== "—" ? "error-text" : ""}>{recentErrorLabel}</dd>
-                </div>
-              </dl>
-            </article>
-          </section>
-        </>
-      )}
-      </div>
+                      {recentErrorLabel}
+                    </dd>
+                  </div>
+                </dl>
+              </article>
+            </>
+          )}
+        </div>
+      </main>
 
       <style>{`
-        .mcp-content-wrapper { max-width: 900px; margin: 0 auto; width: 100%; padding: 32px 48px; display: flex; flex-direction: column; gap: 24px; }
-
-        .settings-detail-pane {
-          display: flex;
-          height: 100%;
+        /* MCP 详情页：max-width 1100，单列流式（双列 grid 仅用于概览/连接） */
+        .mcp-detail-content {
+          max-width: 1100px;
+          margin: 0 auto;
           width: 100%;
-          flex-direction: column;
-          overflow-y: auto;
-          position: relative;
-          background: #0d0d0f;
-          padding: 0;
-        }
-
-        
-
-        .header-actions {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
-
-        .eyebrow {
-          display: inline-block;
-          margin-bottom: 8px;
-          color: var(--accent-cyan, #67e8f9);
-          font-size: 12px;
-          font-weight: 700;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-
-        .page-title {
-          margin: 0;
-          font-size: 28px;
-          font-weight: 800;
-          letter-spacing: -0.02em;
-          color: var(--text-primary, #fff);
-        }
-
-        .page-subtitle {
-          margin: 10px 0 0;
-          max-width: 620px;
-          color: var(--text-secondary, #b0b0b8);
-          line-height: 1.7;
-        }
-
-        .secondary-link, .secondary-button, .primary-button {
-          height: 32px;
-          border-radius: 8px;
-          padding: 0 14px;
-          font-size: 12px;
-          font-weight: 600;
-          transition: all 0.2s ease;
-        }
-
-        .secondary-link, .secondary-button {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-          text-decoration: none;
-          border: 1px solid var(--glass-border, #41414b);
-          background: transparent;
-          color: var(--text-primary, #fff);
-          cursor: pointer;
-        }
-
-        .secondary-link:hover, .secondary-button:hover {
-          border-color: var(--accent-cyan, #67e8f9);
-          color: var(--accent-cyan, #67e8f9);
-        }
-
-        .primary-button {
-          border: none;
-          color: #fff;
-          background: linear-gradient(135deg, var(--accent-cyan), rgba(16, 163, 127, 0.7));
-          cursor: pointer;
-        }
-
-        .primary-button:hover {
-          filter: brightness(1.15);
-          transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(16, 163, 127, 0.25);
-        }
-
-        .danger-button {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 6px;
-          height: 32px;
-          border-radius: 8px;
-          padding: 0 14px;
-          font-size: 12px;
-          font-weight: 600;
-          border: 1px solid rgba(239, 68, 68, 0.4);
-          background: rgba(239, 68, 68, 0.12);
-          color: #f87171;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-        .danger-button:hover {
-          background: rgba(239, 68, 68, 0.25);
-          border-color: rgba(239, 68, 68, 0.6);
-        }
-
-        .error-banner {
-          margin: 0 0 20px;
-          padding: 14px 18px;
-          border-radius: 14px;
-          color: #fca5a5;
-          background: rgba(239, 68, 68, 0.1);
-          border: 1px solid rgba(239, 68, 68, 0.2);
-          font-size: 13px;
-          line-height: 1.6;
-        }
-
-        .empty-state {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 12px;
-          padding: 56px 24px;
-          border-radius: 18px;
-          border: 1px dashed var(--glass-border, #3f3f46);
-          background: color-mix(in srgb, var(--bg-card, #1b1b20) 70%, transparent);
-          text-align: center;
-        }
-
-        .empty-icon { color: var(--text-muted, #6b6b76); }
-        .empty-state h3 { margin: 0; color: var(--text-primary, #fff); }
-        .empty-state p { margin: 0; color: var(--text-secondary, #b0b0b8); }
-
-        .detail-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 20px;
-          margin-bottom: 20px;
-        }
-
-        .detail-card {
-          padding: 24px;
-          border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08));
-          border-radius: 16px;
-          background: linear-gradient(145deg, rgba(20,20,24,0.6), rgba(0,0,0,0.4));
-          backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
           display: flex;
           flex-direction: column;
           gap: 16px;
-          box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-          transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
         }
 
-        .detail-card:hover {
-          border-color: color-mix(in srgb, var(--accent-cyan) 30%, var(--glass-border, #30303a));
-          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-          transform: translateY(-2px);
+        .mcp-detail-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 16px;
         }
 
-        .card-head {
+        /* 段落卡片内边距（覆盖 .glass-card 默认无 padding） */
+        .mcp-info-card { padding: 18px 20px; }
+
+        .mcp-section-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin: 0 0 14px;
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--text-primary);
+        }
+        .mcp-section-title svg { color: var(--text-muted); flex-shrink: 0; }
+
+        .mcp-section-head {
           display: flex;
           justify-content: space-between;
           align-items: center;
           gap: 12px;
-          margin-bottom: 20px;
+          margin-bottom: 14px;
         }
+        .mcp-section-head .mcp-section-title { margin-bottom: 0; }
 
-        .section-title {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin: 0;
-          font-size: 15px;
-          font-weight: 700;
-          color: var(--text-primary, #fff);
-        }
-
-        .section-title svg { color: var(--accent-cyan, #67e8f9); flex-shrink: 0; }
-
-        .info-grid {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 14px;
-          margin: 0;
-        }
-
-        .info-item {
-          padding: 12px 14px;
-          border-radius: 10px;
-          background: color-mix(in srgb, var(--bg-base, #121214) 80%, transparent);
-          border: 1px solid var(--glass-border, #28282f);
-        }
-
-        .info-item.full-width { grid-column: 1 / -1; }
-
-        .info-item dt {
-          font-size: 11px;
-          font-weight: 600;
-          color: var(--text-muted, #8d8d97);
-          text-transform: uppercase;
-          letter-spacing: 0.06em;
-          margin-bottom: 6px;
-        }
-
-        .info-item dd {
-          margin: 0;
-          font-size: 13px;
-          color: var(--text-primary, #fff);
-          line-height: 1.6;
-          word-break: break-word;
-        }
-
-        .mono-text {
-          font-family: "JetBrains Mono", "Fira Code", monospace;
-          font-size: 12px;
-        }
-
-        .stat-value { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; }
-        .error-text { color: #fca5a5; }
-
-        .inline-badge {
-          display: inline-flex;
-          align-items: center;
-          padding: 2px 10px;
-          border-radius: 999px;
-          font-size: 12px;
-          font-weight: 600;
-          border: 1px solid var(--glass-border, #3f3f46);
-          background: color-mix(in srgb, var(--bg-base, #111214) 80%, transparent);
-          color: var(--text-secondary, #b0b0b8);
-        }
-
-        .inline-badge[data-health="healthy"],
-        .inline-badge[data-connected="true"],
-        .inline-badge[data-enabled="true"] {
-          color: var(--status-green);
-          border-color: rgba(34, 197, 94, 0.25);
-          background: rgba(34, 197, 94, 0.1);
-        }
-
-        .inline-badge[data-health="error"] {
-          color: var(--status-red);
-          border-color: rgba(239, 68, 68, 0.25);
-          background: rgba(239, 68, 68, 0.1);
-        }
-
-        .transport-badge {
-          display: inline-flex;
-          align-items: center;
-          padding: 2px 10px;
-          border-radius: 6px;
-          font-size: 12px;
-          font-weight: 700;
-          font-family: monospace;
-          letter-spacing: 0.04em;
-          color: var(--accent-cyan, #67e8f9);
-          background: rgba(103, 232, 249, 0.08);
-          border: 1px solid rgba(103, 232, 249, 0.18);
-        }
-
-        .tools-card { grid-column: 1 / -1; }
-
-        .tool-count-badge {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-width: 22px;
-          height: 22px;
-          padding: 0 6px;
-          border-radius: 999px;
-          font-size: 11px;
-          font-weight: 700;
-          color: var(--accent-cyan, #67e8f9);
-          background: rgba(103, 232, 249, 0.12);
-        }
-
-        .sync-button {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          height: 28px;
-          padding: 0 12px;
-          border-radius: 8px;
-          font-size: 12px;
-          font-weight: 600;
-          border: 1px solid var(--glass-border, #3f3f46);
-          background: transparent;
-          color: var(--text-secondary, #b0b0b8);
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .sync-button:hover:not(:disabled) {
-          border-color: var(--accent-cyan, #67e8f9);
-          color: var(--accent-cyan, #67e8f9);
-          transform: translateY(-1px);
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-        }
-
-        .sync-button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .spinning { animation: spin 1s linear infinite; }
-
-        .tool-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-          gap: 14px;
-        }
-
-        .tool-card {
-          padding: 14px;
-          border-radius: 12px;
-          border: 1px solid var(--glass-border, #28282f);
-          background: color-mix(in srgb, var(--bg-base, #121214) 70%, transparent);
+        /* 键值列表（label | value） */
+        .mcp-info-list {
           display: flex;
           flex-direction: column;
-          gap: 8px;
-          transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+          gap: 0;
+          margin: 0;
         }
-
-        .tool-card:hover {
-          border-color: var(--glass-border, #3f3f46);
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-          transform: translateY(-1px);
-        }
-
-        .tool-header {
-          display: flex;
+        .mcp-info-list > div {
+          display: grid;
+          grid-template-columns: 96px 1fr;
           align-items: center;
-          justify-content: space-between;
-          gap: 8px;
+          gap: 16px;
+          padding: 8px 0;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+          min-width: 0;
         }
-
-        .tool-name {
-          display: flex;
-          align-items: center;
-          gap: 6px;
+        .mcp-info-list > div:last-child { border-bottom: none; }
+        .mcp-info-list dt {
+          font-size: 12px;
+          color: var(--text-muted);
+          font-weight: 500;
+        }
+        .mcp-info-list dd {
+          margin: 0;
           font-size: 13px;
-          font-weight: 600;
-          color: var(--text-primary, #fff);
+          color: var(--text-primary);
+          line-height: 1.55;
+          word-break: break-word;
+          min-width: 0;
         }
 
-        .risk-badge {
+        .mcp-mono {
+          font-family: "Cascadia Code", "Fira Code", ui-monospace, "SFMono-Regular", monospace;
+          font-size: 12px;
+        }
+        .mcp-mono--block {
+          white-space: pre;
+          padding: 8px 10px;
+          background: var(--bg-base);
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          overflow-x: auto;
+        }
+
+        .mcp-stat-value {
+          font-size: 18px;
+          font-weight: 700;
+          letter-spacing: -0.01em;
+          color: var(--text-primary);
+        }
+        .mcp-error-text { color: var(--status-red); }
+
+        /* 工具行内的折叠 schema */
+        .mcp-tool-schema {
+          margin-top: 6px;
+        }
+        .mcp-tool-schema summary {
           font-size: 11px;
           font-weight: 600;
-          padding: 2px 8px;
-          border-radius: 999px;
-          border: 1px solid var(--glass-border, #3f3f46);
-          color: var(--text-secondary, #b0b0b8);
+          color: var(--text-muted);
+          cursor: pointer;
+          padding: 4px 0;
+          letter-spacing: 0.04em;
+          text-transform: uppercase;
         }
+        .mcp-tool-schema summary:hover { color: var(--text-secondary); }
+        .mcp-tool-schema[open] summary { color: var(--text-primary); }
 
-        .risk-badge[data-risk="low"] { color: var(--status-green); border-color: rgba(34,197,94,0.25); background: rgba(34,197,94,0.08); }
-        .risk-badge[data-risk="medium"] { color: var(--status-yellow); border-color: rgba(245,158,11,0.25); background: rgba(245,158,11,0.08); }
-        .risk-badge[data-risk="high"] { color: var(--status-red); border-color: rgba(239,68,68,0.25); background: rgba(239,68,68,0.08); }
-
-        .tool-desc { font-size: 12px; color: var(--text-secondary, #b0b0b8); margin: 0; line-height: 1.5; }
-
-        .tool-schema {
-          padding-top: 8px;
-          border-top: 1px solid var(--glass-border, #28282f);
-        }
-
-        .schema-header {
+        .mcp-tool-params {
+          list-style: none;
+          padding: 6px 0 4px;
+          margin: 0;
           display: flex;
-          align-items: center;
+          flex-direction: column;
           gap: 4px;
+        }
+        .mcp-tool-param {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: baseline;
+          gap: 8px;
+          font-size: 12px;
+        }
+        .mcp-param-name {
+          font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace;
+          font-size: 12px;
+          color: var(--text-primary);
+          background: rgba(255, 255, 255, 0.04);
+          padding: 1px 5px;
+          border-radius: var(--radius-sm);
+        }
+        .mcp-param-type {
+          font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace;
+          color: var(--accent-cyan);
+        }
+        .mcp-param-required {
           font-size: 10px;
           font-weight: 700;
-          color: var(--text-muted, #71717a);
+          color: var(--status-yellow);
           text-transform: uppercase;
-          letter-spacing: 0.06em;
-          margin-bottom: 8px;
+          letter-spacing: 0.04em;
+        }
+        .mcp-param-desc {
+          color: var(--text-muted);
+          flex: 1;
+          min-width: 200px;
         }
 
-        .schema-params { display: flex; flex-direction: column; gap: 4px; }
+        @keyframes mcp-spin { to { transform: rotate(360deg); } }
+        .mcp-spin { animation: mcp-spin 1s linear infinite; }
 
-        .param-row {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          flex-wrap: wrap;
-          font-size: 12px;
-        }
-
-        .param-name { font-weight: 600; color: var(--text-primary, #fff); font-family: monospace; }
-        .param-type { color: var(--accent-cyan, #67e8f9); font-family: monospace; }
-        .param-required { color: #fbbf24; font-size: 10px; font-weight: 700; text-transform: uppercase; }
-        .param-desc { color: var(--text-muted, #71717a); }
-
-        .placeholder-state {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 10px;
-          padding: 32px;
-          text-align: center;
-        }
-
-        .placeholder-icon { color: var(--text-muted, #52525b); }
-        .placeholder-state p { margin: 0; color: var(--text-secondary, #b0b0b8); font-size: 13px; }
-
-        /* 表单样式 */
-        .server-form { display: flex; flex-direction: column; gap: 20px; }
-
-        .form-grid {
+        /* 表单 */
+        .mcp-form { display: flex; flex-direction: column; gap: 14px; }
+        .mcp-form-grid {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
-          gap: 16px;
+          gap: 12px;
+        }
+        .mcp-form-field {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+          min-width: 0;
+        }
+        .mcp-form-field--full { grid-column: 1 / -1; }
+        .mcp-form-field > span {
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--text-muted);
+        }
+        .mcp-form-field input,
+        .mcp-form-field select,
+        .mcp-form-field textarea {
+          width: 100%;
+          padding: 8px 12px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: var(--bg-base);
+          color: var(--text-primary);
+          font: inherit;
+          font-size: 13px;
+          transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          box-sizing: border-box;
+        }
+        .mcp-form-field input:hover:not(:disabled),
+        .mcp-form-field select:hover:not(:disabled),
+        .mcp-form-field textarea:hover:not(:disabled) {
+          border-color: var(--glass-border-hover);
+        }
+        .mcp-form-field input:focus,
+        .mcp-form-field select:focus,
+        .mcp-form-field textarea:focus {
+          outline: none;
+          border-color: var(--accent-cyan);
+          box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
+        }
+        .mcp-form-field input:disabled,
+        .mcp-form-field select:disabled,
+        .mcp-form-field textarea:disabled {
+          opacity: 0.55;
+          cursor: not-allowed;
+        }
+        .mcp-form-field select {
+          appearance: none;
+          -webkit-appearance: none;
+          cursor: pointer;
+          padding-right: 32px;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 10px center;
+          background-size: 12px;
+        }
+        .mcp-form-field textarea {
+          font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace;
+          resize: vertical;
         }
 
-        .field { display: flex; flex-direction: column; gap: 8px; }
-        .field span { font-size: 13px; font-weight: 600; color: var(--text-muted, #8d8d97); }
-        .field.full-width { grid-column: 1 / -1; }
-        .checkbox-field { flex-direction: row; align-items: center; gap: 10px; padding: 12px 16px; background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08)); border-radius: 8px; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
-        .checkbox-field:hover { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.15); }
-        .checkbox-field input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent-cyan, #10a37f); cursor: pointer; }
-        .checkbox-field span { font-weight: 500; font-size: 13px; color: var(--text-primary, #ededed); }
-        .field input, .field select, .field textarea { width: 100%; border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.08)); border-radius: 8px; background: rgba(0,0,0,0.15); color: var(--text-primary, #fff); padding: 10px 14px; font: inherit; font-size: 13px; transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); box-sizing: border-box; }
-        .field input:hover, .field textarea:hover, .field select:hover { border-color: rgba(255,255,255,0.15); background: rgba(0,0,0,0.25); }
-        .field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent-cyan, #10a37f); box-shadow: 0 0 0 3px rgba(16,163,127,0.15), inset 0 1px 2px rgba(0,0,0,0.2); outline: none; background: rgba(0,0,0,0.3); }
-        .field select { appearance: none; -webkit-appearance: none; padding-right: 36px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; }
-        .field select option { background: var(--bg-card, #1b1b20); color: var(--text-primary, #fff); padding: 8px 12px; }
+        .mcp-form-checkbox {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 10px 14px;
+          background: var(--bg-surface);
+          border: 1px solid var(--row-border);
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease;
+        }
+        .mcp-form-checkbox:hover {
+          background: var(--bg-surface-hover);
+          border-color: var(--row-border-hover);
+        }
+        .mcp-form-checkbox input[type="checkbox"] {
+          accent-color: var(--accent-cyan);
+          width: 14px;
+          height: 14px;
+          margin: 0;
+        }
+        .mcp-form-checkbox span {
+          font-size: 13px;
+          color: var(--text-primary);
+        }
 
-        .field input:disabled { opacity: 0.5; cursor: not-allowed; }
+        .mcp-form-error {
+          margin: 0;
+          color: var(--status-red);
+          font-size: 13px;
+        }
 
-        .form-error { margin: 0; color: var(--status-red); font-size: 13px; }
-
-        .form-actions {
+        .mcp-form-actions {
           display: flex;
           justify-content: flex-end;
-          gap: 12px;
-          padding-top: 8px;
+          gap: 8px;
+          padding-top: 4px;
         }
 
         @media (max-width: 900px) {
-          .detail-grid { grid-template-columns: 1fr; }
-          .form-grid { grid-template-columns: 1fr; }
+          .mcp-detail-grid { grid-template-columns: 1fr; }
+          .mcp-form-grid { grid-template-columns: 1fr; }
+          .mcp-info-list > div { grid-template-columns: 80px 1fr; }
         }
       `}</style>
-    </main>
+    </div>
   );
 }
