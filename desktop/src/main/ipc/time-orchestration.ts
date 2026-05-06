@@ -171,7 +171,7 @@ export function registerTimeOrchestrationHandlers(ctx: RuntimeContext): void {
   });
 
   ipcMain.handle("time:suggest-timeboxes", async () => {
-    console.info("[time-ipc] 鐢熸垚鏃堕棿鍧楀缓璁?");
+    console.info("[time-ipc] 生成时间块建议");
     const items = await requireTimeApplication(ctx).suggestTimeboxes();
     return { items };
   });
