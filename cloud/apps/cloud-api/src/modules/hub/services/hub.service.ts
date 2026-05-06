@@ -41,7 +41,7 @@ export class HubService {
         name: item.name,
         summary: item.summary,
         latestVersion: item.latestVersion,
-        iconUrl: `/api/hub/items/${item.id}/icon`
+        iconUrl: null
       }));
   }
 

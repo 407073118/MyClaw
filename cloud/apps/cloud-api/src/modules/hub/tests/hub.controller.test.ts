@@ -14,7 +14,7 @@ describe("hub controller", () => {
         name: "Onboarding Assistant",
         summary: "Employee package",
         latestVersion: "1.0.0",
-        iconUrl: "/api/hub/items/employee-onboarding-assistant/icon",
+        iconUrl: null,
       },
     ]);
 
@@ -41,7 +41,7 @@ describe("hub controller", () => {
           name: "Onboarding Assistant",
           summary: "Employee package",
           latestVersion: "1.0.0",
-          iconUrl: "/api/hub/items/employee-onboarding-assistant/icon",
+          iconUrl: null,
         },
       ],
     });
@@ -219,5 +219,30 @@ describe("hub controller", () => {
       version: "1.1.0",
     });
     expect(publishWorkflowPackageRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects icon requests with a stable not-found code", async () => {
+    const controller = new HubController(
+      {
+        list: async () => [],
+        findById: async () => null,
+      } as unknown as HubService,
+      {
+        getManifest: () => {
+          throw new Error("not used");
+        },
+        createDownloadToken: async () => {
+          throw new Error("not used");
+        },
+      } as unknown as ArtifactService,
+    );
+
+    try {
+      controller.icon("any-id");
+      throw new Error("expected NotFoundException");
+    } catch (error) {
+      expect(error).toBeInstanceOf(NotFoundException);
+      expect((error as NotFoundException).message).toBe("hub_item_icon_not_found");
+    }
   });
 });

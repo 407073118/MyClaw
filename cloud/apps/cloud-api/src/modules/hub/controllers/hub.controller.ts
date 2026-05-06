@@ -55,6 +55,11 @@ export class HubController {
     return item;
   }
 
+  @Get("items/:id/icon")
+  icon(@Param("id") _id: string) {
+    throw new NotFoundException("hub_item_icon_not_found");
+  }
+
   @Post("items/:id/employee-releases")
   @UseInterceptors(FileInterceptor("file"))
   async publishEmployeeRelease(
