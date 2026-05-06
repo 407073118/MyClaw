@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
-last_updated: "2026-04-21T15:21:40.938Z"
-last_activity: 2026-04-21
+last_updated: "2026-05-06T03:17:22.990Z"
+last_activity: 2026-05-06
 progress:
   total_phases: 8
   completed_phases: 1
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-04-21
+Last activity: 2026-05-06 - Completed quick task 260506-foh: 挂载 HubModule 到 cloud-api app.module.ts，并补全 hub item icon 端点，修复 cloud-web /hub 页面与 skills 详情下载链路
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -110,6 +110,12 @@ None yet.
 - 需要在 Phase 4 规划前确认首批企业连接器优先级，按业务价值、鉴权可行性和数据语义排序。
 - 需要明确 desktop 到 cloud 的身份透传与平台代理 token 边界。
 - 需要在 Phase 5 规划前收敛首批值得做 A2UI 的 create/update 流程范围。
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260506-foh | 挂载 HubModule 到 cloud-api app.module.ts，并补全 hub item icon 端点，修复 cloud-web /hub 页面与 skills 详情下载链路 | 2026-05-06 | dac598c | [260506-foh-hubmodule-cloud-api-app-module-ts-hub-it](./quick/260506-foh-hubmodule-cloud-api-app-module-ts-hub-it/) |
 
 ## Session Continuity
 
