@@ -320,6 +320,8 @@ export default function ChatPage() {
   const timelineStickToBottomRef = useRef(true);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const confirmCancelRef = useRef<HTMLButtonElement | null>(null);
+  // 投递痕迹 5s 自动消失的定时器集中管理，组件 unmount 时统一清理。
+  const dispatchTraceTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
   // 跟踪当前轮次工具执行状态，用于增强聊天时间线展示。
   const [activeTools, setActiveTools] = useState<Map<string, { toolId: string; toolName: string; startTime: number; args?: Record<string, unknown> }>>(new Map());
@@ -450,6 +452,15 @@ export default function ChatPage() {
   useEffect(() => {
     setMentionTargetSiliconPersonId(null);
   }, [activeSiliconPersonId]);
+
+  /** 组件 unmount 时清理所有挂起的 5s 投递痕迹定时器，避免 React state-on-unmounted 警告。 */
+  useEffect(() => {
+    const timers = dispatchTraceTimersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
 
   /** 进入硅基员工聊天页后先刷新一次员工摘要，保证 currentSession 摘要与未读状态同步。 */
   useEffect(() => {
@@ -1081,16 +1092,22 @@ export default function ChatPage() {
         const person = siliconPersons.find((sp) => sp.id === mentionTargetSiliconPersonId);
         await workspace.sendSiliconPersonMessage(mentionTargetSiliconPersonId, draft);
         if (person) {
+          const newTraceId = `${Date.now()}-${mentionTargetSiliconPersonId}`;
           setDispatchTraces((prev) => [
             ...prev,
             {
-              id: `${Date.now()}-${mentionTargetSiliconPersonId}`,
+              id: newTraceId,
               personName: person.name,
               personId: person.id,
               content: draft,
               timestamp: new Date().toLocaleTimeString(),
             },
           ]);
+          const timer = setTimeout(() => {
+            setDispatchTraces((prev) => prev.filter((t) => t.id !== newTraceId));
+            dispatchTraceTimersRef.current.delete(timer);
+          }, 5000);
+          dispatchTraceTimersRef.current.add(timer);
         }
         setMentionTargetSiliconPersonId(null);
         return true;
@@ -1906,6 +1923,25 @@ export default function ChatPage() {
                 </div>
                 );
               })}
+
+              {/* @ 投递痕迹（轻量系统提示，跟随消息流滚动，5s 后自动消失） */}
+              {dispatchTraces.length > 0 && (
+                <div className="dispatch-traces">
+                  {dispatchTraces.map((trace) => (
+                    <div key={trace.id} className="dispatch-trace-card">
+                      <span className="dispatch-trace-dot" />
+                      <span className="dispatch-trace-text">
+                        已投递给 @{trace.personName}: {trace.content.length > 30 ? `${trace.content.slice(0, 30)}...` : trace.content}
+                      </span>
+                      <button
+                        type="button"
+                        className="dispatch-trace-link"
+                        onClick={() => workspace.setActiveSiliconPersonId(trace.personId)}
+                      >进入对话</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
 
@@ -1923,25 +1959,6 @@ export default function ChatPage() {
         {/* 计划面板 - Codex 风格，紧贴输入框上方 */}
         {!taskPanelDismissed && (
           <PlanStatePanel tasks={session?.tasks ?? []} onDismiss={() => setTaskPanelDismissed(true)} />
-        )}
-
-        {/* @ 投递痕迹卡片 */}
-        {dispatchTraces.length > 0 && (
-          <div className="dispatch-traces">
-            {dispatchTraces.map((trace) => (
-              <div key={trace.id} className="dispatch-trace-card">
-                <span className="dispatch-trace-dot" />
-                <span className="dispatch-trace-text">
-                  已投递给 @{trace.personName}: {trace.content.length > 30 ? `${trace.content.slice(0, 30)}...` : trace.content}
-                </span>
-                <button
-                  type="button"
-                  className="dispatch-trace-link"
-                  onClick={() => workspace.setActiveSiliconPersonId(trace.personId)}
-                >进入对话</button>
-              </div>
-            ))}
-          </div>
         )}
 
         {/* ── 后台研究面板 ── */}
@@ -2419,11 +2436,11 @@ export default function ChatPage() {
         .mention-status-needs_approval { color: var(--status-yellow); border-color: rgba(245,158,11,0.3); }
         .mention-status-done { color: var(--status-green); border-color: rgba(34,197,94,0.3); }
         .mention-status-error { color: var(--status-red); border-color: rgba(239,68,68,0.3); }
-        .dispatch-traces { display: flex; flex-direction: column; gap: 6px; max-width: 1200px; margin: 0 auto; padding: 0 48px 8px; }
-        .dispatch-trace-card { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-md); font-size: 13px; line-height: 1.4; }
-        .dispatch-trace-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-cyan); flex-shrink: 0; }
-        .dispatch-trace-text { flex: 1; min-width: 0; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .dispatch-trace-link { flex-shrink: 0; color: var(--accent-cyan); font-size: 12px; font-weight: 500; text-decoration: none; transition: opacity 0.15s; background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
+        .dispatch-traces { display: flex; flex-direction: column; gap: 4px; max-width: 1200px; margin: 0 auto; padding: 4px 48px; }
+        .dispatch-trace-card { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: transparent; border: none; border-radius: 0; font-size: 12px; line-height: 1.4; color: var(--text-muted); opacity: 0.85; }
+        .dispatch-trace-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-cyan); flex-shrink: 0; }
+        .dispatch-trace-text { flex: 1; min-width: 0; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .dispatch-trace-link { flex-shrink: 0; color: var(--accent-cyan); font-size: 11px; font-weight: 500; text-decoration: none; transition: opacity 0.15s; background: none; border: none; cursor: pointer; padding: 0; font-family: inherit; }
         .dispatch-trace-link:hover { opacity: 0.8; text-decoration: underline; }
 
         /* ── 上下文压缩警告 ── */
