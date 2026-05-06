@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
+import { MessageSquare, Plus, Settings2, Users } from "lucide-react";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "空闲",
@@ -20,6 +21,12 @@ const STATUS_VARIANT: Record<string, string> = {
   error: "red",
   canceling: "yellow",
   canceled: "muted",
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  enterprise: "企业",
+  hub: "Hub",
+  personal: "个人",
 };
 
 function getAvatarColor(name: string): string {
@@ -42,7 +49,7 @@ export default function SiliconPersonEntryPage() {
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 点击卡片后切换共享聊天对象，并进入主聊天容器。 */
+  /** 切换共享聊天对象，并进入主聊天容器。 */
   function handleOpenChat(personId: string) {
     console.info("[SiliconPersonEntryPage] 切换硅基员工聊天对象", {
       siliconPersonId: personId,
@@ -60,347 +67,128 @@ export default function SiliconPersonEntryPage() {
   }
 
   return (
-    <main data-testid="silicon-person-entry-view" className="page-container" style={{ height: "100%", overflowY: "auto" }}>
-      <header className="page-header">
-        <div className="header-text">
-          <span className="eyebrow">Silicon Person</span>
-          <h2 className="page-title">硅基员工</h2>
-          <p className="page-subtitle">管理你的硅基员工，点击卡片进入共享聊天对话。</p>
-        </div>
-        {loadError && (
-          <p style={{ color: "var(--status-error)", fontSize: "13px", margin: "8px 0 0" }}>
-            加载失败：{loadError}
+    <div className="page-shell" data-testid="silicon-person-entry-view">
+      <header className="page-header page-header--sticky">
+        <div className="page-header__lead">
+          <div className="page-header__eyebrow">
+            <Users size={14} />
+            <span>Silicon Person</span>
+          </div>
+          <h2 className="page-header__title">硅基员工</h2>
+          <p className="page-header__subtitle">
+            管理你的硅基员工，点击名称进入共享聊天对话。
           </p>
-        )}
-        <div className="header-actions">
+        </div>
+        <div className="page-header__actions">
           <button
-            className="btn-premium accent"
+            type="button"
+            className="btn-primary"
             data-testid="silicon-person-create-btn"
             onClick={() => navigate("/employees/new")}
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
+            <Plus size={14} />
             新建硅基员工
           </button>
         </div>
       </header>
 
-      <div className="sp-stats-row">
-        <span className="sp-stats-count">{workspace.siliconPersons.length} 位硅基员工</span>
-      </div>
-
-      {workspace.siliconPersons.length === 0 ? (
-        <div className="sp-empty-state">
-          <div className="sp-empty-icon">
-            <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="8" y="6" width="32" height="36" rx="4" />
-              <circle cx="24" cy="20" r="6" />
-              <path d="M14 38c0-5.523 4.477-10 10-10s10 4.477 10 10" />
-            </svg>
+      <main className="page-content">
+        {loadError ? (
+          <div className="banner banner--error">
+            <span>加载失败：{loadError}</span>
           </div>
-          <p>还没有硅基员工</p>
-          <p className="sp-empty-hint">点击右上角「新建硅基员工」开始创建</p>
-        </div>
-      ) : (
-        <div className="glass-grid glass-grid--sm">
-          {workspace.siliconPersons.map((person) => (
-            <article
-              key={person.id}
-              className="glass-card glass-card--accent sp-card-link"
-              data-testid={`silicon-person-card-${person.id}`}
+        ) : null}
+
+        {workspace.siliconPersons.length === 0 ? (
+          <section className="empty-state">
+            <Users size={32} className="empty-state__icon" />
+            <h3 className="empty-state__title">还没有硅基员工</h3>
+            <p className="empty-state__body">
+              点击右上角「新建硅基员工」开始创建第一位。
+            </p>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => navigate("/employees/new")}
             >
-              <div className="glass-card__header">
-                <div className="sp-card-top">
-                  <div
-                    className="sp-avatar"
-                    style={{ background: getAvatarColor(person.name) }}
-                  >
-                    <span>{person.name[0]}</span>
+              <Plus size={14} />
+              新建硅基员工
+            </button>
+          </section>
+        ) : (
+          <div className="list-rows">
+            {workspace.siliconPersons.map((person) => {
+              const statusVariant = STATUS_VARIANT[person.status] ?? "muted";
+              const statusLabel = STATUS_LABEL[person.status] ?? person.status;
+              const sourceLabel = SOURCE_LABEL[person.source] ?? person.source;
+
+              return (
+                <article
+                  key={person.id}
+                  className="list-row list-row--with-avatar list-row--with-description"
+                  data-testid={`silicon-person-card-${person.id}`}
+                >
+                  <div className="list-row__lead">
+                    <div
+                      className="list-row__avatar"
+                      style={{ background: getAvatarColor(person.name) }}
+                      aria-hidden="true"
+                    >
+                      {person.name[0]}
+                    </div>
                   </div>
-                  <div className="sp-card-title-block">
-                    <h4>{person.name}</h4>
-                    <span className="sp-card-title-sub">{person.title || person.name}</span>
+
+                  <div className="list-row__main">
+                    <div className="list-row__title-row">
+                      <Link
+                        to="/"
+                        className="list-row__title"
+                        onClick={() => workspace.setActiveSiliconPersonId(person.id)}
+                      >
+                        {person.name}
+                      </Link>
+                      <span className={`tag tag--${statusVariant}`}>{statusLabel}</span>
+                      <span className="tag tag--muted">{sourceLabel}</span>
+                      {person.hasUnread && person.unreadCount > 0 && (
+                        <span
+                          className="tag tag--accent"
+                          title={`${person.unreadCount} 条未读消息`}
+                        >
+                          {person.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                    <div className="list-row__description">
+                      {person.description || person.title || "暂无职责描述"}
+                    </div>
                   </div>
-                </div>
-                <span className={`sp-status-dot sp-status-dot--${STATUS_VARIANT[person.status] ?? "muted"}`} title={STATUS_LABEL[person.status] ?? person.status} />
-              </div>
 
-              <div className="glass-card__body">
-                <p className="sp-card-desc">{person.description || "暂无职责描述"}</p>
-                <div className="sp-card-meta">
-                  <span className={`glass-pill glass-pill--${STATUS_VARIANT[person.status] ?? "muted"}`}>
-                    {STATUS_LABEL[person.status] ?? person.status}
-                  </span>
-                  <span className="glass-pill glass-pill--muted">{person.source === "enterprise" ? "企业" : person.source === "hub" ? "Hub" : "个人"}</span>
-                  {person.workflowIds.length > 0 && (
-                    <span className="glass-pill glass-pill--muted">{person.workflowIds.length} 个工作流</span>
-                  )}
-                </div>
-              </div>
-
-              <div className="glass-card__footer">
-                <div className="sp-card-footer-meta">
-                  <span className="sp-foot-sessions">
-                    {person.sessions.length} 个会话
-                  </span>
-                  {person.hasUnread && (
-                    <span className="sp-unread-badge">{person.unreadCount}</span>
-                  )}
-                  {person.needsApproval && (
-                    <span className="sp-approval-badge">!</span>
-                  )}
-                </div>
-                <div className="sp-card-actions">
-                  <button
-                    type="button"
-                    className="sp-card-action sp-card-action--primary"
-                    data-testid={`silicon-person-open-${person.id}`}
-                    onClick={() => handleOpenChat(person.id)}
-                  >
-                    进入对话
-                  </button>
-                  <button
-                    type="button"
-                    className="sp-card-action"
-                    data-testid={`silicon-person-manage-${person.id}`}
-                    onClick={() => handleOpenStudio(person.id)}
-                  >
-                    打开配置
-                  </button>
-                </div>
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
-
-      <style>{`
-        .sp-stats-row {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-top: -16px;
-          padding-bottom: 14px;
-          border-bottom: 1px solid var(--glass-border);
-        }
-
-        .sp-stats-count {
-          color: var(--accent-cyan);
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.04em;
-        }
-
-        /* ── Empty State ── */
-        .sp-empty-state {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 12px;
-          padding: 80px 20px;
-          color: var(--text-muted);
-          text-align: center;
-        }
-
-        .sp-empty-icon {
-          opacity: 0.3;
-          margin-bottom: 8px;
-        }
-
-        .sp-empty-state p {
-          margin: 0;
-          font-size: 14px;
-        }
-
-        .sp-empty-hint {
-          font-size: 12px !important;
-          color: var(--text-muted);
-        }
-
-        /* ── Card Link ── */
-        .sp-card-link {
-          color: var(--text-primary);
-          display: flex;
-          flex-direction: column;
-          width: 100%;
-        }
-
-        /* ── Card Inner ── */
-        .sp-card-top {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          flex: 1;
-        }
-
-        .sp-avatar {
-          width: 44px;
-          height: 44px;
-          border-radius: var(--radius-lg);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-shrink: 0;
-        }
-
-        .sp-avatar span {
-          font-size: 16px;
-          font-weight: 900;
-          color: #fff;
-        }
-
-        .sp-card-title-block {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          min-width: 0;
-          flex: 1;
-        }
-
-        .sp-card-title-block h4 {
-          margin: 0;
-          font-size: 15px;
-          font-weight: 700;
-          color: var(--text-primary);
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .sp-card-title-sub {
-          font-size: 11px;
-          color: var(--text-muted);
-          font-weight: 600;
-        }
-
-        .sp-status-dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 50%;
-          flex-shrink: 0;
-        }
-
-        .sp-status-dot--accent {
-          background: var(--accent-cyan);
-          box-shadow: 0 0 6px var(--accent-cyan);
-          animation: sp-pulse 1.5s ease-in-out infinite;
-        }
-        .sp-status-dot--green { background: var(--status-green); }
-        .sp-status-dot--yellow { background: var(--status-yellow); }
-        .sp-status-dot--red { background: var(--status-red); }
-        .sp-status-dot--muted { background: var(--text-muted); }
-
-        @keyframes sp-pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-
-        .sp-card-desc {
-          margin: 0 0 10px;
-          font-size: 13px;
-          color: var(--text-secondary);
-          line-height: 1.55;
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
-
-        .sp-card-meta {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 6px;
-        }
-
-        .sp-foot-sessions {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          font-size: 11px;
-          font-weight: 600;
-          color: var(--text-muted);
-        }
-
-        .sp-unread-badge {
-          min-width: 18px;
-          height: 18px;
-          padding: 0 5px;
-          border-radius: 9px;
-          background: var(--accent-cyan);
-          color: #fff;
-          font-size: 10px;
-          font-weight: 800;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .sp-approval-badge {
-          width: 18px;
-          height: 18px;
-          border-radius: 9px;
-          background: var(--status-yellow);
-          color: #000;
-          font-size: 11px;
-          font-weight: 900;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .sp-card-footer-meta {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          min-width: 0;
-        }
-
-        .sp-card-actions {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          margin-left: auto;
-        }
-
-        .sp-card-action {
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-width: 76px;
-          height: 30px;
-          padding: 0 12px;
-          border-radius: 999px;
-          border: 1px solid var(--glass-border);
-          background: transparent;
-          color: var(--text-secondary);
-          font-size: 11px;
-          font-weight: 700;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .sp-card-action:hover {
-          border-color: var(--glass-border-hover);
-          color: var(--text-primary);
-          background: rgba(255,255,255,0.04);
-        }
-
-        .sp-card-action--primary {
-          color: var(--accent-cyan);
-          border-color: rgba(16,163,127,0.24);
-          background: rgba(16,163,127,0.08);
-        }
-
-        .sp-card-action--primary:hover {
-          color: var(--accent-cyan);
-          border-color: rgba(16,163,127,0.38);
-          background: rgba(16,163,127,0.14);
-        }
-
-      `}</style>
-    </main>
+                  <div className="list-row__trailing">
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      data-testid={`silicon-person-open-${person.id}`}
+                      onClick={() => handleOpenChat(person.id)}
+                    >
+                      <MessageSquare size={14} />
+                      进入对话
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-toolbar"
+                      data-testid={`silicon-person-manage-${person.id}`}
+                      onClick={() => handleOpenStudio(person.id)}
+                    >
+                      <Settings2 size={14} />
+                      配置
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
