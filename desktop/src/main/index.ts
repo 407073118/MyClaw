@@ -453,9 +453,13 @@ let isQuitting = false;
 
 app.on("before-quit", (event) => {
   // 关闭浏览器进程（如果存在），避免遗留孤儿 Chrome 进程
-  shutdownToolExecutor().catch(() => {});
+  shutdownToolExecutor().catch((err) => {
+    log.warn("[shutdown] 关闭工具执行器失败", { error: err instanceof Error ? err.message : String(err) });
+  });
   // 关闭所有硅基员工工作空间的 MCP 连接
-  shutdownAllWorkspaces().catch(() => {});
+  shutdownAllWorkspaces().catch((err) => {
+    log.warn("[shutdown] 关闭硅基员工工作空间失败", { error: err instanceof Error ? err.message : String(err) });
+  });
   runtimeContext?.services.timeScheduler?.stop();
   runtimeContext?.services.timeStore?.close();
 

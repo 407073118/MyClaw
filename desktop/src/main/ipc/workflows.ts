@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { ChatSession, ModelProfile, Task, TurnOutcome, WorkflowDefinition, WorkflowRunSummary, WorkflowSummary } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
+import { createLogger } from "../services/logger";
 import { saveSession, saveWorkflow, saveWorkflowRun, deleteWorkflowFile } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
@@ -38,6 +39,8 @@ import {
 
 type UpdateWorkflowInput = Partial<WorkflowDefinition>;
 type StartWorkflowRunInput = { workflowId: string; initialState?: Record<string, unknown> };
+
+const log = createLogger("desktop-workflows");
 
 let registeredWorkflowStartRunBridge:
   | ((input: StartWorkflowRunInput) => Promise<{ runId: string }>)
@@ -763,7 +766,12 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
           updatedAt: new Date().toISOString(),
         };
         upsertWorkflowRun(ctx, failedRun);
-        trackSave(saveWorkflowRun(ctx.runtime.paths, failedRun).catch(() => {}));
+        trackSave(saveWorkflowRun(ctx.runtime.paths, failedRun).catch((err) => {
+          log.error("[workflow:start-run] 保存失败状态记录失败", {
+            runId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }));
         if (siliconPersonSession) {
           const failedTasks = applyWorkflowEventToSessionTasks({
             session: siliconPersonSession,
@@ -856,7 +864,12 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
               error: errorMsg,
             };
             upsertWorkflowRun(ctx, failedRun);
-            trackSave(saveWorkflowRun(ctx.runtime.paths, failedRun).catch(() => {}));
+            trackSave(saveWorkflowRun(ctx.runtime.paths, failedRun).catch((err) => {
+              log.error("[workflow:interrupt-resume] 保存失败状态记录失败", {
+                runId: input.runId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }));
           }
           ctx.state.activeWorkflowRuns.delete(input.runId);
           console.error("[workflow:interrupt-resume] 工作流恢复异常", { runId: input.runId, error: errorMsg });
