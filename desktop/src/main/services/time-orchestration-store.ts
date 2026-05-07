@@ -65,6 +65,9 @@ export type ExecutionRunRecordInput = {
   startedAt: string;
   finishedAt: string;
   note?: string;
+  jobId?: string;
+  outputSummary?: string;
+  errorMessage?: string;
 };
 
 export type CalendarEventUpsertInput = {
@@ -510,6 +513,9 @@ export class TimeOrchestrationStore {
 
   /**
    * 记录提醒或计划任务的执行结果，供后续审计与运行面板复用。
+   * payload_json 写入与 ExecutionRun 契约对齐的对象，保证渲染层 listExecutionRuns 取出的字段
+   * （jobId / status / outputSummary / errorMessage）真实存在；DB 列保留 entity_kind/entity_id/status
+   * 的旧字面量值（completed/failed）以避免 schema migration。
    */
   async recordExecutionRun(input: ExecutionRunRecordInput): Promise<void> {
     console.info("[time-store] 记录执行结果", {
@@ -517,6 +523,16 @@ export class TimeOrchestrationStore {
       entityId: input.entityId,
       status: input.status,
     });
+    const runId = randomUUID();
+    const persistedRun: ExecutionRun = {
+      id: runId,
+      jobId: input.jobId ?? input.entityId,
+      status: input.status === "completed" ? "succeeded" : "failed",
+      startedAt: input.startedAt,
+      finishedAt: input.finishedAt,
+      outputSummary: input.outputSummary,
+      errorMessage: input.errorMessage ?? input.note,
+    };
     this.database.run(
       `INSERT INTO execution_runs (
         id, entity_kind, entity_id, status, started_at, finished_at, payload_json
@@ -524,13 +540,13 @@ export class TimeOrchestrationStore {
         @id, @entity_kind, @entity_id, @status, @started_at, @finished_at, @payload_json
       )`,
       {
-        id: randomUUID(),
+        id: runId,
         entity_kind: input.entityKind,
         entity_id: input.entityId,
         status: input.status,
         started_at: input.startedAt,
         finished_at: input.finishedAt,
-        payload_json: JSON.stringify(input),
+        payload_json: JSON.stringify(persistedRun),
       },
     );
   }

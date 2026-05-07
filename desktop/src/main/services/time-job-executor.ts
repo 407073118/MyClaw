@@ -4,9 +4,16 @@ import { createLogger } from "./logger";
 
 const logger = createLogger("time-job-executor");
 
+const ASSISTANT_PROMPT_OUTPUT_LIMIT = 500;
+
 export type TimeJobExecutorDeps = {
   startWorkflowRun: (input: { workflowId: string; siliconPersonId?: string }) => Promise<void>;
   sendSiliconPersonMessage: (input: { siliconPersonId: string; content: string }) => Promise<void>;
+  runAssistantPrompt: (input: { prompt: string }) => Promise<{ outputSummary: string }>;
+};
+
+export type TimeJobExecutionResult = {
+  outputSummary?: string;
 };
 
 export type TimeJobExecutor = ReturnType<typeof createTimeJobExecutor>;
@@ -15,7 +22,7 @@ export type TimeJobExecutor = ReturnType<typeof createTimeJobExecutor>;
 export function createTimeJobExecutor(deps: TimeJobExecutorDeps) {
   return {
     /** 执行单条到期的计划任务，并输出统一的中文日志。 */
-    async execute(job: ScheduleJob): Promise<void> {
+    async execute(job: ScheduleJob): Promise<TimeJobExecutionResult | void> {
       logger.info("开始执行计划任务", {
         jobId: job.id,
         title: job.title,
@@ -58,12 +65,29 @@ export function createTimeJobExecutor(deps: TimeJobExecutorDeps) {
           return;
         }
 
-        case "assistant_prompt":
-        default:
-          logger.info("计划任务命中 assistant_prompt，当前以空操作完成", {
+        case "assistant_prompt": {
+          const prompt = (job.description ?? job.title).trim();
+          if (!prompt) {
+            throw new Error("assistant_prompt 类型计划任务缺少 prompt 内容（description/title 都为空）");
+          }
+          const { outputSummary } = await deps.runAssistantPrompt({ prompt });
+          const truncated = outputSummary.length > ASSISTANT_PROMPT_OUTPUT_LIMIT
+            ? outputSummary.slice(0, ASSISTANT_PROMPT_OUTPUT_LIMIT) + "…"
+            : outputSummary;
+          logger.info("计划任务 assistant_prompt 已生成摘要", {
             jobId: job.id,
-            title: job.title,
+            promptLength: prompt.length,
+            outputLength: outputSummary.length,
           });
+          return { outputSummary: truncated };
+        }
+
+        default:
+          logger.warn("计划任务命中未知 executor 类型，跳过执行", {
+            jobId: job.id,
+            executor: job.executor,
+          });
+          return;
       }
     },
   };

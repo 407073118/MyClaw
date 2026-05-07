@@ -12,6 +12,13 @@ export type TimeExecutionRunInput = {
   startedAt: string;
   finishedAt: string;
   note?: string;
+  jobId?: string;
+  outputSummary?: string;
+  errorMessage?: string;
+};
+
+export type TimeScheduleJobRunResult = {
+  outputSummary?: string;
 };
 
 export type TimeSchedulerDeps = {
@@ -24,7 +31,7 @@ export type TimeSchedulerDeps = {
   recordExecutionRun: (run: TimeExecutionRunInput) => Promise<void>;
   getAvailabilityPolicy: () => Promise<AvailabilityPolicy | null>;
   saveScheduleJob: (job: ScheduleJob) => Promise<void>;
-  runScheduleJob?: (job: DueScheduleJob) => Promise<void>;
+  runScheduleJob?: (job: DueScheduleJob) => Promise<TimeScheduleJobRunResult | void>;
 };
 
 export type TimeScheduler = ReturnType<typeof createTimeScheduler>;
@@ -173,6 +180,41 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
   let timer: ReturnType<typeof setInterval> | null = null;
   let running = false;
 
+  /** 执行单条计划任务并回写执行记录与下次触发状态。 */
+  async function runSingleScheduleJob(job: DueScheduleJob): Promise<ScheduleJob> {
+    const startedAt = now().toISOString();
+    let succeeded = true;
+    let failureNote: string | undefined;
+    let outputSummary: string | undefined;
+
+    try {
+      if (!deps.runScheduleJob) {
+        throw new Error("runScheduleJob dependency is not available");
+      }
+      const result = await deps.runScheduleJob(job);
+      outputSummary = result?.outputSummary;
+    } catch (error) {
+      succeeded = false;
+      failureNote = error instanceof Error ? error.message : String(error);
+    }
+
+    const finishedAt = now().toISOString();
+    await deps.recordExecutionRun({
+      entityKind: "schedule_job",
+      entityId: job.id,
+      jobId: job.id,
+      status: succeeded ? "completed" : "failed",
+      startedAt,
+      finishedAt,
+      note: failureNote,
+      outputSummary,
+      errorMessage: failureNote,
+    });
+    const nextState = buildNextScheduleJobState(job, finishedAt, succeeded);
+    await deps.saveScheduleJob(nextState);
+    return nextState;
+  }
+
   const api = {
     /**
      * 启动桌面时间调度轮询，周期检查到期提醒与计划任务。
@@ -225,6 +267,7 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
           await deps.recordExecutionRun({
             entityKind: "reminder",
             entityId: reminder.id,
+            jobId: reminder.id,
             status: "completed",
             startedAt,
             finishedAt,
@@ -234,32 +277,21 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
         const jobs = await deps.listDueJobs(current);
         if (deps.runScheduleJob) {
           for (const job of jobs) {
-            const startedAt = now().toISOString();
-            let succeeded = true;
-            let failureNote: string | undefined;
-
-            try {
-              await deps.runScheduleJob(job);
-            } catch (error) {
-              succeeded = false;
-              failureNote = error instanceof Error ? error.message : String(error);
-            }
-
-            const finishedAt = now().toISOString();
-            await deps.recordExecutionRun({
-              entityKind: "schedule_job",
-              entityId: job.id,
-              status: succeeded ? "completed" : "failed",
-              startedAt,
-              finishedAt,
-              note: failureNote,
-            });
-            await deps.saveScheduleJob(buildNextScheduleJobState(job, finishedAt, succeeded));
+            await runSingleScheduleJob(job);
           }
         }
       } finally {
         running = false;
       }
+    },
+
+    /** 立即执行指定计划任务，供用户手动触发“现在就跑一次”。 */
+    async executeJobNow(job: DueScheduleJob): Promise<ScheduleJob> {
+      console.info("[time-scheduler] 用户手动立即执行计划任务", {
+        jobId: job.id,
+        title: job.title,
+      });
+      return runSingleScheduleJob(job);
     },
   };
 

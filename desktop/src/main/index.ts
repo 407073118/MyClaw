@@ -217,6 +217,20 @@ async function buildRuntimeContext(
         content,
       });
     },
+    runAssistantPrompt: async ({ prompt }) => {
+      const profile = defaultModelProfileId
+        ? models.find((m) => m.id === defaultModelProfileId) ?? models[0]
+        : models[0];
+      if (!profile) {
+        throw new Error("未配置任何模型，assistant_prompt 计划任务无法执行");
+      }
+      const result = await callModel({
+        profile,
+        messages: [{ role: "user", content: prompt }],
+        timeoutMs: 60_000,
+      });
+      return { outputSummary: result.content ?? "" };
+    },
   });
   const timeScheduler = createTimeScheduler({
     listDueReminders: async (at) => timeStore.listDueReminders(at),
@@ -235,7 +249,7 @@ async function buildRuntimeContext(
       await timeStore.upsertScheduleJob(job);
     },
     runScheduleJob: async (job) => {
-      await timeJobExecutor.execute(job);
+      return await timeJobExecutor.execute(job);
     },
   });
 
