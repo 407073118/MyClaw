@@ -382,7 +382,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
         .run-panel .run-id-short { font-size: 11px; font-family: monospace; color: #a1a1aa; }
         .run-panel .run-item-top { display: flex; align-items: center; justify-content: space-between; }
         .run-panel .run-status-dot { width: 6px; height: 6px; border-radius: 50%; background: #52525b; }
-        .run-panel .run-status-dot[data-status="success"] { background: #10b981; }
+        .run-panel .run-status-dot[data-status="succeeded"] { background: #10b981; }
         .run-panel .run-status-dot[data-status="running"] { background: #2563eb; }
         .run-panel .run-status-dot[data-status="failed"] { background: #ef4444; }
         .run-panel .run-item-meta { font-size: 10px; color: #52525b; margin-top: 4px; }
@@ -409,7 +409,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
           background: #27272a;
           color: #a1a1aa;
         }
-        .run-panel .status-pill[data-status="success"] { background: rgba(16, 185, 129, 0.1); color: #10b981; }
+        .run-panel .status-pill[data-status="succeeded"] { background: rgba(16, 185, 129, 0.1); color: #10b981; }
         .run-panel .status-pill[data-status="failed"] { background: rgba(239, 68, 68, 0.1); color: #f87171; }
         .run-panel .detail-run-id { font-size: 11px; color: #52525b; margin-left: 12px; font-family: monospace; }
         .run-panel .btn-resume { background: #10b981; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 11px; cursor: pointer; }
