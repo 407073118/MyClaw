@@ -120,6 +120,7 @@ None yet.
 | 260506-ldw | 修复硅基员工对话 [模型调用失败] fetch failed：从 UI 到 fetch 全链路 6 层契约补齐（创建/会话/客户端断言/transport cause 透传/启动期回填/UI 强约束） | 2026-05-06 | 7f1d879 | [260506-ldw-fix-silicon-person-fetch-failed-enforce-](./quick/260506-ldw-fix-silicon-person-fetch-failed-enforce-/) |
 | 260506-m4g | ChatPage UI 微调：投递痕迹卡片移入消息流并 5s 自动消失，用户消息整行 row-reverse 气泡靠右区分用户/AI | 2026-05-06 | 40ff367 | [260506-m4g-chatpage-ui-dispatch-trace-inline-user](./quick/260506-m4g-chatpage-ui-dispatch-trace-inline-user/) |
 | 260506-mq5 | 修复硅基员工 SiliconRail 徽章不更新的 bug，并改用单点视觉提示替代数字计数 | 2026-05-06 | 92492dc | [260506-mq5-siliconrail-bug](./quick/260506-mq5-siliconrail-bug/) |
+| 260507-gc0 | 修复 workflow：先能跑（P0：RunPanel 切回 IPC、preload 不再吞错、status 选择器对齐 succeeded、subgraph 占位 executor）；P1/P2 待后续 | 2026-05-07 | 717f149 | [260507-gc0-workflow-sidebar](./quick/260507-gc0-workflow-sidebar/) |
 
 ## Session Continuity
 
