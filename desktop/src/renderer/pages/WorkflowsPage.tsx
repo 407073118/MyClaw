@@ -282,19 +282,19 @@ export default function WorkflowsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace.workflowSummaries, workspace.workflows, filters]);
 
-  /** 启动指定工作流运行，并在失败时提示原因。 */
+  /** 启动指定工作流运行，并在失败时提示原因。runId 缺失视为启动失败。 */
   async function handleExecute(workflowId: string) {
     try {
       const result = await workspace.startWorkflowRun(workflowId);
-      console.info(`[workflows] Started workflow run ${result.runId}`);
-      alert(
-        `Successfully started workflow run: ${result.runId}\nYou can monitor it from runtime terminal or logs.`,
-      );
+      if (!result?.runId) {
+        throw new Error("启动失败：未返回 runId");
+      }
+      console.info("[workflows] 已启动工作流运行", { workflowId, runId: result.runId });
       // 刷新运行历史，让新运行立即可见
       loadRunHistory();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Execution failed.";
-      alert(`Failed to execute workflow: ${message}`);
+      const message = error instanceof Error ? error.message : "执行失败。";
+      alert(`启动工作流失败：${message}`);
     }
   }
 

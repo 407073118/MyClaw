@@ -340,39 +340,39 @@ const myClawAPI = {
     onChannel("approval:resolved", callback),
 
   // ---- 工作流 --------------------------------------------------------------
+  // workflow:* IPC wrappers 不再静默 .catch；让 main 端的 reject 直达 renderer，
+  // 由调用方在业务上下文里给出语义化错误提示。
   fetchWorkflows: () =>
     ipcRenderer.invoke("workflow:list").then((items: unknown[]) => ({ items })),
 
   getWorkflow: (workflowId: string) =>
     ipcRenderer.invoke("workflow:get", workflowId)
-      .then((workflow: unknown) => ({ workflow }))
-      .catch(() => ({ workflow: null })),
+      .then((workflow: unknown) => ({ workflow })),
 
   createWorkflow: (input: { name: string; description?: string }) =>
-    ipcRenderer.invoke("workflow:create", input).catch(() => ({ workflow: null, items: [] })),
+    ipcRenderer.invoke("workflow:create", input),
 
   updateWorkflow: (workflowId: string, updates: Partial<WorkflowDefinition>) =>
-    ipcRenderer.invoke("workflow:update", workflowId, updates).catch(() => ({ workflow: null, items: [] })),
+    ipcRenderer.invoke("workflow:update", workflowId, updates),
 
   fetchWorkflowRuns: () =>
     ipcRenderer.invoke("workflow:list-runs")
-      .then((items: unknown[]) => ({ items }))
-      .catch(() => ({ items: [] })),
+      .then((items: unknown[]) => ({ items })),
 
   startWorkflowRun: (input: { workflowId: string; initialState?: Record<string, unknown> }) =>
-    ipcRenderer.invoke("workflow:start-run", input).catch(() => ({ runId: null })),
+    ipcRenderer.invoke("workflow:start-run", input),
 
   resumeWorkflowRun: (runId: string, resumeValue?: unknown) =>
-    ipcRenderer.invoke("workflow:interrupt-resume", { runId, resumeValue }).catch(() => ({ success: false })),
+    ipcRenderer.invoke("workflow:interrupt-resume", { runId, resumeValue }),
 
   deleteWorkflow: (workflowId: string) =>
-    ipcRenderer.invoke("workflow:delete", workflowId).catch(() => ({ success: false })),
+    ipcRenderer.invoke("workflow:delete", workflowId),
 
   cancelWorkflowRun: (runId: string) =>
-    ipcRenderer.invoke("workflow:cancel-run", runId).catch(() => ({ success: false })),
+    ipcRenderer.invoke("workflow:cancel-run", runId),
 
   getWorkflowRunDetail: (runId: string) =>
-    ipcRenderer.invoke("workflow:get-run-detail", runId).catch(() => null),
+    ipcRenderer.invoke("workflow:get-run-detail", runId),
 
   /** 订阅工作流引擎流式事件 */
   onWorkflowStream: (callback: (event: unknown) => void): UnsubscribeFn => {
