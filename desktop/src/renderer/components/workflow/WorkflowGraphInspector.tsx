@@ -276,29 +276,23 @@ export default function WorkflowGraphInspector({
       data-testid="workflow-graph-inspector"
       className={`inspector${compact ? " inspector--compact" : ""}`}
     >
-      <header className="inspector-header">
-        <div>
-          <h3 className="title">工作流图检查器</h3>
-          <p className="subtitle">结构化编辑：节点、连线、状态 Schema、策略</p>
-        </div>
-        <div className="actions">
-          {graphErrorText && (
-            <span data-testid="workflow-graph-inspector-graph-error" className="error">
-              {graphErrorText}
-            </span>
-          )}
-          {saveError && <span className="error">{saveError}</span>}
-          <button
-            data-testid="workflow-graph-inspector-save"
-            type="button"
-            className="primary"
-            disabled={!canSave}
-            onClick={handleSave}
-          >
-            保存图定义
-          </button>
-        </div>
-      </header>
+      <div className="actions">
+        {graphErrorText && (
+          <span data-testid="workflow-graph-inspector-graph-error" className="error">
+            {graphErrorText}
+          </span>
+        )}
+        {saveError && <span className="error">{saveError}</span>}
+        <button
+          data-testid="workflow-graph-inspector-save"
+          type="button"
+          className="primary"
+          disabled={!canSave}
+          onClick={handleSave}
+        >
+          保存图定义
+        </button>
+      </div>
 
       <section className={`grid${useSingleColumnLayout ? " grid--single" : ""}`}>
         {showGraphList && (
@@ -342,7 +336,6 @@ export default function WorkflowGraphInspector({
         )}
 
         <section className="panel">
-          <h4 className="panel-title">配置编辑器</h4>
           {selectedNode ? (
             <WorkflowNodeEditor
               node={selectedNode}
@@ -373,22 +366,6 @@ export default function WorkflowGraphInspector({
           display: flex;
           flex-direction: column;
           gap: 14px;
-        }
-        .inspector-header {
-          display: flex;
-          align-items: flex-start;
-          justify-content: space-between;
-          gap: 16px;
-        }
-        .inspector .title {
-          margin: 0;
-          color: var(--text-primary);
-          font-size: 18px;
-        }
-        .inspector .subtitle {
-          margin: 6px 0 0;
-          color: var(--text-secondary);
-          font-size: 13px;
         }
         .inspector .actions {
           display: flex;
@@ -422,10 +399,6 @@ export default function WorkflowGraphInspector({
         }
         .inspector .grid--single {
           grid-template-columns: 1fr;
-        }
-        .inspector--compact .inspector-header {
-          flex-direction: column;
-          align-items: stretch;
         }
         .inspector--compact .actions {
           justify-content: flex-start;
