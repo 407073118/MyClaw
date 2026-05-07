@@ -128,8 +128,6 @@ export default function WorkflowNodeEditor({
   const [joinError, setJoinError] = useState("");
   const [joinConfig, setJoinConfig] = useState<WorkflowJoinConfig>({ mode: "all", upstreamNodeIds: [] });
 
-  const toolOptionListId = `workflow-node-editor-tool-options-${node.id}`;
-  const workflowOptionListId = `workflow-node-editor-workflow-options-${node.id}`;
   const stateFieldKeyListId = `workflow-node-editor-state-field-options-${node.id}`;
   const stateFieldPathListId = `workflow-node-editor-state-path-options-${node.id}`;
 
@@ -217,13 +215,6 @@ export default function WorkflowNodeEditor({
     onUpdateNode({ ...node, llm: { ...node.llm, outputKey } });
   }
 
-  function handleToolIdInput(e: React.ChangeEvent<HTMLInputElement>) {
-    if (node.kind !== "tool") return;
-    const toolId = e.target.value;
-    console.info("[workflow] 更新 tool 节点 toolId", { nodeId: node.id, toolId });
-    onUpdateNode({ ...node, tool: { ...node.tool, toolId } });
-  }
-
   function handleToolCandidateChange(e: React.ChangeEvent<HTMLSelectElement>) {
     if (node.kind !== "tool") return;
     const toolId = e.target.value;
@@ -237,13 +228,6 @@ export default function WorkflowNodeEditor({
     const outputKey = e.target.value.trim() || undefined;
     console.info("[workflow] 更新 tool 节点 outputKey", { nodeId: node.id, outputKey: outputKey ?? null });
     onUpdateNode({ ...node, tool: { ...node.tool, outputKey } });
-  }
-
-  function handleSubgraphWorkflowIdInput(e: React.ChangeEvent<HTMLInputElement>) {
-    if (node.kind !== "subgraph") return;
-    const workflowId = e.target.value;
-    console.info("[workflow] 更新 subgraph 节点 workflowId", { nodeId: node.id, workflowId });
-    onUpdateNode({ ...node, subgraph: { ...node.subgraph, workflowId } });
   }
 
   function handleWorkflowCandidateChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -311,13 +295,6 @@ export default function WorkflowNodeEditor({
 
   function handleConditionFalseNodeIdChange(e: React.ChangeEvent<HTMLSelectElement>) {
     updateConditionRoute({ falseNodeId: e.target.value || undefined });
-  }
-
-  function handleHumanFormKeyInput(e: React.ChangeEvent<HTMLInputElement>) {
-    if (node.kind !== "human-input") return;
-    const formKey = e.target.value;
-    console.info("[workflow] 更新 human-input formKey", { nodeId: node.id, formKey });
-    onUpdateNode({ ...node, humanInput: { ...node.humanInput, formKey } });
   }
 
   function handleHumanFieldCandidateChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -483,16 +460,6 @@ export default function WorkflowNodeEditor({
               </select>
             </label>
           )}
-          <label className="field">
-            <span>Tool ID</span>
-            <input
-              data-testid="workflow-node-editor-tool-id"
-              type="text"
-              list={toolOptionListId}
-              value={node.tool.toolId}
-              onChange={handleToolIdInput}
-            />
-          </label>
           <p className="meta">{selectedToolHint}</p>
           <label className="field">
             <span>输出键</span>
@@ -525,16 +492,6 @@ export default function WorkflowNodeEditor({
               </select>
             </label>
           )}
-          <label className="field">
-            <span>工作流 ID</span>
-            <input
-              data-testid="workflow-node-editor-subgraph-workflow-id"
-              type="text"
-              list={workflowOptionListId}
-              value={node.subgraph.workflowId}
-              onChange={handleSubgraphWorkflowIdInput}
-            />
-          </label>
           <p className="meta">{selectedWorkflowHint}</p>
           <label className="field">
             <span>输出键</span>
@@ -637,16 +594,6 @@ export default function WorkflowNodeEditor({
               </select>
             </label>
           )}
-          <label className="field">
-            <span>结果字段</span>
-            <input
-              data-testid="workflow-node-editor-human-form-key"
-              type="text"
-              list={stateFieldKeyListId}
-              value={node.humanInput.formKey}
-              onChange={handleHumanFormKeyInput}
-            />
-          </label>
           <p className="meta">runtime 会把人工输入结果写回这个字段，优先复用 state schema 里的正式字段键。</p>
         </section>
       )}
@@ -724,20 +671,6 @@ export default function WorkflowNodeEditor({
         </section>
       )}
 
-      {toolCandidateOptions.length > 0 && (
-        <datalist id={toolOptionListId}>
-          {toolCandidateOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </datalist>
-      )}
-      {workflowCandidateOptions.length > 0 && (
-        <datalist id={workflowOptionListId}>
-          {workflowCandidateOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </datalist>
-      )}
       {stateFieldKeyOptions.length > 0 && (
         <datalist id={stateFieldKeyListId}>
           {stateFieldKeyOptions.map((fieldKey) => (
