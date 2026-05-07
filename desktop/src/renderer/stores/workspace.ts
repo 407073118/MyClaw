@@ -291,6 +291,8 @@ type WorkspaceState = {
   createScheduleJob: (input: Record<string, unknown>) => Promise<ScheduleJob>;
   updateScheduleJob: (input: Record<string, unknown>) => Promise<ScheduleJob>;
   deleteScheduleJob: (id: string) => Promise<void>;
+  executeScheduleJobNow: (id: string) => Promise<ScheduleJob>;
+  refreshExecutionRuns: () => Promise<ExecutionRun[]>;
   saveAvailabilityPolicy: (policy: AvailabilityPolicy) => Promise<AvailabilityPolicy>;
   refreshTodayBrief: () => Promise<TodayBrief>;
   suggestTimeboxes: () => Promise<SuggestedTimebox[]>;
@@ -762,6 +764,31 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       },
     }));
     await get().refreshTodayBrief();
+  },
+
+  async executeScheduleJobNow(id) {
+    const { item } = await window.myClawAPI.time.runScheduleJobNow(id);
+    const { items: executionRuns } = await window.myClawAPI.time.listExecutionRuns();
+    set((state) => ({
+      time: {
+        ...state.time,
+        scheduleJobs: replaceTimeItem(state.time.scheduleJobs, item, "nextRunAt"),
+        executionRuns,
+      },
+    }));
+    await get().refreshTodayBrief();
+    return item;
+  },
+
+  async refreshExecutionRuns() {
+    const { items: executionRuns } = await window.myClawAPI.time.listExecutionRuns();
+    set((state) => ({
+      time: {
+        ...state.time,
+        executionRuns,
+      },
+    }));
+    return executionRuns;
   },
 
   async saveAvailabilityPolicy(policy) {
