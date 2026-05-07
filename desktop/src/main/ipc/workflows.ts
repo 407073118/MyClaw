@@ -38,7 +38,13 @@ import {
   JoinNodeExecutor,
 } from "../services/workflow-engine";
 import type { ModelCaller, ModelProfileResolver, WorkflowCheckpointer, CheckpointData } from "../services/workflow-engine";
-import type { ToolExecutorFn, McpToolCallerFn } from "../services/workflow-engine";
+import type {
+  ToolExecutorFn,
+  McpToolCallerFn,
+  NodeExecutor,
+  NodeExecutionContext,
+  NodeExecutionResult,
+} from "../services/workflow-engine";
 import { SqliteCheckpointer } from "../services/workflow-engine/sqlite-checkpointer";
 import { broadcastSessionTasksUpdated } from "./sessions";
 import {
@@ -431,7 +437,22 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
   // ── Join ──
   registry.register(new JoinNodeExecutor());
 
+  // ── Subgraph 占位 ──
+  // 让 registry 装配阶段不再因 'No executor registered for node kind: subgraph'
+  // 直接崩，运行时 throw 友好错误，由 PregelRunner 负责落到 failed 状态。
+  // 真正的子工作流调度逻辑在后续 plan 中实现，本 executor 只是出口。
+  registry.register(new SubgraphStubExecutor());
+
   return registry;
+}
+
+/** 子工作流占位 executor：注册阶段无副作用，execute 阶段抛友好错误。 */
+class SubgraphStubExecutor implements NodeExecutor {
+  readonly kind = "subgraph" as const;
+
+  async execute(_ctx: NodeExecutionContext): Promise<NodeExecutionResult> {
+    throw new Error("子工作流尚未支持，请移除该节点");
+  }
 }
 
 // ---------------------------------------------------------------------------
