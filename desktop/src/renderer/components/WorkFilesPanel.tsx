@@ -1,4 +1,13 @@
 import { useEffect, useMemo } from "react";
+import {
+  Archive,
+  Code,
+  Database,
+  FileText,
+  Image as ImageIcon,
+  Paperclip,
+  ScrollText,
+} from "lucide-react";
 
 import type { ArtifactRecord, ArtifactScopeRef } from "@shared/contracts";
 
@@ -41,19 +50,26 @@ function kindLabel(kind: ArtifactRecord["kind"]): string {
   )[kind] ?? kind;
 }
 
-/** 类型图标映射。 */
-function kindIcon(kind: ArtifactRecord["kind"]): string {
-  return (
-    {
-      doc: "📄",
-      image: "📊",
-      code: "📝",
-      dataset: "📋",
-      archive: "📦",
-      log: "📃",
-      other: "📎",
-    } as Record<ArtifactRecord["kind"], string>
-  )[kind] ?? "📎";
+/** 类型图标映射，使用 lucide 图标避免 emoji。 */
+function KindIcon({ kind, size = 18 }: { kind: ArtifactRecord["kind"]; size?: number }) {
+  const className = `wf-item__icon-svg wf-item__icon-svg--${kind}`;
+  switch (kind) {
+    case "doc":
+      return <FileText size={size} className={className} aria-hidden />;
+    case "image":
+      return <ImageIcon size={size} className={className} aria-hidden />;
+    case "code":
+      return <Code size={size} className={className} aria-hidden />;
+    case "dataset":
+      return <Database size={size} className={className} aria-hidden />;
+    case "archive":
+      return <Archive size={size} className={className} aria-hidden />;
+    case "log":
+      return <ScrollText size={size} className={className} aria-hidden />;
+    case "other":
+    default:
+      return <Paperclip size={size} className={className} aria-hidden />;
+  }
 }
 
 /** 从 session 流事件中解析当前面板需要比对的会话 ID。 */
@@ -96,7 +112,9 @@ function ArtifactItem({
 
   return (
     <article className="wf-item">
-      <div className="wf-item__icon">{kindIcon(artifact.kind)}</div>
+      <div className="wf-item__icon">
+        <KindIcon kind={artifact.kind} size={18} />
+      </div>
       <div className="wf-item__body">
         <div className="wf-item__name">{artifact.title}</div>
         <div className="wf-item__meta">
@@ -108,10 +126,10 @@ function ArtifactItem({
         </div>
       </div>
       <div className="wf-item__actions">
-        <button type="button" className="wf-btn" onClick={() => void openArtifact(artifact.id)} title="打开文件">
+        <button type="button" className="btn-toolbar wf-btn-compact" onClick={() => void openArtifact(artifact.id)} title="打开文件">
           打开
         </button>
-        <button type="button" className="wf-btn" onClick={() => void revealArtifact(artifact.id)} title="在文件管理器中定位">
+        <button type="button" className="btn-toolbar wf-btn-compact" onClick={() => void revealArtifact(artifact.id)} title="在文件管理器中定位">
           定位
         </button>
       </div>
@@ -193,7 +211,10 @@ export default function WorkFilesPanel({
       </div>
 
       {sortedArtifacts.length === 0 ? (
-        <div className="wf-empty">{emptyHint}</div>
+        <section className="empty-state empty-state--minimal">
+          <Paperclip size={32} className="empty-state__icon" aria-hidden />
+          <p className="empty-state__body">{emptyHint}</p>
+        </section>
       ) : (
         <div className="wf-list">
           {sortedArtifacts.map((artifact) => (
@@ -208,16 +229,22 @@ export default function WorkFilesPanel({
         .wf-panel--page { width: 100%; }
         .wf-panel__header h3 { margin: 0 0 4px; font-size: 16px; color: var(--text-primary); }
         .wf-panel__header p { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
-        .wf-empty { padding: 18px; border-radius: 16px; border: 1px dashed var(--glass-border); color: var(--text-muted); font-size: 13px; background: rgba(255,255,255,0.03); text-align: center; }
         .wf-list { display: flex; flex-direction: column; gap: 8px; }
-        .wf-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: 14px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03); }
-        .wf-item__icon { font-size: 20px; line-height: 1; flex-shrink: 0; margin-top: 2px; }
+        .wf-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: var(--radius-lg); border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03); }
+        .wf-item__icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; color: var(--text-secondary); border-radius: var(--radius-sm); background: rgba(255,255,255,0.04); }
+        .wf-item__icon-svg { display: block; }
+        .wf-item__icon-svg--doc { color: var(--text-secondary); }
+        .wf-item__icon-svg--image { color: var(--accent-cyan); }
+        .wf-item__icon-svg--code { color: #8b5cf6; }
+        .wf-item__icon-svg--dataset { color: #3b82f6; }
+        .wf-item__icon-svg--archive { color: var(--status-yellow); }
+        .wf-item__icon-svg--log { color: var(--text-muted); }
+        .wf-item__icon-svg--other { color: var(--text-muted); }
         .wf-item__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
         .wf-item__name { color: var(--text-primary); font-size: 13px; font-weight: 600; line-height: 1.4; word-break: break-word; }
         .wf-item__meta { display: flex; flex-wrap: wrap; gap: 4px; color: var(--text-muted); font-size: 11px; }
         .wf-item__actions { display: flex; gap: 6px; flex-shrink: 0; margin-top: 2px; }
-        .wf-btn { padding: 5px 10px; border-radius: var(--radius-md, 7px); border: 1px solid var(--glass-border); background: transparent; color: var(--text-secondary); font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }
-        .wf-btn:hover { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+        .wf-btn-compact { height: 26px; padding: 0 10px; font-size: 11px; }
         @media (max-width: 1200px) {
           .wf-panel--sidebar { max-width: 320px; }
         }

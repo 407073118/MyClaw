@@ -839,6 +839,39 @@ a.list-row__title:hover {
   border-color: rgba(255, 255, 255, 0.10);
 }
 
+/* Interactive variant — for clickable / selectable tags such as session pills.
+   Adds hover, focus-visible and is-active states without changing the static
+   .tag visual identity. */
+.tag--interactive {
+  cursor: pointer;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.10);
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.tag--interactive:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--glass-border-hover);
+  color: var(--text-primary);
+}
+
+.tag--interactive:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+}
+
+.tag--interactive.is-active {
+  color: var(--accent-cyan);
+  background: rgba(16, 163, 127, 0.12);
+  border-color: rgba(16, 163, 127, 0.30);
+}
+
+.tag--interactive:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ── Buttons ───────────────────────────────────────────────────────────
    Replace .btn-premium / .glass-action-btn for new pages. */
 

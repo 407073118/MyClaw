@@ -1,5 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import {
+  Activity,
+  AlertCircle,
+  Archive,
+  ChevronLeft,
+  Clock,
+  ListTodo,
+  MessageSquare,
+  Play,
+  Plug,
+  Save,
+  Send,
+  Users,
+  Workflow,
+  Wrench,
+} from "lucide-react";
 import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, McpServer, ModelProfile, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
@@ -61,6 +77,28 @@ function workflowRunStatusLabel(status: string): string {
     failed: "已失败",
     canceled: "已取消",
   } as Record<string, string>)[status] ?? status;
+}
+
+type StatusVariant = "green" | "red" | "yellow" | "accent" | "muted";
+
+const SILICON_STATUS_VARIANT: Record<string, StatusVariant> = {
+  idle: "muted",
+  running: "accent",
+  needs_approval: "yellow",
+  done: "green",
+  error: "red",
+  canceling: "yellow",
+  canceled: "muted",
+};
+
+/** 把硅基员工状态映射到规范的 .status-dot 变体。 */
+function statusDotVariant(status: string): StatusVariant {
+  return SILICON_STATUS_VARIANT[status] ?? "muted";
+}
+
+/** 把硅基员工状态映射到规范的 .tag 变体。 */
+function tagStatusVariant(status: string): StatusVariant {
+  return SILICON_STATUS_VARIANT[status] ?? "muted";
 }
 
 /** 把工作时段数组压缩成工作台易读摘要，优先展示首个配置窗口。 */
@@ -157,6 +195,9 @@ export default function SiliconPersonWorkspacePage() {
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [activeStudioTab, setActiveStudioTab] = useState<"chat" | "profile" | "tasks" | "capabilities">("chat");
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+  const saveDialogRef = useRef<HTMLDivElement | null>(null);
+  const confirmBtnRef = useRef<HTMLButtonElement | null>(null);
+  const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
   const [draftMessage, setDraftMessage] = useState("");
   const [scheduledWorkflowId, setScheduledWorkflowId] = useState("");
   const [scheduledStartsAt, setScheduledStartsAt] = useState("2026-04-21T09:00");
@@ -403,6 +444,49 @@ export default function SiliconPersonWorkspacePage() {
     };
   }, [siliconPersonId]);
 
+  // 保存确认 modal 打开时：聚焦确认按钮、ESC 关闭、Enter 提交、Tab 焦点陷阱、关闭后还原焦点。
+  useEffect(() => {
+    if (!showSaveConfirm) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    confirmBtnRef.current?.focus();
+
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setShowSaveConfirm(false);
+        return;
+      }
+      if (event.key === "Enter" && !isSaving) {
+        const target = event.target as HTMLElement | null;
+        if (target !== cancelBtnRef.current) {
+          event.preventDefault();
+          void handleSave();
+        }
+        return;
+      }
+      if (event.key === "Tab") {
+        const focusable = [cancelBtnRef.current, confirmBtnRef.current].filter(Boolean) as HTMLButtonElement[];
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (event.shiftKey && active === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && active === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [showSaveConfirm, isSaving]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** 绑定当前下拉中选中的工作流，避免重复添加。 */
   function bindWorkflow() {
     if (!selectedWorkflowId || draftWorkflowIds.includes(selectedWorkflowId)) return;
@@ -596,106 +680,106 @@ export default function SiliconPersonWorkspacePage() {
     }
   }
 
-  const statusColor: Record<string, string> = {
-    idle: "var(--text-muted)", running: "var(--accent-cyan)", needs_approval: "var(--status-yellow)",
-    done: "var(--status-green)", error: "var(--status-red)", canceling: "var(--status-yellow)", canceled: "var(--text-muted)",
-  };
-  const approvalModeLabel: Record<string, string> = {
-    inherit: "继承全局策略", always_ask: "每次都问", auto_approve: "自动批准",
-  };
   const sourceLabel: Record<string, string> = {
     personal: "个人创建", enterprise: "企业分发", hub: "Hub 导入",
   };
-  const avatarColors = ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#ec4899", "#06b6d4", "#84cc16"];
-  function pickAvatarColor(name: string): string {
-    let h = 0;
-    for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
-    return avatarColors[Math.abs(h) % avatarColors.length];
-  }
 
   return (
-    <main data-testid="silicon-person-studio-view" className="ws">
-      {/* ── Header ── */}
-      <header className="ws-header">
-        <div className="ws-header-top">
+    <div className="page-shell" data-testid="silicon-person-studio-view">
+      <header className="page-header page-header--sticky">
+        <div className="page-header__lead">
+          <div className="page-header__eyebrow">
+            <Users size={14} aria-hidden />
+            <span>硅基员工工作台</span>
+          </div>
+          <div className="page-header__title-row">
+            <h2 className="page-header__title">{draftName || siliconPerson?.name || "硅基员工"}</h2>
+            {siliconPerson && (
+              <span
+                className={`status-dot status-dot--${statusDotVariant(siliconPerson.status)}`}
+                title={siliconPersonStatusLabel(siliconPerson.status)}
+              />
+            )}
+          </div>
+          <p className="page-header__subtitle">
+            {draftTitle || siliconPerson?.title || "管理这个硅基员工的会话、能力与定时任务。"}
+          </p>
+        </div>
+        <div className="page-header__actions">
           <button
             type="button"
-            className="glass-action-btn ws-back-btn"
+            className="btn-toolbar"
             data-testid="ws-back-btn"
             onClick={() => navigate("/employees")}
             title="返回硅基员工列表"
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
+            <ChevronLeft size={14} aria-hidden />
             返回
           </button>
-          <div className="ws-identity">
-            <div className="ws-avatar" style={{ background: pickAvatarColor(siliconPerson?.name ?? "?") }}>
-              <span>{(siliconPerson?.name ?? "?")[0]}</span>
-            </div>
-            <div className="ws-identity-text">
-              <div className="ws-name-row">
-                <h2>{draftName || siliconPerson?.name || "硅基员工"}</h2>
-                <span
-                  className="ws-status-dot"
-                  style={{ background: statusColor[siliconPerson?.status ?? "idle"] }}
-                  title={siliconPersonStatusLabel(siliconPerson?.status ?? "idle")}
-                />
-              </div>
-              <span className="ws-title-sub">{draftTitle || siliconPerson?.title || ""}</span>
-            </div>
-          </div>
           {siliconPerson && (
-            <button className="btn-premium accent" type="button" data-testid="profile-tab-save" onClick={() => setShowSaveConfirm(true)} disabled={isSaving} style={{ opacity: isSaving ? 0.55 : undefined, cursor: isSaving ? "not-allowed" : undefined }}>
+            <button
+              type="button"
+              className="btn-primary"
+              data-testid="profile-tab-save"
+              onClick={() => setShowSaveConfirm(true)}
+              disabled={isSaving}
+            >
+              <Save size={14} aria-hidden />
               {isSaving ? "保存中..." : "保存"}
             </button>
           )}
         </div>
-        {saveError && <p className="ws-error">{saveError}</p>}
-        {siliconPerson && (
-          <div className="ws-meta-row">
-            <span className={`glass-pill glass-pill--ws-status-${siliconPerson.status}`}>{siliconPersonStatusLabel(siliconPerson.status)}</span>
-            <span className="glass-pill glass-pill--muted">{sourceLabel[siliconPerson.source] ?? siliconPerson.source}</span>
-            <span className="glass-pill glass-pill--muted">{siliconPerson.sessions.length} 个会话</span>
-            <span className="glass-pill glass-pill--muted">{siliconPerson.workflowIds.length} 个工作流</span>
-            {siliconPerson.hasUnread && <span className="glass-pill glass-pill--accent">{siliconPerson.unreadCount} 未读</span>}
-            {siliconPerson.needsApproval && <span className="glass-pill glass-pill--yellow">待审批</span>}
-          </div>
-        )}
       </header>
 
-      {/* ── Tabs ── */}
-      <nav className="ws-tabs" data-testid="studio-tab-bar">
-        {([
-          ["chat", "聊天"],
-          ["profile", "资料"],
-          ["capabilities", "能力"],
-          ["tasks", "任务"],
-        ] as const).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            className={`ws-tab${activeStudioTab === key ? " active" : ""}`}
-            data-testid={
-              key === "chat"
-                ? "studio-tab-chat"
-                : key === "profile"
-                  ? "studio-tab-profile"
-                  : key === "capabilities"
-                    ? "studio-tab-capabilities"
-                    : key === "tasks"
-                      ? "studio-tab-tasks"
-                      : undefined
-            }
-            onClick={() => setActiveStudioTab(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
+      <main className="page-content">
+        <nav className="ws-tabs" data-testid="studio-tab-bar">
+          {([
+            ["chat", "聊天"],
+            ["profile", "资料"],
+            ["capabilities", "能力"],
+            ["tasks", "任务"],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={`ws-tab${activeStudioTab === key ? " active" : ""}`}
+              data-testid={
+                key === "chat"
+                  ? "studio-tab-chat"
+                  : key === "profile"
+                    ? "studio-tab-profile"
+                    : key === "capabilities"
+                      ? "studio-tab-capabilities"
+                      : key === "tasks"
+                        ? "studio-tab-tasks"
+                        : undefined
+              }
+              onClick={() => setActiveStudioTab(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </nav>
 
-      <section className="ws-body">
+        {saveError && (
+          <div className="banner banner--error" role="alert">
+            <AlertCircle size={16} aria-hidden />
+            <span>{saveError}</span>
+          </div>
+        )}
+
+        {siliconPerson && (
+          <div className="ws-meta-row">
+            <span className={`tag tag--${tagStatusVariant(siliconPerson.status)}`}>{siliconPersonStatusLabel(siliconPerson.status)}</span>
+            <span className="tag tag--muted">{sourceLabel[siliconPerson.source] ?? siliconPerson.source}</span>
+            <span className="tag tag--muted">{siliconPerson.sessions.length} 个会话</span>
+            <span className="tag tag--muted">{siliconPerson.workflowIds.length} 个工作流</span>
+            {siliconPerson.hasUnread && <span className="tag tag--accent">{siliconPerson.unreadCount} 未读</span>}
+            {siliconPerson.needsApproval && <span className="tag tag--yellow">待审批</span>}
+          </div>
+        )}
+
+        <section className="ws-body">
         {siliconPerson && (
           <section
             className="ws-col"
@@ -713,7 +797,7 @@ export default function SiliconPersonWorkspacePage() {
                     <button
                       key={session.id}
                       type="button"
-                      className={`ws-session-pill${currentSessionSummary?.id === session.id ? " active" : ""}`}
+                      className={`tag tag--interactive${currentSessionSummary?.id === session.id ? " is-active" : ""}`}
                       data-testid={`silicon-person-session-pill-${session.id}`}
                       onClick={() => void handleSwitchSession(session.id)}
                     >
@@ -727,7 +811,7 @@ export default function SiliconPersonWorkspacePage() {
                 </div>
                 <button
                   type="button"
-                  className="ws-btn-ghost"
+                  className="btn-toolbar"
                   data-testid="silicon-person-create-session"
                   onClick={() => void handleCreateSession()}
                   disabled={isCreatingSession}
@@ -736,11 +820,18 @@ export default function SiliconPersonWorkspacePage() {
                 </button>
               </div>
 
-              {sessionError && <p className="ws-error">{sessionError}</p>}
-              {!currentSessionSummary && (
-                <div className="ws-empty-state">
-                  <p>当前还没有可用会话，先新建一个会话开始协作。</p>
+              {sessionError && (
+                <div className="banner banner--error" role="alert">
+                  <AlertCircle size={16} aria-hidden />
+                  <span>{sessionError}</span>
                 </div>
+              )}
+              {!currentSessionSummary && (
+                <section className="empty-state empty-state--minimal">
+                  <MessageSquare size={32} className="empty-state__icon" aria-hidden />
+                  <h3 className="empty-state__title">还没有可用会话</h3>
+                  <p className="empty-state__body">先新建一个会话开始协作。</p>
+                </section>
               )}
 
               {currentSessionSummary && (
@@ -748,10 +839,10 @@ export default function SiliconPersonWorkspacePage() {
                   <div className="ws-section">
                     <h4>当前会话</h4>
                     <div className="ws-meta-row">
-                      <span className="glass-pill glass-pill--muted">{currentSessionSummary.title || "未命名会话"}</span>
-                      <span className="glass-pill glass-pill--muted">{currentSessionMessages.length} 条消息</span>
+                      <span className="tag tag--muted">{currentSessionSummary.title || "未命名会话"}</span>
+                      <span className="tag tag--muted">{currentSessionMessages.length} 条消息</span>
                       {currentSessionSummary.hasUnread && (
-                        <span className="glass-pill glass-pill--accent">{currentSessionSummary.unreadCount} 未读</span>
+                        <span className="tag tag--accent">{currentSessionSummary.unreadCount} 未读</span>
                       )}
                     </div>
                   </div>
@@ -786,9 +877,11 @@ export default function SiliconPersonWorkspacePage() {
                         })}
                       </div>
                     ) : (
-                      <div className="ws-empty-state">
-                        <p>当前会话还没有历史消息，直接发一条消息开始协作。</p>
-                      </div>
+                      <section className="empty-state empty-state--minimal">
+                        <MessageSquare size={32} className="empty-state__icon" aria-hidden />
+                        <h3 className="empty-state__title">还没有历史消息</h3>
+                        <p className="empty-state__body">直接发一条消息开始协作。</p>
+                      </section>
                     )}
                   </div>
 
@@ -803,8 +896,8 @@ export default function SiliconPersonWorkspacePage() {
                               <p>{request.detail || "当前会话有一条待处理审批请求。"}</p>
                             </div>
                             <div className="ws-approval-actions">
-                              <button type="button" className="ws-btn-approve" onClick={() => void handleResolveApproval(request.id, "allow-once")}>批准</button>
-                              <button type="button" className="ws-btn-deny" onClick={() => void handleResolveApproval(request.id, "deny")}>拒绝</button>
+                              <button type="button" className="btn-primary" onClick={() => void handleResolveApproval(request.id, "allow-once")}>批准</button>
+                              <button type="button" className="btn-ghost btn-ghost--danger" onClick={() => void handleResolveApproval(request.id, "deny")}>拒绝</button>
                             </div>
                           </div>
                         ))}
@@ -812,7 +905,12 @@ export default function SiliconPersonWorkspacePage() {
                     </div>
                   )}
 
-                  {approvalError && <p className="ws-error">{approvalError}</p>}
+                  {approvalError && (
+                    <div className="banner banner--error" role="alert">
+                      <AlertCircle size={16} aria-hidden />
+                      <span>{approvalError}</span>
+                    </div>
+                  )}
 
                   <div className="ws-composer">
                     <textarea
@@ -824,11 +922,12 @@ export default function SiliconPersonWorkspacePage() {
                     />
                     <button
                       type="button"
-                      className="ws-btn-send"
+                      className="btn-primary"
                       data-testid="silicon-person-composer-send"
                       onClick={() => void handleSendMessage()}
                       disabled={isSending || draftMessage.trim().length === 0}
                     >
+                      <Send size={14} aria-hidden />
                       {isSending ? "发送中..." : "发送"}
                     </button>
                   </div>
@@ -970,14 +1069,16 @@ export default function SiliconPersonWorkspacePage() {
                         <strong>{task.subject}</strong>
                         {task.description && <p>{task.description}</p>}
                       </div>
-                      <span className={`glass-pill glass-pill--${task.status === "completed" ? "green" : task.status === "in_progress" ? "accent" : "muted"}`}>{taskStatusLabel(task.status)}</span>
+                      <span className={`tag tag--${task.status === "completed" ? "green" : task.status === "in_progress" ? "accent" : "muted"}`}>{taskStatusLabel(task.status)}</span>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="ws-empty-state" style={{ marginTop: 16 }}>
-                  <p>还没有任务，任务会随执行自动产生</p>
-                </div>
+                <section className="empty-state empty-state--minimal" style={{ marginTop: 16 }}>
+                  <ListTodo size={32} className="empty-state__icon" aria-hidden />
+                  <h3 className="empty-state__title">还没有任务</h3>
+                  <p className="empty-state__body">任务会随执行自动产生。</p>
+                </section>
               )}
             </article>
           </section>
@@ -995,25 +1096,36 @@ export default function SiliconPersonWorkspacePage() {
                 </div>
                 <button
                   type="button"
-                  className="ws-btn-ghost"
+                  className="btn-toolbar"
                   onClick={() => void loadPersonResources()}
                 >
                   刷新
                 </button>
               </div>
-              <div className="ws-binding-grid">
-                {personSkills.map((skill) => (
-                  <div key={skill.id} className="ws-binding-card bound">
-                    <div className="ws-binding-card-info">
-                      <strong>{skill.name}</strong>
-                      <span>{skill.description || skill.id}</span>
-                    </div>
-                  </div>
-                ))}
-                {personSkills.length === 0 && (
-                  <div className="ws-empty-state"><p>员工工作空间中还没有 Skills，可从 Hub 安装</p></div>
-                )}
-              </div>
+              {personSkills.length > 0 ? (
+                <div className="list-rows">
+                  {personSkills.map((skill) => (
+                    <article key={skill.id} className="list-row list-row--with-description">
+                      <div className="list-row__lead">
+                        <Wrench size={16} aria-hidden />
+                      </div>
+                      <div className="list-row__main">
+                        <div className="list-row__title-row">
+                          <span className="list-row__title">{skill.name}</span>
+                          <span className="tag tag--accent">已安装</span>
+                        </div>
+                        <div className="list-row__description">{skill.description || skill.id}</div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <section className="empty-state empty-state--minimal">
+                  <Wrench size={32} className="empty-state__icon" aria-hidden />
+                  <h3 className="empty-state__title">还没有 Skills</h3>
+                  <p className="empty-state__body">员工工作空间中还没有 Skills，可从 Hub 安装。</p>
+                </section>
+              )}
             </article>
 
             {/* ── 员工独立 MCP 服务 ── */}
@@ -1025,25 +1137,37 @@ export default function SiliconPersonWorkspacePage() {
                 </div>
                 <button
                   type="button"
-                  className="ws-btn-ghost"
+                  className="btn-toolbar"
                   onClick={() => void loadPersonResources()}
                 >
                   刷新
                 </button>
               </div>
-              <div className="ws-binding-grid">
-                {personMcpServers.map((server) => (
-                  <div key={server.id} className="ws-binding-card bound">
-                    <div className="ws-binding-card-info">
-                      <strong>{server.name}</strong>
-                      <span>{server.state?.connected ? "已连接" : "未连接"}</span>
-                    </div>
-                  </div>
-                ))}
-                {personMcpServers.length === 0 && (
-                  <div className="ws-empty-state"><p>员工工作空间中还没有 MCP 服务，可从 Hub 安装</p></div>
-                )}
-              </div>
+              {personMcpServers.length > 0 ? (
+                <div className="list-rows">
+                  {personMcpServers.map((server) => (
+                    <article key={server.id} className="list-row list-row--with-description">
+                      <div className="list-row__lead">
+                        <Plug size={16} aria-hidden />
+                      </div>
+                      <div className="list-row__main">
+                        <div className="list-row__title-row">
+                          <span className="list-row__title">{server.name}</span>
+                          <span className={`tag tag--${server.state?.connected ? "green" : "muted"}`}>
+                            {server.state?.connected ? "已连接" : "未连接"}
+                          </span>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <section className="empty-state empty-state--minimal">
+                  <Plug size={32} className="empty-state__icon" aria-hidden />
+                  <h3 className="empty-state__title">还没有 MCP 服务</h3>
+                  <p className="empty-state__body">员工工作空间中还没有 MCP 服务，可从 Hub 安装。</p>
+                </section>
+              )}
             </article>
 
             {/* ── 工作流绑定 ── */}
@@ -1065,35 +1189,45 @@ export default function SiliconPersonWorkspacePage() {
                       <option key={wf.id} value={wf.id}>{wf.name}</option>
                     ))}
                   </select>
-                  <button data-testid="employee-studio-bind-workflow" className="ws-btn-ghost" type="button" onClick={bindWorkflow}>
+                  <button data-testid="employee-studio-bind-workflow" className="btn-toolbar" type="button" onClick={bindWorkflow}>
                     绑定
                   </button>
                 </div>
               </div>
 
               {boundWorkflows.length > 0 ? (
-                <div className="ws-wf-grid">
+                <div className="list-rows">
                   {boundWorkflows.map(({ workflowId, summary }) => (
-                    <div key={workflowId} className="ws-wf-card" data-testid={`silicon-person-workflow-binding-${workflowId}`}>
-                      <div className="ws-wf-card-info">
-                        <strong>{summary.name}</strong>
-                        <span className="ws-mono ws-text-muted">{workflowId}</span>
+                    <article key={workflowId} className="list-row list-row--with-description" data-testid={`silicon-person-workflow-binding-${workflowId}`}>
+                      <div className="list-row__lead">
+                        <Workflow size={16} aria-hidden />
                       </div>
-                      <button
-                        type="button"
-                        className="ws-btn-ghost"
-                        data-testid={`silicon-person-workflow-start-${workflowId}`}
-                        onClick={() => void handleStartWorkflowRun(workflowId)}
-                      >
-                        启动运行
-                      </button>
-                    </div>
+                      <div className="list-row__main">
+                        <div className="list-row__title-row">
+                          <span className="list-row__title">{summary.name}</span>
+                        </div>
+                        <div className="list-row__description ws-mono">{workflowId}</div>
+                      </div>
+                      <div className="list-row__trailing">
+                        <button
+                          type="button"
+                          className="btn-toolbar"
+                          data-testid={`silicon-person-workflow-start-${workflowId}`}
+                          onClick={() => void handleStartWorkflowRun(workflowId)}
+                        >
+                          <Play size={14} aria-hidden />
+                          启动运行
+                        </button>
+                      </div>
+                    </article>
                   ))}
                 </div>
               ) : (
-                <div className="ws-empty-state" style={{ marginTop: 16 }}>
-                  <p>还没有绑定工作流</p>
-                </div>
+                <section className="empty-state empty-state--minimal" style={{ marginTop: 16 }}>
+                  <Workflow size={32} className="empty-state__icon" aria-hidden />
+                  <h3 className="empty-state__title">还没有绑定工作流</h3>
+                  <p className="empty-state__body">从下拉中选择并点击绑定。</p>
+                </section>
               )}
             </article>
 
@@ -1103,10 +1237,10 @@ export default function SiliconPersonWorkspacePage() {
                   <h3>定时任务</h3>
                   <p className="ws-card-desc">为硅基员工绑定周期性 workflow 运行窗口，并复用时间规划的统一调度。</p>
                 </div>
-                <span className="glass-pill glass-pill--muted">工作时段 {siliconPersonWorkingHoursSummary}</span>
+                <span className="tag tag--muted">工作时段 {siliconPersonWorkingHoursSummary}</span>
               </div>
 
-              <div className="ws-binding-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", marginTop: 16 }}>
+              <div className="ws-schedule-form">
                 <label className="ws-field">
                   <span>定时工作流</span>
                   <select value={scheduledWorkflowId} onChange={(e) => setScheduledWorkflowId(e.target.value)} aria-label="定时工作流">
@@ -1137,7 +1271,7 @@ export default function SiliconPersonWorkspacePage() {
                 </label>
                 <div className="ws-field ws-field--action">
                   <span>执行策略</span>
-                  <button type="button" className="ws-btn-ghost" onClick={() => void handleCreateScheduledWorkflowJob()}>
+                  <button type="button" className="btn-toolbar" onClick={() => void handleCreateScheduledWorkflowJob()}>
                     创建定时工作流
                   </button>
                 </div>
@@ -1148,37 +1282,50 @@ export default function SiliconPersonWorkspacePage() {
               ) : null}
 
               {siliconPersonScheduleJobs.length > 0 ? (
-                <div className="ws-item-list" style={{ marginTop: 16 }}>
+                <div className="list-rows" style={{ marginTop: 16 }}>
                   {siliconPersonScheduleJobs.map((job) => (
-                    <div key={job.id} className="ws-item">
-                      <div className="ws-item-main">
-                        <strong>{job.title}</strong>
-                        <p>{job.nextRunAt ? `下次运行 ${job.nextRunAt}` : "等待下一次计算"}</p>
+                    <article key={job.id} className="list-row list-row--with-description">
+                      <div className="list-row__lead">
+                        <Clock size={16} aria-hidden />
                       </div>
-                      <span className="glass-pill glass-pill--muted">{job.scheduleKind}</span>
-                    </div>
+                      <div className="list-row__main">
+                        <div className="list-row__title-row">
+                          <span className="list-row__title">{job.title}</span>
+                          <span className="tag tag--muted">{job.scheduleKind}</span>
+                        </div>
+                        <div className="list-row__description">{job.nextRunAt ? `下次运行 ${job.nextRunAt}` : "等待下一次计算"}</div>
+                      </div>
+                    </article>
                   ))}
                 </div>
               ) : (
-                <div className="ws-empty-state" style={{ marginTop: 16 }}>
-                  <p>还没有为该硅基员工创建定时任务</p>
-                </div>
+                <section className="empty-state empty-state--minimal" style={{ marginTop: 16 }}>
+                  <Clock size={32} className="empty-state__icon" aria-hidden />
+                  <h3 className="empty-state__title">还没有定时任务</h3>
+                  <p className="empty-state__body">为该硅基员工创建周期性 workflow 运行。</p>
+                </section>
               )}
             </article>
 
             {boundWorkflowRuns.length > 0 && (
               <article className="ws-card">
                 <h3>运行记录</h3>
-                <div className="ws-item-list" style={{ marginTop: 12 }}>
+                <div className="list-rows" style={{ marginTop: 12 }}>
                   {boundWorkflowRuns.map((run) => (
-                    <div key={run.id} className="ws-item" data-testid={`silicon-person-workflow-run-${run.id}`}>
-                      <div className="ws-item-main">
-                        <strong>{run.workflowId}</strong>
-                        <p>v{run.workflowVersion} &middot; {run.updatedAt}</p>
+                    <article key={run.id} className="list-row list-row--with-description" data-testid={`silicon-person-workflow-run-${run.id}`}>
+                      <div className="list-row__lead">
+                        <Activity size={16} aria-hidden />
                       </div>
-                      <span className="glass-pill glass-pill--muted">{workflowRunStatusLabel(run.status)}</span>
-                      {run.error && <p className="ws-error" style={{ marginTop: 4 }}>{run.error}</p>}
-                    </div>
+                      <div className="list-row__main">
+                        <div className="list-row__title-row">
+                          <span className="list-row__title">{run.workflowId}</span>
+                          <span className="tag tag--muted">{workflowRunStatusLabel(run.status)}</span>
+                        </div>
+                        <div className="list-row__description">
+                          v{run.workflowVersion} · {run.updatedAt}{run.error ? ` · 失败：${run.error}` : ""}
+                        </div>
+                      </div>
+                    </article>
                   ))}
                 </div>
               </article>
@@ -1189,89 +1336,78 @@ export default function SiliconPersonWorkspacePage() {
 
       </section>
 
+      </main>
+
       {/* 保存确认弹窗 */}
       {showSaveConfirm && (
-        <div className="sp-confirm-overlay" onClick={() => setShowSaveConfirm(false)}>
+        <div
+          className="sp-confirm-overlay"
+          role="presentation"
+          onClick={() => setShowSaveConfirm(false)}
+        >
           <div
+            ref={saveDialogRef}
             className="sp-confirm-dialog"
             role="dialog"
             aria-modal="true"
             aria-labelledby="sp-confirm-title"
+            aria-describedby="sp-confirm-hint"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sp-confirm-icon">
-              <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" />
-                <polyline points="7 3 7 8 15 8" />
-              </svg>
+              <Save size={24} aria-hidden />
             </div>
-            <p id="sp-confirm-title" className="sp-confirm-message">确定保存对「{draftName || siliconPerson?.name}」的配置修改吗？</p>
-            <p className="sp-confirm-hint">修改将立即生效，新会话将使用更新后的配置。</p>
+            <h3 id="sp-confirm-title" className="sp-confirm-message">确定保存对「{draftName || siliconPerson?.name}」的配置修改吗？</h3>
+            <p id="sp-confirm-hint" className="sp-confirm-hint">修改将立即生效，新会话将使用更新后的配置。</p>
             <div className="sp-confirm-actions">
-              <button className="sp-confirm-cancel" onClick={() => setShowSaveConfirm(false)}>取消</button>
-              <button className="sp-confirm-ok" onClick={() => void handleSave()}>确认保存</button>
+              <button
+                type="button"
+                ref={cancelBtnRef}
+                className="btn-toolbar"
+                onClick={() => setShowSaveConfirm(false)}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                ref={confirmBtnRef}
+                className="btn-primary"
+                onClick={() => void handleSave()}
+                disabled={isSaving}
+              >
+                <Save size={14} aria-hidden />
+                确认保存
+              </button>
             </div>
           </div>
         </div>
       )}
 
       <style>{`
-        /* ── Layout ── */
-        .ws { height: 100%; overflow-y: auto; padding: 28px 32px; display: flex; flex-direction: column; gap: 20px; }
-
-        /* ── Header ── */
-        .ws-header { display: flex; flex-direction: column; gap: 14px; }
-        .ws-header-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
-        .ws-back-btn { display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 12px; font-size: 13px; flex-shrink: 0; }
-        .ws-identity { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; }
-        .ws-avatar { width: 52px; height: 52px; border-radius: var(--radius-xl); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-        .ws-avatar span { font-size: 1.4rem; font-weight: 900; color: #fff; }
-        .ws-identity-text { min-width: 0; }
-        .ws-name-row { display: flex; align-items: center; gap: 10px; }
-        .ws-name-row h2 { margin: 0; font-size: 22px; font-weight: 800; color: var(--text-primary); }
-        .ws-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
-        .ws-title-sub { font-size: 0.8rem; color: var(--text-muted); font-weight: 500; }
-        .ws-meta-row { display: flex; flex-wrap: wrap; gap: 6px; }
-
-        /* ── Status-specific pill mappings ── */
-        .glass-pill--ws-status-running { color: var(--accent-cyan); background: rgba(16,163,127,0.08); border-color: rgba(16,163,127,0.2); }
-        .glass-pill--ws-status-needs_approval { color: var(--status-yellow); background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2); }
-        .glass-pill--ws-status-done { color: var(--status-green); background: rgba(34,197,94,0.1); border-color: rgba(34,197,94,0.2); }
-        .glass-pill--ws-status-error { color: var(--status-red); background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.2); }
-        .glass-pill--ws-status-idle,
-        .glass-pill--ws-status-canceling,
-        .glass-pill--ws-status-canceled { color: var(--text-muted); background: rgba(115,115,115,0.1); border-color: rgba(115,115,115,0.2); }
+        /* page-shell + page-header--sticky 接管整体页面骨架；下面只保留工作台内部子组件的局部样式。 */
 
         /* ── Tabs ── */
         .ws-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--glass-border); }
-        .ws-tab { padding: 10px 18px; border: none; background: none; color: var(--text-muted); font-size: 0.82rem; font-weight: 700; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s; }
+        .ws-tab { padding: 10px 18px; border: none; background: none; color: var(--text-muted); font-size: 0.82rem; font-weight: 700; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s ease, border-color 0.15s ease; }
         .ws-tab:hover { color: var(--text-primary); }
         .ws-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-cyan); }
 
         /* ── Body Grid ── */
+        .ws-meta-row { display: flex; flex-wrap: wrap; gap: 6px; }
         .ws-body { display: flex; flex-direction: column; gap: 20px; flex: 1; min-height: 0; }
         .ws-col { display: flex; flex-direction: column; gap: 16px; }
 
         /* ── Card ── */
         .ws-card { border: 1px solid var(--glass-border); border-radius: var(--radius-xl); background: var(--bg-card); padding: 20px; box-shadow: var(--shadow-card), var(--glass-inner-glow); }
-        .ws-card h3 { margin: 0 0 4px; color: var(--text-primary); font-size: 0.95rem; font-weight: 800; }
+        .ws-card h3 { margin: 0 0 4px; color: var(--text-primary); font-size: 0.95rem; font-weight: 700; }
         .ws-card-desc { margin: 0; color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; }
 
         /* ── Session Bar ── */
         .ws-session-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
         .ws-session-pills { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
-        .ws-session-pill { padding: 6px 14px; border: 1px solid var(--glass-border); border-radius: 20px; background: transparent; color: var(--text-secondary); font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px; }
-        .ws-session-pill:hover { border-color: var(--glass-border-hover); color: var(--text-primary); }
-        .ws-session-pill.active { background: rgba(16,163,127,0.1); border-color: var(--accent-cyan); color: var(--accent-cyan); }
-        .ws-session-badge { min-width: 16px; height: 16px; border-radius: 999px; background: var(--accent-cyan); color: #fff; font-size: 0.6rem; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
+        .ws-session-badge { min-width: 16px; height: 16px; border-radius: 999px; background: var(--accent-cyan); color: #fff; font-size: 0.6rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
         .ws-session-badge.warn { background: var(--status-yellow); color: #000; }
         .ws-empty-hint { color: var(--text-muted); font-size: 0.78rem; }
-
-        /* ── Ghost Button (aligned with global .glass-action-btn) ── */
-        .ws-btn-ghost { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 14px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; white-space: nowrap; }
-        .ws-btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.06); border-color: var(--glass-border-hover); color: var(--text-primary); }
-        .ws-btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
 
         /* ── Chat Card ── */
         .ws-chat-card { display: flex; flex-direction: column; gap: 0; }
@@ -1280,7 +1416,7 @@ export default function SiliconPersonWorkspacePage() {
 
         .ws-message-list { display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; padding-right: 4px; }
         .ws-msg { display: flex; gap: 10px; align-items: flex-start; }
-        .ws-msg-role { flex-shrink: 0; width: 56px; font-size: 0.7rem; font-weight: 800; color: var(--text-muted); text-align: right; padding-top: 8px; }
+        .ws-msg-role { flex-shrink: 0; width: 56px; font-size: 0.7rem; font-weight: 700; color: var(--text-muted); text-align: right; padding-top: 8px; }
         .ws-msg-body { flex: 1; padding: 10px 14px; border-radius: var(--radius-lg); background: var(--bg-base); border: 1px solid var(--glass-border); min-width: 0; }
         .ws-msg-body p { margin: 0; color: var(--text-primary); font-size: 0.85rem; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
         .ws-msg-time { display: block; margin-top: 6px; font-size: 0.65rem; color: var(--text-muted); cursor: default; }
@@ -1293,10 +1429,10 @@ export default function SiliconPersonWorkspacePage() {
 
         /* ── Sections inside chat ── */
         .ws-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--glass-border); }
-        .ws-section h4 { margin: 0 0 10px; font-size: 0.78rem; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+        .ws-section h4 { margin: 0 0 10px; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
         .ws-section--approval { background: rgba(245,158,11,0.03); margin: 16px -20px -20px; padding: 16px 20px 20px; border-radius: 0 0 var(--radius-xl) var(--radius-xl); border-top: 1px solid rgba(245,158,11,0.15); }
 
-        /* ── Item list ── */
+        /* ── Item list (non-list-row legacy: tasks tab) ── */
         .ws-item-list { display: flex; flex-direction: column; gap: 8px; }
         .ws-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 14px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--bg-base); }
         .ws-item-main { min-width: 0; }
@@ -1309,18 +1445,11 @@ export default function SiliconPersonWorkspacePage() {
         .ws-approval-info p { margin: 0; color: var(--text-secondary); font-size: 0.78rem; line-height: 1.5; }
         .ws-approval-meta { display: flex; gap: 12px; margin-top: 6px; font-size: 0.7rem; color: var(--text-muted); }
         .ws-approval-actions { display: flex; gap: 8px; }
-        .ws-btn-approve { padding: 6px 16px; border: 1px solid rgba(16,163,127,0.25); border-radius: var(--radius-md); background: transparent; color: var(--accent-cyan); font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; }
-        .ws-btn-approve:hover { background: rgba(16,163,127,0.1); border-color: rgba(16,163,127,0.4); }
-        .ws-btn-deny { padding: 6px 16px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; }
-        .ws-btn-deny:hover { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.35); color: var(--status-red); }
 
         /* ── Composer ── */
         .ws-composer { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--glass-border); display: flex; gap: 10px; align-items: flex-end; }
-        .ws-composer textarea { flex: 1; border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--bg-base); color: var(--text-primary); padding: 10px 14px; font: inherit; font-size: 0.85rem; resize: vertical; transition: border-color 0.2s, box-shadow 0.2s; }
+        .ws-composer textarea { flex: 1; border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--bg-base); color: var(--text-primary); padding: 10px 14px; font: inherit; font-size: 0.85rem; resize: vertical; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
         .ws-composer textarea:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.14); outline: none; }
-        .ws-btn-send { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 24px; border: 1px solid var(--accent-cyan); border-radius: var(--radius-md); background: transparent; color: var(--accent-cyan); font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s cubic-bezier(0.4,0,0.2,1); white-space: nowrap; flex-shrink: 0; }
-        .ws-btn-send:hover:not(:disabled) { background: rgba(16,163,127,0.1); box-shadow: 0 4px 15px rgba(16,163,127,0.2); transform: translateY(-1px); }
-        .ws-btn-send:disabled { opacity: 0.55; cursor: not-allowed; }
 
         /* ── Profile ── */
         .ws-profile-col { max-width: 900px; margin: 0 auto; width: 100%; }
@@ -1335,61 +1464,38 @@ export default function SiliconPersonWorkspacePage() {
         .ws-field { display: flex; flex-direction: column; gap: 8px; }
         .ws-field span { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); }
         .ws-field--full { grid-column: 1 / -1; }
-        .ws-field input, .ws-field textarea, .ws-field select { width: 100%; border: 1px solid var(--glass-border); border-radius: 8px; background: rgba(0,0,0,0.15); color: var(--text-primary); padding: 10px 14px; font: inherit; font-size: 13px; transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1); box-sizing: border-box; }
+        .ws-field input, .ws-field textarea, .ws-field select { width: 100%; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: rgba(0,0,0,0.15); color: var(--text-primary); padding: 10px 14px; font: inherit; font-size: 13px; transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; box-sizing: border-box; }
         .ws-field input:hover, .ws-field textarea:hover, .ws-field select:hover { border-color: rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); }
-        .ws-field input:focus, .ws-field textarea:focus, .ws-field select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.15), inset 0 1px 2px rgba(0,0,0,0.2); outline: none; background: rgba(0,0,0,0.3); }
+        .ws-field input:focus, .ws-field textarea:focus, .ws-field select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.15); outline: none; background: rgba(0,0,0,0.3); }
         .ws-field select { appearance: none; -webkit-appearance: none; padding-right: 36px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; }
         .ws-field select option { background: var(--bg-card); color: var(--text-primary); padding: 8px 12px; }
-        .ws-path-display { width: 100%; padding: 10px 14px; border: 1px dashed var(--glass-border); border-radius: 8px; background: rgba(0,0,0,0.1); color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; cursor: text; box-sizing: border-box; }
-        
+        .ws-path-display { width: 100%; padding: 10px 14px; border: 1px dashed var(--glass-border); border-radius: var(--radius-md); background: rgba(0,0,0,0.1); color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; cursor: text; box-sizing: border-box; }
+
         /* ── Readonly Stats ── */
         .ws-readonly-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 14px; }
-        .ws-stat-cell { padding: 14px 16px; border-radius: 10px; border: 1px solid var(--glass-border); background: linear-gradient(145deg, rgba(255,255,255,0.03), transparent); display: flex; flex-direction: column; gap: 6px; }
+        .ws-stat-cell { padding: 14px 16px; border-radius: var(--radius-lg); border: 1px solid var(--glass-border); background: linear-gradient(145deg, rgba(255,255,255,0.03), transparent); display: flex; flex-direction: column; gap: 6px; }
         .ws-stat-label { font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-        .ws-stat-value { font-size: 0.85rem; font-weight: 600; color: #e6edf3; word-break: break-all; }
+        .ws-stat-value { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); word-break: break-all; }
         .ws-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; }
         .ws-text-muted { color: var(--text-muted); }
 
         /* ── Capabilities ── */
         .ws-cap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
         .ws-bind-row { display: flex; gap: 8px; align-items: center; }
-        .ws-bind-select { padding: 8px 14px; padding-right: 36px; border: 1px solid var(--glass-border); border-radius: 8px; background: var(--bg-base); color: var(--text-primary); font: inherit; font-size: 0.82rem; appearance: none; -webkit-appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; transition: border-color 0.2s, box-shadow 0.2s; }
+        .ws-bind-select { padding: 8px 14px; padding-right: 36px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font: inherit; font-size: 0.82rem; appearance: none; -webkit-appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
         .ws-bind-select:hover { border-color: var(--glass-border-hover); background: rgba(255,255,255,0.02); }
         .ws-bind-select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.14); outline: none; }
         .ws-bind-select option { background: var(--bg-card); color: var(--text-primary); }
-        .ws-wf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
-        .ws-wf-card { padding: 18px; border: 1px solid var(--glass-border); border-radius: var(--radius-xl); background: linear-gradient(145deg, var(--bg-base), rgba(0,0,0,0.2)); display: flex; align-items: center; justify-content: space-between; gap: 16px; transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-        .ws-wf-card:hover { border-color: var(--glass-border-hover); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
-        .ws-wf-card-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-        .ws-wf-card-info strong { font-size: 0.9rem; font-weight: 600; color: #e6edf3; }
-        .ws-wf-card-info span { font-size: 0.72rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-        /* ── Binding Grid (Skills / MCP) ── */
-        .ws-binding-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; margin-top: 16px; }
-        .ws-binding-card { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border: 1px solid var(--glass-border); border-radius: var(--radius-xl); background: linear-gradient(145deg, var(--bg-base), rgba(0,0,0,0.2)); cursor: default; transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-        .ws-binding-card:hover { border-color: rgba(255,255,255,0.15); transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,0.2); }
-        .ws-binding-card.bound { border-color: rgba(16,163,127,0.3); background: linear-gradient(145deg, rgba(16,163,127,0.08), rgba(16,163,127,0.02)); box-shadow: 0 0 0 1px rgba(16,163,127,0.1), 0 4px 12px rgba(0,0,0,0.1); }
-        .ws-binding-card.bound:hover { border-color: rgba(16,163,127,0.5); box-shadow: 0 0 0 1px rgba(16,163,127,0.2), 0 8px 24px rgba(0,0,0,0.2); }
-        .ws-binding-card input[type="checkbox"] { accent-color: var(--accent-cyan); flex-shrink: 0; width: 16px; height: 16px; }
-        .ws-binding-card-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
-        .ws-binding-card-info strong { font-size: 0.9rem; font-weight: 600; color: #e6edf3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .ws-binding-card-info span { font-size: 0.72rem; color: #8b949e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .ws-binding-card::before { content: ''; display: block; width: 4px; height: 100%; background: var(--accent-cyan); position: absolute; left: 0; top: 0; border-radius: 4px 0 0 4px; opacity: 0; transition: opacity 0.2s; }
-        .ws-binding-card.bound::before { opacity: 1; }
-        .ws-binding-card { position: relative; overflow: hidden; }
-
-        /* ── Shared ── */
-        .ws-error { margin: 0; color: var(--status-red); font-size: 0.82rem; }
-        .ws-empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; color: var(--text-muted); text-align: center; }
-        .ws-empty-state p { margin: 0; font-size: 0.82rem; }
+        /* ── Schedule Form (定时任务表单容器) ── */
+        .ws-schedule-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 16px; }
 
         /* ── Responsive ── */
         @media (max-width: 960px) {
-          .ws { padding: 20px; }
           .ws-profile-grid { grid-template-columns: 1fr; }
           .ws-form-fields { grid-template-columns: 1fr; }
           .ws-readonly-grid { grid-template-columns: 1fr 1fr; }
-          .ws-binding-grid { grid-template-columns: 1fr; }
+          .ws-schedule-form { grid-template-columns: 1fr; }
         }
 
         /* ── Save Confirm Dialog ── */
@@ -1403,28 +1509,28 @@ export default function SiliconPersonWorkspacePage() {
         @keyframes sp-overlay-in { from { opacity: 0; } to { opacity: 1; } }
 
         .sp-confirm-dialog {
-          background: var(--bg-card, #1e1e2e);
+          background: var(--bg-card);
           border: 1px solid var(--glass-border);
-          border-radius: var(--radius-xl, 14px);
+          border-radius: var(--radius-2xl);
           padding: 32px 32px 26px;
           min-width: 360px; max-width: 420px;
-          box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
-          animation: sp-dialog-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          box-shadow: var(--shadow-modal);
+          animation: sp-dialog-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
           display: flex; flex-direction: column; align-items: center;
           text-align: center;
         }
         @keyframes sp-dialog-in {
-          from { opacity: 0; transform: scale(0.92) translateY(10px); }
+          from { opacity: 0; transform: scale(0.96); }
           to   { opacity: 1; transform: none; }
         }
 
         .sp-confirm-icon {
           width: 52px; height: 52px;
-          border-radius: 14px;
+          border-radius: var(--radius-xl);
           background: rgba(16, 163, 127, 0.1);
           border: 1px solid rgba(16, 163, 127, 0.2);
           display: flex; align-items: center; justify-content: center;
-          color: var(--accent-cyan, #10a37f);
+          color: var(--accent-cyan);
           margin-bottom: 18px;
           flex-shrink: 0;
         }
@@ -1446,38 +1552,12 @@ export default function SiliconPersonWorkspacePage() {
         .sp-confirm-actions {
           display: flex; gap: 12px; width: 100%;
         }
-
-        .sp-confirm-cancel, .sp-confirm-ok {
+        .sp-confirm-actions .btn-toolbar,
+        .sp-confirm-actions .btn-primary {
           flex: 1;
-          padding: 10px 20px;
-          border-radius: var(--radius-md, 7px);
-          font-size: 13px; font-weight: 600;
-          cursor: pointer;
-          transition: all 0.15s;
-          border: 1px solid var(--glass-border);
-        }
-
-        .sp-confirm-cancel {
-          background: transparent;
-          color: var(--text-secondary);
-        }
-        .sp-confirm-cancel:hover {
-          background: var(--glass-reflection);
-          color: var(--text-primary);
-        }
-
-        .sp-confirm-ok {
-          background: linear-gradient(135deg, var(--accent-cyan, #10a37f), #0d8a6a);
-          color: #fff;
-          border-color: transparent;
-          box-shadow: 0 2px 8px rgba(16, 163, 127, 0.3);
-        }
-        .sp-confirm-ok:hover {
-          background: linear-gradient(135deg, #0ea882, #0b7a5e);
-          box-shadow: 0 4px 16px rgba(16, 163, 127, 0.4);
-          transform: translateY(-1px);
+          justify-content: center;
         }
       `}</style>
-    </main>
+    </div>
   );
 }

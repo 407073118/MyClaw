@@ -24,6 +24,21 @@ const REASONING_KIND_BADGE: Record<ReasoningControlSpec["kind"], string> = {
   unsupported: "不可调",
 };
 
+/** 把推理控制类型映射到规范的 .tag 变体颜色。 */
+function badgeTagVariant(kind: ReasoningControlSpec["kind"]): "accent" | "green" | "muted" {
+  switch (kind) {
+    case "effort":
+    case "budget":
+      return "accent";
+    case "always_on":
+      return "green";
+    case "boolean":
+    case "unsupported":
+    default:
+      return "muted";
+  }
+}
+
 type ReasoningPresetPanelProps = {
   spec: ReasoningControlSpec;
   enabled: boolean;
@@ -49,7 +64,7 @@ export default function ReasoningPresetPanel({
           <span className="reasoning-panel__eyebrow">{spec.title}</span>
           <p className="reasoning-panel__description">{spec.description}</p>
         </div>
-        <span className={`reasoning-panel__badge reasoning-panel__badge--${spec.kind}`}>
+        <span className={`tag tag--${badgeTagVariant(spec.kind)}`}>
           {REASONING_KIND_BADGE[spec.kind]}
         </span>
       </div>
@@ -117,7 +132,7 @@ export default function ReasoningPresetPanel({
           flex-direction: column;
           gap: 12px;
           padding: 14px;
-          border-radius: 16px;
+          border-radius: var(--radius-xl);
           border: 1px solid rgba(255, 255, 255, 0.08);
           background:
             linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
@@ -152,40 +167,6 @@ export default function ReasoningPresetPanel({
           line-height: 1.6;
         }
 
-        .reasoning-panel__badge {
-          flex-shrink: 0;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          min-height: 24px;
-          padding: 0 10px;
-          border-radius: 999px;
-          border: 1px solid rgba(255, 255, 255, 0.08);
-          background: rgba(255, 255, 255, 0.04);
-          color: var(--text-secondary);
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.03em;
-          white-space: nowrap;
-        }
-
-        .reasoning-panel__badge--effort,
-        .reasoning-panel__badge--budget {
-          color: var(--accent-cyan);
-          border-color: rgba(16, 163, 127, 0.24);
-          background: rgba(16, 163, 127, 0.09);
-        }
-
-        .reasoning-panel__badge--always_on {
-          color: var(--status-green);
-          border-color: rgba(34, 197, 94, 0.22);
-          background: rgba(34, 197, 94, 0.1);
-        }
-
-        .reasoning-panel__badge--unsupported {
-          color: var(--text-muted);
-        }
-
         .reasoning-panel__toggle {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -196,13 +177,13 @@ export default function ReasoningPresetPanel({
         .reasoning-panel__option {
           border: 1px solid rgba(255, 255, 255, 0.08);
           background: rgba(255, 255, 255, 0.02);
-          transition: all 0.18s ease;
+          transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
         }
 
         .reasoning-panel__toggle-btn {
           min-height: 38px;
           padding: 0 14px;
-          border-radius: 12px;
+          border-radius: var(--radius-md);
           color: var(--text-secondary);
           font-size: 12px;
           font-weight: 700;
@@ -213,7 +194,6 @@ export default function ReasoningPresetPanel({
         .reasoning-panel__option:hover:not(:disabled) {
           border-color: var(--glass-border-hover);
           color: var(--text-primary);
-          transform: translateY(-1px);
         }
 
         .reasoning-panel__toggle-btn.active,
@@ -221,12 +201,11 @@ export default function ReasoningPresetPanel({
           border-color: rgba(16, 163, 127, 0.3);
           background: rgba(16, 163, 127, 0.11);
           color: var(--accent-cyan);
-          box-shadow: 0 8px 18px rgba(16, 163, 127, 0.12);
         }
 
         .reasoning-panel__note {
           padding: 10px 12px;
-          border-radius: 12px;
+          border-radius: var(--radius-md);
           background: rgba(255, 255, 255, 0.03);
           border: 1px solid rgba(255, 255, 255, 0.06);
           color: var(--text-muted);
@@ -253,7 +232,7 @@ export default function ReasoningPresetPanel({
           gap: 4px;
           min-height: 92px;
           padding: 12px 13px;
-          border-radius: 14px;
+          border-radius: var(--radius-lg);
           text-align: left;
           cursor: pointer;
         }
@@ -261,13 +240,11 @@ export default function ReasoningPresetPanel({
         .reasoning-panel__option.is-disabled {
           cursor: not-allowed;
           opacity: 0.55;
-          box-shadow: none;
-          transform: none;
         }
 
         .reasoning-panel__option-label {
           font-size: 13px;
-          font-weight: 800;
+          font-weight: 700;
           letter-spacing: 0.01em;
         }
 
@@ -295,10 +272,6 @@ export default function ReasoningPresetPanel({
         @media (max-width: 760px) {
           .reasoning-panel__header {
             flex-direction: column;
-          }
-
-          .reasoning-panel__badge {
-            align-self: flex-start;
           }
 
           .reasoning-panel__grid {
