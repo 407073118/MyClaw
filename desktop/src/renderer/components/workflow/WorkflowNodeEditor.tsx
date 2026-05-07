@@ -90,6 +90,32 @@ function stageHint(kind: "start" | "end") {
     : "终止阶段：负责收敛结果并结束本次执行。";
 }
 
+/** 节点 kind 的中文标签，供 inspector header 展示。 */
+function kindLabel(kind: WorkflowNode["kind"]): string {
+  switch (kind) {
+    case "start":
+      return "开始";
+    case "end":
+      return "结束";
+    case "llm":
+      return "LLM 推理";
+    case "tool":
+      return "工具调用";
+    case "human-input":
+      return "人工输入";
+    case "condition":
+      return "条件分支";
+    case "subgraph":
+      return "子工作流";
+    case "join":
+      return "汇聚节点";
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
+}
+
 export default function WorkflowNodeEditor({
   node,
   upstreamCandidateNodeIds = [],
@@ -394,8 +420,7 @@ export default function WorkflowNodeEditor({
 
   return (
     <section className="node-editor" data-testid="workflow-node-editor">
-      <h4 className="title">节点配置</h4>
-      <p className="meta">{node.id} ({node.kind})</p>
+      <h4 className="title">节点配置 · {kindLabel(node.kind)}</h4>
 
       <label className="field">
         <span>标签</span>
@@ -728,6 +753,11 @@ export default function WorkflowNodeEditor({
         </datalist>
       )}
 
+      <details className="advanced">
+        <summary>高级（节点 ID）</summary>
+        <code className="mono" data-testid="workflow-node-editor-node-id">{node.id}</code>
+      </details>
+
       <style>{`
         .node-editor {
           border: 1px solid var(--glass-border);
@@ -801,6 +831,22 @@ export default function WorkflowNodeEditor({
         .node-editor .error {
           color: #b83333;
           font-size: 12px;
+        }
+        .node-editor .advanced {
+          border-top: 1px solid var(--glass-border);
+          padding-top: 10px;
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+        .node-editor .advanced summary {
+          cursor: pointer;
+          user-select: none;
+        }
+        .node-editor .advanced .mono {
+          display: inline-block;
+          margin-top: 6px;
+          font-family: var(--font-mono, ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace);
+          color: var(--text-muted);
         }
       `}</style>
     </section>
