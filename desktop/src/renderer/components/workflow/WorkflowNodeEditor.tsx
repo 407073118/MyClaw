@@ -4,10 +4,7 @@ import type {
   WorkflowJoinNode,
   WorkflowMergeStrategy,
   WorkflowNode,
-  WorkflowNodePolicy,
 } from "@shared/contracts";
-
-import WorkflowExecutionPolicyEditor from "./WorkflowExecutionPolicyEditor";
 
 type WorkflowConditionOperator =
   | "equals"
@@ -178,12 +175,6 @@ export default function WorkflowNodeEditor({
     const label = e.target.value;
     console.info("[workflow] 更新节点 label", { nodeId: node.id, label });
     onUpdateNode({ ...node, label } as WorkflowNode);
-  }
-
-  /** 统一更新节点执行策略。 */
-  function handlePolicyUpdate(policy: WorkflowNodePolicy | undefined) {
-    console.info("[workflow] 更新节点 policy", { nodeId: node.id, policy: policy ?? null });
-    onUpdateNode({ ...node, policy } as WorkflowNode);
   }
 
   function handleLlmPromptInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
@@ -415,8 +406,6 @@ export default function WorkflowNodeEditor({
           onChange={handleLabelInput}
         />
       </label>
-
-      <WorkflowExecutionPolicyEditor policy={node.policy} onUpdatePolicy={handlePolicyUpdate} />
 
       {(node.kind === "start" || node.kind === "end") && (
         <section className="subsection">
