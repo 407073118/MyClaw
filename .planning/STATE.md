@@ -121,7 +121,7 @@ None yet.
 | 260506-m4g | ChatPage UI 微调：投递痕迹卡片移入消息流并 5s 自动消失，用户消息整行 row-reverse 气泡靠右区分用户/AI | 2026-05-06 | 40ff367 | [260506-m4g-chatpage-ui-dispatch-trace-inline-user](./quick/260506-m4g-chatpage-ui-dispatch-trace-inline-user/) |
 | 260506-mq5 | 修复硅基员工 SiliconRail 徽章不更新的 bug，并改用单点视觉提示替代数字计数 | 2026-05-06 | 92492dc | [260506-mq5-siliconrail-bug](./quick/260506-mq5-siliconrail-bug/) |
 | 260507-gc0 | 修复 workflow：P0（RunPanel 切回 IPC / preload 不再吞错 / status succeeded / subgraph 占位 executor）+ P1（删 PolicyEditor / UUID 折叠 / 个性→提示词 / 删重复输入 / conditional edge 可编辑 / 清 inspector chrome / 去 From-X-Y 行）；P2 待后续 | 2026-05-07 | 7cd3dde | [260507-gc0-workflow-sidebar](./quick/260507-gc0-workflow-sidebar/) |
-| 260507-juq | 硅基员工工作台样式迁移到 ui-style-guide：page-shell 框架 + 单列 list-row + 矩形 .tag + 描边按钮 + modal a11y；ReasoningPresetPanel + WorkFilesPanel 共享组件同步 | 2026-05-07 | TBD | [260507-juq-ui-style-guide](./quick/260507-juq-ui-style-guide/) |
+| 260507-juq | 硅基员工工作台样式迁移到 ui-style-guide：page-shell 框架 + 单列 list-row + 矩形 .tag + 描边按钮 + modal a11y；ReasoningPresetPanel + WorkFilesPanel 共享组件同步 | 2026-05-07 | f53eb32 | [260507-juq-ui-style-guide](./quick/260507-juq-ui-style-guide/) |
 
 ## Session Continuity
 
