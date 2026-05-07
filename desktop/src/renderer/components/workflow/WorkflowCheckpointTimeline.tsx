@@ -1,9 +1,8 @@
 import React, { useMemo } from "react";
-import type { WorkflowDefinition } from "@shared/contracts";
-import type { WorkflowRunCheckpoint } from "../../services/runtime-client";
+import type { WorkflowCheckpointSummary, WorkflowDefinition } from "@shared/contracts";
 
 interface WorkflowCheckpointTimelineProps {
-  checkpoints: WorkflowRunCheckpoint[];
+  checkpoints: WorkflowCheckpointSummary[];
   definition: WorkflowDefinition;
 }
 
@@ -13,14 +12,11 @@ export default function WorkflowCheckpointTimeline({ checkpoints, definition }: 
     [definition.nodes],
   );
 
+  // checkpointer.listCheckpoints 已经按 step DESC 返回，这里反转得到正向时间轴。
   const orderedCheckpoints = useMemo(() => [...checkpoints].reverse(), [checkpoints]);
 
   function resolveNodeLabel(nodeId: string): string {
     return nodeLabels.get(nodeId) ?? nodeId;
-  }
-
-  function hasState(state: Record<string, unknown>): boolean {
-    return Object.keys(state).length > 0;
   }
 
   function formatValue(value: unknown): string {
@@ -41,20 +37,28 @@ export default function WorkflowCheckpointTimeline({ checkpoints, definition }: 
         <p className="empty">No checkpoints yet.</p>
       ) : (
         <ol className="items">
-          {orderedCheckpoints.map((checkpoint) => (
-            <li key={checkpoint.id} className="item">
-              <div className="item-top">
-                <span className="status">{checkpoint.status}</span>
-                <strong>{resolveNodeLabel(checkpoint.nodeId)}</strong>
-                <time>{checkpoint.createdAt}</time>
-              </div>
-              {checkpoint.error && <p className="error">{checkpoint.error}</p>}
-              {checkpoint.retryAt && <p className="meta">Retry at {checkpoint.retryAt}</p>}
-              {hasState(checkpoint.state) && (
-                <pre className="state">{formatValue(checkpoint.state)}</pre>
-              )}
-            </li>
-          ))}
+          {orderedCheckpoints.map((checkpoint) => {
+            const triggered = checkpoint.triggeredNodes.length > 0
+              ? checkpoint.triggeredNodes.map(resolveNodeLabel).join(", ")
+              : "(no nodes)";
+            return (
+              <li key={checkpoint.checkpointId} className="item">
+                <div className="item-top">
+                  <span className="status">{checkpoint.status}</span>
+                  <strong>{triggered}</strong>
+                  <time>{checkpoint.createdAt}</time>
+                </div>
+                {checkpoint.interruptPayload && (
+                  <p className="meta">
+                    {`等待 ${checkpoint.interruptPayload.type} · ${checkpoint.interruptPayload.prompt}`}
+                  </p>
+                )}
+                {checkpoint.interruptPayload && Object.keys(checkpoint.interruptPayload.currentState).length > 0 && (
+                  <pre className="state">{formatValue(checkpoint.interruptPayload.currentState)}</pre>
+                )}
+              </li>
+            );
+          })}
         </ol>
       )}
 

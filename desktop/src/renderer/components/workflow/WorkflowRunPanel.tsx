@@ -1,11 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import type { WorkflowDefinition, WorkflowRunSummary } from "@shared/contracts";
+import type {
+  WorkflowCheckpointSummary,
+  WorkflowDefinition,
+  WorkflowRunSummary,
+} from "@shared/contracts";
 import { Play } from "lucide-react";
 
 import WorkflowCheckpointTimeline from "./WorkflowCheckpointTimeline";
-import { getWorkflowRun, type GetWorkflowRunPayload } from "../../services/runtime-client";
-import { useShellStore } from "../../stores/shell";
 import { useWorkspaceStore } from "../../stores/workspace";
+
+/** 主进程 workflow:get-run-detail 返回的运行详情载荷。 */
+type WorkflowRunDetailPayload = {
+  run: WorkflowRunSummary;
+  checkpoints: WorkflowCheckpointSummary[];
+};
 
 interface WorkflowRunPanelProps {
   workflowId: string;
@@ -15,10 +23,9 @@ interface WorkflowRunPanelProps {
 /** 展示工作流运行记录、详情和检查点时间轴。 */
 export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRunPanelProps) {
   const workspace = useWorkspaceStore();
-  const shell = useShellStore();
 
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [activeRunDetail, setActiveRunDetail] = useState<GetWorkflowRunPayload | null>(null);
+  const [activeRunDetail, setActiveRunDetail] = useState<WorkflowRunDetailPayload | null>(null);
   const [isLoadingRuns, setIsLoadingRuns] = useState(false);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
@@ -48,13 +55,16 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     return currentNodeIds.map((nodeId) => nodeLabels.get(nodeId) ?? nodeId);
   }, [activeRunDetail, nodeLabels]);
 
-  const lastError = useMemo(() => {
-    const checkpoints = activeRunDetail?.checkpoints ?? [];
-    return [...checkpoints].reverse().find((checkpoint) => checkpoint.error)?.error ?? "";
-  }, [activeRunDetail]);
+  const lastError = useMemo(() => activeRunDetail?.run.error ?? "", [activeRunDetail]);
 
+  // WorkflowRunSummary 不直接持有 channel state；状态预览暂时仅从 interrupt payload 取，
+  // 完整状态展示由后续工作恢复（依赖 checkpointer 的 channel 还原能力）。
   const stateFields = useMemo(() => {
-    const state = activeRunDetail?.run.state ?? {};
+    const checkpoints = activeRunDetail?.checkpoints ?? [];
+    const lastInterrupt = [...checkpoints]
+      .reverse()
+      .find((checkpoint) => checkpoint.interruptPayload)?.interruptPayload;
+    const state = lastInterrupt?.currentState ?? {};
     return Object.entries(state).map(([key, value]) => ({
       key,
       label: stateSchemaLabels.get(key) ?? key,
@@ -108,10 +118,13 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
     setIsLoadingDetail(true);
     setPanelError("");
     try {
-      const detail = await getWorkflowRun(shell.runtimeBaseUrl, runId);
+      const detail = (await window.myClawAPI.getWorkflowRunDetail(runId)) as
+        | WorkflowRunDetailPayload
+        | null;
+      if (!detail) throw new Error("详情加载失败");
       setActiveRunDetail(detail);
-    } catch {
-      setPanelError("详情加载失败");
+    } catch (err) {
+      setPanelError(err instanceof Error ? err.message : "详情加载失败");
       setActiveRunDetail(null);
     } finally {
       setIsLoadingDetail(false);

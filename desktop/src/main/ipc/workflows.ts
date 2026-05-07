@@ -2,7 +2,16 @@ import { BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 
-import type { ChatSession, ModelProfile, Task, TurnOutcome, WorkflowDefinition, WorkflowRunSummary, WorkflowSummary } from "@shared/contracts";
+import type {
+  ChatSession,
+  ModelProfile,
+  Task,
+  TurnOutcome,
+  WorkflowCheckpointSummary,
+  WorkflowDefinition,
+  WorkflowRunSummary,
+  WorkflowSummary,
+} from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
 import { createLogger } from "../services/logger";
@@ -919,13 +928,18 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
 
   ipcMain.handle(
     "workflow:get-run-detail",
-    async (_event, runId: string): Promise<WorkflowRunSummary | null> => {
+    async (
+      _event,
+      runId: string,
+    ): Promise<{ run: WorkflowRunSummary; checkpoints: WorkflowCheckpointSummary[] } | null> => {
+      let resolvedRun: WorkflowRunSummary | null = null;
+
       // 优先查看活跃运行
       const runner = ctx.state.activeWorkflowRuns.get(runId) as PregelRunner | undefined;
       if (runner) {
         const existing = ctx.state.workflowRuns.find((r) => r.id === runId);
         if (existing) {
-          return {
+          resolvedRun = {
             ...existing,
             status: "running",
             updatedAt: new Date().toISOString(),
@@ -934,26 +948,30 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       }
 
       // 从 SQLite checkpointer 读取持久化数据（含 checkpoint 元信息）
+      let checkpoints: WorkflowCheckpointSummary[] = [];
       try {
         await checkpointerReady;
-        const persisted = checkpointer.getRun(runId);
-        if (persisted) {
-          const checkpoint = checkpointer.getLatestCheckpoint(runId);
-          if (checkpoint) {
-            return {
-              ...persisted,
-              currentNodeIds: checkpoint.triggeredNodes,
-              totalSteps: checkpoint.step,
-            };
+        if (!resolvedRun) {
+          const persisted = checkpointer.getRun(runId);
+          if (persisted) {
+            const latest = checkpointer.getLatestCheckpoint(runId);
+            resolvedRun = latest
+              ? { ...persisted, currentNodeIds: latest.triggeredNodes, totalSteps: latest.step }
+              : persisted;
           }
-          return persisted;
         }
+        checkpoints = checkpointer.listCheckpoints(runId);
       } catch (err) {
         console.error("[workflow:get-run-detail] 从 checkpointer 读取失败，回退到内存数据", err);
       }
 
       // 回退到内存数据
-      return ctx.state.workflowRuns.find((r) => r.id === runId) ?? null;
+      if (!resolvedRun) {
+        resolvedRun = ctx.state.workflowRuns.find((r) => r.id === runId) ?? null;
+      }
+
+      if (!resolvedRun) return null;
+      return { run: resolvedRun, checkpoints };
     },
   );
 
