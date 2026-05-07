@@ -298,15 +298,18 @@ export default function WorkflowsPage() {
     }
   }
 
-  /** 处理工作流删除入口，当前仍处于占位交互阶段。 */
+  /** 处理工作流删除：调用 IPC 真正落盘删除，store 会自动从列表中剔除。 */
   async function handleDelete(workflowId: string) {
-    if (
-      !confirm(
-        "Are you sure you want to delete this workflow? (Not fully supported by runtime yet)",
-      )
-    )
-      return;
-    alert(`Delete operation for ${workflowId} called. UI update only for now.`);
+    if (!confirm("确认删除该工作流？此操作不可撤销。")) return;
+    try {
+      await workspace.deleteWorkflow(workflowId);
+      console.info("[workflows] 已删除工作流", { workflowId });
+      // workspace.deleteWorkflow 已自动从 workflows / workflowSummaries / workflowDefinitions 中剔除该项；
+      // 不在此弹出成功提示，列表条目消失即视觉反馈。
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "删除失败。";
+      alert(`删除工作流失败：${message}`);
+    }
   }
 
   /** 创建新工作流，并写入一个最小可用的起止节点图。 */
