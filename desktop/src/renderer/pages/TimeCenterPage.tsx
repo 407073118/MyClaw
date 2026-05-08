@@ -380,20 +380,54 @@ function ActionIconButton({
   title,
   onClick,
   variant = "default",
+  loading = false,
+  disabled = false,
   children,
 }: {
   title: string;
   onClick: () => void | Promise<void>;
   variant?: "default" | "danger";
+  loading?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
-  const className = variant === "danger"
+  const baseClass = variant === "danger"
     ? "job-action-icon-btn job-action-icon-btn--danger"
     : "job-action-icon-btn";
+  const className = loading ? `${baseClass} is-loading` : baseClass;
+  const isDisabled = loading || disabled;
   return (
-    <button type="button" className={className} aria-label={title} title={title} onClick={() => void onClick()}>
-      {children}
+    <button
+      type="button"
+      className={className}
+      aria-label={title}
+      aria-busy={loading || undefined}
+      title={title}
+      disabled={isDisabled}
+      onClick={() => {
+        if (isDisabled) return;
+        void onClick();
+      }}
+    >
+      {loading ? <IconSpinner /> : children}
     </button>
+  );
+}
+
+function IconSpinner(): React.JSX.Element {
+  return (
+    <svg className="icon-spinner" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.4"
+        strokeLinecap="round"
+        strokeDasharray="40 60"
+      />
+    </svg>
   );
 }
 
@@ -765,6 +799,7 @@ function ScheduleJobListPage({
   onRunNow: (job: ScheduleJob) => Promise<void>;
 }) {
   const [selectedJobForHistory, setSelectedJobForHistory] = useState<ScheduleJob | null>(null);
+  const [pendingRunIds, setPendingRunIds] = useState<Set<string>>(() => new Set());
   const executionRuns = useWorkspaceStore((state) => state.time.executionRuns);
 
   /** 抽屉打开时主动拉一次执行记录，确保最近一次执行能立刻看到。
@@ -774,6 +809,25 @@ function ScheduleJobListPage({
       void useWorkspaceStore.getState().refreshExecutionRuns();
     }
   }, [selectedJobForHistory]);
+
+  /** 包一层 onRunNow：本地标记 pending → await → 清理。失败也兜底清理。 */
+  async function handleRunClick(job: ScheduleJob) {
+    if (pendingRunIds.has(job.id)) return;
+    setPendingRunIds((prev) => {
+      const next = new Set(prev);
+      next.add(job.id);
+      return next;
+    });
+    try {
+      await onRunNow(job);
+    } finally {
+      setPendingRunIds((prev) => {
+        const next = new Set(prev);
+        next.delete(job.id);
+        return next;
+      });
+    }
+  }
 
   return (
     <section className="schedule-list-page">
@@ -785,11 +839,11 @@ function ScheduleJobListPage({
         {jobs.length === 0 ? <p className="side-empty">暂无定时任务。</p> : null}
         {jobs.map((job) => {
           const latestRun = latestRunByJobId.get(job.id);
-          const accent = resolveJobAccent(job, latestRun);
+          const isRunPending = pendingRunIds.has(job.id);
           return (
             <article
               key={job.id}
-              className={`list-page-row list-page-row--job list-page-row--job-${accent} is-clickable`}
+              className="list-page-row list-page-row--job is-clickable"
               role="button"
               tabIndex={0}
               aria-label={`查看 ${job.title} 的执行历史`}
@@ -815,13 +869,15 @@ function ScheduleJobListPage({
                 {latestRun ? <span className={latestRun.status === "failed" ? "job-row__run is-warning" : "job-row__run"}>{formatLatestRunLabel(latestRun)}</span> : <span>—</span>}
               </div>
               <div className="job-row__actions" onClick={(event) => event.stopPropagation()}>
-                <ActionIconButton title="立即执行" onClick={() => onRunNow(job)}>
+                <ActionIconButton
+                  title={isRunPending ? "执行中…" : "立即执行"}
+                  loading={isRunPending}
+                  onClick={() => handleRunClick(job)}
+                >
                   <IconPlay />
-                  <span>执行</span>
                 </ActionIconButton>
                 <ActionIconButton title={job.status === "paused" ? "恢复" : "暂停"} onClick={() => onToggle(job)}>
                   {job.status === "paused" ? <IconRestore /> : <IconPause />}
-                  <span>{job.status === "paused" ? "恢复" : "暂停"}</span>
                 </ActionIconButton>
                 <ActionIconButton title="删除" variant="danger" onClick={() => onDelete(job.id)}>
                   <IconTrash />
@@ -858,8 +914,6 @@ function ExecutionHistoryDrawer({
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
     [runs, job.id],
   );
-  const drawerAccent = resolveJobAccent(job, sortedRuns[0]);
-
   /** Esc 关闭抽屉，符合桌面端弹层一致行为。 */
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -882,7 +936,7 @@ function ExecutionHistoryDrawer({
       }}
     >
       <aside
-        className={`execution-history-drawer execution-history-drawer--${drawerAccent}`}
+        className="execution-history-drawer"
         role="dialog"
         aria-modal="true"
         aria-label={`计划任务 ${job.title} 的执行历史`}
@@ -908,11 +962,10 @@ function ExecutionHistoryDrawer({
           ) : (
             <ul className="execution-history-list">
               {sortedRuns.map((run) => {
-                const runAccent = resolveRunAccent(run);
                 return (
                   <li
                     key={run.id}
-                    className={`execution-history-row execution-history-row--${runAccent}`}
+                    className="execution-history-row"
                   >
                     <div className="execution-history-row__head">
                       <span
@@ -1447,25 +1500,6 @@ function getLocalHour(iso: string, timezone: string): number {
   }).format(new Date(iso));
   const hour = Number(hourText);
   return hour === 24 ? 0 : hour;
-}
-
-type StatusAccent = "active" | "running" | "failed" | "muted";
-
-/** 综合 job 与最近一次执行的状态，给出列表行 / 抽屉 header 的色条颜色。 */
-function resolveJobAccent(job: ScheduleJob, latestRun: ExecutionRun | undefined): StatusAccent {
-  if (job.status === "paused" || job.status === "cancelled") return "muted";
-  if (latestRun?.status === "running" || job.status === "running") return "running";
-  if (latestRun?.status === "failed" || job.status === "failed") return "failed";
-  if (latestRun?.status === "succeeded") return "active";
-  return "muted";
-}
-
-/** 单次 run 的状态映射到色条颜色。 */
-function resolveRunAccent(run: ExecutionRun): StatusAccent {
-  if (run.status === "succeeded") return "active";
-  if (run.status === "running") return "running";
-  if (run.status === "failed") return "failed";
-  return "muted";
 }
 
 /** 获取指定时间在目标时区内的分钟，用于按分钟比例插值 now-line。 */
@@ -2098,29 +2132,48 @@ const styles = `
   }
 
   .job-action-icon-btn {
+    width: 30px;
     height: 30px;
-    padding: 0 10px;
+    padding: 0;
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
     background: rgba(255, 255, 255, 0.035);
     color: var(--text-secondary);
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    font-weight: 600;
+    justify-content: center;
     cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
   }
 
-  .job-action-icon-btn:hover {
+  .job-action-icon-btn:hover:not(:disabled) {
     background: rgba(255, 255, 255, 0.09);
     color: var(--text-primary);
+  }
+
+  .job-action-icon-btn:disabled {
+    cursor: progress;
+    opacity: 0.85;
   }
 
   .job-action-icon-btn--danger {
     color: var(--status-red);
     border-color: rgba(239, 68, 68, 0.32);
+  }
+
+  .job-action-icon-btn.is-loading {
+    color: var(--accent-cyan);
+    border-color: rgba(16, 163, 127, 0.4);
+    background: rgba(16, 163, 127, 0.1);
+  }
+
+  .icon-spinner {
+    animation: jobActionSpin 0.8s linear infinite;
+    transform-origin: 50% 50%;
+  }
+
+  @keyframes jobActionSpin {
+    to { transform: rotate(360deg); }
   }
 
   .job-action-icon-btn--danger:hover {
@@ -2178,30 +2231,13 @@ const styles = `
   }
 
   .execution-history-drawer__header {
-    position: relative;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    padding: 20px 24px 20px 27px;
+    padding: 20px 24px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
-
-  .execution-history-drawer__header::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 18px;
-    bottom: 18px;
-    width: 3px;
-    border-radius: 2px;
-    background: var(--text-muted);
-  }
-
-  .execution-history-drawer--active .execution-history-drawer__header::before { background: var(--status-green); box-shadow: 0 0 10px rgba(34, 197, 94, 0.45); }
-  .execution-history-drawer--running .execution-history-drawer__header::before { background: var(--accent-cyan); box-shadow: 0 0 10px rgba(16, 163, 127, 0.5); }
-  .execution-history-drawer--failed .execution-history-drawer__header::before { background: var(--status-red); box-shadow: 0 0 10px rgba(239, 68, 68, 0.5); }
-  .execution-history-drawer--muted .execution-history-drawer__header::before { background: var(--text-muted); }
 
   .execution-history-drawer__heading {
     display: flex;
@@ -2265,8 +2301,7 @@ const styles = `
   }
 
   .execution-history-row {
-    position: relative;
-    padding: 14px 16px 14px 19px;
+    padding: 14px 16px;
     background: var(--bg-card);
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
@@ -2274,22 +2309,6 @@ const styles = `
     flex-direction: column;
     gap: 10px;
   }
-
-  .execution-history-row::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 12px;
-    bottom: 12px;
-    width: 3px;
-    border-radius: 2px;
-    background: var(--text-muted);
-  }
-
-  .execution-history-row--active::before { background: var(--status-green); box-shadow: 0 0 6px rgba(34, 197, 94, 0.4); }
-  .execution-history-row--running::before { background: var(--accent-cyan); box-shadow: 0 0 6px rgba(16, 163, 127, 0.45); }
-  .execution-history-row--failed::before { background: var(--status-red); box-shadow: 0 0 6px rgba(239, 68, 68, 0.45); }
-  .execution-history-row--muted::before { background: var(--text-muted); }
 
   .execution-history-row__head {
     display: flex;
@@ -2501,41 +2520,29 @@ const styles = `
   }
 
   .list-page-row--job {
-    position: relative;
-    padding-left: 27px;
-    grid-template-columns: 140px minmax(0, 1.5fr) minmax(0, 1fr) minmax(220px, auto);
-  }
-
-  .list-page-row--job::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: var(--text-muted);
-    opacity: 0.55;
-    transition: opacity 0.15s ease, box-shadow 0.15s ease;
+    grid-template-columns: 140px minmax(0, 1.5fr) minmax(0, 1fr) minmax(132px, auto);
   }
 
   .list-page-row--job:hover {
     background: var(--bg-surface-hover);
   }
 
-  .list-page-row--job:hover::before {
-    opacity: 1;
-  }
-
-  .list-page-row--job-active::before { background: var(--status-green); box-shadow: 0 0 8px rgba(34, 197, 94, 0.35); }
-  .list-page-row--job-running::before { background: var(--accent-cyan); box-shadow: 0 0 8px rgba(16, 163, 127, 0.45); }
-  .list-page-row--job-failed::before { background: var(--status-red); box-shadow: 0 0 8px rgba(239, 68, 68, 0.45); }
-  .list-page-row--job-muted::before { background: var(--text-muted); }
-
   .job-row__schedule-col,
   .job-row__info-col,
   .job-row__run-col {
     display: grid;
     gap: 6px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .job-row__schedule-col > span,
+  .job-row__info-col > span,
+  .job-row__info-col > strong,
+  .job-row__run-col > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     min-width: 0;
   }
 
