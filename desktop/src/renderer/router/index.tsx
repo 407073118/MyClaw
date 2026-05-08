@@ -23,6 +23,7 @@ import WorkflowsPage from "../pages/WorkflowsPage";
 import WorkflowStudioPage from "../pages/WorkflowStudioPage";
 import MeetingsPage from "../pages/MeetingsPage";
 import TimeCenterPage from "../pages/TimeCenterPage";
+import TimeJobDetailPage from "../pages/TimeJobDetailPage";
 import PublishDraftPage from "../pages/PublishDraftPage";
 import SettingsPage from "../pages/SettingsPage";
 import ModelsPage from "../pages/ModelsPage";
@@ -62,7 +63,7 @@ function SiliconPersonChatRedirectPage() {
       siliconPersonId: id,
     });
     setActiveSiliconPersonId(id);
-    void navigate("/", { replace: true });
+    void navigate("/chat", { replace: true });
   }, [id, navigate, setActiveSiliconPersonId]);
 
   return null;
@@ -86,7 +87,9 @@ export function AppRoutes() {
           </RequireAuth>
         }
       >
-        <Route index element={<ChatPage />} />
+        {/* 默认入口为日程规划，让用户打开桌面就先看见自己、硅基人和自动任务的时间轴。 */}
+        <Route index element={<Navigate to="/time" replace />} />
+        <Route path="/chat" element={<ChatPage />} />
         <Route path="/hub" element={<HubPage />} />
         <Route path="/tools" element={<ToolsPage />} />
         <Route path="/files" element={<FilesWorkspacePage />} />
@@ -104,6 +107,7 @@ export function AppRoutes() {
         <Route path="/meetings" element={<MeetingsPage />} />
         <Route path="/meetings/:id" element={<MeetingsPage />} />
         <Route path="/time" element={<TimeCenterPage />} />
+        <Route path="/time/jobs/:id" element={<TimeJobDetailPage />} />
         <Route path="/publish-drafts" element={<PublishDraftPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/me/prompt" element={<PersonalPromptPage />} />

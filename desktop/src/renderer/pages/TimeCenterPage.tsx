@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import type {
   AvailabilityPolicy,
@@ -85,6 +85,24 @@ export default function TimeCenterPage() {
   const [feedback, setFeedback] = useState("");
   const [chosenJobType, setChosenJobType] = useState<ScheduleJobExecutor | null>(null);
   const [editingJob, setEditingJob] = useState<ScheduleJob | null>(null);
+
+  // 详情页通过 navigate("/time", { state: { editJobId } }) 触发编辑器自动打开
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const state = location.state as { editJobId?: string } | null;
+    const editJobId = state?.editJobId;
+    if (!editJobId) return;
+    const target = time.scheduleJobs.find((job) => job.id === editJobId);
+    if (target) {
+      setEditingJob(target);
+      setChosenJobType(target.executor);
+      setActiveComposer("job");
+    }
+    // 清掉 history.state 防止刷新时重复触发
+    void navigate(location.pathname, { replace: true, state: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state]);
 
   const workflowOptions = useMemo(
     () => (workflows ?? []).map((workflow) => ({ id: workflow.id, name: workflow.name })),
@@ -888,23 +906,14 @@ function ScheduleJobListPage({
   onRunNow: (job: ScheduleJob) => Promise<void>;
   onEdit: (job: ScheduleJob) => void;
 }) {
-  const [selectedJobForHistory, setSelectedJobForHistory] = useState<ScheduleJob | null>(null);
+  const navigate = useNavigate();
   const [pendingRunIds, setPendingRunIds] = useState<Set<string>>(() => new Set());
   const [typeFilter, setTypeFilter] = useState<"all" | ScheduleJobExecutor>("all");
-  const executionRuns = useWorkspaceStore((state) => state.time.executionRuns);
 
   const filteredJobs = useMemo(
     () => (typeFilter === "all" ? jobs : jobs.filter((job) => job.executor === typeFilter)),
     [jobs, typeFilter],
   );
-
-  /** 抽屉打开时主动拉一次执行记录，确保最近一次执行能立刻看到。
-   *  通过 getState 直接调 action，不进 effect 依赖 —— 避免 zustand action 引用变化（理论稳定但保险写法）触发循环。 */
-  useEffect(() => {
-    if (selectedJobForHistory) {
-      void useWorkspaceStore.getState().refreshExecutionRuns();
-    }
-  }, [selectedJobForHistory]);
 
   /** 包一层 onRunNow：本地标记 pending → await → 清理。失败也兜底清理。 */
   async function handleRunClick(job: ScheduleJob) {
@@ -929,7 +938,7 @@ function ScheduleJobListPage({
     <section className="schedule-list-page">
       <header className="list-page-header">
         <h3>定时任务</h3>
-        <p>{jobs.length} 个自动触发任务 · 点行查看执行历史</p>
+        <p>{jobs.length} 个自动触发任务 · 点行打开任务详情页</p>
       </header>
       <div className="job-type-filter" role="group" aria-label="按类型筛选">
         {(["all", "assistant_prompt", "workflow", "silicon_person"] as const).map((value) => (
@@ -956,12 +965,12 @@ function ScheduleJobListPage({
               className="list-page-row list-page-row--job is-clickable"
               role="button"
               tabIndex={0}
-              aria-label={`查看 ${job.title} 的执行历史`}
-              onClick={() => setSelectedJobForHistory(job)}
+              aria-label={`打开 ${job.title} 的详情页`}
+              onClick={() => void navigate(`/time/jobs/${job.id}`)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
-                  setSelectedJobForHistory(job);
+                  void navigate(`/time/jobs/${job.id}`);
                 }
               }}
             >
@@ -1003,167 +1012,10 @@ function ScheduleJobListPage({
           );
         })}
       </div>
-      {selectedJobForHistory ? (
-        <ExecutionHistoryDrawer
-          job={selectedJobForHistory}
-          runs={executionRuns}
-          onClose={() => setSelectedJobForHistory(null)}
-        />
-      ) : null}
     </section>
   );
 }
 
-/** 渲染计划任务执行历史侧滑抽屉，桌面端原生右侧抽屉而不是新路由。 */
-function ExecutionHistoryDrawer({
-  job,
-  runs,
-  onClose,
-}: {
-  job: ScheduleJob;
-  runs: ExecutionRun[];
-  onClose: () => void;
-}): React.JSX.Element {
-  const sortedRuns = useMemo(
-    () => runs
-      .filter((run) => run.jobId === job.id)
-      .sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
-    [runs, job.id],
-  );
-  const navigate = useNavigate();
-  /** Esc 关闭抽屉，符合桌面端弹层一致行为。 */
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  return (
-    <div
-      className="execution-history-drawer-overlay"
-      role="presentation"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
-    >
-      <aside
-        className="execution-history-drawer"
-        role="dialog"
-        aria-modal="true"
-        aria-label={`计划任务 ${job.title} 的执行历史`}
-      >
-        <header className="execution-history-drawer__header">
-          <div className="execution-history-drawer__heading">
-            <span className="execution-history-drawer__eyebrow">执行历史</span>
-            <h3 className="execution-history-drawer__title">{job.title}</h3>
-            <span className="execution-history-drawer__meta">
-              {sortedRuns.length} 次执行记录 · {formatScheduleKind(job.scheduleKind)}
-            </span>
-          </div>
-          <div className="execution-history-drawer__header-actions">
-            {job.sessionId ? (
-              <button
-                type="button"
-                className="execution-history-drawer__chat-link"
-                onClick={() => {
-                  useWorkspaceStore.getState().selectSession(job.sessionId!);
-                  onClose();
-                  void navigate("/chat");
-                }}
-              >
-                在对话中查看 →
-              </button>
-            ) : null}
-            <button type="button" className="job-action-icon-btn" onClick={onClose} aria-label="关闭 (Esc)">
-              <IconClose />
-            </button>
-          </div>
-        </header>
-        <div className="execution-history-drawer__body">
-          {sortedRuns.length === 0 ? (
-            <div className="execution-history-drawer__empty">
-              <p>该任务尚无执行记录</p>
-              <p className="execution-history-drawer__empty-hint">下次到期触发后将自动出现在这里</p>
-            </div>
-          ) : (
-            <ul className="execution-history-list">
-              {sortedRuns.map((run) => {
-                const isClickable = Boolean(job.sessionId);
-                const navigateToSession = () => {
-                  if (!job.sessionId) return;
-                  useWorkspaceStore.getState().selectSession(job.sessionId);
-                  onClose();
-                  void navigate("/chat");
-                };
-                return (
-                  <li
-                    key={run.id}
-                    className={isClickable ? "execution-history-row is-clickable" : "execution-history-row"}
-                    {...(isClickable
-                      ? {
-                          role: "button",
-                          tabIndex: 0,
-                          "aria-label": `查看本次执行的对话详情`,
-                          onClick: navigateToSession,
-                          onKeyDown: (event: React.KeyboardEvent<HTMLLIElement>) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              navigateToSession();
-                            }
-                          },
-                        }
-                      : {})}
-                  >
-                    <div className="execution-history-row__head">
-                      <span
-                        className={
-                          run.status === "succeeded"
-                            ? "status-badge status-badge--active"
-                            : run.status === "failed"
-                            ? "status-badge status-badge--danger"
-                            : run.status === "running"
-                            ? "status-badge status-badge--normal"
-                            : "status-badge status-badge--muted"
-                        }
-                      >
-                        {formatExecutionRunStatus(run.status)}
-                      </span>
-                      <span className="execution-history-row__time">
-                        {formatDateTime(run.startedAt, job.timezone)}
-                        {run.finishedAt ? ` → ${formatClock(run.finishedAt, job.timezone)}` : ""}
-                      </span>
-                    </div>
-                    {run.outputSummary ? (
-                      <MarkdownView
-                        source={run.outputSummary}
-                        className="execution-history-row__markdown"
-                      />
-                    ) : null}
-                    {run.errorMessage ? (
-                      <pre className="execution-history-row__error">{run.errorMessage}</pre>
-                    ) : null}
-                    {!run.outputSummary && !run.errorMessage ? (
-                      <span className="execution-history-row__placeholder">本次执行未记录输出内容</span>
-                    ) : null}
-                    {isClickable ? (
-                      <span className="execution-history-row__detail-hint">查看详情 →</span>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </aside>
-    </div>
-  );
-}
 type JobTypeCard = {
   type: ScheduleJobExecutor;
   title: string;
@@ -2748,165 +2600,6 @@ const styles = `
     color: var(--status-red);
   }
 
-  .execution-history-drawer-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 100;
-    background: rgba(0, 0, 0, 0.55);
-    backdrop-filter: blur(4px);
-    display: flex;
-    justify-content: flex-end;
-    animation: executionDrawerFadeIn 0.18s ease;
-  }
-
-  .execution-history-drawer {
-    width: 480px;
-    max-width: 100%;
-    height: 100%;
-    background: var(--bg-drawer);
-    border-left: 1px solid var(--glass-border);
-    box-shadow: var(--shadow-drawer);
-    display: flex;
-    flex-direction: column;
-    animation: executionDrawerSlideIn 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .execution-history-drawer__header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 20px 24px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .execution-history-drawer__header-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-  }
-
-  .execution-history-drawer__chat-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    height: 30px;
-    padding: 0 12px;
-    border: 1px solid rgba(16, 163, 127, 0.45);
-    border-radius: var(--radius-md);
-    background: rgba(16, 163, 127, 0.08);
-    color: var(--accent-cyan);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.15s ease, border-color 0.15s ease;
-  }
-
-  .execution-history-drawer__chat-link:hover {
-    background: rgba(16, 163, 127, 0.16);
-    border-color: var(--accent-cyan);
-  }
-
-  .execution-history-drawer__heading {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-
-  .execution-history-drawer__eyebrow {
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--accent-cyan);
-  }
-
-  .execution-history-drawer__title {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .execution-history-drawer__meta {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .execution-history-drawer__body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px 20px 24px;
-  }
-
-  .execution-history-drawer__empty {
-    padding: 48px 16px;
-    text-align: center;
-    color: var(--text-muted);
-    font-size: 13px;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .execution-history-drawer__empty-hint {
-    font-size: 12px;
-    color: var(--text-muted);
-    margin: 0;
-  }
-
-  .execution-history-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .execution-history-row {
-    padding: 14px 16px;
-    background: var(--bg-card);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .execution-history-row.is-clickable {
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
-  }
-
-  .execution-history-row.is-clickable:hover {
-    background: rgba(255, 255, 255, 0.05);
-    border-color: var(--glass-border-hover);
-  }
-
-  .execution-history-row.is-clickable:focus-visible {
-    outline: 2px solid var(--accent-cyan);
-    outline-offset: -2px;
-  }
-
-  .execution-history-row__detail-hint {
-    align-self: flex-end;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--accent-cyan);
-    margin-top: 2px;
-  }
-
-  .execution-history-row.is-clickable:hover .execution-history-row__detail-hint {
-    text-decoration: underline;
-  }
-
   .reasoning-chip-group {
     display: flex;
     gap: 6px;
@@ -2934,190 +2627,6 @@ const styles = `
     color: var(--accent-cyan);
     border-color: rgba(16, 163, 127, 0.55);
     background: rgba(16, 163, 127, 0.12);
-  }
-
-  .execution-history-row__head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .execution-history-row__time {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .execution-history-row__output {
-    margin: 0;
-    padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: var(--radius-md);
-    color: var(--text-primary);
-    font-size: 12px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: inherit;
-  }
-
-  .execution-history-row__markdown {
-    margin: 0;
-    padding: 10px 12px;
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: var(--radius-md);
-    color: var(--text-primary);
-    font-size: 13px;
-    line-height: 1.65;
-    word-break: break-word;
-  }
-
-  .execution-history-row__markdown > *:first-child { margin-top: 0; }
-  .execution-history-row__markdown > *:last-child { margin-bottom: 0; }
-
-  .execution-history-row__markdown h1,
-  .execution-history-row__markdown h2,
-  .execution-history-row__markdown h3,
-  .execution-history-row__markdown h4 {
-    margin: 14px 0 6px;
-    color: var(--text-primary);
-    font-weight: 600;
-    line-height: 1.35;
-  }
-
-  .execution-history-row__markdown h1 { font-size: 18px; }
-  .execution-history-row__markdown h2 { font-size: 16px; }
-  .execution-history-row__markdown h3 { font-size: 14px; }
-  .execution-history-row__markdown h4 { font-size: 13px; color: var(--text-secondary); }
-
-  .execution-history-row__markdown p { margin: 8px 0; }
-
-  .execution-history-row__markdown ul,
-  .execution-history-row__markdown ol {
-    margin: 8px 0;
-    padding-left: 22px;
-  }
-
-  .execution-history-row__markdown li { margin: 3px 0; }
-  .execution-history-row__markdown li > p { margin: 0; }
-
-  .execution-history-row__markdown a {
-    color: var(--accent-cyan);
-    text-decoration: none;
-    border-bottom: 1px solid rgba(16, 163, 127, 0.35);
-  }
-
-  .execution-history-row__markdown a:hover {
-    border-bottom-color: var(--accent-cyan);
-  }
-
-  .execution-history-row__markdown code {
-    padding: 1px 5px;
-    background: rgba(255, 255, 255, 0.06);
-    border-radius: var(--radius-sm);
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 12px;
-    color: var(--text-primary);
-  }
-
-  .execution-history-row__markdown pre {
-    margin: 10px 0;
-    padding: 12px 14px;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    overflow-x: auto;
-    font-size: 12px;
-    line-height: 1.55;
-  }
-
-  .execution-history-row__markdown pre code {
-    padding: 0;
-    background: transparent;
-    border-radius: 0;
-    font-size: 12px;
-    color: var(--text-primary);
-  }
-
-  .execution-history-row__markdown blockquote {
-    margin: 10px 0;
-    padding: 4px 12px;
-    border-left: 3px solid var(--glass-border-strong);
-    color: var(--text-secondary);
-    background: rgba(255, 255, 255, 0.02);
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  }
-
-  .execution-history-row__markdown hr {
-    margin: 14px 0;
-    border: 0;
-    border-top: 1px solid var(--glass-border);
-  }
-
-  .execution-history-row__markdown table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 10px 0;
-    font-size: 12px;
-  }
-
-  .execution-history-row__markdown th,
-  .execution-history-row__markdown td {
-    padding: 6px 10px;
-    border: 1px solid var(--glass-border);
-    text-align: left;
-  }
-
-  .execution-history-row__markdown th {
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--text-secondary);
-    font-weight: 600;
-  }
-
-  .execution-history-row__markdown img {
-    max-width: 100%;
-    height: auto;
-    border-radius: var(--radius-md);
-  }
-
-  .execution-history-row__markdown strong {
-    color: var(--text-primary);
-    font-weight: 600;
-  }
-
-  .execution-history-row__markdown em {
-    color: var(--text-secondary);
-    font-style: italic;
-  }
-
-  .execution-history-row__error {
-    margin: 0;
-    padding: 10px 12px;
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.22);
-    border-radius: var(--radius-md);
-    color: var(--status-red);
-    font-size: 12px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-family: inherit;
-  }
-
-  .execution-history-row__placeholder {
-    font-size: 12px;
-    color: var(--text-muted);
-    font-style: italic;
-  }
-
-  @keyframes executionDrawerFadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  @keyframes executionDrawerSlideIn {
-    from { transform: translateX(100%); }
-    to { transform: translateX(0); }
   }
 
   .list-page-body {
