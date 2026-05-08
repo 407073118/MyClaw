@@ -75,6 +75,10 @@ export type ScheduleJob = {
   cronExpression?: string;
   executor: ScheduleJobExecutor;
   executorTargetId?: string;
+  /** Prompt 类型定时任务关联的 ChatSession id；首次执行时自动创建并写回。 */
+  sessionId?: string;
+  /** 指定模型 profile id；不指定时执行器走 workspace 默认主模型。 */
+  modelProfileId?: string;
   lastRunAt?: string;
   nextRunAt?: string;
   createdAt: string;

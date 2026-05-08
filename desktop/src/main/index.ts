@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 
 // ---------------------------------------------------------------------------
 // 防止 EPIPE 错误导致应用崩溃。
@@ -25,6 +26,7 @@ import type {
   WorkflowDefinition,
   WorkflowSummary,
 } from "@shared/contracts";
+import { SESSION_RUNTIME_VERSION, textOfContent } from "@shared/contracts";
 
 import { createRuntimeContext } from "./services/runtime-context";
 import type { RuntimeContext } from "./services/runtime-context";
@@ -52,7 +54,7 @@ import { trackSave, waitForPendingSaves, getPendingSavesCount } from "./services
 export { trackSave };
 
 import type { MyClawPaths } from "./services/directory-service";
-import { getSessionDatabase, loadPersistedState } from "./services/state-persistence";
+import { getSessionDatabase, loadPersistedState, saveSession } from "./services/state-persistence";
 import { syncSessionBackgroundTaskSnapshot } from "./services/session-background-task";
 import { registerAllIpcHandlers } from "./ipc";
 import { McpServerManager } from "./services/mcp-server-manager";
@@ -217,19 +219,63 @@ async function buildRuntimeContext(
         content,
       });
     },
-    runAssistantPrompt: async ({ prompt }) => {
-      const profile = defaultModelProfileId
-        ? models.find((m) => m.id === defaultModelProfileId) ?? models[0]
-        : models[0];
-      if (!profile) {
-        throw new Error("未配置任何模型，assistant_prompt 计划任务无法执行");
+    runAssistantPrompt: async ({ job, prompt }) => {
+      // 复用或创建该 prompt job 关联的长期 ChatSession，让定时任务跑在与
+      // ChatPage 完全相同的 send-message 主链路上，工具/技能/MCP/审批全部继承。
+      let session: ChatSession | null = job.sessionId
+        ? sessions.find((item) => item.id === job.sessionId) ?? null
+        : null;
+      if (!session) {
+        const profileId = job.modelProfileId
+          ?? defaultModelProfileId
+          ?? models[0]?.id
+          ?? "";
+        if (!profileId) {
+          throw new Error("未配置任何模型，assistant_prompt 计划任务无法执行");
+        }
+        const now = new Date().toISOString();
+        session = {
+          id: randomUUID(),
+          title: `[定时] ${job.title}`,
+          modelProfileId: profileId,
+          attachedDirectory: null,
+          createdAt: now,
+          runtimeVersion: SESSION_RUNTIME_VERSION,
+          messages: [],
+        };
+        sessions.push(session);
+        await saveSession(paths, session);
+        await timeStore.upsertScheduleJob({
+          id: job.id,
+          title: job.title,
+          description: job.description,
+          scheduleKind: job.scheduleKind,
+          timezone: job.timezone,
+          ownerScope: job.ownerScope,
+          ownerId: job.ownerId,
+          status: job.status,
+          source: job.source,
+          externalRef: job.externalRef,
+          startsAt: job.startsAt,
+          intervalMinutes: job.intervalMinutes,
+          cronExpression: job.cronExpression,
+          executor: job.executor,
+          executorTargetId: job.executorTargetId,
+          sessionId: session.id,
+          modelProfileId: job.modelProfileId,
+          lastRunAt: job.lastRunAt,
+          nextRunAt: job.nextRunAt,
+        });
       }
-      const result = await callModel({
-        profile,
-        messages: [{ role: "user", content: prompt }],
-        timeoutMs: 60_000,
+
+      const sendResult = await invokeRegisteredSessionSendMessage(session.id, {
+        content: prompt,
       });
-      return { outputSummary: result.content ?? "" };
+      const lastAssistant = [...sendResult.session.messages]
+        .reverse()
+        .find((message) => message.role === "assistant");
+      const outputSummary = lastAssistant ? textOfContent(lastAssistant.content) : "";
+      return { outputSummary };
     },
   });
   const timeScheduler = createTimeScheduler({

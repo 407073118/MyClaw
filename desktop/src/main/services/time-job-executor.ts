@@ -9,7 +9,7 @@ const ASSISTANT_PROMPT_OUTPUT_LIMIT = 500;
 export type TimeJobExecutorDeps = {
   startWorkflowRun: (input: { workflowId: string; siliconPersonId?: string }) => Promise<void>;
   sendSiliconPersonMessage: (input: { siliconPersonId: string; content: string }) => Promise<void>;
-  runAssistantPrompt: (input: { prompt: string }) => Promise<{ outputSummary: string }>;
+  runAssistantPrompt: (input: { job: ScheduleJob; prompt: string }) => Promise<{ outputSummary: string }>;
 };
 
 export type TimeJobExecutionResult = {
@@ -70,7 +70,7 @@ export function createTimeJobExecutor(deps: TimeJobExecutorDeps) {
           if (!prompt) {
             throw new Error("assistant_prompt 类型计划任务缺少 prompt 内容（description/title 都为空）");
           }
-          const { outputSummary } = await deps.runAssistantPrompt({ prompt });
+          const { outputSummary } = await deps.runAssistantPrompt({ job, prompt });
           const truncated = outputSummary.length > ASSISTANT_PROMPT_OUTPUT_LIMIT
             ? outputSummary.slice(0, ASSISTANT_PROMPT_OUTPUT_LIMIT) + "…"
             : outputSummary;

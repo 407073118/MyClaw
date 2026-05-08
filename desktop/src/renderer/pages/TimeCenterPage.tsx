@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 import type {
   AvailabilityPolicy,
@@ -73,6 +74,7 @@ export default function TimeCenterPage() {
   const time = useWorkspaceStore((state) => state.time);
   const siliconPersons = useWorkspaceStore((state) => state.siliconPersons);
   const workflows = useWorkspaceStore((state) => state.workflows);
+  const models = useWorkspaceStore((state) => state.models);
   // actions 通过 getState 调用，不进入订阅链 —— zustand action 引用永远稳定。
   const workspace = useWorkspaceStore.getState();
   const timezone = time.availabilityPolicy?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -91,6 +93,10 @@ export default function TimeCenterPage() {
   const siliconPersonOptions = useMemo(
     () => (siliconPersons ?? []).map((person) => ({ id: person.id, name: person.name })),
     [siliconPersons],
+  );
+  const modelOptions = useMemo(
+    () => (models ?? []).map((model) => ({ id: model.id, name: model.name })),
+    [models],
   );
 
   const siliconPersonNameById = useMemo(
@@ -224,6 +230,7 @@ export default function TimeCenterPage() {
         intervalMinutes: input.intervalMinutes,
         cronExpression: input.cronExpression,
         executorTargetId: input.executorTargetId,
+        modelProfileId: input.modelProfileId,
         nextRunAt: input.startsAt ?? editingJob.nextRunAt,
       });
       setFeedback(`已更新定时任务：${input.title}`);
@@ -242,6 +249,7 @@ export default function TimeCenterPage() {
         cronExpression: input.cronExpression,
         executor: input.executor,
         executorTargetId: input.executorTargetId,
+        modelProfileId: input.modelProfileId,
         nextRunAt: input.startsAt,
       });
       setFeedback(`已保存定时任务：${input.title}`);
@@ -425,6 +433,7 @@ export default function TimeCenterPage() {
           onClearJobType={() => setChosenJobType(null)}
           workflowOptions={workflowOptions}
           siliconPersonOptions={siliconPersonOptions}
+          modelOptions={modelOptions}
         />
       ) : null}
 
@@ -1017,6 +1026,7 @@ function ExecutionHistoryDrawer({
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
     [runs, job.id],
   );
+  const navigate = useNavigate();
   /** Esc 关闭抽屉，符合桌面端弹层一致行为。 */
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -1052,9 +1062,24 @@ function ExecutionHistoryDrawer({
               {sortedRuns.length} 次执行记录 · {formatScheduleKind(job.scheduleKind)}
             </span>
           </div>
-          <button type="button" className="job-action-icon-btn" onClick={onClose} aria-label="关闭 (Esc)">
-            <IconClose />
-          </button>
+          <div className="execution-history-drawer__header-actions">
+            {job.sessionId ? (
+              <button
+                type="button"
+                className="execution-history-drawer__chat-link"
+                onClick={() => {
+                  useWorkspaceStore.getState().selectSession(job.sessionId!);
+                  onClose();
+                  void navigate("/chat");
+                }}
+              >
+                在对话中查看 →
+              </button>
+            ) : null}
+            <button type="button" className="job-action-icon-btn" onClick={onClose} aria-label="关闭 (Esc)">
+              <IconClose />
+            </button>
+          </div>
         </header>
         <div className="execution-history-drawer__body">
           {sortedRuns.length === 0 ? (
@@ -1177,6 +1202,7 @@ function ComposerModal({
   onClearJobType,
   workflowOptions,
   siliconPersonOptions,
+  modelOptions,
 }: {
   activeComposer: ComposerKind;
   onSelectComposer: (composer: ComposerKind) => void;
@@ -1194,6 +1220,7 @@ function ComposerModal({
   onClearJobType: () => void;
   workflowOptions: { id: string; name: string }[];
   siliconPersonOptions: { id: string; name: string }[];
+  modelOptions: { id: string; name: string }[];
 }) {
   const title = {
     event: "新建日程",
@@ -1260,6 +1287,7 @@ function ComposerModal({
                 initialJob={editingJob ?? undefined}
                 workflows={workflowOptions}
                 siliconPersons={siliconPersonOptions}
+                modelOptions={modelOptions}
                 onSave={onSaveJob}
                 onCancel={editingJob ? onClose : onClearJobType}
               />
@@ -2722,6 +2750,35 @@ const styles = `
     gap: 12px;
     padding: 20px 24px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .execution-history-drawer__header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .execution-history-drawer__chat-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid rgba(16, 163, 127, 0.45);
+    border-radius: var(--radius-md);
+    background: rgba(16, 163, 127, 0.08);
+    color: var(--accent-cyan);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .execution-history-drawer__chat-link:hover {
+    background: rgba(16, 163, 127, 0.16);
+    border-color: var(--accent-cyan);
   }
 
   .execution-history-drawer__heading {

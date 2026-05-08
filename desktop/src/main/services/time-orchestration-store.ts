@@ -116,6 +116,8 @@ export type ScheduleJobUpsertInput = {
   cronExpression?: string;
   executor?: ScheduleJobExecutor;
   executorTargetId?: string;
+  sessionId?: string;
+  modelProfileId?: string;
   lastRunAt?: string;
   nextRunAt?: string;
 };
@@ -342,6 +344,8 @@ export class TimeOrchestrationStore {
       cronExpression: input.cronExpression,
       executor: input.executor ?? "assistant_prompt",
       executorTargetId: input.executorTargetId,
+      sessionId: input.sessionId,
+      modelProfileId: input.modelProfileId,
       lastRunAt: input.lastRunAt,
       nextRunAt: input.nextRunAt,
       createdAt: now,

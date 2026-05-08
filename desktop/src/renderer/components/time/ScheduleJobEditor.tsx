@@ -16,6 +16,7 @@ export type ScheduleJobEditorSubmitInput = {
   timezone: string;
   executor: ScheduleJobExecutor;
   executorTargetId?: string;
+  modelProfileId?: string;
   scheduleKind: "once" | "interval" | "cron";
   startsAt?: string;
   intervalMinutes?: number;
@@ -26,6 +27,7 @@ export type ScheduleJobEditorMode = "create" | "update";
 
 export type WorkflowOption = { id: string; name: string };
 export type SiliconPersonOption = { id: string; name: string };
+export type ModelOption = { id: string; name: string };
 
 type Props = {
   timezone: string;
@@ -33,6 +35,7 @@ type Props = {
   initialJob?: ScheduleJob;
   workflows: WorkflowOption[];
   siliconPersons: SiliconPersonOption[];
+  modelOptions: ModelOption[];
   ownerScope?: TimeOwnerScope;
   ownerId?: string;
   onSave: (input: ScheduleJobEditorSubmitInput, mode: ScheduleJobEditorMode) => void | Promise<void>;
@@ -52,6 +55,7 @@ export default function ScheduleJobEditor({
   initialJob,
   workflows,
   siliconPersons,
+  modelOptions,
   ownerScope = "personal",
   ownerId,
   onSave,
@@ -67,6 +71,7 @@ export default function ScheduleJobEditor({
   const [executorTargetId, setExecutorTargetId] = useState<string>(
     initialJob?.executorTargetId ?? (executor === "silicon_person" ? ownerId ?? "" : ""),
   );
+  const [modelProfileId, setModelProfileId] = useState<string>(initialJob?.modelProfileId ?? "");
   const [saving, setSaving] = useState(false);
 
   // executor 切换时（理论上 ComposerModal 已锁，但保险起见兼容）：清掉 target
@@ -99,6 +104,7 @@ export default function ScheduleJobEditor({
           timezone,
           executor,
           executorTargetId: executorTargetId.trim() || undefined,
+          modelProfileId: modelProfileId.trim() || undefined,
           ...scheduleFields,
         },
         mode,
@@ -108,6 +114,7 @@ export default function ScheduleJobEditor({
         setDescription("");
         setFrequency(defaultFrequencyForKind("every-day"));
         setExecutorTargetId(executor === "silicon_person" ? ownerId ?? "" : "");
+        setModelProfileId("");
       }
     } finally {
       setSaving(false);
@@ -139,15 +146,32 @@ export default function ScheduleJobEditor({
       </fieldset>
 
       {executor === "assistant_prompt" ? (
-        <label className="time-editor-field">
-          <span>提示词</span>
-          <textarea
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
-            rows={6}
-            placeholder="例如：用 5 个要点总结今天的科技热点新闻，每点 2 句话以内。"
-          />
-        </label>
+        <>
+          <label className="time-editor-field">
+            <span>使用模型</span>
+            <select
+              value={modelProfileId}
+              onChange={(event) => setModelProfileId(event.target.value)}
+            >
+              <option value="">默认主模型</option>
+              {modelOptions.map((model) => (
+                <option key={model.id} value={model.id}>{model.name}</option>
+              ))}
+            </select>
+            <span className="schedule-job-editor__hint">
+              不选则跟随 workspace 默认主模型；选定后该任务始终用这一个，能力（工具 / 技能 / MCP）继承聊天主链路。
+            </span>
+          </label>
+          <label className="time-editor-field">
+            <span>提示词</span>
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={6}
+              placeholder="例如：用 5 个要点总结今天的科技热点新闻，每点 2 句话以内。"
+            />
+          </label>
+        </>
       ) : null}
 
       {executor === "workflow" ? (
