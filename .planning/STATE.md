@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-07 - Completed quick task 260507-s7m: 时间规划定时任务 assistant_prompt 执行器接入 + 执行历史抽屉 + 按钮配色统一
+Last activity: 2026-05-08 - Completed quick task 260508-hh3: 登录页 Linear 风极简单列重做
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -123,6 +123,7 @@ None yet.
 | 260507-gc0 | 修复 workflow：P0（RunPanel 切回 IPC / preload 不再吞错 / status succeeded / subgraph 占位 executor）+ P1（删 PolicyEditor / UUID 折叠 / 个性→提示词 / 删重复输入 / conditional edge 可编辑 / 清 inspector chrome / 去 From-X-Y 行）；P2 待后续 | 2026-05-07 | 7cd3dde | [260507-gc0-workflow-sidebar](./quick/260507-gc0-workflow-sidebar/) |
 | 260507-juq | 硅基员工工作台样式迁移到 ui-style-guide：page-shell 框架 + 单列 list-row + 矩形 .tag + 描边按钮 + modal a11y；ReasoningPresetPanel + WorkFilesPanel 共享组件同步 | 2026-05-07 | f53eb32 | [260507-juq-ui-style-guide](./quick/260507-juq-ui-style-guide/) |
 | 260507-s7m | 时间规划定时任务三处缺口：assistant_prompt 执行器接 callModel + ExecutionRun 串通 outputSummary；ScheduleJobListPage 行点击右侧抽屉看执行历史全文；composer-tab 圆角 / 反馈色 / 异常 chip / 删除按钮全部 token 化对齐 ui-style-guide | 2026-05-07 | 8b2ea52 | [260507-s7m-assistant-prompt](./quick/260507-s7m-assistant-prompt/) |
+| 260508-hh3 | 登录页 Linear 风极简单列重做：480 宽居中、cyan 径向 blob、56px 框 logo + fade-up、三层文字、label-on-top + Eye/EyeOff toggle、实心 cyan CTA、错误 banner + 整列 4px 抖动、左下角 v0.1.0·DEV 环境角标 | 2026-05-08 | 71d4d06 | [260508-hh3-linear](./quick/260508-hh3-linear/) |
 
 ## Session Continuity
 
