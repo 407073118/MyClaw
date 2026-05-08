@@ -176,7 +176,10 @@ function buildNextScheduleJobState(
 
 export function createTimeScheduler(deps: TimeSchedulerDeps) {
   const now = deps.now ?? (() => new Date());
-  const intervalMs = deps.intervalMs ?? 30_000;
+  // 默认 60s 巡检：cron 表达式最小粒度本身是 1 分钟，30s 巡检意义不大，反而每次都扫
+  // 两张表（reminders / schedule_jobs）+ sql.js 同步 SQL 阻塞 main 进程 event loop。
+  // 若有更激进需求（间隔任务 < 1min），实例化时显式传 intervalMs 即可。
+  const intervalMs = deps.intervalMs ?? 60_000;
   // 单次 tick 占用上限：超过此时长强制释放 running 标志，防止某次卡死的 callModel/IPC
   // 让调度器永久暂停（此前一次 fetch 挂起 = 调度系统永远跳过后续 tick）。
   const tickWatchdogMs = 5 * 60_000;
@@ -263,6 +266,7 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
       running = true;
       runningStartedAt = Date.now();
       const current = now();
+      const tickPerfStart = Date.now();
       console.info("[time-scheduler] 执行调度轮询", { at: current.toISOString() });
 
       try {
@@ -291,6 +295,16 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
           for (const job of jobs) {
             await runSingleScheduleJob(job);
           }
+        }
+        const tickElapsed = Date.now() - tickPerfStart;
+        if (tickElapsed > 200) {
+          console.warn("[time-scheduler] 单次 tick 耗时偏长", {
+            elapsedMs: tickElapsed,
+            reminderCount: reminders.length,
+            jobCount: jobs.length,
+          });
+        } else {
+          console.info("[time-scheduler] tick 完成", { elapsedMs: tickElapsed });
         }
       } finally {
         running = false;

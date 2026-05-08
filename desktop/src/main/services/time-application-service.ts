@@ -107,6 +107,10 @@ export function createTimeApplicationService(deps: TimeApplicationServiceDeps) {
   const api = {
     /**
      * 汇总时间域快照，供 bootstrap 和时间中心首屏复用。
+     * 性能要点：sql.js 是同步 + 每次 db.run/exec 都要 export() flush 整个 db 到磁盘，
+     * 一次 SELECT ≈ 50-100ms 阻塞 main event loop。原本一次 bootstrap 要 5 + 5 = 10 次
+     * 扫描（getSnapshot 拉一遍 + getTodayBrief 又拉一遍），现在共享已读数据 inline 计算
+     * todayBrief，减半到 5 次扫描。
      */
     async getSnapshot(): Promise<TimeSnapshot> {
       console.info("[time-application] 构建时间域快照");
@@ -126,7 +130,19 @@ export function createTimeApplicationService(deps: TimeApplicationServiceDeps) {
         deps.store.getAvailabilityPolicy(),
       ]);
       const timezone = availabilityPolicy?.timezone ?? "Asia/Shanghai";
-      const todayBrief = await api.getTodayBrief();
+      const dateKey = toLocalDateKey(now().toISOString(), timezone);
+      const todayBrief: TodayBrief = {
+        generatedAt: now().toISOString(),
+        timezone,
+        items: buildTodayBriefItems({
+          reminders,
+          events: calendarEvents,
+          commitments: taskCommitments,
+          jobs: scheduleJobs,
+          dateKey,
+          timezone,
+        }),
+      };
       return {
         calendarEvents,
         taskCommitments,
@@ -134,10 +150,7 @@ export function createTimeApplicationService(deps: TimeApplicationServiceDeps) {
         scheduleJobs,
         executionRuns,
         availabilityPolicy,
-        todayBrief: todayBrief.timezone === timezone ? todayBrief : {
-          ...todayBrief,
-          timezone,
-        },
+        todayBrief,
       };
     },
 
