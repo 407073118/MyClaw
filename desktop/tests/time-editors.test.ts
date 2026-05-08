@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,6 +36,7 @@ describe("time editors", () => {
       updateScheduleJob: vi.fn().mockResolvedValue(undefined),
       deleteReminder: vi.fn().mockResolvedValue(undefined),
       deleteScheduleJob: vi.fn().mockResolvedValue(undefined),
+      executeScheduleJobNow: vi.fn().mockResolvedValue(undefined),
     } as any);
   });
 
@@ -57,23 +58,42 @@ describe("time editors", () => {
   it("creates a recurring schedule job and persists availability rules", async () => {
     renderPage();
 
-    fireEvent.click(screen.getByRole("tab", { name: "自动化" }));
+    expect(screen.queryByRole("button", { name: "新建提醒" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "新建定时任务" })).toBeNull();
 
-    fireEvent.change(screen.getByLabelText("Reminder Title"), { target: { value: "催一下周报" } });
-    fireEvent.change(screen.getByLabelText("Reminder Time"), { target: { value: "2026-04-22T09:30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Reminder" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建" }));
+    let composerModal = screen.getByTestId("schedule-composer-modal");
+    fireEvent.click(within(composerModal).getByRole("button", { name: "提醒" }));
 
-    fireEvent.change(screen.getByLabelText("Job Title"), { target: { value: "每周跟进流程" } });
-    fireEvent.change(screen.getByLabelText("Schedule Type"), { target: { value: "interval" } });
-    fireEvent.change(screen.getByLabelText("Job Start"), { target: { value: "2026-04-22T10:00" } });
-    fireEvent.change(screen.getByLabelText("Interval Minutes"), { target: { value: "120" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Job" }));
+    fireEvent.change(screen.getByLabelText("提醒标题"), { target: { value: "催一下周报" } });
+    fireEvent.change(screen.getByLabelText("提醒时间"), { target: { value: "2026-04-22T09:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存提醒" }));
 
-    fireEvent.change(screen.getByLabelText("Workday Start"), { target: { value: "08:30" } });
-    fireEvent.change(screen.getByLabelText("Workday End"), { target: { value: "19:00" } });
-    fireEvent.change(screen.getByLabelText("Quiet Start"), { target: { value: "23:00" } });
-    fireEvent.change(screen.getByLabelText("Quiet End"), { target: { value: "07:30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Rules" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建" }));
+    composerModal = screen.getByTestId("schedule-composer-modal");
+    const expandLowFreqButtonA = within(composerModal).queryByRole("button", { name: "展开低频选项（任务 / 时间规则）" });
+    if (expandLowFreqButtonA) {
+      fireEvent.click(expandLowFreqButtonA);
+    }
+    fireEvent.click(within(composerModal).getByRole("button", { name: "时间规则" }));
+    fireEvent.change(screen.getByLabelText("工作日开始"), { target: { value: "08:30" } });
+    fireEvent.change(screen.getByLabelText("工作日结束"), { target: { value: "19:00" } });
+    fireEvent.change(screen.getByLabelText("静默开始"), { target: { value: "23:00" } });
+    fireEvent.change(screen.getByLabelText("静默结束"), { target: { value: "07:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存规则" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "新建" }));
+    composerModal = screen.getByTestId("schedule-composer-modal");
+    const expandLowFreqButtonB = within(composerModal).queryByRole("button", { name: "展开低频选项（任务 / 时间规则）" });
+    if (expandLowFreqButtonB) {
+      fireEvent.click(expandLowFreqButtonB);
+    }
+    fireEvent.click(within(composerModal).getByRole("button", { name: "定时任务" }));
+    fireEvent.change(screen.getByLabelText("任务标题"), { target: { value: "每周跟进流程" } });
+    fireEvent.change(screen.getByLabelText("调度类型"), { target: { value: "interval" } });
+    fireEvent.change(screen.getByLabelText("开始时间"), { target: { value: "2026-04-22T10:00" } });
+    fireEvent.change(screen.getByLabelText("间隔分钟"), { target: { value: "120" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存定时任务" }));
 
     await waitFor(() => {
       const state = useWorkspaceStore.getState() as any;
@@ -144,13 +164,15 @@ describe("time editors", () => {
 
     renderPage();
 
-    fireEvent.click(screen.getByRole("tab", { name: "自动化" }));
-
-    fireEvent.click(screen.getByRole("button", { name: "暂停任务" }));
+    fireEvent.click(screen.getByRole("button", { name: "定时任务" }));
+    fireEvent.click(screen.getByRole("button", { name: "立即执行" }));
+    fireEvent.click(screen.getByRole("button", { name: "暂停" }));
+    fireEvent.click(screen.getByRole("button", { name: "提醒列表" }));
     fireEvent.click(screen.getByRole("button", { name: "删除提醒" }));
 
     await waitFor(() => {
       const state = useWorkspaceStore.getState() as any;
+      expect(state.executeScheduleJobNow).toHaveBeenCalledWith("job-1");
       expect(state.updateScheduleJob).toHaveBeenCalledWith(
         expect.objectContaining({
           id: "job-1",

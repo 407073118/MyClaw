@@ -54,13 +54,13 @@ export default function CalendarEventEditor({ timezone, onSave }: CalendarEventE
   return (
     <form className="time-editor-form" onSubmit={handleSubmit}>
       <label className="time-editor-field">
-        <span>Title</span>
+        <span>标题</span>
         <input value={title} onChange={(event) => setTitle(event.target.value)} />
       </label>
 
       <div className="time-editor-grid">
         <label className="time-editor-field">
-          <span>Start</span>
+          <span>开始时间</span>
           <input
             type="datetime-local"
             value={startValue}
@@ -69,7 +69,7 @@ export default function CalendarEventEditor({ timezone, onSave }: CalendarEventE
         </label>
 
         <label className="time-editor-field">
-          <span>End</span>
+          <span>结束时间</span>
           <input
             type="datetime-local"
             value={endValue}
@@ -80,23 +80,23 @@ export default function CalendarEventEditor({ timezone, onSave }: CalendarEventE
 
       <div className="time-editor-grid">
         <label className="time-editor-field">
-          <span>Location</span>
+          <span>地点</span>
           <input value={location} onChange={(event) => setLocation(event.target.value)} />
         </label>
 
         <label className="time-editor-field">
-          <span>Timezone</span>
+          <span>时区</span>
           <input value={timezone} readOnly />
         </label>
       </div>
 
       <label className="time-editor-field">
-        <span>Description</span>
+        <span>说明</span>
         <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
       </label>
 
       <button type="submit" className="time-editor-submit" disabled={saving}>
-        {saving ? "Saving..." : "Save Event"}
+        {saving ? "保存中..." : "保存日程"}
       </button>
     </form>
   );

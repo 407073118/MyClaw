@@ -153,7 +153,7 @@ describe("AppShell time assistant presence", () => {
     fireEvent.click(screen.getByTestId("titlebar-time-chip"));
 
     expect(screen.getByTestId("floating-time-capsule").textContent).toContain("产品评审");
-    expect(screen.getByRole("button", { name: "打开时间中心" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "打开日程规划" })).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("titlebar-time-chip"));
 

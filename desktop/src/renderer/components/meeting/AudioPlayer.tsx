@@ -80,18 +80,7 @@ export function AudioPlayer({ src, seekToMs, onTimeUpdate }: AudioPlayerProps) {
   };
 
   return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 12,
-        padding: "10px 14px",
-        background: "var(--bg-card)",
-        border: "1px solid var(--glass-border)",
-        borderRadius: "var(--radius-lg)",
-        backdropFilter: "var(--blur-std)",
-      }}
-    >
+    <div className="meeting-audio-player">
       <audio
         ref={audioRef}
         src={src}
@@ -103,14 +92,13 @@ export function AudioPlayer({ src, seekToMs, onTimeUpdate }: AudioPlayerProps) {
 
       <button
         type="button"
-        className="glass-action-btn glass-action-btn--primary"
+        className="btn-primary meeting-audio-player__play-btn"
         onClick={togglePlay}
-        style={{ minWidth: 72 }}
       >
         {playing ? "暂停" : "播放"}
       </button>
 
-      <span style={{ fontSize: 12, color: "var(--text-secondary)", minWidth: 44, textAlign: "right" }}>
+      <span className="meeting-audio-player__time meeting-audio-player__time--current">
         {formatSeconds(currentSec)}
       </span>
 
@@ -121,21 +109,20 @@ export function AudioPlayer({ src, seekToMs, onTimeUpdate }: AudioPlayerProps) {
         step={0.1}
         value={currentSec}
         onChange={handleSeek}
-        style={{ flex: 1, accentColor: "var(--accent-cyan)" }}
+        className="meeting-audio-player__slider"
       />
 
-      <span style={{ fontSize: 12, color: "var(--text-secondary)", minWidth: 44 }}>
+      <span className="meeting-audio-player__time">
         {formatSeconds(durationSec)}
       </span>
 
-      <div style={{ display: "flex", gap: 4 }}>
+      <div className="meeting-audio-player__speed-group">
         {SPEED_OPTIONS.map((s) => (
           <button
             key={s}
             type="button"
-            className={`glass-action-btn${s === speed ? " glass-action-btn--primary" : ""}`}
+            className={`btn-toolbar meeting-audio-player__speed-btn${s === speed ? " is-active" : ""}`}
             onClick={() => setSpeed(s)}
-            style={{ minWidth: 42 }}
           >
             {s}x
           </button>

@@ -46,12 +46,12 @@ export default function ReminderEditor({ timezone, onSave }: ReminderEditorProps
   return (
     <form className="time-editor-form" onSubmit={handleSubmit}>
       <label className="time-editor-field">
-        <span>Reminder Title</span>
+        <span>提醒标题</span>
         <input value={title} onChange={(event) => setTitle(event.target.value)} />
       </label>
 
       <label className="time-editor-field">
-        <span>Reminder Time</span>
+        <span>提醒时间</span>
         <input
           type="datetime-local"
           value={triggerValue}
@@ -60,12 +60,12 @@ export default function ReminderEditor({ timezone, onSave }: ReminderEditorProps
       </label>
 
       <label className="time-editor-field">
-        <span>Reminder Note</span>
+        <span>提醒备注</span>
         <textarea value={body} onChange={(event) => setBody(event.target.value)} rows={3} />
       </label>
 
       <button type="submit" className="time-editor-submit" disabled={saving}>
-        {saving ? "Saving..." : "Save Reminder"}
+        {saving ? "保存中..." : "保存提醒"}
       </button>
     </form>
   );

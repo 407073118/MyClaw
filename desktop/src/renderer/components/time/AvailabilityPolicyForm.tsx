@@ -59,20 +59,20 @@ export default function AvailabilityPolicyForm({
     <form className="time-editor-form" onSubmit={handleSubmit}>
       <div className="time-editor-grid">
         <label className="time-editor-field">
-          <span>Workday Start</span>
+          <span>工作日开始</span>
           <input
             type="time"
-            aria-label="Workday Start"
+            aria-label="工作日开始"
             value={workdayStart}
             onChange={(event) => setWorkdayStart(event.target.value)}
           />
         </label>
 
         <label className="time-editor-field">
-          <span>Workday End</span>
+          <span>工作日结束</span>
           <input
             type="time"
-            aria-label="Workday End"
+            aria-label="工作日结束"
             value={workdayEnd}
             onChange={(event) => setWorkdayEnd(event.target.value)}
           />
@@ -80,7 +80,7 @@ export default function AvailabilityPolicyForm({
       </div>
 
       <label className="time-editor-field time-editor-checkbox">
-        <span>Quiet Hours Enabled</span>
+        <span>启用静默时段</span>
         <input
           type="checkbox"
           checked={quietEnabled}
@@ -90,20 +90,20 @@ export default function AvailabilityPolicyForm({
 
       <div className="time-editor-grid">
         <label className="time-editor-field">
-          <span>Quiet Start</span>
+          <span>静默开始</span>
           <input
             type="time"
-            aria-label="Quiet Start"
+            aria-label="静默开始"
             value={quietStart}
             onChange={(event) => setQuietStart(event.target.value)}
           />
         </label>
 
         <label className="time-editor-field">
-          <span>Quiet End</span>
+          <span>静默结束</span>
           <input
             type="time"
-            aria-label="Quiet End"
+            aria-label="静默结束"
             value={quietEnd}
             onChange={(event) => setQuietEnd(event.target.value)}
           />
@@ -111,7 +111,7 @@ export default function AvailabilityPolicyForm({
       </div>
 
       <button type="submit" className="time-editor-submit" disabled={saving}>
-        {saving ? "Saving..." : "Save Rules"}
+        {saving ? "保存中..." : "保存规则"}
       </button>
     </form>
   );

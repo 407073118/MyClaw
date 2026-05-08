@@ -106,6 +106,8 @@ const myClawAPI = {
       ipcRenderer.invoke("time:update-schedule-job", input) as Promise<{ item: ScheduleJob }>,
     deleteScheduleJob: (id: string) =>
       ipcRenderer.invoke("time:delete-schedule-job", id) as Promise<{ ok: boolean }>,
+    runScheduleJobNow: (id: string) =>
+      ipcRenderer.invoke("time:run-schedule-job-now", id) as Promise<{ item: ScheduleJob }>,
     getAvailabilityPolicy: () =>
       ipcRenderer.invoke("time:get-availability-policy") as Promise<{ policy: AvailabilityPolicy | null }>,
     saveAvailabilityPolicy: (policy: AvailabilityPolicy) =>

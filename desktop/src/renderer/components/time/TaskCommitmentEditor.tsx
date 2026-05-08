@@ -54,13 +54,13 @@ export default function TaskCommitmentEditor({ timezone, onSave }: TaskCommitmen
   return (
     <form className="time-editor-form" onSubmit={handleSubmit}>
       <label className="time-editor-field">
-        <span>Title</span>
+        <span>标题</span>
         <input value={title} onChange={(event) => setTitle(event.target.value)} />
       </label>
 
       <div className="time-editor-grid">
         <label className="time-editor-field">
-          <span>Due</span>
+          <span>截止时间</span>
           <input
             type="datetime-local"
             value={dueValue}
@@ -69,7 +69,7 @@ export default function TaskCommitmentEditor({ timezone, onSave }: TaskCommitmen
         </label>
 
         <label className="time-editor-field">
-          <span>Duration</span>
+          <span>预计时长</span>
           <input
             type="number"
             min="15"
@@ -82,28 +82,28 @@ export default function TaskCommitmentEditor({ timezone, onSave }: TaskCommitmen
 
       <div className="time-editor-grid">
         <label className="time-editor-field">
-          <span>Priority</span>
+          <span>优先级</span>
           <select value={priority} onChange={(event) => setPriority(event.target.value as typeof priority)}>
-            <option value="low">low</option>
-            <option value="medium">medium</option>
-            <option value="high">high</option>
-            <option value="urgent">urgent</option>
+            <option value="low">低</option>
+            <option value="medium">中</option>
+            <option value="high">高</option>
+            <option value="urgent">紧急</option>
           </select>
         </label>
 
         <label className="time-editor-field">
-          <span>Timezone</span>
+          <span>时区</span>
           <input value={timezone} readOnly />
         </label>
       </div>
 
       <label className="time-editor-field">
-        <span>Description</span>
+        <span>说明</span>
         <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
       </label>
 
       <button type="submit" className="time-editor-submit" disabled={saving}>
-        {saving ? "Saving..." : "Save Task"}
+        {saving ? "保存中..." : "保存任务"}
       </button>
     </form>
   );

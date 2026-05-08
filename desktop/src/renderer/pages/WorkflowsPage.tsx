@@ -1,7 +1,7 @@
 import React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Plus, X } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { AlertCircle, Play, Plus, Settings2, Trash2, Workflow, X } from "lucide-react";
 import { useDialogA11y } from "../hooks/useDialogA11y";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useWorkflowRunsStore } from "../stores/workflow-runs";
@@ -13,114 +13,6 @@ interface WorkflowLibraryFilterState {
   query: string;
   status: "all" | "draft" | "active" | "archived";
   sort: "updated-desc" | "name-asc" | "nodes-desc";
-}
-
-// ── 工作流筛选栏 ──────────────────────────────────────────────────────────────
-
-interface FiltersProps {
-  filters: WorkflowLibraryFilterState;
-  onChange: (filters: WorkflowLibraryFilterState) => void;
-}
-
-/** 渲染工作流列表顶部的筛选与排序控件。 */
-function WorkflowLibraryFilters({ filters, onChange }: FiltersProps) {
-  return (
-    <div className="filters-bar">
-      <input
-        className="filter-search"
-        type="text"
-        placeholder="搜索工作流…"
-        value={filters.query}
-        onChange={(e) => onChange({ ...filters, query: e.target.value })}
-      />
-      <select
-        className="filter-select"
-        value={filters.status}
-        onChange={(e) =>
-          onChange({ ...filters, status: e.target.value as WorkflowLibraryFilterState["status"] })
-        }
-      >
-        <option value="all">全部状态</option>
-        <option value="draft">草稿</option>
-        <option value="active">已启用</option>
-        <option value="archived">已归档</option>
-      </select>
-      <select
-        className="filter-select"
-        value={filters.sort}
-        onChange={(e) =>
-          onChange({ ...filters, sort: e.target.value as WorkflowLibraryFilterState["sort"] })
-        }
-      >
-        <option value="updated-desc">最近更新</option>
-        <option value="name-asc">名称 A→Z</option>
-        <option value="nodes-desc">节点最多</option>
-      </select>
-    </div>
-  );
-}
-
-// ── 工作流卡片 ────────────────────────────────────────────────────────────────
-
-interface WorkflowLibraryCardProps {
-  summary: WorkflowSummary;
-  onExecute: () => void;
-  onDelete: () => void;
-}
-
-/** 渲染单个工作流摘要卡片，并提供运行与删除入口。 */
-function WorkflowLibraryCard({ summary, onExecute, onDelete }: WorkflowLibraryCardProps) {
-  const navigate = useNavigate();
-  const statusLabel: Record<string, string> = {
-    draft: "草稿",
-    active: "已启用",
-    archived: "已归档",
-  };
-
-  /** 处理卡片键盘触发，让回车和空格键都能进入详情页。 */
-  function handleCardKeyDown(event: React.KeyboardEvent<HTMLElement>) {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    navigate(`/workflows/${encodeURIComponent(summary.id)}`);
-  }
-
-  return (
-    <article
-      className="workflow-card"
-      onClick={() => navigate(`/workflows/${encodeURIComponent(summary.id)}`)}
-      role="button"
-      tabIndex={0}
-      aria-label={`查看工作流 ${summary.name}`}
-      onKeyDown={handleCardKeyDown}
-    >
-      <div className="wf-card-header">
-        <span className="wf-card-name">{summary.name}</span>
-        <span className={`wf-status-chip wf-status-${summary.status ?? "draft"}`}>
-          {statusLabel[summary.status ?? "draft"] ?? summary.status}
-        </span>
-      </div>
-      {summary.description && <p className="wf-card-desc">{summary.description}</p>}
-      <div className="wf-card-meta">
-        {summary.nodeCount != null && (
-          <span className="wf-meta-pill">{summary.nodeCount} 节点</span>
-        )}
-        {summary.updatedAt && (
-          <span className="wf-meta-pill">
-            {new Date(summary.updatedAt).toLocaleDateString("zh-CN")}
-          </span>
-        )}
-      </div>
-      <div className="wf-card-footer" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="wf-action-btn" onClick={onExecute}>
-          运行
-        </button>
-        <button type="button" className="wf-action-btn wf-action-danger" onClick={onDelete}>
-          删除
-        </button>
-      </div>
-    </article>
-  );
 }
 
 // ── 排序与筛选辅助方法 ────────────────────────────────────────────────────────
@@ -141,19 +33,6 @@ function safeComparableNodeCount(value: unknown): number {
 }
 
 // ── 运行状态与时间辅助方法 ────────────────────────────────────────────────────
-
-/** 返回运行状态对应的中文标签与颜色。 */
-function getStatusBadge(status: string): { label: string; color: string } {
-  const config: Record<string, { label: string; color: string }> = {
-    "running": { label: "运行中", color: "#3b82f6" },
-    "succeeded": { label: "成功", color: "#22c55e" },
-    "failed": { label: "失败", color: "#ef4444" },
-    "waiting-input": { label: "等待输入", color: "#f59e0b" },
-    "canceled": { label: "已取消", color: "#6b7280" },
-    "queued": { label: "排队中", color: "#8b5cf6" },
-  };
-  return config[status] ?? { label: status, color: "#6b7280" };
-}
 
 /** 将 ISO 时间字符串转换为相对时间描述（中文）。 */
 function timeAgo(isoString: string): string {
@@ -371,94 +250,243 @@ export default function WorkflowsPage() {
   }
 
   return (
-    <main data-testid="workflows-view" className="page-container" style={{ height: "100%", overflowY: "auto" }}>
-      <header className="page-header">
-        <div className="header-text">
-          <span className="eyebrow">工作流</span>
-          <h2 className="page-title">本地工作流库</h2>
-          <p className="page-subtitle">
+    <div className="page-shell" data-testid="workflows-view">
+      <header className="page-header page-header--sticky">
+        <div className="page-header__lead">
+          <div className="page-header__eyebrow">
+            <Workflow size={14} />
+            <span>Workflows</span>
+          </div>
+          <h2 className="page-header__title">本地工作流库</h2>
+          <p className="page-header__subtitle">
             在本地 Runtime 上设计、管理和执行可复用的 AI 代理与自动化流程。
           </p>
         </div>
-        <div className="header-actions">
+        <div className="page-header__actions">
           <button
-            className="btn-premium accent new-workflow-btn"
+            type="button"
+            className="btn-primary"
             onClick={(event) => openCreateModal(event.currentTarget)}
           >
-            <Plus size={18} className="icon-plus" />
-            <span>新建工作流</span>
+            <Plus size={14} />
+            新建工作流
           </button>
         </div>
       </header>
 
-      <section className="library-content">
+      <main className="page-content">
         {loadError ? (
-          <p className="error-copy">{loadError}</p>
+          <div className="banner banner--error">
+            <AlertCircle size={16} />
+            <span>{loadError}</span>
+          </div>
         ) : (
-          <div className="library-list">
-            <WorkflowLibraryFilters filters={filters} onChange={setFilters} />
-            {filteredWorkflows.length === 0 ? (
-              <p className="empty-copy">当前空间内暂无工作流。创建一个新工作流来开始吧。</p>
-            ) : (
-              <ul className="card-grid" aria-label="Workflow summaries">
-                {filteredWorkflows.map((summary) => (
-                  <li key={summary.id} className="card-item">
-                    <WorkflowLibraryCard
-                      summary={summary}
-                      onExecute={() => handleExecute(summary.id)}
-                      onDelete={() => handleDelete(summary.id)}
-                    />
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </section>
+          <>
+            <div className="toolbar">
+              <input
+                className="input toolbar__search"
+                type="text"
+                placeholder="搜索工作流…"
+                value={filters.query}
+                onChange={(e) => setFilters({ ...filters, query: e.target.value })}
+              />
+              <select
+                className="select"
+                value={filters.status}
+                onChange={(e) =>
+                  setFilters({ ...filters, status: e.target.value as WorkflowLibraryFilterState["status"] })
+                }
+              >
+                <option value="all">全部状态</option>
+                <option value="draft">草稿</option>
+                <option value="active">已启用</option>
+                <option value="archived">已归档</option>
+              </select>
+              <select
+                className="select"
+                value={filters.sort}
+                onChange={(e) =>
+                  setFilters({ ...filters, sort: e.target.value as WorkflowLibraryFilterState["sort"] })
+                }
+              >
+                <option value="updated-desc">最近更新</option>
+                <option value="name-asc">名称 A→Z</option>
+                <option value="nodes-desc">节点最多</option>
+              </select>
+              <span className="toolbar__count">{filteredWorkflows.length} 条</span>
+            </div>
 
-      {/* 最近运行 */}
-      {recentRuns.length > 0 && (
-        <section className="recent-runs-section">
-          <h3 className="recent-runs-title">最近运行</h3>
-          <div className="recent-runs-list">
-            {recentRuns.map((run) => {
-              const badge = getStatusBadge(run.status);
-              const wfName = workflowNameById[run.workflowId] ?? run.workflowId;
-              return (
-                <div
-                  key={run.id}
-                  className="run-row"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => navigate(`/workflows/${encodeURIComponent(run.workflowId)}`)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      navigate(`/workflows/${encodeURIComponent(run.workflowId)}`);
-                    }
-                  }}
+            {filteredWorkflows.length === 0 ? (
+              <section className="empty-state">
+                <Workflow size={32} className="empty-state__icon" />
+                <h3 className="empty-state__title">当前空间内暂无工作流</h3>
+                <p className="empty-state__body">创建一个新工作流来开始吧。</p>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={(event) => openCreateModal(event.currentTarget)}
                 >
-                  <span className="run-name" title={wfName}>{wfName}</span>
-                  <span
-                    className="run-status-badge"
-                    style={{
-                      background: `${badge.color}18`,
-                      color: badge.color,
-                      border: `1px solid ${badge.color}33`,
-                    }}
-                  >
-                    {badge.label}
-                  </span>
-                  <span className="run-time">{timeAgo(run.startedAt)}</span>
-                  <span className="run-duration">
-                    {formatDuration(run.startedAt, run.finishedAt)}
-                  </span>
+                  <Plus size={14} />
+                  新建工作流
+                </button>
+              </section>
+            ) : (
+              <div className="list-rows" aria-label="Workflow summaries">
+                {filteredWorkflows.map((summary) => {
+                  const statusLabel: Record<string, string> = {
+                    draft: "草稿",
+                    active: "已启用",
+                    archived: "已归档",
+                  };
+                  const status = summary.status ?? "draft";
+                  const variant: "green" | "yellow" | "muted" =
+                    status === "active" ? "green" : status === "archived" ? "muted" : "yellow";
+                  return (
+                    <article key={summary.id} className="list-row">
+                      <div className="list-row__lead">
+                        <span
+                          className={`status-dot status-dot--${variant}`}
+                          title={statusLabel[status]}
+                        />
+                      </div>
+                      <div className="list-row__main">
+                        <div className="list-row__title-row">
+                          <Link
+                            to={`/workflows/${encodeURIComponent(summary.id)}`}
+                            className="list-row__title"
+                          >
+                            {summary.name}
+                          </Link>
+                          <span className={`tag tag--${variant}`}>{statusLabel[status]}</span>
+                        </div>
+                        <div className="list-row__meta-row">
+                          {summary.nodeCount != null && (
+                            <>
+                              <span className="list-row__meta">{summary.nodeCount} 节点</span>
+                              <span className="list-row__meta-sep" />
+                            </>
+                          )}
+                          {summary.updatedAt && (
+                            <span className="list-row__meta">
+                              {new Date(summary.updatedAt).toLocaleDateString("zh-CN")}
+                            </span>
+                          )}
+                          {summary.description && (
+                            <>
+                              <span className="list-row__meta-sep" />
+                              <span className="list-row__meta" title={summary.description}>
+                                {summary.description}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div className="list-row__trailing">
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="运行"
+                          onClick={() => handleExecute(summary.id)}
+                        >
+                          <Play size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          title="删除"
+                          onClick={() => handleDelete(summary.id)}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <Link
+                          to={`/workflows/${encodeURIComponent(summary.id)}`}
+                          className="btn-toolbar"
+                        >
+                          <Settings2 size={14} />
+                          详情
+                        </Link>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* 最近运行 */}
+            {recentRuns.length > 0 && (
+              <section className="recent-runs-section">
+                <h3 className="recent-runs-title">最近运行</h3>
+                <div className="list-rows">
+                  {recentRuns.map((run) => {
+                    const wfName = workflowNameById[run.workflowId] ?? run.workflowId;
+                    const dot: "green" | "red" | "accent" | "yellow" | "muted" =
+                      run.status === "succeeded"
+                        ? "green"
+                        : run.status === "failed"
+                        ? "red"
+                        : run.status === "running"
+                        ? "accent"
+                        : run.status === "waiting-input"
+                        ? "yellow"
+                        : "muted";
+                    const label =
+                      run.status === "running"
+                        ? "运行中"
+                        : run.status === "succeeded"
+                        ? "成功"
+                        : run.status === "failed"
+                        ? "失败"
+                        : run.status === "waiting-input"
+                        ? "等待输入"
+                        : run.status === "canceled"
+                        ? "已取消"
+                        : run.status === "queued"
+                        ? "排队中"
+                        : run.status;
+                    return (
+                      <article key={run.id} className="list-row">
+                        <div className="list-row__lead">
+                          <span
+                            className={`status-dot status-dot--${dot}`}
+                            title={label}
+                          />
+                        </div>
+                        <div className="list-row__main">
+                          <div className="list-row__title-row">
+                            <Link
+                              to={`/workflows/${encodeURIComponent(run.workflowId)}`}
+                              className="list-row__title"
+                              title={wfName}
+                            >
+                              {wfName}
+                            </Link>
+                            <span className={`tag tag--${dot}`}>{label}</span>
+                          </div>
+                          <div className="list-row__meta-row">
+                            <span className="list-row__meta">{timeAgo(run.startedAt)}</span>
+                            <span className="list-row__meta-sep" />
+                            <span className="list-row__meta list-row__meta--mono">
+                              {formatDuration(run.startedAt, run.finishedAt)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="list-row__trailing">
+                          <Link
+                            to={`/workflows/${encodeURIComponent(run.workflowId)}`}
+                            className="btn-toolbar"
+                          >
+                            进入
+                          </Link>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+              </section>
+            )}
+          </>
+        )}
+      </main>
 
       {/* Create Modal */}
       {showCreateModal && (
@@ -478,11 +506,11 @@ export default function WorkflowsPage() {
               <h3 id="workflow-create-dialog-title">新建工作流</h3>
               <button
                 type="button"
-                className="icon-button close-btn"
+                className="icon-btn"
                 aria-label="关闭新建工作流弹窗"
                 onClick={closeCreateModal}
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </header>
             <form
@@ -520,16 +548,21 @@ export default function WorkflowsPage() {
                   placeholder="自动整理每周待办事项并检查状态。"
                 />
               </label>
-              {createError && <p className="error-copy">{createError}</p>}
+              {createError && (
+                <div className="banner banner--error">
+                  <AlertCircle size={16} />
+                  <span>{createError}</span>
+                </div>
+              )}
               <footer className="modal-actions">
                 <button
-                  className="secondary"
                   type="button"
+                  className="btn-ghost"
                   onClick={closeCreateModal}
                 >
                   取消
                 </button>
-                <button className="primary" type="submit" disabled={isCreating}>
+                <button type="submit" className="btn-primary" disabled={isCreating}>
                   确认创建
                 </button>
               </footer>
@@ -539,219 +572,73 @@ export default function WorkflowsPage() {
       )}
 
       <style>{`
-        .page-container {
-          height: 100%;
-          overflow-y: auto;
-        }
-
-        .page-header {
+        /* Toolbar (page-local until promoted to global.css) */
+        .toolbar {
           display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 20px;
-          margin-bottom: 28px;
-        }
-
-        .header-text { min-width: 0; }
-
-        .eyebrow {
-          display: inline-block;
-          margin-bottom: 8px;
-          color: var(--accent-cyan, #67e8f9);
-          font-size: 12px;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        }
-
-        .page-title {
-          margin: 0;
-          color: var(--text-primary, #fff);
-          font-size: 28px;
-        }
-
-        .page-subtitle {
-          margin: 10px 0 0;
-          max-width: 620px;
-          color: var(--text-secondary, #b0b0b8);
-          line-height: 1.7;
-        }
-
-        .header-actions { flex-shrink: 0; }
-
-        .new-workflow-btn {
-          display: inline-flex;
           align-items: center;
-          gap: 6px;
-        }
-
-        .library-content { width: 100%; }
-
-        .library-list {
-          display: flex;
-          flex-direction: column;
-          gap: 24px;
-        }
-
-        .filters-bar {
-          display: flex;
           gap: 12px;
+          margin-bottom: 16px;
           flex-wrap: wrap;
         }
 
-        .filter-search {
+        .toolbar__search {
           flex: 1;
           min-width: 180px;
-          padding: 8px 12px;
-          border: 1px solid var(--glass-border, #3f3f46);
-          border-radius: 8px;
-          background: var(--bg-base, #121214);
-          color: var(--text-primary, #fff);
-          font-size: 13px;
-          outline: none;
         }
 
-        .filter-select {
-          padding: 8px 12px;
-          border: 1px solid var(--glass-border, #3f3f46);
-          border-radius: 8px;
-          background: var(--bg-base, #121214);
-          color: var(--text-primary, #fff);
-          font-size: 13px;
-          outline: none;
-          cursor: pointer;
-        }
-
-        .card-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-          gap: 24px;
-          list-style: none;
-          padding: 0;
-          margin: 0;
-        }
-
-        .card-item { margin: 0; }
-
-        .workflow-card {
-          padding: 20px;
-          border-radius: var(--radius-xl);
-          background: var(--bg-card);
-          backdrop-filter: var(--blur-std);
-          -webkit-backdrop-filter: var(--blur-std);
-          border: 1px solid var(--glass-border, #27272a);
-          box-shadow: var(--shadow-card), var(--glass-inner-glow);
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          cursor: pointer;
-          transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
-        }
-
-        .workflow-card:hover {
-          border-color: var(--glass-border-hover);
-          box-shadow: var(--shadow-card-hover), var(--glass-inner-glow);
-          transform: translateY(-2px);
-        }
-
-        .wf-card-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-        }
-
-        .wf-card-name {
-          font-size: 15px;
-          font-weight: 600;
-          color: var(--text-primary, #fff);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .wf-status-chip {
-          font-size: 10px;
-          font-weight: 700;
-          text-transform: uppercase;
-          padding: 2px 8px;
-          border-radius: 4px;
-          flex-shrink: 0;
-        }
-
-        .wf-status-draft { background: rgba(245,158,11,0.1); color: #f59e0b; border: 1px solid rgba(245,158,11,0.2); }
-        .wf-status-active { background: rgba(16,185,129,0.1); color: #10b981; border: 1px solid rgba(16,185,129,0.2); }
-        .wf-status-archived { background: rgba(113,113,122,0.1); color: #71717a; border: 1px solid rgba(113,113,122,0.2); }
-
-        .wf-card-desc {
-          font-size: 13px;
-          color: var(--text-secondary, #b0b0b8);
-          margin: 0;
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-        }
-
-        .wf-card-meta {
-          display: flex;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-
-        .wf-meta-pill {
-          font-size: 11px;
-          color: var(--text-muted, #71717a);
-          border: 1px solid var(--glass-border, #27272a);
-          border-radius: 999px;
-          padding: 2px 8px;
-        }
-
-        .wf-card-footer {
-          display: flex;
-          gap: 8px;
-          padding-top: 12px;
-          border-top: 1px solid var(--glass-border, #27272a);
-        }
-
-        .wf-action-btn {
-          height: 28px;
-          padding: 0 12px;
-          border-radius: 6px;
+        .toolbar__count {
+          margin-left: auto;
           font-size: 12px;
-          font-weight: 500;
+          color: var(--text-muted);
+        }
+
+        /* Form controls used by the toolbar and create modal (page-local) */
+        .input,
+        .select {
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: var(--bg-base);
+          color: var(--text-primary);
+          padding: 8px 12px;
+          font-size: 13px;
+          font-family: inherit;
+          outline: none;
+          transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .input:hover,
+        .select:hover {
+          border-color: var(--glass-border-hover);
+        }
+
+        .input:focus,
+        .select:focus {
+          border-color: var(--accent-cyan);
+          box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
+        }
+
+        .select {
           cursor: pointer;
-          border: 1px solid var(--glass-border, #3f3f46);
-          background: transparent;
-          color: var(--text-primary, #fff);
-          transition: all 0.2s;
         }
 
-        .wf-action-btn:hover { background: rgba(255,255,255,0.06); }
-
-        .wf-action-danger { color: #f87171; border-color: rgba(248,113,113,0.2); }
-        .wf-action-danger:hover { background: rgba(239,68,68,0.1); }
-
-        .empty-copy {
-          color: var(--text-secondary);
-          font-size: 14px;
-          text-align: center;
-          padding: 48px;
-          background: color-mix(in srgb, var(--bg-card, #1e1e24) 40%, transparent);
-          border: 1px dashed var(--glass-border, #333338);
-          border-radius: 12px;
+        /* Recent runs section heading */
+        .recent-runs-section {
+          margin-top: 36px;
         }
 
-        .error-copy {
-          margin: 0;
-          color: #ef4444;
-          font-size: 14px;
+        .recent-runs-title {
+          margin: 0 0 16px;
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--text-primary);
         }
 
+        /* Modal (page-local) */
         .modal-overlay {
           position: fixed;
           inset: 0;
           z-index: 1000;
-          background: rgba(0,0,0,0.6);
+          background: rgba(0, 0, 0, 0.6);
           backdrop-filter: blur(4px);
           display: grid;
           place-items: center;
@@ -761,12 +648,12 @@ export default function WorkflowsPage() {
         .modal-content {
           background: var(--bg-card, #18181b);
           border: 1px solid var(--glass-border, #27272a);
-          border-radius: 16px;
+          border-radius: var(--radius-2xl);
           width: 100%;
           max-width: 460px;
-          box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+          box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
           overflow: hidden;
-          animation: modal-pop 0.3s cubic-bezier(0.34,1.56,0.64,1);
+          animation: modal-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
 
         @keyframes modal-pop {
@@ -789,23 +676,6 @@ export default function WorkflowsPage() {
           color: var(--text-primary, #ffffff);
         }
 
-        .icon-button {
-          background: transparent;
-          border: none;
-          color: var(--text-secondary, #a1a1aa);
-          cursor: pointer;
-          padding: 4px;
-          border-radius: 6px;
-          display: grid;
-          place-items: center;
-          transition: all 0.2s;
-        }
-
-        .icon-button:hover {
-          background: color-mix(in srgb, var(--text-secondary) 15%, transparent);
-          color: var(--text-primary);
-        }
-
         .create-form {
           display: flex;
           flex-direction: column;
@@ -825,22 +695,24 @@ export default function WorkflowsPage() {
           color: var(--text-secondary, #a1a1aa);
         }
 
-        .field input, .field textarea {
+        .field input,
+        .field textarea {
           width: 100%;
           border: 1px solid var(--glass-border, #3f3f46);
-          border-radius: 8px;
+          border-radius: var(--radius-md);
           background: var(--bg-base, #121214);
           color: var(--text-primary, #ffffff);
-          padding: 12px 14px;
+          padding: 10px 14px;
           font: inherit;
           font-size: 14px;
-          transition: border-color 0.2s, box-shadow 0.2s;
+          transition: border-color 0.15s ease, box-shadow 0.15s ease;
           outline: none;
         }
 
-        .field input:focus, .field textarea:focus {
-          border-color: var(--accent-primary, #3b82f6);
-          box-shadow: 0 0 0 2px rgba(59,130,246,0.2);
+        .field input:focus,
+        .field textarea:focus {
+          border-color: var(--accent-cyan);
+          box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
         }
 
         .field textarea { resize: vertical; min-height: 80px; }
@@ -852,111 +724,7 @@ export default function WorkflowsPage() {
           gap: 12px;
           margin-top: 12px;
         }
-
-        .secondary {
-          border: 1px solid var(--glass-border, #3f3f46);
-          background: transparent;
-          color: var(--text-primary, #ffffff);
-          padding: 10px 16px;
-          border-radius: 8px;
-          font-size: 14px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .secondary:hover {
-          background: color-mix(in srgb, var(--glass-border) 40%, transparent);
-        }
-
-        .primary {
-          border: none;
-          border-radius: 8px;
-          padding: 10px 18px;
-          background: var(--accent-primary, #3b82f6);
-          color: var(--accent-text, #ffffff);
-          font-size: 14px;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all 0.2s;
-        }
-
-        .primary:hover:not(:disabled) {
-          background: color-mix(in srgb, var(--accent-primary, #3b82f6) 85%, white);
-        }
-
-        .primary:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .recent-runs-section {
-          margin-top: 36px;
-        }
-
-        .recent-runs-title {
-          margin: 0 0 16px;
-          font-size: 16px;
-          font-weight: 600;
-          color: var(--text-primary, #fff);
-        }
-
-        .recent-runs-list {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-
-        .run-row {
-          display: grid;
-          grid-template-columns: 1fr auto auto auto;
-          align-items: center;
-          gap: 12px;
-          padding: 10px 14px;
-          border-radius: 8px;
-          background: var(--bg-card, #18181b);
-          border: 1px solid var(--glass-border, #27272a);
-          cursor: pointer;
-          transition: background 0.15s, border-color 0.15s;
-        }
-
-        .run-row:hover {
-          background: color-mix(in srgb, var(--bg-card, #18181b) 80%, white);
-          border-color: var(--glass-border-hover, #3f3f46);
-        }
-
-        .run-name {
-          font-size: 13px;
-          font-weight: 500;
-          color: var(--text-primary, #fff);
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .run-status-badge {
-          font-size: 11px;
-          font-weight: 600;
-          padding: 2px 8px;
-          border-radius: 4px;
-          white-space: nowrap;
-        }
-
-        .run-time {
-          font-size: 12px;
-          color: var(--text-muted, #71717a);
-          white-space: nowrap;
-        }
-
-        .run-duration {
-          font-size: 12px;
-          color: var(--text-secondary, #a1a1aa);
-          white-space: nowrap;
-          min-width: 60px;
-          text-align: right;
-        }
-
-        @media (max-width: 900px) {
-          .page-header { flex-direction: column; align-items: flex-start; }
-        }
       `}</style>
-    </main>
+    </div>
   );
 }

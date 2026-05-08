@@ -994,6 +994,306 @@ a.list-row__title:hover {
   cursor: not-allowed;
 }
 
+/* ── Form Controls & Toolbar ───────────────────────────────────────────── */
+
+.input,
+.select,
+.textarea {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input:hover,
+.select:hover,
+.textarea:hover {
+  border-color: var(--glass-border-hover);
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
+}
+
+.select {
+  cursor: pointer;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.toolbar__search {
+  flex: 1;
+  min-width: 180px;
+}
+
+.toolbar__count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── Meetings Shared Styles ───────────────────────────────────────────── */
+
+.list-row__title-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.list-row__title-btn:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.list-row__meta--error {
+  color: var(--status-red);
+}
+
+.meeting-state-placeholder {
+  padding: 32px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.meeting-status-tag {
+  margin-left: 12px;
+}
+
+.meeting-record-panel {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.meeting-record-panel__timer-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.meeting-record-panel__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--status-red);
+  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  animation: meetingPulse 1.4s ease-in-out infinite;
+}
+
+.meeting-record-panel__timer {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.meeting-live-transcript {
+  min-height: 120px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.meeting-live-transcript__placeholder {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.meeting-live-transcript__partial {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.meeting-detail-tabs {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid var(--glass-border);
+  padding-bottom: 8px;
+}
+
+.meeting-detail-tab.is-active {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.meeting-summary {
+  padding: 20px 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-primary);
+}
+
+.meeting-audio-player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  backdrop-filter: var(--blur-std);
+  -webkit-backdrop-filter: var(--blur-std);
+}
+
+.meeting-audio-player__play-btn {
+  min-width: 72px;
+}
+
+.meeting-audio-player__time {
+  font-size: 12px;
+  color: var(--text-secondary);
+  min-width: 44px;
+}
+
+.meeting-audio-player__time--current {
+  text-align: right;
+}
+
+.meeting-audio-player__slider {
+  flex: 1;
+  accent-color: var(--accent-cyan);
+}
+
+.meeting-audio-player__speed-group {
+  display: flex;
+  gap: 4px;
+}
+
+.meeting-audio-player__speed-btn {
+  min-width: 42px;
+}
+
+.meeting-audio-player__speed-btn.is-active {
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.meeting-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.meeting-transcript__group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent-cyan);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius-md);
+}
+
+.meeting-transcript__group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.meeting-transcript__speaker-input {
+  padding: 2px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  border: 1px solid var(--accent-cyan);
+  border-radius: var(--radius-sm);
+  min-width: 120px;
+}
+
+.meeting-transcript__speaker-btn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent-cyan);
+  cursor: pointer;
+}
+
+.meeting-transcript__speaker-btn:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.meeting-transcript__time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.meeting-transcript__segments {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.meeting-transcript__segment {
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  font-size: 14px;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  line-height: 1.6;
+}
+
+.meeting-transcript__segment:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.meeting-transcript__segment.is-active {
+  background: rgba(16, 163, 127, 0.14);
+}
+
+.meeting-transcript__segment:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 1px;
+}
+
+.meeting-transcript__empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+@keyframes meetingPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+}
+
 /* ── Drawer (right slide-out) ──────────────────────────────────────────
    Canonical detail surface for new pages. Use over center modal. */
 

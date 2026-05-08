@@ -152,6 +152,21 @@ export function registerTimeOrchestrationHandlers(ctx: RuntimeContext): void {
     return { ok: true };
   });
 
+  ipcMain.handle("time:run-schedule-job-now", async (_event, id: string) => {
+    console.info("[time-ipc] 立即执行计划任务", { id });
+    const scheduler = ctx.services.timeScheduler;
+    if (!scheduler?.executeJobNow) {
+      throw new Error("time scheduler service is not available");
+    }
+    const jobs = await requireTimeStore(ctx).listScheduleJobs();
+    const job = jobs.find((item) => item.id === id);
+    if (!job) {
+      throw new Error(`schedule job not found: ${id}`);
+    }
+    const item = await scheduler.executeJobNow(job);
+    return { item };
+  });
+
   ipcMain.handle("time:get-availability-policy", async () => {
     console.info("[time-ipc] 读取可用时段策略");
     const policy = await requireTimeApplication(ctx).getAvailabilityPolicy();

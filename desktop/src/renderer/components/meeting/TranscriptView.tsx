@@ -74,25 +74,14 @@ export function TranscriptView({
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div className="meeting-transcript">
       {groups.map((group, groupIdx) => {
         const label = speakerLabels?.[group.speaker] || `发言人${group.speaker}`;
         const isEditing = editingSpeaker === group.speaker;
 
         return (
-          <div
-            key={`${group.speaker}-${groupIdx}`}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 6,
-              padding: "10px 14px",
-              borderLeft: "3px solid var(--accent-cyan)",
-              background: "rgba(255, 255, 255, 0.02)",
-              borderRadius: "var(--radius-md)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div key={`${group.speaker}-${groupIdx}`} className="meeting-transcript__group">
+            <div className="meeting-transcript__group-header">
               {isEditing ? (
                 <input
                   type="text"
@@ -107,17 +96,7 @@ export function TranscriptView({
                       setEditingValue("");
                     }
                   }}
-                  style={{
-                    padding: "2px 8px",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: "var(--text-primary)",
-                    background: "var(--bg-base)",
-                    border: "1px solid var(--accent-cyan)",
-                    borderRadius: "var(--radius-sm)",
-                    outline: "none",
-                    minWidth: 120,
-                  }}
+                  className="meeting-transcript__speaker-input"
                 />
               ) : (
                 <button
@@ -127,25 +106,17 @@ export function TranscriptView({
                     setEditingValue(label);
                   }}
                   title="双击重命名"
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    padding: 0,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: "var(--accent-cyan)",
-                    cursor: "pointer",
-                  }}
+                  className="meeting-transcript__speaker-btn"
                 >
                   {label}
                 </button>
               )}
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              <span className="meeting-transcript__time">
                 {formatTimestamp(group.startMs)}
               </span>
             </div>
 
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div className="meeting-transcript__segments">
               {group.segments.map((seg, segIdx) => {
                 const isActive =
                   currentTimeMs != null && currentTimeMs >= seg.startMs && currentTimeMs < seg.endMs;
@@ -154,17 +125,7 @@ export function TranscriptView({
                     key={`${groupIdx}-${segIdx}`}
                     type="button"
                     onClick={() => onSeek?.(seg.startMs)}
-                    style={{
-                      textAlign: "left",
-                      background: isActive ? "rgba(16, 163, 127, 0.14)" : "transparent",
-                      border: "none",
-                      padding: "4px 6px",
-                      fontSize: 14,
-                      color: isActive ? "var(--text-primary)" : "var(--text-primary)",
-                      cursor: "pointer",
-                      borderRadius: "var(--radius-sm)",
-                      lineHeight: 1.6,
-                    }}
+                    className={`meeting-transcript__segment${isActive ? " is-active" : ""}`}
                   >
                     {seg.text}
                   </button>
@@ -176,7 +137,7 @@ export function TranscriptView({
       })}
 
       {groups.length === 0 && (
-        <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+        <div className="meeting-transcript__empty">
           无可展示的转写内容
         </div>
       )}

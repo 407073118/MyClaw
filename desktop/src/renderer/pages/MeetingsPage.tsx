@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Mic, Trash2, Settings2, Radio, ArrowLeft, AlertCircle } from "lucide-react";
 
 import type { MeetingRecord, MeetingStatus, StructuredTranscript } from "@shared/contracts";
 
@@ -37,18 +38,23 @@ function formatDate(iso: string): string {
   }
 }
 
-function statusPill(status: MeetingStatus): { text: string; className: string } {
+function statusTag(status: MeetingStatus): { text: string; variant: "red" | "yellow" | "green" | "muted" | "accent" } {
   switch (status) {
-    case "recording":
-      return { text: "录音中", className: "glass-pill glass-pill--red" };
-    case "transcribing":
-      return { text: "转写中", className: "glass-pill glass-pill--yellow" };
-    case "summarizing":
-      return { text: "生成纪要", className: "glass-pill glass-pill--yellow" };
-    case "done":
-      return { text: "已完成", className: "glass-pill glass-pill--green" };
-    case "failed":
-      return { text: "失败", className: "glass-pill glass-pill--red" };
+    case "recording":    return { text: "录音中",   variant: "red" };
+    case "transcribing": return { text: "转写中",   variant: "yellow" };
+    case "summarizing":  return { text: "生成纪要", variant: "yellow" };
+    case "done":         return { text: "已完成",   variant: "green" };
+    case "failed":       return { text: "失败",     variant: "red" };
+  }
+}
+
+function statusDot(status: MeetingStatus): "red" | "yellow" | "green" | "muted" | "accent" {
+  switch (status) {
+    case "recording":    return "accent";
+    case "transcribing": return "yellow";
+    case "summarizing":  return "yellow";
+    case "done":         return "green";
+    case "failed":       return "red";
   }
 }
 
@@ -73,96 +79,106 @@ function MeetingListView({ meetings, onOpen, onDelete, onStartRecording }: ListV
   }, [meetings, keyword]);
 
   return (
-    <>
-      <header className="page-header">
-        <div className="header-text">
-          <span className="eyebrow">MEETINGS</span>
-          <h2 className="page-title">会议录音</h2>
-          <p className="page-subtitle">实时转写 + 说话人分离 + AI 纪要，录完即用。</p>
+    <div className="page-shell">
+      <header className="page-header page-header--sticky">
+        <div className="page-header__lead">
+          <div className="page-header__eyebrow">
+            <Mic size={14} />
+            <span>Meetings</span>
+          </div>
+          <h2 className="page-header__title">会议录音</h2>
+          <p className="page-header__subtitle">实时转写 + 说话人分离 + AI 纪要，录完即用。</p>
         </div>
-        <div className="header-actions" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <input
-            type="text"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            placeholder="搜索会议..."
-            style={{
-              width: 200,
-              padding: "8px 12px",
-              fontSize: 13,
-              color: "var(--text-primary)",
-              background: "var(--bg-base)",
-              border: "1px solid var(--glass-border)",
-              borderRadius: "var(--radius-md)",
-              outline: "none",
-            }}
-          />
-          <button type="button" className="btn-premium accent" onClick={onStartRecording}>
+        <div className="page-header__actions">
+          <button type="button" className="btn-primary" onClick={onStartRecording}>
+            <Mic size={14} />
             开始录音
           </button>
         </div>
       </header>
+      <main className="page-content">
+        <div className="toolbar">
+          <input
+            className="input toolbar__search"
+            type="text"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="搜索会议..."
+          />
+          <span className="toolbar__count">{filtered.length} 条</span>
+        </div>
 
-      {filtered.length === 0 ? (
-        <div
-          style={{
-            padding: "64px 32px",
-            textAlign: "center",
-            color: "var(--text-muted)",
-            fontSize: 14,
-            border: "1px dashed var(--glass-border)",
-            borderRadius: "var(--radius-xl)",
-          }}
-        >
-          {meetings.length === 0 ? "还没有录音记录，点击「开始录音」开启第一次会议" : "没有匹配的录音"}
-        </div>
-      ) : (
-        <div className="glass-grid glass-grid--md">
-          {filtered.map((m) => {
-            const pill = statusPill(m.status);
-            return (
-              <div key={m.id} className="glass-card glass-card--accent">
-                <div className="glass-card__header">
-                  <h3>{m.title}</h3>
-                  <span className={pill.className}>{pill.text}</span>
-                </div>
-                <div className="glass-card__body">
-                  <p style={{ fontSize: 13, color: "var(--text-secondary)", margin: 0 }}>
-                    {formatDate(m.createdAt)}
-                  </p>
-                  <p style={{ fontSize: 13, color: "var(--text-muted)", margin: "4px 0 0" }}>
-                    时长 {formatDuration(m.durationMs)}
-                    {m.speakerCount != null ? ` · ${m.speakerCount} 位发言人` : ""}
-                  </p>
-                  {m.errorMessage && (
-                    <p style={{ fontSize: 12, color: "var(--status-red)", margin: "6px 0 0" }}>
-                      {m.errorMessage}
-                    </p>
-                  )}
-                </div>
-                <div className="glass-card__footer">
-                  <button
-                    type="button"
-                    className="glass-action-btn glass-action-btn--danger"
-                    onClick={() => onDelete(m.id)}
-                  >
-                    删除
-                  </button>
-                  <button
-                    type="button"
-                    className="glass-action-btn glass-action-btn--primary"
-                    style={{ marginLeft: "auto" }}
-                    onClick={() => onOpen(m.id)}
-                  >
-                    查看详情
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </>
+        {filtered.length === 0 ? (
+          <section className="empty-state">
+            <Mic size={32} className="empty-state__icon" />
+            <h3 className="empty-state__title">
+              {meetings.length === 0 ? "还没有录音记录" : "没有匹配的录音"}
+            </h3>
+            <p className="empty-state__body">
+              {meetings.length === 0 ? "点击「开始录音」开启第一次会议。" : "调整搜索关键词试试。"}
+            </p>
+            {meetings.length === 0 && (
+              <button type="button" className="btn-primary" onClick={onStartRecording}>
+                <Mic size={14} />开始录音
+              </button>
+            )}
+          </section>
+        ) : (
+          <div className="list-rows">
+            {filtered.map((m) => {
+              const tag = statusTag(m.status);
+              const dot = statusDot(m.status);
+              return (
+                <article key={m.id} className="list-row">
+                  <div className="list-row__lead">
+                    <span className={`status-dot status-dot--${dot}`} title={tag.text} />
+                  </div>
+                  <div className="list-row__main">
+                    <div className="list-row__title-row">
+                      <button
+                        type="button"
+                        className="list-row__title list-row__title-btn"
+                        onClick={() => onOpen(m.id)}
+                      >
+                        {m.title}
+                      </button>
+                      <span className={`tag tag--${tag.variant}`}>{tag.text}</span>
+                    </div>
+                    <div className="list-row__meta-row">
+                      <span className="list-row__meta">{formatDate(m.createdAt)}</span>
+                      <span className="list-row__meta-sep" />
+                      <span className="list-row__meta">时长 {formatDuration(m.durationMs)}</span>
+                      {m.speakerCount != null && (
+                        <>
+                          <span className="list-row__meta-sep" />
+                          <span className="list-row__meta">{m.speakerCount} 位发言人</span>
+                        </>
+                      )}
+                      {m.errorMessage && (
+                        <>
+                          <span className="list-row__meta-sep" />
+                          <span className="list-row__meta list-row__meta--error" title={m.errorMessage}>
+                            {m.errorMessage}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="list-row__trailing">
+                    <button type="button" className="icon-btn" title="删除" onClick={() => onDelete(m.id)}>
+                      <Trash2 size={14} />
+                    </button>
+                    <button type="button" className="btn-toolbar" onClick={() => onOpen(m.id)}>
+                      <Settings2 size={14} />详情
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
 
@@ -197,87 +213,61 @@ function MeetingRecordingView({ onStop, onCancel }: RecordingViewProps) {
   };
 
   return (
-    <>
-      <header className="page-header">
-        <div className="header-text">
-          <span className="eyebrow" style={{ color: "var(--status-red)" }}>RECORDING</span>
-          <h2 className="page-title">正在录音</h2>
-          <p className="page-subtitle">
+    <div className="page-shell">
+      <header className="page-header page-header--sticky">
+        <div className="page-header__lead">
+          <div className="page-header__eyebrow" style={{ color: "var(--status-red)" }}>
+            <Radio size={14} />
+            <span>Recording</span>
+          </div>
+          <h2 className="page-header__title">正在录音</h2>
+          <p className="page-header__subtitle">
             {recorder.error
               ? `出错：${recorder.error}`
               : "麦克风已开启，请尽量靠近声源以获得更好的识别效果。"}
           </p>
         </div>
-        <div className="header-actions" style={{ display: "flex", gap: 12 }}>
-          <button type="button" className="btn-premium" onClick={handleCancel}>
+        <div className="page-header__actions">
+          <button type="button" className="btn-ghost" onClick={handleCancel}>
             取消
           </button>
-          <button type="button" className="btn-premium accent" onClick={handleStop}>
+          <button type="button" className="btn-primary" onClick={handleStop}>
             结束录音
           </button>
         </div>
       </header>
-
-      <section
-        className="glass-card glass-card--flat"
-        style={{ padding: 24, display: "flex", flexDirection: "column", gap: 20 }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <span
-            style={{
-              width: 12,
-              height: 12,
-              borderRadius: "50%",
-              background: "var(--status-red)",
-              boxShadow: "0 0 0 0 rgba(239,68,68,0.7)",
-              animation: "meetingPulse 1.4s ease-in-out infinite",
-            }}
-          />
-          <span style={{ fontSize: 24, fontWeight: 700, color: "var(--text-primary)" }}>
-            {formatDuration(recorder.durationMs)}
-          </span>
-        </div>
-
-        <AudioWaveform analyserNode={recorder.analyserNode} height={96} />
-
-        <div
-          style={{
-            minHeight: 120,
-            maxHeight: 280,
-            overflowY: "auto",
-            padding: "12px 14px",
-            background: "rgba(0,0,0,0.25)",
-            border: "1px solid var(--glass-border)",
-            borderRadius: "var(--radius-lg)",
-            fontSize: 14,
-            lineHeight: 1.7,
-            color: "var(--text-primary)",
-          }}
+      <main className="page-content">
+        <section
+          className="glass-card glass-card--flat meeting-record-panel"
         >
-          {recorder.confirmedLines.length === 0 && !recorder.partialText ? (
-            <span style={{ color: "var(--text-muted)", fontSize: 13 }}>等待识别结果...</span>
-          ) : (
-            <>
-              {recorder.confirmedLines.map((line, idx) => (
-                <div key={idx}>{line}</div>
-              ))}
-              {recorder.partialText && (
-                <div style={{ color: "var(--text-secondary)", fontStyle: "italic" }}>
-                  {recorder.partialText}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </section>
+          <div className="meeting-record-panel__timer-row">
+            <span className="meeting-record-panel__dot" />
+            <span className="meeting-record-panel__timer">
+              {formatDuration(recorder.durationMs)}
+            </span>
+          </div>
 
-      <style>{`
-        @keyframes meetingPulse {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.7); }
-          50% { box-shadow: 0 0 0 10px rgba(239,68,68,0); }
-        }
-      `}</style>
-    </>
+          <AudioWaveform analyserNode={recorder.analyserNode} height={96} />
+
+          <div className="meeting-live-transcript">
+            {recorder.confirmedLines.length === 0 && !recorder.partialText ? (
+              <span className="meeting-live-transcript__placeholder">等待识别结果...</span>
+            ) : (
+              <>
+                {recorder.confirmedLines.map((line, idx) => (
+                  <div key={idx}>{line}</div>
+                ))}
+                {recorder.partialText && (
+                  <div className="meeting-live-transcript__partial">
+                    {recorder.partialText}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </section>
+      </main>
+    </div>
   );
 }
 
@@ -365,7 +355,7 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
       const total = payload.commitments.length + payload.reminders.length + payload.suggestedEvents.length;
       setFollowUpNotice(
         total > 0
-          ? `已导入 ${total} 个跟进事项到时间规划。`
+          ? `已导入 ${total} 个跟进事项到日程规划。`
           : "没有识别到可导入的跟进事项。",
       );
     } finally {
@@ -375,159 +365,123 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
 
   if (loading) {
     return (
-      <div style={{ padding: 48, textAlign: "center", color: "var(--text-muted)" }}>加载中...</div>
+      <div className="meeting-state-placeholder">加载中...</div>
     );
   }
 
   if (!meeting) {
     return (
-      <>
-        <header className="page-header">
-          <div className="header-text">
-            <h2 className="page-title">录音不存在</h2>
+      <div className="page-shell">
+        <header className="page-header page-header--sticky">
+          <div className="page-header__lead">
+            <h2 className="page-header__title">录音不存在</h2>
           </div>
-          <div className="header-actions">
-            <button type="button" className="btn-premium" onClick={onBack}>
-              返回列表
+          <div className="page-header__actions">
+            <button type="button" className="btn-toolbar" onClick={onBack}>
+              <ArrowLeft size={14} />返回列表
             </button>
           </div>
         </header>
-      </>
+      </div>
     );
   }
 
-  const pill = statusPill(meeting.status);
   const processing = meeting.status === "transcribing" || meeting.status === "summarizing";
 
   return (
-    <>
-      <header className="page-header">
-        <div className="header-text">
-          <span className="eyebrow">MEETING</span>
-          <h2 className="page-title">{meeting.title}</h2>
-          <p className="page-subtitle">
+    <div className="page-shell">
+      <header className="page-header page-header--sticky">
+        <div className="page-header__lead">
+          <div className="page-header__eyebrow">
+            <Mic size={14} />
+            <span>Meeting</span>
+          </div>
+          <h2 className="page-header__title">{meeting.title}</h2>
+          <p className="page-header__subtitle">
             {formatDate(meeting.createdAt)} · 时长 {formatDuration(meeting.durationMs)}
             {meeting.speakerCount != null ? ` · ${meeting.speakerCount} 位发言人` : ""}
-            <span className={pill.className} style={{ marginLeft: 12 }}>
-              {pill.text}
+            <span className={`tag tag--${statusTag(meeting.status).variant} meeting-status-tag`}>
+              {statusTag(meeting.status).text}
             </span>
           </p>
         </div>
-        <div className="header-actions" style={{ display: "flex", gap: 12 }}>
-          <button type="button" className="btn-premium" onClick={onBack}>
-            返回
+        <div className="page-header__actions">
+          <button type="button" className="btn-toolbar" onClick={onBack}>
+            <ArrowLeft size={14} />返回
           </button>
           <button
             type="button"
-            className="btn-premium accent"
+            className="btn-primary"
             onClick={handleBuildFollowUps}
             disabled={processing || importingFollowUps}
           >
-            {importingFollowUps ? "导入中..." : "导入到时间规划"}
+            {importingFollowUps ? "导入中..." : "导入到日程规划"}
           </button>
-          <button
-            type="button"
-            className="glass-action-btn glass-action-btn--danger"
-            onClick={handleDelete}
-          >
-            删除
+          <button type="button" className="btn-ghost btn-ghost--danger" onClick={handleDelete}>
+            <Trash2 size={14} />删除
           </button>
         </div>
       </header>
-
-      {processing && (
-        <div
-          style={{
-            padding: "12px 16px",
-            borderRadius: "var(--radius-lg)",
-            background: "rgba(245, 158, 11, 0.1)",
-            border: "1px solid rgba(245, 158, 11, 0.3)",
-            color: "var(--status-yellow)",
-            fontSize: 13,
-          }}
-        >
-          后处理进行中：{pill.text}。该会议将在后台自动完成，无需停留在此页面。
-        </div>
-      )}
-
-      {followUpNotice && (
-        <div
-          style={{
-            padding: "12px 16px",
-            borderRadius: "var(--radius-lg)",
-            background: "rgba(16, 163, 127, 0.12)",
-            border: "1px solid rgba(16, 163, 127, 0.3)",
-            color: "var(--text-primary)",
-            fontSize: 13,
-          }}
-        >
-          {followUpNotice}
-        </div>
-      )}
-
-      {audioUrl && (
-        <AudioPlayer src={audioUrl} seekToMs={seekMs} onTimeUpdate={setCurrentMs} />
-      )}
-
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          borderBottom: "1px solid var(--glass-border)",
-          paddingBottom: 8,
-        }}
-      >
-        <button
-          type="button"
-          className={`glass-action-btn${tab === "transcript" ? " glass-action-btn--primary" : ""}`}
-          onClick={() => setTab("transcript")}
-        >
-          转写稿
-        </button>
-        <button
-          type="button"
-          className={`glass-action-btn${tab === "summary" ? " glass-action-btn--primary" : ""}`}
-          onClick={() => setTab("summary")}
-        >
-          会议纪要
-        </button>
-      </div>
-
-      {tab === "transcript" ? (
-        transcript ? (
-          <TranscriptView
-            transcript={transcript}
-            speakerLabels={meeting.speakerLabels}
-            currentTimeMs={currentMs}
-            onSeek={setSeekMs}
-            onUpdateSpeaker={handleUpdateSpeaker}
-          />
-        ) : (
-          <div style={{ padding: 32, color: "var(--text-muted)", fontSize: 13, textAlign: "center" }}>
-            {processing ? "转写稿尚未生成..." : "没有可用的转写稿"}
+      <main className="page-content">
+        {processing && (
+          <div className="banner banner--warning">
+            <AlertCircle size={16} />
+            <span>后处理进行中：{statusTag(meeting.status).text}。该会议将在后台自动完成，无需停留在此页面。</span>
           </div>
-        )
-      ) : summary ? (
-        <article
-          style={{
-            padding: "20px 24px",
-            background: "var(--bg-card)",
-            border: "1px solid var(--glass-border)",
-            borderRadius: "var(--radius-xl)",
-            whiteSpace: "pre-wrap",
-            fontSize: 14,
-            lineHeight: 1.8,
-            color: "var(--text-primary)",
-          }}
-        >
-          {summary}
-        </article>
-      ) : (
-        <div style={{ padding: 32, color: "var(--text-muted)", fontSize: 13, textAlign: "center" }}>
-          {processing ? "会议纪要正在生成..." : "没有可用的会议纪要"}
+        )}
+
+        {followUpNotice && (
+          <div className="banner banner--info">
+            <span>{followUpNotice}</span>
+          </div>
+        )}
+
+        {audioUrl && (
+          <AudioPlayer src={audioUrl} seekToMs={seekMs} onTimeUpdate={setCurrentMs} />
+        )}
+
+        <div className="meeting-detail-tabs">
+          <button
+            type="button"
+            className={`btn-toolbar meeting-detail-tab${tab === "transcript" ? " is-active" : ""}`}
+            onClick={() => setTab("transcript")}
+          >
+            转写稿
+          </button>
+          <button
+            type="button"
+            className={`btn-toolbar meeting-detail-tab${tab === "summary" ? " is-active" : ""}`}
+            onClick={() => setTab("summary")}
+          >
+            会议纪要
+          </button>
         </div>
-      )}
-    </>
+
+        {tab === "transcript" ? (
+          transcript ? (
+            <TranscriptView
+              transcript={transcript}
+              speakerLabels={meeting.speakerLabels}
+              currentTimeMs={currentMs}
+              onSeek={setSeekMs}
+              onUpdateSpeaker={handleUpdateSpeaker}
+            />
+          ) : (
+            <div className="meeting-state-placeholder">
+              {processing ? "转写稿尚未生成..." : "没有可用的转写稿"}
+            </div>
+          )
+        ) : summary ? (
+          <article className="meeting-summary">
+            {summary}
+          </article>
+        ) : (
+          <div className="meeting-state-placeholder">
+            {processing ? "会议纪要正在生成..." : "没有可用的会议纪要"}
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
 
@@ -574,7 +528,7 @@ export default function MeetingsPage() {
   }, [routeMeetingId]);
 
   return (
-    <main className="page-container" style={{ height: "100%", overflowY: "auto" }}>
+    <>
       {view === "list" && (
         <MeetingListView
           meetings={meetings}
@@ -611,6 +565,6 @@ export default function MeetingsPage() {
           }}
         />
       )}
-    </main>
+    </>
   );
 }

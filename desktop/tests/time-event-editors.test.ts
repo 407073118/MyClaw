@@ -18,10 +18,10 @@ describe("time event editors", () => {
       }),
     );
 
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "客户复盘" } });
-    fireEvent.change(screen.getByLabelText("Start"), { target: { value: "2026-04-21T10:00" } });
-    fireEvent.change(screen.getByLabelText("End"), { target: { value: "2026-04-21T11:30" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Event" }));
+    fireEvent.change(screen.getByLabelText("标题"), { target: { value: "客户复盘" } });
+    fireEvent.change(screen.getByLabelText("开始时间"), { target: { value: "2026-04-21T10:00" } });
+    fireEvent.change(screen.getByLabelText("结束时间"), { target: { value: "2026-04-21T11:30" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存日程" }));
 
     await waitFor(() => {
       expect(handleSave).toHaveBeenCalledWith(
@@ -45,11 +45,11 @@ describe("time event editors", () => {
       }),
     );
 
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "整理周报素材" } });
-    fireEvent.change(screen.getByLabelText("Due"), { target: { value: "2026-04-21T18:00" } });
-    fireEvent.change(screen.getByLabelText("Duration"), { target: { value: "90" } });
-    fireEvent.change(screen.getByLabelText("Priority"), { target: { value: "urgent" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save Task" }));
+    fireEvent.change(screen.getByLabelText("标题"), { target: { value: "整理周报素材" } });
+    fireEvent.change(screen.getByLabelText("截止时间"), { target: { value: "2026-04-21T18:00" } });
+    fireEvent.change(screen.getByLabelText("预计时长"), { target: { value: "90" } });
+    fireEvent.change(screen.getByLabelText("优先级"), { target: { value: "urgent" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存任务" }));
 
     await waitFor(() => {
       expect(handleSave).toHaveBeenCalledWith(

@@ -203,6 +203,7 @@ declare global {
         createScheduleJob: (input: Record<string, unknown>) => Promise<{ item: ScheduleJob }>;
         updateScheduleJob: (input: Record<string, unknown>) => Promise<{ item: ScheduleJob }>;
         deleteScheduleJob: (id: string) => Promise<{ ok: boolean }>;
+        runScheduleJobNow: (id: string) => Promise<{ item: ScheduleJob }>;
         getAvailabilityPolicy: () => Promise<{ policy: AvailabilityPolicy | null }>;
         saveAvailabilityPolicy: (policy: AvailabilityPolicy) => Promise<{ policy: AvailabilityPolicy }>;
         getTodayBrief: () => Promise<{ brief: TodayBrief }>;
