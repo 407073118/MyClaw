@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import type { ScheduleJob, ScheduleJobExecutor, TimeOwnerScope } from "@shared/contracts";
+import type { ScheduleJob, ScheduleJobExecutor, SessionReasoningEffort, TimeOwnerScope } from "@shared/contracts";
 
 import {
   defaultFrequencyForKind,
@@ -17,11 +17,24 @@ export type ScheduleJobEditorSubmitInput = {
   executor: ScheduleJobExecutor;
   executorTargetId?: string;
   modelProfileId?: string;
+  reasoningEffort?: SessionReasoningEffort;
+  reasoningEnabled?: boolean;
   scheduleKind: "once" | "interval" | "cron";
   startsAt?: string;
   intervalMinutes?: number;
   cronExpression?: string;
 };
+
+const REASONING_PRESETS: ReadonlyArray<{
+  level: SessionReasoningEffort;
+  label: string;
+  description: string;
+}> = [
+  { level: "low", label: "快速", description: "低延迟响应，适合简单任务" },
+  { level: "medium", label: "思考", description: "默认推理深度，平衡速度与质量" },
+  { level: "high", label: "深度", description: "展开更多中间推理，适合复杂任务" },
+  { level: "xhigh", label: "极深", description: "拉满思考预算，处理高复杂度问题" },
+];
 
 export type ScheduleJobEditorMode = "create" | "update";
 
@@ -72,6 +85,9 @@ export default function ScheduleJobEditor({
     initialJob?.executorTargetId ?? (executor === "silicon_person" ? ownerId ?? "" : ""),
   );
   const [modelProfileId, setModelProfileId] = useState<string>(initialJob?.modelProfileId ?? "");
+  const [reasoningEffort, setReasoningEffort] = useState<SessionReasoningEffort>(
+    initialJob?.reasoningEffort ?? "medium",
+  );
   const [saving, setSaving] = useState(false);
 
   // executor 切换时（理论上 ComposerModal 已锁，但保险起见兼容）：清掉 target
@@ -105,6 +121,8 @@ export default function ScheduleJobEditor({
           executor,
           executorTargetId: executorTargetId.trim() || undefined,
           modelProfileId: modelProfileId.trim() || undefined,
+          reasoningEffort: executor === "assistant_prompt" ? reasoningEffort : undefined,
+          reasoningEnabled: executor === "assistant_prompt" ? true : undefined,
           ...scheduleFields,
         },
         mode,
@@ -115,6 +133,7 @@ export default function ScheduleJobEditor({
         setFrequency(defaultFrequencyForKind("every-day"));
         setExecutorTargetId(executor === "silicon_person" ? ownerId ?? "" : "");
         setModelProfileId("");
+        setReasoningEffort("medium");
       }
     } finally {
       setSaving(false);
@@ -162,6 +181,30 @@ export default function ScheduleJobEditor({
               不选则跟随 workspace 默认主模型；选定后该任务始终用这一个，能力（工具 / 技能 / MCP）继承聊天主链路。
             </span>
           </label>
+          <div className="time-editor-field">
+            <span>推理深度</span>
+            <div className="reasoning-chip-group" role="radiogroup" aria-label="推理深度">
+              {REASONING_PRESETS.map((preset) => {
+                const active = preset.level === reasoningEffort;
+                return (
+                  <button
+                    key={preset.level}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    title={preset.description}
+                    className={active ? "reasoning-chip is-active" : "reasoning-chip"}
+                    onClick={() => setReasoningEffort(preset.level)}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="schedule-job-editor__hint">
+              快速 / 思考（默认）/ 深度 / 极深；模型不支持时自动降级。
+            </span>
+          </div>
           <label className="time-editor-field">
             <span>提示词</span>
             <textarea

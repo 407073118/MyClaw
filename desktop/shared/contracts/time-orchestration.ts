@@ -1,4 +1,5 @@
 import type { TimeEntitySource, TimeOwnerScope } from "./calendar";
+import type { SessionReasoningEffort } from "./session-runtime";
 
 export type ReminderStatus = "scheduled" | "delivered" | "dismissed" | "cancelled";
 
@@ -79,6 +80,10 @@ export type ScheduleJob = {
   sessionId?: string;
   /** 指定模型 profile id；不指定时执行器走 workspace 默认主模型。 */
   modelProfileId?: string;
+  /** 推理深度（low=快速 / medium=思考 / high=深度 / xhigh=极深）；不填默认 medium。 */
+  reasoningEffort?: SessionReasoningEffort;
+  /** 是否显式启用推理；不填走 session 默认。 */
+  reasoningEnabled?: boolean;
   lastRunAt?: string;
   nextRunAt?: string;
   createdAt: string;

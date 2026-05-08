@@ -243,6 +243,12 @@ async function buildRuntimeContext(
           runtimeVersion: SESSION_RUNTIME_VERSION,
           messages: [],
         };
+        if (job.reasoningEffort || job.reasoningEnabled !== undefined) {
+          session.runtimeIntent = {
+            ...(job.reasoningEffort ? { reasoningEffort: job.reasoningEffort } : {}),
+            ...(job.reasoningEnabled !== undefined ? { reasoningEnabled: job.reasoningEnabled } : {}),
+          };
+        }
         sessions.push(session);
         await saveSession(paths, session);
         await timeStore.upsertScheduleJob({
@@ -263,6 +269,8 @@ async function buildRuntimeContext(
           executorTargetId: job.executorTargetId,
           sessionId: session.id,
           modelProfileId: job.modelProfileId,
+          reasoningEffort: job.reasoningEffort,
+          reasoningEnabled: job.reasoningEnabled,
           lastRunAt: job.lastRunAt,
           nextRunAt: job.nextRunAt,
         });

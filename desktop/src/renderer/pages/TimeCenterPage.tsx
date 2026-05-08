@@ -231,6 +231,8 @@ export default function TimeCenterPage() {
         cronExpression: input.cronExpression,
         executorTargetId: input.executorTargetId,
         modelProfileId: input.modelProfileId,
+        reasoningEffort: input.reasoningEffort,
+        reasoningEnabled: input.reasoningEnabled,
         nextRunAt: input.startsAt ?? editingJob.nextRunAt,
       });
       setFeedback(`已更新定时任务：${input.title}`);
@@ -250,6 +252,8 @@ export default function TimeCenterPage() {
         executor: input.executor,
         executorTargetId: input.executorTargetId,
         modelProfileId: input.modelProfileId,
+        reasoningEffort: input.reasoningEffort,
+        reasoningEnabled: input.reasoningEnabled,
         nextRunAt: input.startsAt,
       });
       setFeedback(`已保存定时任务：${input.title}`);
@@ -1090,10 +1094,31 @@ function ExecutionHistoryDrawer({
           ) : (
             <ul className="execution-history-list">
               {sortedRuns.map((run) => {
+                const isClickable = Boolean(job.sessionId);
+                const navigateToSession = () => {
+                  if (!job.sessionId) return;
+                  useWorkspaceStore.getState().selectSession(job.sessionId);
+                  onClose();
+                  void navigate("/chat");
+                };
                 return (
                   <li
                     key={run.id}
-                    className="execution-history-row"
+                    className={isClickable ? "execution-history-row is-clickable" : "execution-history-row"}
+                    {...(isClickable
+                      ? {
+                          role: "button",
+                          tabIndex: 0,
+                          "aria-label": `查看本次执行的对话详情`,
+                          onClick: navigateToSession,
+                          onKeyDown: (event: React.KeyboardEvent<HTMLLIElement>) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              navigateToSession();
+                            }
+                          },
+                        }
+                      : {})}
                   >
                     <div className="execution-history-row__head">
                       <span
@@ -1125,6 +1150,9 @@ function ExecutionHistoryDrawer({
                     ) : null}
                     {!run.outputSummary && !run.errorMessage ? (
                       <span className="execution-history-row__placeholder">本次执行未记录输出内容</span>
+                    ) : null}
+                    {isClickable ? (
+                      <span className="execution-history-row__detail-hint">查看详情 →</span>
                     ) : null}
                   </li>
                 );
@@ -2850,6 +2878,62 @@ const styles = `
     display: flex;
     flex-direction: column;
     gap: 10px;
+  }
+
+  .execution-history-row.is-clickable {
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+
+  .execution-history-row.is-clickable:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--glass-border-hover);
+  }
+
+  .execution-history-row.is-clickable:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: -2px;
+  }
+
+  .execution-history-row__detail-hint {
+    align-self: flex-end;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent-cyan);
+    margin-top: 2px;
+  }
+
+  .execution-history-row.is-clickable:hover .execution-history-row__detail-hint {
+    text-decoration: underline;
+  }
+
+  .reasoning-chip-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .reasoning-chip {
+    padding: 5px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .reasoning-chip:hover {
+    color: var(--text-primary);
+    border-color: var(--glass-border-hover);
+  }
+
+  .reasoning-chip.is-active {
+    color: var(--accent-cyan);
+    border-color: rgba(16, 163, 127, 0.55);
+    background: rgba(16, 163, 127, 0.12);
   }
 
   .execution-history-row__head {

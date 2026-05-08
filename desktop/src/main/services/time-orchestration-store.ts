@@ -118,6 +118,8 @@ export type ScheduleJobUpsertInput = {
   executorTargetId?: string;
   sessionId?: string;
   modelProfileId?: string;
+  reasoningEffort?: ScheduleJob["reasoningEffort"];
+  reasoningEnabled?: boolean;
   lastRunAt?: string;
   nextRunAt?: string;
 };
@@ -346,6 +348,8 @@ export class TimeOrchestrationStore {
       executorTargetId: input.executorTargetId,
       sessionId: input.sessionId,
       modelProfileId: input.modelProfileId,
+      reasoningEffort: input.reasoningEffort,
+      reasoningEnabled: input.reasoningEnabled,
       lastRunAt: input.lastRunAt,
       nextRunAt: input.nextRunAt,
       createdAt: now,
