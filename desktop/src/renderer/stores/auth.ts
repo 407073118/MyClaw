@@ -39,6 +39,35 @@ type AuthIntrospectResponse = {
 
 const AUTH_STORAGE_KEY = "myclaw-desktop-auth-session";
 
+const DEV_BYPASS_TOKEN_PREFIX = "dev-bypass-";
+const DEV_BYPASS_EXPIRES_IN_SECONDS = 24 * 60 * 60;
+
+/** dev 模式是否启用 cloud-api 校验跳过（仅 Vite MODE === "development" 生效）。 */
+export function isDevAuthBypassEnabled(): boolean {
+  return import.meta.env.MODE === "development";
+}
+
+/** 判断给定 token 是否为 dev bypass mock token（前缀匹配）。 */
+function isDevBypassToken(token: string | undefined | null): boolean {
+  return Boolean(token && token.startsWith(DEV_BYPASS_TOKEN_PREFIX));
+}
+
+/** 构造 dev mock 登录响应；不调用 IPC，纯本地生成。 */
+function buildDevBypassSession(account: string): AuthLoginResponse {
+  const safeAccount = account.trim() || "dev-user";
+  const stamp = Date.now().toString(36);
+  return {
+    accessToken: `${DEV_BYPASS_TOKEN_PREFIX}access-${stamp}`,
+    refreshToken: `${DEV_BYPASS_TOKEN_PREFIX}refresh-${stamp}`,
+    expiresIn: DEV_BYPASS_EXPIRES_IN_SECONDS,
+    user: {
+      account: safeAccount,
+      displayName: safeAccount,
+      roles: ["dev-bypass"],
+    },
+  };
+}
+
 /** 创建一份空登录会话，用作初始化与清空后的统一默认值。 */
 function createEmptySession(): DesktopAuthSession {
   return {
@@ -209,6 +238,14 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
 
   async login(payload) {
     console.info("[desktop-auth] 开始执行桌面登录", { account: payload.account });
+    if (isDevAuthBypassEnabled()) {
+      console.warn("[desktop-auth] DEV 模式跳过 cloud-api 校验，注入本地 mock 会话", {
+        account: payload.account,
+      });
+      const response = buildDevBypassSession(payload.account);
+      get().applyLoginSession(response);
+      return response;
+    }
     const response = await window.myClawAPI.auth.login(payload);
     get().applyLoginSession(response);
     return response;
@@ -220,6 +257,18 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
       console.warn("[desktop-auth] 当前没有 refresh token，无法续期");
       get().clearSession();
       return false;
+    }
+
+    if (isDevBypassToken(session.refreshToken)) {
+      console.info("[desktop-auth] DEV 模式 mock 会话，跳过 cloud-api refresh", {
+        account: session.user?.account ?? null,
+      });
+      const stamp = Date.now().toString(36);
+      get().applyRefreshSession({
+        accessToken: `${DEV_BYPASS_TOKEN_PREFIX}access-${stamp}`,
+        expiresIn: DEV_BYPASS_EXPIRES_IN_SECONDS,
+      });
+      return true;
     }
 
     try {
@@ -244,6 +293,14 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
       console.warn("[desktop-auth] 当前没有 access token，跳过会话校验");
       get().clearSession();
       return false;
+    }
+
+    if (isDevBypassToken(session.accessToken)) {
+      console.info("[desktop-auth] DEV 模式 mock 会话，跳过 cloud-api introspect", {
+        account: session.user?.account ?? null,
+      });
+      set({ validationChecked: true });
+      return true;
     }
 
     try {
@@ -309,7 +366,7 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
     console.info("[desktop-auth] 开始执行退出登录", {
       account: session.user?.account ?? null,
     });
-    if (session.refreshToken) {
+    if (session.refreshToken && !isDevBypassToken(session.refreshToken)) {
       try {
         await window.myClawAPI.auth.logout(session.refreshToken);
       } catch (error) {

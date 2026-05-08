@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { AlertCircle, ArrowRight, Eye, EyeOff } from "lucide-react";
+import { AlertCircle, ArrowRight, Eye, EyeOff, Info } from "lucide-react";
 import { useShellStore } from "@/stores/shell";
-import { useAuthStore } from "@/stores/auth";
+import { isDevAuthBypassEnabled, useAuthStore } from "@/stores/auth";
 import TitleBar from "../components/TitleBar";
 
 const loginErrorMessageMap: Record<string, string> = {
@@ -106,7 +106,15 @@ export default function LoginPage() {
             <p className="login-subtitle">使用与 Cloud 一致的企业账号密码</p>
           </div>
 
-          {/* 3. 错误 banner（在表单上方） */}
+          {/* 3a. dev 模式提示（仅 development 构建显示） */}
+          {isDevAuthBypassEnabled() && (
+            <div className="dev-bypass-banner" role="note">
+              <Info size={14} aria-hidden="true" />
+              <span>DEV 模式 · 登录将跳过 cloud-api 校验，账号密码可任填</span>
+            </div>
+          )}
+
+          {/* 3b. 错误 banner（在表单上方） */}
           {errorMessage && (
             <div data-testid="desktop-login-error" className="error-banner" role="alert">
               <AlertCircle size={14} aria-hidden="true" />
@@ -290,6 +298,25 @@ export default function LoginPage() {
             font-weight: 400;
             line-height: 1.6;
             color: var(--text-secondary);
+          }
+
+          /* DEV 模式提示 banner（cyan 描边） */
+          .dev-bypass-banner {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: var(--radius-md);
+            background: rgba(16, 163, 127, 0.08);
+            border: 1px solid rgba(16, 163, 127, 0.25);
+            color: var(--accent-cyan);
+            font-size: 12px;
+            line-height: 1.5;
+          }
+
+          .dev-bypass-banner svg {
+            margin-top: 2px;
+            flex-shrink: 0;
           }
 
           /* 错误 banner */
