@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-import type { ScheduleJob, ScheduleJobExecutor, SessionReasoningEffort, TimeOwnerScope } from "@shared/contracts";
+import type {
+  ScheduleJob,
+  ScheduleJobExecutor,
+  ScheduleJobSessionMode,
+  SessionReasoningEffort,
+  TimeOwnerScope,
+} from "@shared/contracts";
 
 import {
   defaultFrequencyForKind,
@@ -19,6 +25,7 @@ export type ScheduleJobEditorSubmitInput = {
   modelProfileId?: string;
   reasoningEffort?: SessionReasoningEffort;
   reasoningEnabled?: boolean;
+  sessionMode?: ScheduleJobSessionMode;
   scheduleKind: "once" | "interval" | "cron";
   startsAt?: string;
   intervalMinutes?: number;
@@ -88,6 +95,9 @@ export default function ScheduleJobEditor({
   const [reasoningEffort, setReasoningEffort] = useState<SessionReasoningEffort>(
     initialJob?.reasoningEffort ?? "medium",
   );
+  const [sessionMode, setSessionMode] = useState<ScheduleJobSessionMode>(
+    initialJob?.sessionMode ?? "per_run",
+  );
   const [saving, setSaving] = useState(false);
 
   // executor 切换时（理论上 ComposerModal 已锁，但保险起见兼容）：清掉 target
@@ -123,6 +133,7 @@ export default function ScheduleJobEditor({
           modelProfileId: modelProfileId.trim() || undefined,
           reasoningEffort: executor === "assistant_prompt" ? reasoningEffort : undefined,
           reasoningEnabled: executor === "assistant_prompt" ? true : undefined,
+          sessionMode: executor === "assistant_prompt" ? sessionMode : undefined,
           ...scheduleFields,
         },
         mode,
@@ -134,6 +145,7 @@ export default function ScheduleJobEditor({
         setExecutorTargetId(executor === "silicon_person" ? ownerId ?? "" : "");
         setModelProfileId("");
         setReasoningEffort("medium");
+        setSessionMode("per_run");
       }
     } finally {
       setSaving(false);
@@ -203,6 +215,34 @@ export default function ScheduleJobEditor({
             </div>
             <span className="schedule-job-editor__hint">
               快速 / 思考（默认）/ 深度 / 极深；模型不支持时自动降级。
+            </span>
+          </div>
+          <div className="time-editor-field">
+            <span>会话模式</span>
+            <div className="reasoning-chip-group" role="radiogroup" aria-label="会话模式">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={sessionMode === "per_run"}
+                title="每次到点触发都新建独立 session，token 干净，详情页可逐次展开消息流"
+                className={sessionMode === "per_run" ? "reasoning-chip is-active" : "reasoning-chip"}
+                onClick={() => setSessionMode("per_run")}
+              >
+                每次新会话
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={sessionMode === "shared"}
+                title="所有触发追加到同一 session（重构前老行为，会累积上下文）"
+                className={sessionMode === "shared" ? "reasoning-chip is-active" : "reasoning-chip"}
+                onClick={() => setSessionMode("shared")}
+              >
+                累积会话
+              </button>
+            </div>
+            <span className="schedule-job-editor__hint">
+              每次新会话（默认）：每次执行起一个干净 session，token 不累积；累积会话：所有触发拼到同一 session（老行为）。
             </span>
           </div>
           <label className="time-editor-field">

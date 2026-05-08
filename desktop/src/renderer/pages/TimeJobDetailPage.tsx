@@ -4,8 +4,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   textOfContent,
   type ChatMessage,
+  type ChatSession,
   type ExecutionRun,
-  type ScheduleJob,
   type ScheduleJobExecutor,
 } from "@shared/contracts";
 
@@ -21,6 +21,9 @@ export default function TimeJobDetailPage() {
   const job = useWorkspaceStore((state) => state.time.scheduleJobs.find((item) => item.id === id) ?? null);
   const sessions = useWorkspaceStore((state) => state.sessions);
   const allRuns = useWorkspaceStore((state) => state.time.executionRuns);
+
+  const sessionMode = job?.sessionMode ?? "per_run";
+  const isShared = sessionMode === "shared";
 
   const session = useMemo(
     () => (job?.sessionId ? sessions.find((item) => item.id === job.sessionId) ?? null : null),
@@ -42,24 +45,26 @@ export default function TimeJobDetailPage() {
   const [sending, setSending] = useState(false);
   const [running, setRunning] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // 进入页面时自动选中该 session，让 sendMessage / cancelSessionRun 能命中
+  // 进入页面时自动选中该 session，让 sendMessage / cancelSessionRun 能命中（仅 shared）
   useEffect(() => {
-    if (job?.sessionId) {
+    if (isShared && job?.sessionId) {
       useWorkspaceStore.getState().selectSession(job.sessionId);
     }
-  }, [job?.sessionId]);
+  }, [isShared, job?.sessionId]);
 
   // 进入后刷一次执行记录，确保看到最新一次执行
   useEffect(() => {
     void useWorkspaceStore.getState().refreshExecutionRuns();
   }, [id]);
 
-  // 消息更新后滚到底部
+  // 消息更新后滚到底部（仅 shared 模式底部对话区）
   useEffect(() => {
+    if (!isShared) return;
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [visibleMessages.length]);
+  }, [isShared, visibleMessages.length]);
 
   if (!job) {
     return (
@@ -128,6 +133,7 @@ export default function TimeJobDetailPage() {
   }
 
   const supportsChat = job.executor === "assistant_prompt";
+  const showSharedChat = supportsChat && isShared;
   const lastRun = runs[0] ?? null;
 
   return (
@@ -152,6 +158,16 @@ export default function TimeJobDetailPage() {
             >
               {formatStatusLabel(job.status)}
             </span>
+            {supportsChat ? (
+              <span
+                className={`session-mode-chip session-mode-chip--${sessionMode}`}
+                title={isShared
+                  ? "累积会话：所有触发拼到同一 session（重构前老行为）"
+                  : "每次新会话：每次到点触发产生独立 session，token 干净"}
+              >
+                {isShared ? "累积会话" : "每次新会话"}
+              </span>
+            ) : null}
           </div>
           <p className="time-job-detail__meta">
             {formatJobFrequency(job, (iso) => formatLocal(iso, job.timezone))}
@@ -176,7 +192,7 @@ export default function TimeJobDetailPage() {
         {feedback ? <p className="time-job-detail__feedback">{feedback}</p> : null}
       </section>
 
-      {supportsChat ? (
+      {showSharedChat ? (
         <section className="time-job-detail__chat">
           <header className="time-job-detail__section-head">
             <h2>对话</h2>
@@ -225,9 +241,22 @@ export default function TimeJobDetailPage() {
           <p className="time-job-detail__empty-hint">这个任务还没有执行过。</p>
         ) : (
           <ol className="time-job-detail__run-list">
-            {runs.map((run) => (
-              <RunRow key={run.id} run={run} timezone={job.timezone} />
-            ))}
+            {runs.map((run) => {
+              const runSession = run.sessionId
+                ? sessions.find((item) => item.id === run.sessionId) ?? null
+                : null;
+              return (
+                <RunRow
+                  key={run.id}
+                  run={run}
+                  timezone={job.timezone}
+                  sessionMode={sessionMode}
+                  runSession={runSession}
+                  expanded={expandedRunId === run.id}
+                  onToggle={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}
+                />
+              );
+            })}
           </ol>
         )}
       </section>
@@ -266,26 +295,113 @@ function ChatBubble({ message, timezone }: { message: ChatMessage; timezone: str
   );
 }
 
-function RunRow({ run, timezone }: { run: ExecutionRun; timezone: string }) {
+type RunRowProps = {
+  run: ExecutionRun;
+  timezone: string;
+  sessionMode: "per_run" | "shared";
+  runSession: ChatSession | null;
+  expanded: boolean;
+  onToggle: () => void;
+};
+
+function RunRow({ run, timezone, sessionMode, runSession, expanded, onToggle }: RunRowProps) {
   const summaryPreview = run.outputSummary
     ? run.outputSummary.replace(/\s+/g, " ").trim().slice(0, 120)
     : "";
+  const canExpand = sessionMode === "per_run" && Boolean(run.sessionId);
+
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const messages = useMemo(
+    () => (runSession?.messages ?? []).filter((message) => message.role !== "system"),
+    [runSession?.messages],
+  );
+
+  async function handleSend(event: React.FormEvent) {
+    event.preventDefault();
+    if (!run.sessionId) return;
+    const trimmed = draft.trim();
+    if (!trimmed || sending) return;
+    setSending(true);
+    setError(null);
+    try {
+      const ws = useWorkspaceStore.getState();
+      ws.selectSession(run.sessionId);
+      await ws.sendMessage(trimmed);
+      setDraft("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
-    <li className={`run-row run-row--${run.status}`}>
-      <span className="run-row__bullet" aria-hidden="true">{run.status === "succeeded" ? "✓" : run.status === "failed" ? "✗" : run.status === "running" ? "…" : "•"}</span>
-      <div className="run-row__body">
-        <div className="run-row__head">
-          <span className="run-row__time">
-            {formatLocal(run.startedAt, timezone)}
-            {run.finishedAt ? ` → ${formatClock(run.finishedAt, timezone)}` : ""}
-          </span>
-          <span className={`status-badge status-badge--${run.status === "succeeded" ? "active" : run.status === "failed" ? "danger" : run.status === "running" ? "normal" : "muted"}`}>
-            {formatRunStatusZh(run.status)}
-          </span>
+    <li className={`run-row run-row--${run.status}${canExpand ? " run-row--expandable" : ""}${expanded ? " is-expanded" : ""}`}>
+      <button
+        type="button"
+        className="run-row__head-btn"
+        onClick={canExpand ? onToggle : undefined}
+        disabled={!canExpand}
+        aria-expanded={canExpand ? expanded : undefined}
+      >
+        <span className="run-row__bullet" aria-hidden="true">{run.status === "succeeded" ? "✓" : run.status === "failed" ? "✗" : run.status === "running" ? "…" : "•"}</span>
+        <div className="run-row__body">
+          <div className="run-row__head">
+            <span className="run-row__time">
+              {formatLocal(run.startedAt, timezone)}
+              {run.finishedAt ? ` → ${formatClock(run.finishedAt, timezone)}` : ""}
+            </span>
+            <span className={`status-badge status-badge--${run.status === "succeeded" ? "active" : run.status === "failed" ? "danger" : run.status === "running" ? "normal" : "muted"}`}>
+              {formatRunStatusZh(run.status)}
+            </span>
+            {canExpand ? (
+              <span className="run-row__toggle" aria-hidden="true">{expanded ? "收起 ↑" : "展开 ↓"}</span>
+            ) : null}
+          </div>
+          {summaryPreview ? <p className="run-row__summary">{summaryPreview}{(run.outputSummary?.length ?? 0) > 120 ? "…" : ""}</p> : null}
+          {run.errorMessage ? <pre className="run-row__error">{run.errorMessage}</pre> : null}
         </div>
-        {summaryPreview ? <p className="run-row__summary">{summaryPreview}{(run.outputSummary?.length ?? 0) > 120 ? "…" : ""}</p> : null}
-        {run.errorMessage ? <pre className="run-row__error">{run.errorMessage}</pre> : null}
-      </div>
+      </button>
+
+      {canExpand && expanded ? (
+        <div className="run-row__chat">
+          <div className="run-row__messages">
+            {messages.length === 0 ? (
+              <div className="run-row__empty">这次执行的 session 还没有消息（或正在加载）。</div>
+            ) : (
+              messages.map((message) => (
+                <ChatBubble key={message.id} message={message} timezone={timezone} />
+              ))
+            )}
+          </div>
+          <form className="run-row__compose" onSubmit={handleSend}>
+            <textarea
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void handleSend(event);
+                }
+              }}
+              placeholder="基于这次执行继续聊…（⌘ / Ctrl + Enter 发送）"
+              rows={3}
+              disabled={sending}
+            />
+            <button
+              type="submit"
+              className="run-row__btn is-primary"
+              disabled={sending || !draft.trim()}
+            >
+              {sending ? "发送中…" : "发送"}
+            </button>
+          </form>
+          {error ? <p className="run-row__send-error">{error}</p> : null}
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -710,13 +826,43 @@ const styles = `
   }
 
   .run-row {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    overflow: hidden;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .run-row.run-row--expandable:hover {
+    border-color: var(--glass-border-hover);
+    background: var(--bg-surface-hover);
+  }
+
+  .run-row.is-expanded {
+    border-color: var(--glass-border-strong);
+    background: var(--bg-surface-hover);
+  }
+
+  .run-row__head-btn {
+    all: unset;
+    box-sizing: border-box;
     display: grid;
     grid-template-columns: 24px minmax(0, 1fr);
     gap: 10px;
     padding: 10px 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
+    width: 100%;
+    cursor: pointer;
+  }
+
+  .run-row__head-btn:disabled {
+    cursor: default;
+  }
+
+  .run-row__head-btn:focus-visible {
+    outline: 1px solid var(--accent-cyan);
+    outline-offset: -2px;
   }
 
   .run-row__bullet {
@@ -729,6 +875,135 @@ const styles = `
     font-size: 12px;
     font-weight: 700;
     line-height: 1;
+  }
+
+  .run-row__toggle {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  .run-row__chat {
+    border-top: 1px dashed var(--glass-border);
+    padding: 12px 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .run-row__messages {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 420px;
+    overflow-y: auto;
+    padding: 4px 4px 0;
+  }
+
+  .run-row__empty {
+    padding: 16px 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: center;
+  }
+
+  .run-row__compose {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+  }
+
+  .run-row__compose textarea {
+    flex: 1;
+    min-height: 56px;
+    padding: 8px 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.55;
+    resize: vertical;
+  }
+
+  .run-row__compose textarea:focus {
+    outline: none;
+    border-color: rgba(16, 163, 127, 0.55);
+  }
+
+  .run-row__compose textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .run-row__btn {
+    height: 32px;
+    padding: 0 14px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .run-row__btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--glass-border-hover);
+    background: var(--bg-surface-hover);
+  }
+
+  .run-row__btn.is-primary {
+    color: var(--accent-cyan);
+    border-color: rgba(16, 163, 127, 0.5);
+  }
+
+  .run-row__btn.is-primary:hover:not(:disabled) {
+    background: rgba(16, 163, 127, 0.12);
+    border-color: var(--accent-cyan);
+  }
+
+  .run-row__btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .run-row__send-error {
+    margin: 0;
+    padding: 6px 10px;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.22);
+    border-radius: var(--radius-sm);
+    color: var(--status-red);
+    font-size: 12px;
+  }
+
+  .session-mode-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+
+  .session-mode-chip--per_run {
+    border-color: rgba(16, 163, 127, 0.45);
+    color: var(--accent-cyan);
+  }
+
+  .session-mode-chip--shared {
+    border-color: rgba(245, 158, 11, 0.45);
+    color: var(--status-yellow);
   }
 
   .run-row--succeeded .run-row__bullet { background: rgba(34, 197, 94, 0.18); color: var(--status-green); }
