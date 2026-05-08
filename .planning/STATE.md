@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-fc4: 日程时间轴加“当前时间”指示线
+Last activity: 2026-05-08 - Completed quick task 260508-fmv: 定时任务列表 + 抽屉视觉重做 + Markdown 渲染
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -124,6 +124,7 @@ None yet.
 | 260507-juq | 硅基员工工作台样式迁移到 ui-style-guide：page-shell 框架 + 单列 list-row + 矩形 .tag + 描边按钮 + modal a11y；ReasoningPresetPanel + WorkFilesPanel 共享组件同步 | 2026-05-07 | f53eb32 | [260507-juq-ui-style-guide](./quick/260507-juq-ui-style-guide/) |
 | 260507-s7m | 时间规划定时任务三处缺口：assistant_prompt 执行器接 callModel + ExecutionRun 串通 outputSummary；ScheduleJobListPage 行点击右侧抽屉看执行历史全文；composer-tab 圆角 / 反馈色 / 异常 chip / 删除按钮全部 token 化对齐 ui-style-guide | 2026-05-07 | 8b2ea52 | [260507-s7m-assistant-prompt](./quick/260507-s7m-assistant-prompt/) |
 | 260508-fc4 | 日程时间轴 ScheduleTimeline 加“当前时间”指示线：仅 today 显示，分钟级刷新，首次落位自动滚动到红线附近 | 2026-05-08 | 0d9ca35 | [260508-fc4-timeline-now-indicator-line](./quick/260508-fc4-timeline-now-indicator-line/) |
+| 260508-fmv | 定时任务列表 + 执行抽屉视觉重做：左侧 3px 状态色条（成功/失败/暂停/运行）、抽屉 row 升 --bg-card、eyebrow 改 accent-cyan；新增 MarkdownView 组件渲染 outputSummary（marked + sanitizePreviewHtml） | 2026-05-08 | 1ba33bb | [260508-fmv-schedule-job-drawer-redesign-markdown](./quick/260508-fmv-schedule-job-drawer-redesign-markdown/) |
 
 ## Session Continuity
 
