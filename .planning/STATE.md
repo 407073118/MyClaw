@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-hvr: 定时任务 Prompt 加推理深度 + 执行行可点击
+Last activity: 2026-05-08 - Completed quick task 260508-ic3: 定时任务详情独立页替换抽屉 + Prompt 可继续聊天
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -130,6 +130,7 @@ None yet.
 | 260508-glz | worktree 跑 Electron 自动用 `<worktreeRoot>/.userdata` 隔离 userData（修 0x5 Cache 拒绝访问）+ pnpm start/dev 在 Windows 下自动 chcp 65001（修中文乱码） | 2026-05-08 | a342703 | [260508-glz-worktree-electron-userdata-windows](./quick/260508-glz-worktree-electron-userdata-windows/) |
 | 260508-hcp | 定时任务 Prompt 走真 session：ScheduleJob 加 sessionId+modelProfileId（无 migration）；首次执行新建 `[定时] {title}` session 写回，之后调 invokeRegisteredSessionSendMessage 复用 ChatPage 主链路（工具/技能/MCP/审批全继承）；Editor 加「使用模型」select；Drawer 加「在对话中查看 →」跳转 | 2026-05-08 | 4478e44 | [260508-hcp-schedule-prompt-runs-as-real-session](./quick/260508-hcp-schedule-prompt-runs-as-real-session/) |
 | 260508-hvr | 定时任务 Prompt 加 4 档推理深度 chip（low/medium/high/xhigh，默认 medium，写入 session.runtimeIntent）+ 抽屉执行历史行 sessionId 存在时可点击 hover 高亮 + 右下「查看详情 →」点击 selectSession+navigate(/chat) | 2026-05-08 | 347555f | [260508-hvr-schedule-prompt-reasoning-effort-clickab](./quick/260508-hvr-schedule-prompt-reasoning-effort-clickab/) |
+| 260508-ic3 | 定时任务详情独立页 /time/jobs/:id 替换抽屉：header（title+chip+frequency+actions）+ Prompt 类型对话流（user/assistant/tool 气泡 + markdown）+ 底部输入框可继续聊天（selectSession+sendMessage 主链路）+ 执行记录时间线 bullet 列；列表行 click 改 navigate；编辑跳回 location.state.editJobId 自动开编辑器；删除全部 drawer JSX/CSS | 2026-05-08 | 4357def | [260508-ic3-schedule-job-detail-page-replace-drawer](./quick/260508-ic3-schedule-job-detail-page-replace-drawer/) |
 
 ## Session Continuity
 
