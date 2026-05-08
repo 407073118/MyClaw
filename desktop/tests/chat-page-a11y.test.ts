@@ -50,6 +50,13 @@ vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
 }));
 
+// ChatPage 现在用 useNavigate/useSearchParams，但本测试用 render() 直接挂载组件，
+// 没有 Router 上下文。这里 stub 出最小可用替身让 hook 调用通过。
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => vi.fn(),
+  useSearchParams: () => [new URLSearchParams(), vi.fn()] as const,
+}));
+
 describe("ChatPage", () => {
   afterEach(() => {
     cleanup();

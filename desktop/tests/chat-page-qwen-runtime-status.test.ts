@@ -73,6 +73,11 @@ vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
 }));
 
+vi.mock("react-router-dom", () => ({
+  useNavigate: () => vi.fn(),
+  useSearchParams: () => [new URLSearchParams(), vi.fn()] as const,
+}));
+
 describe("ChatPage Qwen runtime status", () => {
   afterEach(() => {
     cleanup();

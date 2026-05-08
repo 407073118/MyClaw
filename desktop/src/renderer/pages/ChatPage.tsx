@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUp, Square } from "lucide-react";
 import { marked } from "marked";
 import { PlanStatePanel } from "../components/plan-state-panel";
@@ -307,6 +308,8 @@ function readRuntimeStatus(event: Record<string, unknown>): ChatRunRuntimeStatus
 /** 渲染聊天主界面，并负责消息流、审批和内联表单交互。 */
 export default function ChatPage() {
   const workspace = useWorkspaceStore();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [composerDraft, setComposerDraft] = useState("");
   const [activeRunState, setActiveRunState] = useState<ComposerRunState | null>(null);
   const [creatingSession, setCreatingSession] = useState(false);
@@ -411,6 +414,21 @@ export default function ChatPage() {
     return orderedSessions;
   }, [selectedSiliconPerson, workspace.sessions]);
 
+  /** 定时任务 id → job 元信息查表，给 session 列表行/header 显示「来自定时任务 X」用。 */
+  const scheduleJobsById = useMemo(() => {
+    const map = new Map<string, { id: string; title: string }>();
+    for (const job of workspace.time?.scheduleJobs ?? []) {
+      map.set(job.id, { id: job.id, title: job.title });
+    }
+    return map;
+  }, [workspace.time?.scheduleJobs]);
+
+  const associatedScheduleJob = useMemo(() => {
+    const associatedId = (session as { associatedScheduleJobId?: string | null } | null)?.associatedScheduleJobId;
+    if (!associatedId) return null;
+    return scheduleJobsById.get(associatedId) ?? null;
+  }, [session, scheduleJobsById]);
+
   const sessionRuntimeIntent = session?.runtimeIntent as Record<string, unknown> | undefined;
   const planModeState = (session as (ChatSession & {
     planModeState?: { mode?: string; approvalStatus?: string; planVersion?: number } | null;
@@ -461,6 +479,18 @@ export default function ChatPage() {
       timers.clear();
     };
   }, []);
+
+  /** 路由参数 ?sessionId= 一次性命中 → 切到该 session 并清掉 query，避免回退/刷新时反复触发。 */
+  useEffect(() => {
+    const queryId = searchParams.get("sessionId");
+    if (!queryId) return;
+    const exists = workspace.sessions.some((item) => item.id === queryId);
+    if (!exists) return;
+    useWorkspaceStore.getState().selectSession(queryId);
+    const next = new URLSearchParams(searchParams);
+    next.delete("sessionId");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, workspace.sessions, setSearchParams]);
 
   /** 进入硅基员工聊天页后先刷新一次员工摘要，保证 currentSession 摘要与未读状态同步。 */
   useEffect(() => {
@@ -1440,11 +1470,26 @@ export default function ChatPage() {
             {/* 会话下拉选择器 */}
             <div className="session-dropdown-container">
               <button className="session-dropdown-trigger" aria-haspopup="listbox">
-                <h1 className="header-title">{session?.title ?? "暂无会话"}</h1>
+                <h1 className="header-title">
+                  {associatedScheduleJob ? <span className="session-schedule-badge" aria-hidden="true">⏰</span> : null}
+                  {session?.title ?? "暂无会话"}
+                </h1>
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
                 </svg>
               </button>
+              {associatedScheduleJob ? (
+                <div className="session-from-schedule" data-testid="session-from-schedule">
+                  来自定时任务「{associatedScheduleJob.title}」
+                  <button
+                    type="button"
+                    className="session-from-schedule__link"
+                    onClick={() => navigate(`/time/jobs/${associatedScheduleJob.id}`)}
+                  >
+                    打开任务详情 →
+                  </button>
+                </div>
+              ) : null}
               <div className="session-dropdown-menu">
                 <div className="dropdown-header">历史记录</div>
                 <ul data-testid="session-list" className="session-list session-list-dropdown">
@@ -1459,7 +1504,12 @@ export default function ChatPage() {
                           }}
                         >
                           <div className="session-info">
-                            <strong>{item.title}</strong>
+                            <strong>
+                              {(item as { associatedScheduleJobId?: string | null }).associatedScheduleJobId
+                                ? <span className="session-schedule-badge" aria-label="来自定时任务" title="来自定时任务">⏰</span>
+                                : null}
+                              {item.title}
+                            </strong>
                             <span>{previewMessage(item)}</span>
                           </div>
                         </button>
@@ -2236,6 +2286,10 @@ export default function ChatPage() {
         .session-info strong { font-size: 13px; font-weight: 500; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .session-info span { color: var(--text-secondary); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .session-row { display: flex; align-items: stretch; gap: 4px; }
+        .session-schedule-badge { display: inline-block; margin-right: 6px; font-size: 11px; line-height: 1; vertical-align: baseline; opacity: 0.85; }
+        .session-from-schedule { display: inline-flex; align-items: center; gap: 8px; margin: 6px 0 0 -4px; padding: 4px 10px; background: rgba(16, 163, 127, 0.08); border: 1px solid rgba(16, 163, 127, 0.25); border-radius: var(--radius-md); color: var(--text-secondary); font-size: 11px; }
+        .session-from-schedule__link { background: transparent; border: 0; padding: 0; color: var(--accent-cyan); font-size: 11px; font-weight: 600; cursor: pointer; }
+        .session-from-schedule__link:hover { text-decoration: underline; }
         .session-delete { width: 32px; display: flex; align-items: center; justify-content: center; border-radius: var(--radius-md); border: 1px solid transparent; background: transparent; color: var(--text-muted); cursor: pointer; opacity: 0; transition: all 0.2s ease; }
         .session-row:hover .session-delete, .session-row .session-delete:focus-within { opacity: 1; }
         .session-delete:hover:not(:disabled) { background: rgba(239,68,68,0.1); color: #ef4444; }

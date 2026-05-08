@@ -1,34 +1,24 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
-import {
-  textOfContent,
-  type ChatMessage,
-  type ChatSession,
-  type ExecutionRun,
-  type ScheduleJobExecutor,
-} from "@shared/contracts";
+import type { ExecutionRun, ScheduleJobExecutor } from "@shared/contracts";
 
-import MarkdownView from "../components/MarkdownView";
 import { useWorkspaceStore } from "../stores/workspace";
 import { formatJobFrequency } from "../utils/frequency";
 
-/** 单个定时任务的独立详情页：header 元信息 + Prompt 类型对话流 + 执行记录。 */
+/** 单个定时任务的独立详情页：header 元信息 + 触发记录。
+ *  对话本身不在此页承载——点击触发记录行跳到对应 ChatPage session。 */
 export default function TimeJobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
   const job = useWorkspaceStore((state) => state.time.scheduleJobs.find((item) => item.id === id) ?? null);
-  const sessions = useWorkspaceStore((state) => state.sessions);
   const allRuns = useWorkspaceStore((state) => state.time.executionRuns);
 
   const sessionMode = job?.sessionMode ?? "per_run";
   const isShared = sessionMode === "shared";
 
-  const session = useMemo(
-    () => (job?.sessionId ? sessions.find((item) => item.id === job.sessionId) ?? null : null),
-    [job?.sessionId, sessions],
-  );
   const runs = useMemo(
     () =>
       allRuns
@@ -36,35 +26,13 @@ export default function TimeJobDetailPage() {
         .sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
     [allRuns, id],
   );
-  const visibleMessages = useMemo(
-    () => (session?.messages ?? []).filter((message) => message.role !== "system"),
-    [session?.messages],
-  );
 
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
   const [running, setRunning] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // 进入页面时自动选中该 session，让 sendMessage / cancelSessionRun 能命中（仅 shared）
-  useEffect(() => {
-    if (isShared && job?.sessionId) {
-      useWorkspaceStore.getState().selectSession(job.sessionId);
-    }
-  }, [isShared, job?.sessionId]);
-
-  // 进入后刷一次执行记录，确保看到最新一次执行
   useEffect(() => {
     void useWorkspaceStore.getState().refreshExecutionRuns();
   }, [id]);
-
-  // 消息更新后滚到底部（仅 shared 模式底部对话区）
-  useEffect(() => {
-    if (!isShared) return;
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [isShared, visibleMessages.length]);
 
   if (!job) {
     return (
@@ -114,27 +82,14 @@ export default function TimeJobDetailPage() {
     void navigate("/time");
   }
 
-  async function handleSend(event: React.FormEvent) {
-    event.preventDefault();
-    if (!session) return;
-    const trimmed = draft.trim();
-    if (!trimmed || sending) return;
-    setSending(true);
-    try {
-      const ws = useWorkspaceStore.getState();
-      ws.selectSession(session.id);
-      await ws.sendMessage(trimmed);
-      setDraft("");
-    } catch (error) {
-      setFeedback(`发送失败：${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      setSending(false);
-    }
+  function handleOpenRunSession(sessionId: string) {
+    void navigate(`/chat?sessionId=${encodeURIComponent(sessionId)}`);
   }
 
   const supportsChat = job.executor === "assistant_prompt";
-  const showSharedChat = supportsChat && isShared;
   const lastRun = runs[0] ?? null;
+  // shared 模式：所有触发都汇入同一 session（job.sessionId）；提供一个直达按钮即可。
+  const sharedSessionId = isShared && supportsChat ? job.sessionId ?? null : null;
 
   return (
     <main className="time-job-detail-page" data-testid="time-job-detail">
@@ -183,6 +138,16 @@ export default function TimeJobDetailPage() {
           <button type="button" className="time-job-detail__btn is-primary" onClick={handleRunNow} disabled={running}>
             {running ? "执行中…" : "立即执行"}
           </button>
+          {sharedSessionId ? (
+            <button
+              type="button"
+              className="time-job-detail__btn"
+              onClick={() => handleOpenRunSession(sharedSessionId)}
+              title="在聊天页打开这个累积会话"
+            >
+              打开会话
+            </button>
+          ) : null}
           <button type="button" className="time-job-detail__btn" onClick={handleEdit}>编辑</button>
           <button type="button" className="time-job-detail__btn" onClick={handleTogglePause}>
             {job.status === "paused" ? "恢复" : "暂停"}
@@ -192,71 +157,23 @@ export default function TimeJobDetailPage() {
         {feedback ? <p className="time-job-detail__feedback">{feedback}</p> : null}
       </section>
 
-      {showSharedChat ? (
-        <section className="time-job-detail__chat">
-          <header className="time-job-detail__section-head">
-            <h2>对话</h2>
-            <span>{visibleMessages.length} 条消息 · 继续聊或等待下次到点触发</span>
-          </header>
-          <div className="time-job-detail__messages">
-            {visibleMessages.length === 0 ? (
-              <div className="time-job-detail__empty-hint">
-                <p>这个任务还没产生过对话。</p>
-                <p>到点触发或点「立即执行」会生成第一条消息。</p>
-              </div>
-            ) : (
-              visibleMessages.map((message) => (
-                <ChatBubble key={message.id} message={message} timezone={job.timezone} />
-              ))
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-          <form className="time-job-detail__compose" onSubmit={handleSend}>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void handleSend(event);
-                }
-              }}
-              placeholder={session ? "继续往下聊…（⌘ / Ctrl + Enter 发送）" : "首次执行后才能开始对话"}
-              rows={3}
-              disabled={sending || !session}
-            />
-            <button type="submit" className="time-job-detail__btn is-primary" disabled={sending || !draft.trim() || !session}>
-              {sending ? "发送中…" : "发送"}
-            </button>
-          </form>
-        </section>
-      ) : null}
-
       <section className="time-job-detail__runs">
         <header className="time-job-detail__section-head">
-          <h2>执行记录</h2>
-          <span>{runs.length} 次</span>
+          <h2>触发记录</h2>
+          <span>{runs.length} 次{supportsChat ? " · 点击行进入对应聊天" : ""}</span>
         </header>
         {runs.length === 0 ? (
           <p className="time-job-detail__empty-hint">这个任务还没有执行过。</p>
         ) : (
           <ol className="time-job-detail__run-list">
-            {runs.map((run) => {
-              const runSession = run.sessionId
-                ? sessions.find((item) => item.id === run.sessionId) ?? null
-                : null;
-              return (
-                <RunRow
-                  key={run.id}
-                  run={run}
-                  timezone={job.timezone}
-                  sessionMode={sessionMode}
-                  runSession={runSession}
-                  expanded={expandedRunId === run.id}
-                  onToggle={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}
-                />
-              );
-            })}
+            {runs.map((run) => (
+              <RunRow
+                key={run.id}
+                run={run}
+                timezone={job.timezone}
+                onOpenSession={handleOpenRunSession}
+              />
+            ))}
           </ol>
         )}
       </section>
@@ -266,86 +183,26 @@ export default function TimeJobDetailPage() {
   );
 }
 
-function ChatBubble({ message, timezone }: { message: ChatMessage; timezone: string }) {
-  if (message.role === "tool") {
-    const text = textOfContent(message.content);
-    const preview = text.length > 80 ? `${text.slice(0, 80)}…` : text;
-    return (
-      <div className="bubble bubble--tool">
-        <div className="bubble__meta">
-          <span className="bubble__role">工具结果</span>
-          <span className="bubble__time">{formatLocal(message.createdAt, timezone)}</span>
-        </div>
-        <details className="bubble__tool-details">
-          <summary>{preview || "（空输出）"}</summary>
-          <pre>{text}</pre>
-        </details>
-      </div>
-    );
-  }
-  const isUser = message.role === "user";
-  return (
-    <div className={isUser ? "bubble bubble--user" : "bubble bubble--assistant"}>
-      <div className="bubble__meta">
-        <span className="bubble__role">{isUser ? "我" : "助手"}</span>
-        <span className="bubble__time">{formatLocal(message.createdAt, timezone)}</span>
-      </div>
-      <MarkdownView source={textOfContent(message.content)} className="bubble__markdown" />
-    </div>
-  );
-}
-
 type RunRowProps = {
   run: ExecutionRun;
   timezone: string;
-  sessionMode: "per_run" | "shared";
-  runSession: ChatSession | null;
-  expanded: boolean;
-  onToggle: () => void;
+  onOpenSession: (sessionId: string) => void;
 };
 
-function RunRow({ run, timezone, sessionMode, runSession, expanded, onToggle }: RunRowProps) {
+function RunRow({ run, timezone, onOpenSession }: RunRowProps) {
   const summaryPreview = run.outputSummary
-    ? run.outputSummary.replace(/\s+/g, " ").trim().slice(0, 120)
+    ? run.outputSummary.replace(/\s+/g, " ").trim().slice(0, 160)
     : "";
-  const canExpand = sessionMode === "per_run" && Boolean(run.sessionId);
-
-  const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const messages = useMemo(
-    () => (runSession?.messages ?? []).filter((message) => message.role !== "system"),
-    [runSession?.messages],
-  );
-
-  async function handleSend(event: React.FormEvent) {
-    event.preventDefault();
-    if (!run.sessionId) return;
-    const trimmed = draft.trim();
-    if (!trimmed || sending) return;
-    setSending(true);
-    setError(null);
-    try {
-      const ws = useWorkspaceStore.getState();
-      ws.selectSession(run.sessionId);
-      await ws.sendMessage(trimmed);
-      setDraft("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSending(false);
-    }
-  }
+  const canOpen = Boolean(run.sessionId);
 
   return (
-    <li className={`run-row run-row--${run.status}${canExpand ? " run-row--expandable" : ""}${expanded ? " is-expanded" : ""}`}>
+    <li className={`run-row run-row--${run.status}${canOpen ? " run-row--openable" : ""}`}>
       <button
         type="button"
-        className="run-row__head-btn"
-        onClick={canExpand ? onToggle : undefined}
-        disabled={!canExpand}
-        aria-expanded={canExpand ? expanded : undefined}
+        className="run-row__btn-row"
+        onClick={canOpen && run.sessionId ? () => onOpenSession(run.sessionId!) : undefined}
+        disabled={!canOpen}
+        aria-label={canOpen ? `打开这次触发的聊天会话` : `本次触发没有关联会话`}
       >
         <span className="run-row__bullet" aria-hidden="true">{run.status === "succeeded" ? "✓" : run.status === "failed" ? "✗" : run.status === "running" ? "…" : "•"}</span>
         <div className="run-row__body">
@@ -357,51 +214,12 @@ function RunRow({ run, timezone, sessionMode, runSession, expanded, onToggle }: 
             <span className={`status-badge status-badge--${run.status === "succeeded" ? "active" : run.status === "failed" ? "danger" : run.status === "running" ? "normal" : "muted"}`}>
               {formatRunStatusZh(run.status)}
             </span>
-            {canExpand ? (
-              <span className="run-row__toggle" aria-hidden="true">{expanded ? "收起 ↑" : "展开 ↓"}</span>
-            ) : null}
+            {canOpen ? <span className="run-row__open-hint" aria-hidden="true">打开聊天 →</span> : null}
           </div>
-          {summaryPreview ? <p className="run-row__summary">{summaryPreview}{(run.outputSummary?.length ?? 0) > 120 ? "…" : ""}</p> : null}
+          {summaryPreview ? <p className="run-row__summary">{summaryPreview}{(run.outputSummary?.length ?? 0) > 160 ? "…" : ""}</p> : null}
           {run.errorMessage ? <pre className="run-row__error">{run.errorMessage}</pre> : null}
         </div>
       </button>
-
-      {canExpand && expanded ? (
-        <div className="run-row__chat">
-          <div className="run-row__messages">
-            {messages.length === 0 ? (
-              <div className="run-row__empty">这次执行的 session 还没有消息（或正在加载）。</div>
-            ) : (
-              messages.map((message) => (
-                <ChatBubble key={message.id} message={message} timezone={timezone} />
-              ))
-            )}
-          </div>
-          <form className="run-row__compose" onSubmit={handleSend}>
-            <textarea
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void handleSend(event);
-                }
-              }}
-              placeholder="基于这次执行继续聊…（⌘ / Ctrl + Enter 发送）"
-              rows={3}
-              disabled={sending}
-            />
-            <button
-              type="submit"
-              className="run-row__btn is-primary"
-              disabled={sending || !draft.trim()}
-            >
-              {sending ? "发送中…" : "发送"}
-            </button>
-          </form>
-          {error ? <p className="run-row__send-error">{error}</p> : null}
-        </div>
-      ) : null}
     </li>
   );
 }
@@ -602,7 +420,6 @@ const styles = `
     font-size: 12px;
   }
 
-  .time-job-detail__chat,
   .time-job-detail__runs {
     margin: 16px 24px;
     background: var(--bg-card);
@@ -632,15 +449,6 @@ const styles = `
     font-size: 12px;
   }
 
-  .time-job-detail__messages {
-    padding: 16px 20px;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    max-height: 580px;
-    overflow-y: auto;
-  }
-
   .time-job-detail__empty-hint {
     margin: 0;
     padding: 24px;
@@ -648,172 +456,6 @@ const styles = `
     text-align: center;
     font-size: 13px;
     line-height: 1.7;
-  }
-
-  .bubble {
-    max-width: 78%;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-
-  .bubble__meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .bubble__role {
-    font-weight: 700;
-  }
-
-  .bubble--user {
-    align-self: flex-end;
-    align-items: flex-end;
-  }
-
-  .bubble--assistant,
-  .bubble--tool {
-    align-self: flex-start;
-    align-items: flex-start;
-  }
-
-  .bubble__markdown {
-    margin: 0;
-    padding: 10px 14px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    color: var(--text-primary);
-    font-size: 13px;
-    line-height: 1.65;
-    word-break: break-word;
-  }
-
-  .bubble--user .bubble__markdown {
-    background: rgba(16, 163, 127, 0.1);
-    border-color: rgba(16, 163, 127, 0.3);
-  }
-
-  .bubble--assistant .bubble__markdown,
-  .bubble--user .bubble__markdown {
-    /* Markdown 元素继承 execution-history-row__markdown 已加载的 typography？
-       这里不依赖外部，自己写常用元素的样式。 */
-  }
-
-  .bubble__markdown > *:first-child { margin-top: 0; }
-  .bubble__markdown > *:last-child { margin-bottom: 0; }
-  .bubble__markdown h1,
-  .bubble__markdown h2,
-  .bubble__markdown h3 {
-    margin: 12px 0 6px;
-    font-weight: 600;
-  }
-  .bubble__markdown h1 { font-size: 17px; }
-  .bubble__markdown h2 { font-size: 15px; }
-  .bubble__markdown h3 { font-size: 14px; }
-  .bubble__markdown p { margin: 6px 0; }
-  .bubble__markdown ul,
-  .bubble__markdown ol { margin: 6px 0; padding-left: 22px; }
-  .bubble__markdown li { margin: 2px 0; }
-  .bubble__markdown a { color: var(--accent-cyan); text-decoration: none; border-bottom: 1px solid rgba(16, 163, 127, 0.35); }
-  .bubble__markdown a:hover { border-bottom-color: var(--accent-cyan); }
-  .bubble__markdown code {
-    padding: 1px 5px;
-    background: rgba(255, 255, 255, 0.08);
-    border-radius: var(--radius-sm);
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 12px;
-  }
-  .bubble__markdown pre {
-    margin: 8px 0;
-    padding: 10px 12px;
-    background: rgba(0, 0, 0, 0.35);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    overflow-x: auto;
-    font-size: 12px;
-  }
-  .bubble__markdown pre code {
-    padding: 0;
-    background: transparent;
-  }
-  .bubble__markdown blockquote {
-    margin: 8px 0;
-    padding: 4px 12px;
-    border-left: 3px solid var(--glass-border-strong);
-    color: var(--text-secondary);
-  }
-
-  .bubble--tool {
-    max-width: 92%;
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-
-  .bubble__tool-details {
-    background: rgba(255, 255, 255, 0.02);
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    padding: 8px 12px;
-    width: 100%;
-  }
-
-  .bubble__tool-details summary {
-    cursor: pointer;
-    color: var(--text-secondary);
-    font-size: 12px;
-    line-height: 1.5;
-  }
-
-  .bubble__tool-details pre {
-    margin: 8px 0 0;
-    padding: 8px 10px;
-    background: rgba(0, 0, 0, 0.35);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-    font-size: 11px;
-    line-height: 1.5;
-    overflow-x: auto;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 240px;
-    overflow-y: auto;
-  }
-
-  .time-job-detail__compose {
-    padding: 12px 20px 16px;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
-    display: flex;
-    gap: 10px;
-    align-items: flex-end;
-  }
-
-  .time-job-detail__compose textarea {
-    flex: 1;
-    min-height: 60px;
-    padding: 10px 12px;
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 1.55;
-    resize: vertical;
-  }
-
-  .time-job-detail__compose textarea:focus {
-    outline: none;
-    border-color: rgba(16, 163, 127, 0.55);
-  }
-
-  .time-job-detail__compose textarea:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
   }
 
   .time-job-detail__run-list {
@@ -835,17 +477,12 @@ const styles = `
     transition: border-color 0.15s ease, background 0.15s ease;
   }
 
-  .run-row.run-row--expandable:hover {
+  .run-row.run-row--openable:hover {
     border-color: var(--glass-border-hover);
     background: var(--bg-surface-hover);
   }
 
-  .run-row.is-expanded {
-    border-color: var(--glass-border-strong);
-    background: var(--bg-surface-hover);
-  }
-
-  .run-row__head-btn {
+  .run-row__btn-row {
     all: unset;
     box-sizing: border-box;
     display: grid;
@@ -856,11 +493,11 @@ const styles = `
     cursor: pointer;
   }
 
-  .run-row__head-btn:disabled {
+  .run-row__btn-row:disabled {
     cursor: default;
   }
 
-  .run-row__head-btn:focus-visible {
+  .run-row__btn-row:focus-visible {
     outline: 1px solid var(--accent-cyan);
     outline-offset: -2px;
   }
@@ -877,109 +514,18 @@ const styles = `
     line-height: 1;
   }
 
-  .run-row__toggle {
+  .run-row__open-hint {
     margin-left: auto;
     font-size: 11px;
-    color: var(--text-muted);
-    font-weight: 600;
-  }
-
-  .run-row__chat {
-    border-top: 1px dashed var(--glass-border);
-    padding: 12px 12px 14px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .run-row__messages {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    max-height: 420px;
-    overflow-y: auto;
-    padding: 4px 4px 0;
-  }
-
-  .run-row__empty {
-    padding: 16px 8px;
-    color: var(--text-muted);
-    font-size: 12px;
-    text-align: center;
-  }
-
-  .run-row__compose {
-    display: flex;
-    align-items: flex-end;
-    gap: 10px;
-  }
-
-  .run-row__compose textarea {
-    flex: 1;
-    min-height: 56px;
-    padding: 8px 10px;
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    background: var(--bg-base);
-    color: var(--text-primary);
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 1.55;
-    resize: vertical;
-  }
-
-  .run-row__compose textarea:focus {
-    outline: none;
-    border-color: rgba(16, 163, 127, 0.55);
-  }
-
-  .run-row__compose textarea:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .run-row__btn {
-    height: 32px;
-    padding: 0 14px;
-    border: 1px solid var(--glass-border);
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
-  }
-
-  .run-row__btn:hover:not(:disabled) {
-    color: var(--text-primary);
-    border-color: var(--glass-border-hover);
-    background: var(--bg-surface-hover);
-  }
-
-  .run-row__btn.is-primary {
     color: var(--accent-cyan);
-    border-color: rgba(16, 163, 127, 0.5);
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.15s ease;
   }
 
-  .run-row__btn.is-primary:hover:not(:disabled) {
-    background: rgba(16, 163, 127, 0.12);
-    border-color: var(--accent-cyan);
-  }
-
-  .run-row__btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .run-row__send-error {
-    margin: 0;
-    padding: 6px 10px;
-    background: rgba(239, 68, 68, 0.08);
-    border: 1px solid rgba(239, 68, 68, 0.22);
-    border-radius: var(--radius-sm);
-    color: var(--status-red);
-    font-size: 12px;
+  .run-row.run-row--openable:hover .run-row__open-hint,
+  .run-row__btn-row:focus-visible .run-row__open-hint {
+    opacity: 1;
   }
 
   .session-mode-chip {
