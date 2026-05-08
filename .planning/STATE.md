@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-kvd: 硅基员工 studio 资料 tab + 新建页 同类列宽 + 卡片化整改
+Last activity: 2026-05-08 - Completed quick task 260508-l1o: SkillDetailPage Markdown 预览去网页大卡片化
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -129,6 +129,7 @@ None yet.
 | 260508-jmn | Settings 模型卡片改单列 flex：`.model-rows-container` 从 grid auto-fill minmax(420px,1fr) 改为 flex column，修复全屏窗口下折 3 列且单卡固定 420px 不伸展的问题 | 2026-05-08 | 07e9725 | [260508-jmn-settings-flex](./quick/260508-jmn-settings-flex/) |
 | 260508-jzp | Settings + ModelDetail 全屏列宽 + 网页卡片化整改：6 处 CSS——`.settings-group-panel` 去 max-width 860；`.main-form` 去 max-width 900 + margin auto；`.native-tool-card` 去 linear-gradient；`.feature-tag` 999px→4px；`.dot-icon` 颜色 token 化；`.capability-card`/`.managed-profile-card` 圆角与色 token 化 | 2026-05-08 | 0f0594b | [260508-jzp-settings-modeldetail](./quick/260508-jzp-settings-modeldetail/) |
 | 260508-kvd | 硅基员工 studio 资料 tab + 新建页 同类整改：6 处 CSS——`.ws-profile-col` 去 max-width 900 + margin auto；`.ws-model-status-pill`/`.spc-model-status-pill` 999px→4px tag 规格；CreatePage `.spc-copy-strip`/`.spc-editor-pane`/`.spc-config-pane` 3 处 linear-gradient → 单色 alpha + 圆角 16/18→12 | 2026-05-08 | b258010 | [260508-kvd-silicon-person-profile-config](./quick/260508-kvd-silicon-person-profile-config/) |
+| 260508-l1o | SkillDetailPage Markdown 预览去网页大卡片化（VSCode/Notion 风扁平文档）：surface 删 border/18px 圆角/多层 box-shadow/linear-gradient 背景；pre 去渐变改 rgba + 圆角 14→6；h1/h2 hero 字号 clamp 36/28 → 24/18；blockquote/table 圆角 12→6；外层双 gradient 改纯 --bg-base | 2026-05-08 | da0fc88 | [260508-l1o-skilldetailpage-markdown](./quick/260508-l1o-skilldetailpage-markdown/) |
 
 ## Session Continuity
 
