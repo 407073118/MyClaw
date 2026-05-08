@@ -770,12 +770,31 @@ export default function SiliconPersonWorkspacePage() {
 
         {siliconPerson && (
           <div className="ws-meta-row">
-            <span className={`tag tag--${tagStatusVariant(siliconPerson.status)}`}>{siliconPersonStatusLabel(siliconPerson.status)}</span>
-            <span className="tag tag--muted">{sourceLabel[siliconPerson.source] ?? siliconPerson.source}</span>
-            <span className="tag tag--muted">{siliconPerson.sessions.length} 个会话</span>
-            <span className="tag tag--muted">{siliconPerson.workflowIds.length} 个工作流</span>
-            {siliconPerson.hasUnread && <span className="tag tag--accent">{siliconPerson.unreadCount} 未读</span>}
-            {siliconPerson.needsApproval && <span className="tag tag--yellow">待审批</span>}
+            <div className="ws-meta-tags">
+              <span className={`tag tag--${tagStatusVariant(siliconPerson.status)}`}>
+                {siliconPersonStatusLabel(siliconPerson.status)}
+              </span>
+              <span className="tag tag--muted">{sourceLabel[siliconPerson.source] ?? siliconPerson.source}</span>
+            </div>
+            <div className="ws-meta-stats" aria-label="工作台概览">
+              <span className="ws-meta-stat">
+                <strong>{siliconPerson.sessions.length}</strong>
+                <span>会话</span>
+              </span>
+              <span className="ws-meta-stat-sep" aria-hidden />
+              <span className="ws-meta-stat">
+                <strong>{siliconPerson.workflowIds.length}</strong>
+                <span>工作流</span>
+              </span>
+            </div>
+            {(siliconPerson.hasUnread || siliconPerson.needsApproval) && (
+              <div className="ws-meta-alerts">
+                {siliconPerson.hasUnread && (
+                  <span className="tag tag--accent">{siliconPerson.unreadCount} 未读</span>
+                )}
+                {siliconPerson.needsApproval && <span className="tag tag--yellow">待审批</span>}
+              </div>
+            )}
           </div>
         )}
 
@@ -792,22 +811,27 @@ export default function SiliconPersonWorkspacePage() {
               </div>
 
               <div className="ws-session-bar">
-                <div className="ws-session-pills">
-                  {siliconPerson.sessions.map((session) => (
-                    <button
-                      key={session.id}
-                      type="button"
-                      className={`tag tag--interactive${currentSessionSummary?.id === session.id ? " is-active" : ""}`}
-                      data-testid={`silicon-person-session-pill-${session.id}`}
-                      onClick={() => void handleSwitchSession(session.id)}
-                    >
-                      <span>{session.title || "未命名会话"}</span>
-                      {session.needsApproval && <span className="ws-session-badge warn">!</span>}
-                      {session.unreadCount > 0 && !session.needsApproval && (
-                        <span className="ws-session-badge">{session.unreadCount > 9 ? "9+" : session.unreadCount}</span>
-                      )}
-                    </button>
-                  ))}
+                <div className="ws-session-pills" role="tablist" aria-label="硅基员工会话">
+                  {siliconPerson.sessions.map((session) => {
+                    const isActive = currentSessionSummary?.id === session.id;
+                    return (
+                      <button
+                        key={session.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={isActive}
+                        className={`ws-session-pill${isActive ? " is-active" : ""}`}
+                        data-testid={`silicon-person-session-pill-${session.id}`}
+                        onClick={() => void handleSwitchSession(session.id)}
+                      >
+                        <span className="ws-session-pill__label">{session.title || "未命名会话"}</span>
+                        {session.needsApproval && <span className="ws-session-badge warn">!</span>}
+                        {session.unreadCount > 0 && !session.needsApproval && (
+                          <span className="ws-session-badge">{session.unreadCount > 9 ? "9+" : session.unreadCount}</span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
                 <button
                   type="button"
@@ -838,11 +862,19 @@ export default function SiliconPersonWorkspacePage() {
                 <>
                   <div className="ws-section">
                     <h4>当前会话</h4>
-                    <div className="ws-meta-row">
-                      <span className="tag tag--muted">{currentSessionSummary.title || "未命名会话"}</span>
-                      <span className="tag tag--muted">{currentSessionMessages.length} 条消息</span>
+                    <div className="ws-meta-row ws-meta-row--inline">
+                      <span className="ws-meta-name" title={currentSessionSummary.title || "未命名会话"}>
+                        {currentSessionSummary.title || "未命名会话"}
+                      </span>
+                      <span className="ws-meta-stat-sep" aria-hidden />
+                      <span className="ws-meta-stat">
+                        <strong>{currentSessionMessages.length}</strong>
+                        <span>条消息</span>
+                      </span>
                       {currentSessionSummary.hasUnread && (
-                        <span className="tag tag--accent">{currentSessionSummary.unreadCount} 未读</span>
+                        <span className="tag tag--accent ws-meta-alert">
+                          {currentSessionSummary.unreadCount} 未读
+                        </span>
                       )}
                     </div>
                   </div>
@@ -1386,28 +1418,67 @@ export default function SiliconPersonWorkspacePage() {
       <style>{`
         /* page-shell + page-header--sticky 接管整体页面骨架；下面只保留工作台内部子组件的局部样式。 */
 
-        /* ── Tabs ── */
-        .ws-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--glass-border); }
-        .ws-tab { padding: 10px 18px; border: none; background: none; color: var(--text-muted); font-size: 0.82rem; font-weight: 700; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s ease, border-color 0.15s ease; }
+        /* ── Header title + status dot 对齐（page-header 没定义这个 sub-class）── */
+        .page-header__title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .page-header__title-row .page-header__title { margin: 0; }
+
+        /* ── Tabs（桌面 segmented underline，13px / 600，去 uppercase）── */
+        .ws-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--glass-border); margin-bottom: 16px; flex-shrink: 0; }
+        .ws-tab { padding: 8px 14px; border: none; background: none; color: var(--text-muted); font-size: 13px; font-weight: 500; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 0.15s ease, border-color 0.15s ease; letter-spacing: 0; }
         .ws-tab:hover { color: var(--text-primary); }
-        .ws-tab.active { color: var(--text-primary); border-bottom-color: var(--accent-cyan); }
+        .ws-tab:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 2px; border-radius: var(--radius-sm); }
+        .ws-tab.active { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--accent-cyan); }
+
+        /* ── Meta Row（状态/来源 + 数量统计 + 警告徽章 三段式，桌面 stat strip）── */
+        .ws-meta-row {
+          display: flex; align-items: center; flex-wrap: wrap;
+          gap: 14px;
+          padding: 10px 0 14px;
+          margin-bottom: 16px;
+          border-bottom: 1px solid var(--glass-border);
+        }
+        .ws-meta-tags { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .ws-meta-stats { display: flex; align-items: center; gap: 12px; color: var(--text-muted); font-size: 12px; }
+        .ws-meta-stat { display: inline-flex; align-items: baseline; gap: 5px; line-height: 1; }
+        .ws-meta-stat strong { color: var(--text-primary); font-weight: 600; font-size: 13px; font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+        .ws-meta-stat-sep { width: 3px; height: 3px; border-radius: 50%; background: rgba(255, 255, 255, 0.18); flex-shrink: 0; }
+        .ws-meta-alerts { margin-left: auto; display: flex; gap: 6px; }
+        /* inline 变体：聊天 tab 里"当前会话"行，没有上 border */
+        .ws-meta-row--inline { padding: 0; margin-bottom: 0; border-bottom: none; gap: 10px; }
+        .ws-meta-row--inline .ws-meta-name { font-size: 13px; font-weight: 500; color: var(--text-primary); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ws-meta-row--inline .ws-meta-alert { margin-left: auto; }
 
         /* ── Body Grid ── */
-        .ws-meta-row { display: flex; flex-wrap: wrap; gap: 6px; }
-        .ws-body { display: flex; flex-direction: column; gap: 20px; flex: 1; min-height: 0; }
-        .ws-col { display: flex; flex-direction: column; gap: 16px; }
+        .ws-body { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; }
+        .ws-col { display: flex; flex-direction: column; gap: 14px; }
 
-        /* ── Card ── */
-        .ws-card { border: 1px solid var(--glass-border); border-radius: var(--radius-xl); background: var(--bg-card); padding: 20px; box-shadow: var(--shadow-card), var(--glass-inner-glow); }
-        .ws-card h3 { margin: 0 0 4px; color: var(--text-primary); font-size: 0.95rem; font-weight: 700; }
-        .ws-card-desc { margin: 0; color: var(--text-muted); font-size: 0.78rem; line-height: 1.5; }
+        /* ── Card（紧凑桌面 panel，去 inner-glow / shadow，圆角降到 lg）── */
+        .ws-card { border: 1px solid var(--glass-border); border-radius: var(--radius-lg); background: var(--bg-card); padding: 18px 20px; }
+        .ws-card h3 { margin: 0 0 4px; color: var(--text-primary); font-size: 14px; font-weight: 600; letter-spacing: -0.005em; }
+        .ws-card-desc { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
 
         /* ── Session Bar ── */
-        .ws-session-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-        .ws-session-pills { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
-        .ws-session-badge { min-width: 16px; height: 16px; border-radius: 999px; background: var(--accent-cyan); color: #fff; font-size: 0.6rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
+        .ws-session-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+        .ws-session-pills { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+        .ws-session-pill {
+          display: inline-flex; align-items: center; gap: 6px;
+          max-width: 220px; min-width: 0;
+          padding: 5px 12px;
+          font-size: 12.5px; font-weight: 500;
+          color: var(--text-secondary);
+          background: var(--bg-surface);
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+        }
+        .ws-session-pill__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        .ws-session-pill:hover { background: var(--bg-surface-hover); border-color: var(--glass-border-hover); color: var(--text-primary); }
+        .ws-session-pill:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 2px; }
+        .ws-session-pill.is-active { background: rgba(16, 163, 127, 0.10); border-color: rgba(16, 163, 127, 0.32); color: var(--accent-cyan); }
+        .ws-session-badge { min-width: 16px; height: 16px; border-radius: 999px; background: var(--accent-cyan); color: #fff; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
         .ws-session-badge.warn { background: var(--status-yellow); color: #000; }
-        .ws-empty-hint { color: var(--text-muted); font-size: 0.78rem; }
+        .ws-empty-hint { color: var(--text-muted); font-size: 12px; }
 
         /* ── Chat Card ── */
         .ws-chat-card { display: flex; flex-direction: column; gap: 0; }
@@ -1427,10 +1498,10 @@ export default function SiliconPersonWorkspacePage() {
         .ws-msg--system .ws-msg-body { background: rgba(245,158,11,0.05); border-color: rgba(245,158,11,0.15); }
         .ws-msg--tool .ws-msg-body { background: rgba(139,92,246,0.05); border-color: rgba(139,92,246,0.15); }
 
-        /* ── Sections inside chat ── */
+        /* ── Sections inside chat（11px caps eyebrow，对齐 ui-style-guide 的 eyebrow 规则）── */
         .ws-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--glass-border); }
-        .ws-section h4 { margin: 0 0 10px; font-size: 0.78rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-        .ws-section--approval { background: rgba(245,158,11,0.03); margin: 16px -20px -20px; padding: 16px 20px 20px; border-radius: 0 0 var(--radius-xl) var(--radius-xl); border-top: 1px solid rgba(245,158,11,0.15); }
+        .ws-section h4 { margin: 0 0 10px; font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+        .ws-section--approval { background: rgba(245,158,11,0.03); margin: 16px -20px -18px; padding: 16px 20px 18px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid rgba(245,158,11,0.15); }
 
         /* ── Item list (non-list-row legacy: tasks tab) ── */
         .ws-item-list { display: flex; flex-direction: column; gap: 8px; }
@@ -1452,17 +1523,17 @@ export default function SiliconPersonWorkspacePage() {
         .ws-composer textarea:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.14); outline: none; }
 
         /* ── Profile ── */
-        .ws-profile-col { max-width: 900px; margin: 0 auto; width: 100%; }
+        .ws-profile-col { width: 100%; }
         .ws-profile-grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
 
         /* ── Form Card ── */
         .ws-form-card { display: flex; flex-direction: column; gap: 18px; }
         .ws-form-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         .ws-model-status { display: flex; flex-wrap: wrap; gap: 8px; }
-        .ws-model-status-pill { display: inline-flex; align-items: center; min-height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: var(--text-secondary); font-size: 12px; line-height: 1; white-space: nowrap; }
+        .ws-model-status-pill { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: var(--text-secondary); font-size: 11px; font-weight: 600; line-height: 1; letter-spacing: 0.04em; white-space: nowrap; }
         .ws-model-status-pill--vendor, .ws-model-status-pill--protocol { color: var(--accent-strong); border-color: rgba(16,163,127,0.24); background: rgba(16,163,127,0.08); }
-        .ws-field { display: flex; flex-direction: column; gap: 8px; }
-        .ws-field span { font-size: 0.8rem; font-weight: 700; color: var(--text-muted); }
+        .ws-field { display: flex; flex-direction: column; gap: 6px; }
+        .ws-field span { font-size: 12px; font-weight: 500; color: var(--text-muted); letter-spacing: 0; }
         .ws-field--full { grid-column: 1 / -1; }
         .ws-field input, .ws-field textarea, .ws-field select { width: 100%; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: rgba(0,0,0,0.15); color: var(--text-primary); padding: 10px 14px; font: inherit; font-size: 13px; transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease; box-sizing: border-box; }
         .ws-field input:hover, .ws-field textarea:hover, .ws-field select:hover { border-color: rgba(255,255,255,0.12); background: rgba(0,0,0,0.25); }
@@ -1471,16 +1542,38 @@ export default function SiliconPersonWorkspacePage() {
         .ws-field select option { background: var(--bg-card); color: var(--text-primary); padding: 8px 12px; }
         .ws-path-display { width: 100%; padding: 10px 14px; border: 1px dashed var(--glass-border); border-radius: var(--radius-md); background: rgba(0,0,0,0.1); color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; cursor: text; box-sizing: border-box; }
 
-        /* ── Readonly Stats ── */
-        .ws-readonly-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-top: 14px; }
-        .ws-stat-cell { padding: 14px 16px; border-radius: var(--radius-lg); border: 1px solid var(--glass-border); background: linear-gradient(145deg, rgba(255,255,255,0.03), transparent); display: flex; flex-direction: column; gap: 6px; }
-        .ws-stat-label { font-size: 0.68rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
-        .ws-stat-value { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); word-break: break-all; }
-        .ws-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; }
+        /* ── Readonly Stats（dl 描述列表模式，桌面应用紧凑展示）── */
+        .ws-readonly-grid {
+          display: grid;
+          grid-template-columns: 96px 1fr;
+          column-gap: 16px;
+          row-gap: 2px;
+          margin-top: 12px;
+        }
+        .ws-stat-cell { display: contents; }
+        .ws-stat-cell .ws-stat-label {
+          font-size: 12px; font-weight: 500;
+          color: var(--text-muted);
+          text-transform: none; letter-spacing: 0;
+          padding: 7px 0;
+          align-self: baseline;
+        }
+        .ws-stat-cell .ws-stat-value {
+          font-size: 13px; font-weight: 500;
+          color: var(--text-primary);
+          padding: 7px 0;
+          word-break: break-all;
+          align-self: baseline;
+          min-width: 0;
+        }
+        .ws-stat-cell + .ws-stat-cell .ws-stat-label,
+        .ws-stat-cell + .ws-stat-cell .ws-stat-value { border-top: 1px solid var(--glass-border); }
+        .ws-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
         .ws-text-muted { color: var(--text-muted); }
 
         /* ── Capabilities ── */
-        .ws-cap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+        .ws-cap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+        .ws-cap-header > div:first-child { min-width: 0; flex: 1; }
         .ws-bind-row { display: flex; gap: 8px; align-items: center; }
         .ws-bind-select { padding: 8px 14px; padding-right: 36px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font: inherit; font-size: 0.82rem; appearance: none; -webkit-appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
         .ws-bind-select:hover { border-color: var(--glass-border-hover); background: rgba(255,255,255,0.02); }
@@ -1494,8 +1587,9 @@ export default function SiliconPersonWorkspacePage() {
         @media (max-width: 960px) {
           .ws-profile-grid { grid-template-columns: 1fr; }
           .ws-form-fields { grid-template-columns: 1fr; }
-          .ws-readonly-grid { grid-template-columns: 1fr 1fr; }
+          .ws-readonly-grid { grid-template-columns: 80px 1fr; }
           .ws-schedule-form { grid-template-columns: 1fr; }
+          .ws-meta-alerts { margin-left: 0; }
         }
 
         /* ── Save Confirm Dialog ── */
