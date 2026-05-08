@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type {
   AvailabilityPolicy,
@@ -309,7 +309,12 @@ export default function TimeCenterPage() {
         {activeView === "timeline" ? (
           <section className="schedule-timeline-panel" data-testid="schedule-timeline">
             <TimelineHeader selectedDate={selectedDate} timezone={timezone} entryCount={planningModel.entries.length} />
-            <ScheduleTimeline entries={planningModel.entries} timezone={timezone} />
+            <ScheduleTimeline
+              entries={planningModel.entries}
+              timezone={timezone}
+              selectedDate={selectedDate}
+              todayDateKey={todayDateKey}
+            />
           </section>
         ) : null}
 
@@ -551,7 +556,17 @@ function TimelineHeader({
 }
 
 /** 渲染统一时间轴，把不同来源的条目按真实触发时间排序。 */
-function ScheduleTimeline({ entries, timezone }: { entries: TimelineEntry[]; timezone: string }) {
+function ScheduleTimeline({
+  entries,
+  timezone,
+  selectedDate,
+  todayDateKey,
+}: {
+  entries: TimelineEntry[];
+  timezone: string;
+  selectedDate: string;
+  todayDateKey: string;
+}) {
   // useMemo 缓存 25×N 的分桶计算 —— 之前每次渲染都重建，定时任务很多时是渲染热点。
   const entriesByHour = useMemo(() => {
     const result = new Map<number, TimelineEntry[]>();
@@ -563,8 +578,47 @@ function ScheduleTimeline({ entries, timezone }: { entries: TimelineEntry[]; tim
     return result;
   }, [entries, timezone]);
 
+  // 仅在「选中的就是今天」时启用 now-line：每分钟刷一次时间，切走时立即清掉避免误导。
+  const isToday = selectedDate === todayDateKey;
+  const [now, setNow] = useState<Date | null>(() => (isToday ? new Date() : null));
+  useEffect(() => {
+    if (!isToday) {
+      setNow(null);
+      return;
+    }
+    setNow(new Date());
+    const handle = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(handle);
+  }, [isToday]);
+
+  // 行高随当天事件多少而变，用真实 DOM 量出当前小时行的 offsetTop 和 offsetHeight，再按分钟比例插值。
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const [nowTop, setNowTop] = useState<number | null>(null);
+  const didScrollRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!isToday || !now || !boardRef.current) {
+      setNowTop(null);
+      didScrollRef.current = false;
+      return;
+    }
+    const hour = Math.min(23, getLocalHour(now.toISOString(), timezone));
+    const minute = getLocalMinute(now.toISOString(), timezone);
+    const board = boardRef.current;
+    const row = board.querySelector<HTMLElement>(`[data-testid="timeline-hour-${hour}"]`);
+    if (!row) {
+      setNowTop(null);
+      return;
+    }
+    const top = row.offsetTop + (minute / 60) * row.offsetHeight;
+    setNowTop(top);
+    if (!didScrollRef.current) {
+      board.scrollTop = Math.max(0, top - 160);
+      didScrollRef.current = true;
+    }
+  }, [isToday, now, timezone, entries.length]);
+
   return (
-    <div className="timeline-board">
+    <div className="timeline-board" ref={boardRef}>
       {DAY_HOURS.map((hour) => {
         const hourEntries = entriesByHour.get(hour) ?? [];
         return (
@@ -589,6 +643,17 @@ function ScheduleTimeline({ entries, timezone }: { entries: TimelineEntry[]; tim
           </section>
         );
       })}
+      {isToday && now && nowTop !== null ? (
+        <div
+          className="timeline-now-line"
+          style={{ top: nowTop }}
+          data-testid="timeline-now-line"
+          aria-hidden="true"
+        >
+          <span className="timeline-now-line__dot" />
+          <span className="timeline-now-line__label">{formatNowLabel(now, timezone)}</span>
+        </div>
+      ) : null}
       {entries.length === 0 ? (
         <section className="timeline-empty">
           <h3>这一天还没有排定事项</h3>
@@ -1372,6 +1437,24 @@ function getLocalHour(iso: string, timezone: string): number {
   return hour === 24 ? 0 : hour;
 }
 
+/** 获取指定时间在目标时区内的分钟，用于按分钟比例插值 now-line。 */
+function getLocalMinute(iso: string, timezone: string): number {
+  const minuteText = getDateTimeFormatter("local-minute", "en-CA", timezone, {
+    minute: "2-digit",
+  }).format(new Date(iso));
+  const minute = Number(minuteText);
+  return Number.isFinite(minute) ? minute : 0;
+}
+
+/** 格式化 now-line 上展示的当前时间标签。 */
+function formatNowLabel(now: Date, timezone: string): string {
+  return getDateTimeFormatter("now-line", "en-CA", timezone, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(now);
+}
+
 /** 格式化时间轴条目的起止时间。 */
 function formatTimeRange(startsAt: string, endsAt: string | undefined, timezone: string): string {
   const start = formatClock(startsAt, timezone);
@@ -1774,6 +1857,38 @@ const styles = `
     border: 1px dashed rgba(255, 255, 255, 0.10);
     border-radius: var(--radius-lg);
     text-align: center;
+  }
+
+  .timeline-now-line {
+    position: absolute;
+    left: 64px;
+    right: 0;
+    height: 1px;
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.45);
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .timeline-now-line__dot {
+    position: absolute;
+    left: -4px;
+    top: -3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.55);
+  }
+
+  .timeline-now-line__label {
+    position: absolute;
+    right: 8px;
+    top: -16px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: #ef4444;
   }
 
   .schedule-resource-rail {
