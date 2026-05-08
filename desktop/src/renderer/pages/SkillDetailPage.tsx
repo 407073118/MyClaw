@@ -771,14 +771,11 @@ const styles = `
     border-radius: var(--radius-md, 6px);
   }
 
-  /* ---- Markdown 预览 ---- */
+  /* ---- Markdown 预览（VSCode / Notion 风扁平文档，无外层卡盒） ---- */
   .markdown-preview {
     min-height: 100%;
-    padding: 24px;
-    background:
-      radial-gradient(circle at top left, rgba(16, 163, 127, 0.08), transparent 36%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 28%),
-      var(--bg-base, #121214);
+    padding: 32px 48px;
+    background: var(--bg-base, #121214);
     color: var(--text-primary, #fff);
     font-size: 14px;
     line-height: 1.7;
@@ -788,15 +785,7 @@ const styles = `
   .markdown-preview__surface {
     width: min(100%, 880px);
     margin: 0 auto;
-    padding: clamp(24px, 4vw, 40px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 18px;
-    background:
-      linear-gradient(180deg, rgba(16, 163, 127, 0.08), rgba(16, 163, 127, 0) 120px),
-      rgba(18, 18, 22, 0.78);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.04),
-      0 20px 48px rgba(0, 0, 0, 0.24);
+    padding: 0;
   }
 
   .markdown-preview__surface > :first-child {
@@ -808,36 +797,34 @@ const styles = `
   }
 
   .markdown-preview h1 {
-    font-size: clamp(28px, 4vw, 36px);
-    font-weight: 800;
-    line-height: 1.1;
-    letter-spacing: -0.03em;
-    margin: 0 0 20px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 24px;
+    font-weight: 600;
+    line-height: 1.25;
+    letter-spacing: -0.01em;
+    margin: 0 0 16px;
   }
 
   .markdown-preview h2 {
-    font-size: clamp(22px, 3vw, 28px);
-    font-weight: 700;
-    line-height: 1.2;
-    letter-spacing: -0.02em;
-    margin: 36px 0 14px;
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1.3;
+    letter-spacing: -0.005em;
+    margin: 28px 0 12px;
   }
 
   .markdown-preview h3 {
-    font-size: 18px;
-    font-weight: 700;
-    line-height: 1.3;
-    margin: 28px 0 10px;
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1.35;
+    margin: 22px 0 10px;
   }
 
   .markdown-preview h4,
   .markdown-preview h5,
   .markdown-preview h6 {
-    font-size: 15px;
-    font-weight: 700;
-    margin: 22px 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 18px 0 8px;
     color: var(--text-primary, #fff);
   }
 
@@ -872,15 +859,12 @@ const styles = `
   }
 
   .markdown-preview pre {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 22%),
-      rgba(9, 12, 14, 0.92);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 14px;
-    padding: 16px 18px;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 14px 16px;
     overflow-x: auto;
-    margin: 0 0 20px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    margin: 0 0 18px;
     scrollbar-width: thin;
     scrollbar-color: hsla(0, 0%, 100%, 0.16) transparent;
   }
@@ -917,10 +901,10 @@ const styles = `
   }
 
   .markdown-preview blockquote {
-    margin: 0 0 20px;
-    padding: 14px 18px;
+    margin: 0 0 18px;
+    padding: 10px 14px;
     border-left: 3px solid var(--accent-cyan, #67e8f9);
-    border-radius: 0 12px 12px 0;
+    border-radius: 0 6px 6px 0;
     background: rgba(255, 255, 255, 0.03);
     color: var(--text-secondary, #b0b0b8);
   }
@@ -928,11 +912,11 @@ const styles = `
   .markdown-preview table {
     width: 100%;
     border-collapse: collapse;
-    margin: 0 0 20px;
+    margin: 0 0 18px;
     overflow: hidden;
-    border-radius: 12px;
+    border-radius: 6px;
     border-style: hidden;
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
   }
 
   .markdown-preview th, .markdown-preview td {

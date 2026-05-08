@@ -323,10 +323,9 @@ export default function SiliconPersonCreatePage() {
           gap: 18px;
           align-items: end;
           padding: 16px 18px;
-          border-radius: 16px;
-          background:
-            linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.025);
+          border: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         .spc-copy-strip-copy {
@@ -350,24 +349,22 @@ export default function SiliconPersonCreatePage() {
           min-width: 0;
           min-height: 0;
           padding: 20px 22px 22px;
-          border-radius: 18px;
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          border-radius: 12px;
+          border: 1px solid rgba(255, 255, 255, 0.06);
         }
 
         .spc-editor-pane {
           display: flex;
           flex-direction: column;
           gap: 16px;
-          background:
-            linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
+          background: rgba(255, 255, 255, 0.02);
         }
 
         .spc-config-pane {
           display: flex;
           flex-direction: column;
           gap: 16px;
-          background:
-            linear-gradient(180deg, rgba(16, 163, 127, 0.055), rgba(255, 255, 255, 0.015));
+          background: rgba(16, 163, 127, 0.04);
         }
 
         .spc-pane-head {
@@ -410,13 +407,15 @@ export default function SiliconPersonCreatePage() {
         .spc-model-status-pill {
           display: inline-flex;
           align-items: center;
-          min-height: 28px;
-          padding: 0 10px;
-          border-radius: 999px;
+          min-height: 22px;
+          padding: 2px 7px;
+          border-radius: 4px;
           border: 1px solid rgba(255, 255, 255, 0.12);
           background: rgba(255, 255, 255, 0.04);
           color: var(--text-secondary);
-          font-size: 12px;
+          font-size: 11px;
+          font-weight: 600;
+          letter-spacing: 0.04em;
           line-height: 1;
           white-space: nowrap;
         }

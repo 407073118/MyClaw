@@ -1547,9 +1547,7 @@ export default function ModelDetailPage() {
           display: flex;
           flex-direction: column;
           gap: 24px;
-          max-width: 900px;
           width: 100%;
-          margin: 0 auto;
         }
 
         .form-section {
@@ -1577,11 +1575,12 @@ export default function ModelDetailPage() {
           width: 6px;
           height: 6px;
           border-radius: 50%;
-          background: #eab308;
+          background: var(--status-yellow);
           display: inline-block;
         }
 
-        .dot-icon.blue { background: #3b82f6; }
+        .dot-icon.blue { background: var(--accent-cyan); }
+        .dot-icon.green { background: var(--status-green); }
 
         .field-grid {
           display: grid;
@@ -1658,9 +1657,9 @@ export default function ModelDetailPage() {
           flex-direction: column;
           gap: 14px;
           padding: 16px;
-          border-radius: 12px;
-          border: 1px solid #27272a;
-          background: linear-gradient(180deg, rgba(24, 24, 27, 0.96) 0%, rgba(14, 14, 18, 0.96) 100%);
+          border-radius: 10px;
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          background: rgba(255, 255, 255, 0.02);
         }
 
         .native-tool-card-header {
@@ -1947,9 +1946,9 @@ export default function ModelDetailPage() {
         .dot-icon.green { background: #22c55e; }
 
         .capability-card {
-          background: #161618;
-          border: 1px solid #27272a;
-          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: var(--radius-lg);
           padding: 16px;
         }
 
@@ -1992,17 +1991,19 @@ export default function ModelDetailPage() {
 
         .feature-tag {
           font-size: 11px;
-          padding: 2px 10px;
-          border-radius: 999px;
-          background: #22c55e15;
-          border: 1px solid #22c55e33;
+          font-weight: 600;
+          padding: 2px 7px;
+          border-radius: 4px;
+          background: rgba(34, 197, 94, 0.12);
+          border: 1px solid rgba(34, 197, 94, 0.20);
           color: #4ade80;
+          letter-spacing: 0.04em;
         }
 
         .managed-profile-card {
-          background: #161618;
-          border: 1px solid #27272a;
-          border-radius: 8px;
+          background: rgba(255, 255, 255, 0.02);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: var(--radius-lg);
           padding: 16px;
           display: flex;
           flex-direction: column;

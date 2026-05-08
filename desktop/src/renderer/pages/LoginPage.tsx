@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { AlertCircle, ArrowRight, Eye, EyeOff, Info } from "lucide-react";
 import { useShellStore } from "@/stores/shell";
-import { useAuthStore } from "@/stores/auth";
+import { isDevAuthBypassEnabled, useAuthStore } from "@/stores/auth";
 import TitleBar from "../components/TitleBar";
 
 const loginErrorMessageMap: Record<string, string> = {
@@ -11,6 +12,16 @@ const loginErrorMessageMap: Record<string, string> = {
   cloud_api_request_failed: "登录失败，请确认 cloud-api 已启动。",
   internal_auth_provider_failed: "登录服务暂时不可用，请稍后重试。",
 };
+
+const APP_VERSION = "v0.1.0";
+
+/** 把 Vite mode 映射到登录页左下角显示的环境角标。 */
+function resolveEnvLabel(): string {
+  const mode = import.meta.env.MODE;
+  if (mode === "development") return "DEV";
+  if (mode === "production") return "PROD";
+  return mode.toUpperCase();
+}
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -23,6 +34,8 @@ export default function LoginPage() {
   const [pending, setPending] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  /** 失败计数器：变化时给 .login-column 重挂 key，触发一次抖动动画。 */
+  const [shakeNonce, setShakeNonce] = useState(0);
 
   /** 归一化登录完成后的跳转地址，避免把非法外链透传给桌面路由。 */
   const redirectTarget = useMemo(() => {
@@ -33,6 +46,8 @@ export default function LoginPage() {
     }
     return target;
   }, [location.search]);
+
+  const envLabel = useMemo(() => resolveEnvLabel(), []);
 
   /** 处理桌面端登录提交，成功后回到用户原本要访问的页面。 */
   async function handleLogin(e: React.FormEvent) {
@@ -55,6 +70,7 @@ export default function LoginPage() {
       const message = error instanceof Error ? error.message : "登录失败，请确认 cloud-api 已启动。";
       const code = message.split(":").at(-1)?.trim() ?? "";
       setErrorMessage(loginErrorMessageMap[code] || "登录失败，请确认 cloud-api 已启动。");
+      setShakeNonce((n) => n + 1);
       console.warn("[desktop-login] 桌面端登录失败", { account, error: message });
     } finally {
       setPending(false);
@@ -65,200 +81,405 @@ export default function LoginPage() {
     <div className="app-root-wrapper">
       <TitleBar />
       <main data-testid="desktop-login-view" className="login-page">
-      <section className="login-panel">
-        <div className="login-copy">
-          <span className="eyebrow">MyClaw Desktop</span>
-          <h1>登录后才能使用桌面端</h1>
-          <p>
-            使用和 Cloud 一致的企业账号密码登录。桌面端会在本地安全保存登录态，并在 access token 过期后自动尝试续期。
-          </p>
+        {/* cyan 径向光晕 */}
+        <div className="login-glow" aria-hidden="true" />
+
+        {/* 居中单列；shakeNonce 变化时整列重挂触发抖动 */}
+        <section className="login-column" key={shakeNonce}>
+          {/* 1. 品牌 logo（带框） */}
+          <div className="login-brand">
+            <div className="login-brand__frame">
+              <svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M12.06 2.75 6.18 20h2.36l1.32-4.01h4.27L15.47 20h2.35L12.06 2.75Zm0 5.41 1.37 4.18h-2.76l1.39-4.18Z"
+                />
+                <path fill="currentColor" opacity="0.34" d="m12.08 9.84 2.05 6.15H9.86z" />
+              </svg>
+            </div>
+          </div>
+
+          {/* 2. 三层文字 */}
+          <div className="login-copy">
+            <span className="login-eyebrow">MYCLAW DESKTOP</span>
+            <h1 className="login-title">登录你的企业工作空间</h1>
+            <p className="login-subtitle">使用与 Cloud 一致的企业账号密码</p>
+          </div>
+
+          {/* 3a. dev 模式提示（仅 development 构建显示） */}
+          {isDevAuthBypassEnabled() && (
+            <div className="dev-bypass-banner" role="note">
+              <Info size={14} aria-hidden="true" />
+              <span>DEV 模式 · 登录将跳过 cloud-api 校验，账号密码可任填</span>
+            </div>
+          )}
+
+          {/* 3b. 错误 banner（在表单上方） */}
+          {errorMessage && (
+            <div data-testid="desktop-login-error" className="error-banner" role="alert">
+              <AlertCircle size={14} aria-hidden="true" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {/* 4. 表单 */}
+          <form className="login-form" onSubmit={handleLogin}>
+            <label className="field">
+              <span className="field__label">企业账号</span>
+              <input
+                value={account}
+                onChange={(e) => setAccount(e.target.value.trim())}
+                data-testid="desktop-login-account"
+                type="text"
+                autoComplete="username"
+                placeholder="请输入企业账号"
+                required
+              />
+            </label>
+
+            <label className="field">
+              <span className="field__label">登录密码</span>
+              <div className="field__password-wrap">
+                <input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  data-testid="desktop-login-password"
+                  type={showPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  placeholder="请输入登录密码"
+                  required
+                />
+                <button
+                  type="button"
+                  className="field__eye"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </label>
+
+            <button
+              data-testid="desktop-login-submit"
+              type="submit"
+              className="submit-button"
+              disabled={pending}
+            >
+              {pending ? (
+                <>
+                  <span className="submit-button__spinner" aria-hidden="true" />
+                  <span>正在登录...</span>
+                </>
+              ) : (
+                <>
+                  <span>登录</span>
+                  <ArrowRight size={16} aria-hidden="true" />
+                </>
+              )}
+            </button>
+          </form>
+        </section>
+
+        {/* 5. 左下角版本/环境角标 */}
+        <div className="login-footer" aria-hidden="true">
+          <span>{APP_VERSION}</span>
+          <span className="login-footer__sep"> · </span>
+          <span>{envLabel}</span>
         </div>
 
-        <form className="login-form" onSubmit={handleLogin}>
-          <label className="field">
-            <span>企业账号</span>
-            <input
-              value={account}
-              onChange={(e) => setAccount(e.target.value.trim())}
-              data-testid="desktop-login-account"
-              type="text"
-              autoComplete="username"
-              placeholder="请输入企业账号"
-              required
-            />
-          </label>
+        <style>{`
+          .app-root-wrapper {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+          }
 
-          <label className="field">
-            <span>登录密码</span>
-            <input
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              data-testid="desktop-login-password"
-              type={showPassword ? "text" : "password"}
-              autoComplete="current-password"
-              placeholder="请输入登录密码"
-              required
-            />
-          </label>
+          .login-page {
+            position: relative;
+            flex: 1;
+            display: grid;
+            place-items: center;
+            padding: 32px;
+            overflow: hidden;
+            background: #08090A;
+          }
 
-          <label className="toggle-line">
-            <input
-              type="checkbox"
-              checked={showPassword}
-              onChange={(e) => setShowPassword(e.target.checked)}
-            />
-            <span>显示密码</span>
-          </label>
+          /* cyan 径向光晕 */
+          .login-glow {
+            position: absolute;
+            top: 8%;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(16, 163, 127, 0.18) 0%, rgba(16, 163, 127, 0) 60%);
+            filter: blur(40px);
+            pointer-events: none;
+            z-index: 0;
+          }
 
-          <button data-testid="desktop-login-submit" type="submit" className="submit-button" disabled={pending}>
-            {pending ? "正在登录..." : "登录 Desktop"}
-          </button>
+          /* 居中单列 */
+          .login-column {
+            position: relative;
+            z-index: 1;
+            width: min(400px, 100%);
+            display: flex;
+            flex-direction: column;
+            gap: 32px;
+            align-items: stretch;
+            animation: login-column-in 400ms ease-out both, login-shake 200ms ease;
+          }
 
-          {errorMessage && (
-            <p data-testid="desktop-login-error" className="status error">
-              {errorMessage}
-            </p>
-          )}
-        </form>
-      </section>
+          @keyframes login-column-in {
+            0% { opacity: 0; transform: translateY(8px); }
+            100% { opacity: 1; transform: translateY(0); }
+          }
 
-      <style>{`
-        .app-root-wrapper {
-          display: flex;
-          flex-direction: column;
-          height: 100vh;
-          overflow: hidden;
-        }
+          @keyframes login-shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-4px); }
+            75% { transform: translateX(4px); }
+          }
 
-        .login-page {
-          flex: 1;
-          display: grid;
-          place-items: center;
-          padding: 32px;
-          overflow: hidden;
-          background: var(--bg-base);
-        }
+          /* 品牌 logo 带框 */
+          .login-brand {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 24px;
+          }
 
-        .login-panel {
-          width: min(440px, 100%);
-          padding: 40px;
-          border-radius: var(--radius-xl);
-          background: var(--bg-card);
-          border: 1px solid var(--glass-border);
-          box-shadow: var(--shadow-main);
-          display: grid;
-          gap: 32px;
-        }
+          .login-brand__frame {
+            width: 56px;
+            height: 56px;
+            padding: 12px;
+            display: grid;
+            place-items: center;
+            border-radius: 14px;
+            background: rgba(16, 163, 127, 0.08);
+            border: 1px solid rgba(16, 163, 127, 0.2);
+            color: var(--accent-cyan);
+            box-sizing: border-box;
+          }
 
-        .login-copy {
-          display: grid;
-          gap: 8px;
-        }
+          /* 三层文字 */
+          .login-copy {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            align-items: center;
+            text-align: center;
+          }
 
-        .login-copy .eyebrow {
-          font-size: 11px;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-          color: var(--text-muted);
-        }
+          .login-eyebrow {
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            color: var(--text-muted);
+          }
 
-        .login-copy h1 {
-          margin: 0;
-          font-size: 24px;
-          line-height: 1.2;
-          font-weight: 600;
-          color: var(--text-primary);
-        }
+          .login-title {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+            color: var(--text-primary);
+            line-height: 1.25;
+          }
 
-        .login-copy p {
-          margin: 0;
-          font-size: 13px;
-          color: var(--text-secondary);
-          line-height: 1.6;
-        }
+          .login-subtitle {
+            margin: 0;
+            font-size: 13px;
+            font-weight: 400;
+            line-height: 1.6;
+            color: var(--text-secondary);
+          }
 
-        .login-form {
-          display: grid;
-          gap: 20px;
-        }
+          /* DEV 模式提示 banner（cyan 描边） */
+          .dev-bypass-banner {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: var(--radius-md);
+            background: rgba(16, 163, 127, 0.08);
+            border: 1px solid rgba(16, 163, 127, 0.25);
+            color: var(--accent-cyan);
+            font-size: 12px;
+            line-height: 1.5;
+          }
 
-        .login-form .field {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
+          .dev-bypass-banner svg {
+            margin-top: 2px;
+            flex-shrink: 0;
+          }
 
-        .login-form .field span {
-          font-size: 13px;
-          color: var(--text-secondary);
-          font-weight: 500;
-        }
+          /* 错误 banner */
+          .error-banner {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            padding: 10px 12px;
+            border-radius: var(--radius-md);
+            background: rgba(239, 68, 68, 0.10);
+            border: 1px solid rgba(239, 68, 68, 0.20);
+            color: #fca5a5;
+            font-size: 13px;
+            line-height: 1.5;
+          }
 
-        .login-form .field input {
-          height: 40px;
-          border-radius: var(--radius-md);
-          border: 1px solid var(--glass-border);
-          background: var(--bg-base);
-          color: var(--text-primary);
-          padding: 0 12px;
-          font-size: 14px;
-          transition: border-color 0.2s, box-shadow 0.2s;
-        }
+          .error-banner svg {
+            margin-top: 2px;
+            flex-shrink: 0;
+          }
 
-        .login-form .field input:focus {
-          outline: none;
-          border-color: var(--accent-cyan);
-          box-shadow: 0 0 0 1px var(--accent-cyan);
-        }
+          /* 表单 */
+          .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          }
 
-        .toggle-line {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          color: var(--text-secondary);
-          font-size: 13px;
-          cursor: pointer;
-        }
+          .field {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+          }
 
-        .toggle-line input[type="checkbox"] {
-          accent-color: var(--accent-cyan);
-        }
+          .field__label {
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-secondary);
+          }
 
-        .submit-button {
-          height: 40px;
-          border: none;
-          border-radius: var(--radius-md);
-          background: var(--accent-cyan);
-          color: #fff;
-          font-size: 14px;
-          font-weight: 600;
-          cursor: pointer;
-          width: 100%;
-          transition: opacity 0.2s;
-        }
+          .field input {
+            height: 42px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: var(--radius-md);
+            padding: 0 14px;
+            font-size: 14px;
+            color: var(--text-primary);
+            transition: border-color 0.15s ease, background 0.15s ease;
+            width: 100%;
+            box-sizing: border-box;
+          }
 
-        .submit-button:hover:not(:disabled) {
-          opacity: 0.9;
-        }
+          .field input::placeholder {
+            color: var(--text-muted);
+          }
 
-        .submit-button:disabled {
-          cursor: wait;
-          opacity: 0.5;
-        }
+          .field input:hover:not(:focus) {
+            border-color: rgba(255, 255, 255, 0.15);
+          }
 
-        .status {
-          margin: 0;
-          padding: 12px;
-          border-radius: var(--radius-md);
-          font-size: 13px;
-        }
+          .field input:focus {
+            outline: none;
+            border-color: var(--accent-cyan);
+          }
 
-        .status.error {
-          color: #fca5a5;
-          background: rgba(153, 27, 27, 0.2);
-          border: 1px solid rgba(248, 113, 113, 0.2);
-        }
-      `}</style>
+          .field__password-wrap {
+            position: relative;
+          }
+
+          .field__password-wrap input {
+            padding-right: 44px;
+          }
+
+          .field__eye {
+            position: absolute;
+            right: 8px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 32px;
+            height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: color 0.15s ease;
+          }
+
+          .field__eye:hover {
+            color: var(--text-primary);
+          }
+
+          .field__eye:focus-visible {
+            outline: 2px solid var(--accent-cyan);
+            outline-offset: -2px;
+            border-radius: var(--radius-md);
+          }
+
+          /* 主 CTA —— 登录是 chrome-level 入口，例外允许实心填充（见 SUMMARY） */
+          .submit-button {
+            height: 44px;
+            width: 100%;
+            border: none;
+            border-radius: var(--radius-md);
+            background: var(--accent-cyan);
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: background 0.15s ease, transform 0.1s ease;
+          }
+
+          .submit-button:hover:not(:disabled) {
+            background: #0e9270;
+          }
+
+          .submit-button:active:not(:disabled) {
+            transform: translateY(1px);
+          }
+
+          .submit-button:disabled {
+            opacity: 0.6;
+            cursor: wait;
+          }
+
+          .submit-button__spinner {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #ffffff;
+            animation: login-spin 0.8s linear infinite;
+          }
+
+          @keyframes login-spin {
+            to { transform: rotate(360deg); }
+          }
+
+          /* 左下角版本 / 环境 */
+          .login-footer {
+            position: absolute;
+            bottom: 16px;
+            left: 24px;
+            z-index: 1;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            user-select: none;
+          }
+
+          .login-footer__sep {
+            margin: 0 2px;
+          }
+        `}</style>
       </main>
     </div>
   );

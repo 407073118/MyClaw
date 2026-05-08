@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
-last_updated: "2026-05-08T14:30:00.000Z"
-last_activity: 2026-05-08
+last_updated: "2026-05-06T08:30:00.000Z"
+last_activity: 2026-05-06
 progress:
   total_phases: 8
   completed_phases: 1
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-jp9: Prompt 任务 per_run/shared 双态 + ExecutionRun.sessionId 1:1 关联 + 详情页 per_run 行展开内嵌消息流
+Last activity: 2026-05-08 - Completed quick task 260508-l1o: SkillDetailPage Markdown 预览去网页大卡片化
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -123,18 +123,16 @@ None yet.
 | 260507-gc0 | 修复 workflow：P0（RunPanel 切回 IPC / preload 不再吞错 / status succeeded / subgraph 占位 executor）+ P1（删 PolicyEditor / UUID 折叠 / 个性→提示词 / 删重复输入 / conditional edge 可编辑 / 清 inspector chrome / 去 From-X-Y 行）；P2 待后续 | 2026-05-07 | 7cd3dde | [260507-gc0-workflow-sidebar](./quick/260507-gc0-workflow-sidebar/) |
 | 260507-juq | 硅基员工工作台样式迁移到 ui-style-guide：page-shell 框架 + 单列 list-row + 矩形 .tag + 描边按钮 + modal a11y；ReasoningPresetPanel + WorkFilesPanel 共享组件同步 | 2026-05-07 | f53eb32 | [260507-juq-ui-style-guide](./quick/260507-juq-ui-style-guide/) |
 | 260507-s7m | 时间规划定时任务三处缺口：assistant_prompt 执行器接 callModel + ExecutionRun 串通 outputSummary；ScheduleJobListPage 行点击右侧抽屉看执行历史全文；composer-tab 圆角 / 反馈色 / 异常 chip / 删除按钮全部 token 化对齐 ui-style-guide | 2026-05-07 | 8b2ea52 | [260507-s7m-assistant-prompt](./quick/260507-s7m-assistant-prompt/) |
-| 260508-fc4 | 日程时间轴 ScheduleTimeline 加“当前时间”指示线：仅 today 显示，分钟级刷新，首次落位自动滚动到红线附近 | 2026-05-08 | 0d9ca35 | [260508-fc4-timeline-now-indicator-line](./quick/260508-fc4-timeline-now-indicator-line/) |
-| 260508-fmv | 定时任务列表 + 执行抽屉视觉重做：左侧 3px 状态色条（成功/失败/暂停/运行）、抽屉 row 升 --bg-card、eyebrow 改 accent-cyan；新增 MarkdownView 组件渲染 outputSummary（marked + sanitizePreviewHtml） | 2026-05-08 | 1ba33bb | [260508-fmv-schedule-job-drawer-redesign-markdown](./quick/260508-fmv-schedule-job-drawer-redesign-markdown/) |
-| 260508-g85 | 撤掉 fmv 引入的左侧色条 + 修文字与按钮重叠（操作改纯图标 + col 收紧 + ellipsis）+ 执行按钮加 spinner loading（pendingRunIds + ActionIconButton.loading） | 2026-05-08 | f134b8a | [260508-g85-schedule-job-row-fix-no-stripe-loading](./quick/260508-g85-schedule-job-row-fix-no-stripe-loading/) |
-| 260508-ghf | 定时任务 B 层重构：composer typed 入口（3 张 Prompt/Workflow/员工 卡）+ FrequencyPicker（9 种预设替代裸 cron）+ 列表 type chip + type filter + ✏️ 编辑按钮（updateScheduleJob 链路全通）+ 修预存 WorkflowDefinitionSummary 导出 | 2026-05-08 | 077f6e6 | [260508-ghf-schedule-job-typed-composer-frequency-ed](./quick/260508-ghf-schedule-job-typed-composer-frequency-ed/) |
-| 260508-glz | worktree 跑 Electron 自动用 `<worktreeRoot>/.userdata` 隔离 userData（修 0x5 Cache 拒绝访问）+ pnpm start/dev 在 Windows 下自动 chcp 65001（修中文乱码） | 2026-05-08 | a342703 | [260508-glz-worktree-electron-userdata-windows](./quick/260508-glz-worktree-electron-userdata-windows/) |
-| 260508-hcp | 定时任务 Prompt 走真 session：ScheduleJob 加 sessionId+modelProfileId（无 migration）；首次执行新建 `[定时] {title}` session 写回，之后调 invokeRegisteredSessionSendMessage 复用 ChatPage 主链路（工具/技能/MCP/审批全继承）；Editor 加「使用模型」select；Drawer 加「在对话中查看 →」跳转 | 2026-05-08 | 4478e44 | [260508-hcp-schedule-prompt-runs-as-real-session](./quick/260508-hcp-schedule-prompt-runs-as-real-session/) |
-| 260508-hvr | 定时任务 Prompt 加 4 档推理深度 chip（low/medium/high/xhigh，默认 medium，写入 session.runtimeIntent）+ 抽屉执行历史行 sessionId 存在时可点击 hover 高亮 + 右下「查看详情 →」点击 selectSession+navigate(/chat) | 2026-05-08 | 347555f | [260508-hvr-schedule-prompt-reasoning-effort-clickab](./quick/260508-hvr-schedule-prompt-reasoning-effort-clickab/) |
-| 260508-ic3 | 定时任务详情独立页 /time/jobs/:id 替换抽屉：header（title+chip+frequency+actions）+ Prompt 类型对话流（user/assistant/tool 气泡 + markdown）+ 底部输入框可继续聊天（selectSession+sendMessage 主链路）+ 执行记录时间线 bullet 列；列表行 click 改 navigate；编辑跳回 location.state.editJobId 自动开编辑器；删除全部 drawer JSX/CSS | 2026-05-08 | 4357def | [260508-ic3-schedule-job-detail-page-replace-drawer](./quick/260508-ic3-schedule-job-detail-page-replace-drawer/) |
-| 260508-jp9 | Prompt 任务 per_run/shared 双态 + ExecutionRun.sessionId 1:1 关联：契约加 ScheduleJob.sessionMode + ExecutionRun.sessionId + ChatSession.associatedScheduleJobId；main runAssistantPrompt 重构双态分支（per_run 默认每次新建 session、shared opt-in 复用累积）；启动期幂等迁移老 assistant_prompt job；详情页 per_run 模式行可展开内嵌消息流 + 继续聊天，shared 保留顶部对话区；Editor 加会话模式 chip 二选一；3 vitest 文件 6/6 全绿 | 2026-05-08 | 4d63037 | [260508-jp9-prompt-per-run-session-session-shared-op](./quick/260508-jp9-prompt-per-run-session-session-shared-op/) |
+| 260508-hh3 | 登录页 Linear 风极简单列重做：480 宽居中、cyan 径向 blob、56px 框 logo + fade-up、三层文字、label-on-top + Eye/EyeOff toggle、实心 cyan CTA、错误 banner + 整列 4px 抖动、左下角 v0.1.0·DEV 环境角标 | 2026-05-08 | 71d4d06 | [260508-hh3-linear](./quick/260508-hh3-linear/) |
+| 260508-iju | dev 模式登录跳过 cloud-api 校验：auth store 加 isDevAuthBypassEnabled + dev-bypass- token 前缀，login/introspect/refresh/logout 四入口在 dev 时短路 IPC；LoginPage 加 cyan dev banner（仅 dev 显示） | 2026-05-08 | 950790f | [260508-iju-dev-cloud-api](./quick/260508-iju-dev-cloud-api/) |
+| 260508-iy7 | 修复 pnpm dev 在 Windows + Node 20+ 抛 spawn EINVAL：spawnPnpm 加 `shell: process.platform === "win32"`，绕开 Node CVE-2024-27980 对 .cmd/.bat 的直接 spawn 拒绝 | 2026-05-08 | c9623ce | [260508-iy7-dev-js-spawn-einval-on-win-node20](./quick/260508-iy7-dev-js-spawn-einval-on-win-node20/) |
+| 260508-jmn | Settings 模型卡片改单列 flex：`.model-rows-container` 从 grid auto-fill minmax(420px,1fr) 改为 flex column，修复全屏窗口下折 3 列且单卡固定 420px 不伸展的问题 | 2026-05-08 | 07e9725 | [260508-jmn-settings-flex](./quick/260508-jmn-settings-flex/) |
+| 260508-jzp | Settings + ModelDetail 全屏列宽 + 网页卡片化整改：6 处 CSS——`.settings-group-panel` 去 max-width 860；`.main-form` 去 max-width 900 + margin auto；`.native-tool-card` 去 linear-gradient；`.feature-tag` 999px→4px；`.dot-icon` 颜色 token 化；`.capability-card`/`.managed-profile-card` 圆角与色 token 化 | 2026-05-08 | 0f0594b | [260508-jzp-settings-modeldetail](./quick/260508-jzp-settings-modeldetail/) |
+| 260508-kvd | 硅基员工 studio 资料 tab + 新建页 同类整改：6 处 CSS——`.ws-profile-col` 去 max-width 900 + margin auto；`.ws-model-status-pill`/`.spc-model-status-pill` 999px→4px tag 规格；CreatePage `.spc-copy-strip`/`.spc-editor-pane`/`.spc-config-pane` 3 处 linear-gradient → 单色 alpha + 圆角 16/18→12 | 2026-05-08 | b258010 | [260508-kvd-silicon-person-profile-config](./quick/260508-kvd-silicon-person-profile-config/) |
+| 260508-l1o | SkillDetailPage Markdown 预览去网页大卡片化（VSCode/Notion 风扁平文档）：surface 删 border/18px 圆角/多层 box-shadow/linear-gradient 背景；pre 去渐变改 rgba + 圆角 14→6；h1/h2 hero 字号 clamp 36/28 → 24/18；blockquote/table 圆角 12→6；外层双 gradient 改纯 --bg-base | 2026-05-08 | da0fc88 | [260508-l1o-skilldetailpage-markdown](./quick/260508-l1o-skilldetailpage-markdown/) |
 
 ## Session Continuity
 
-Last session: 2026-05-08T14:30:00.000Z
-Stopped at: Completed quick task 260508-jp9 (Prompt per_run/shared 双态 + ExecutionRun.sessionId 1:1 + 详情页 per_run 行展开)
+Last session: 2026-04-21T15:08:57.154Z
+Stopped at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
 Resume file: None
