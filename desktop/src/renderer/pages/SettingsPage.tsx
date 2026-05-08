@@ -748,11 +748,11 @@ export default function SettingsPage() {
           margin-bottom: 16px;
         }
 
-        /* High Density Model Row Card */
+        /* High Density Model Row Card —— 始终单列；卡片随窗口宽度伸展，不做多列折叠 */
         .model-rows-container {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-          gap: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
         }
         .model-row-card {
           display: flex;
