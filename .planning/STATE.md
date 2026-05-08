@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-glz: worktree Electron userData 自动隔离 + Windows 控制台 UTF-8 切换
+Last activity: 2026-05-08 - Completed quick task 260508-hcp: 定时任务 Prompt 走真 session（复用 session:send-message 主链路）
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -128,6 +128,7 @@ None yet.
 | 260508-g85 | 撤掉 fmv 引入的左侧色条 + 修文字与按钮重叠（操作改纯图标 + col 收紧 + ellipsis）+ 执行按钮加 spinner loading（pendingRunIds + ActionIconButton.loading） | 2026-05-08 | f134b8a | [260508-g85-schedule-job-row-fix-no-stripe-loading](./quick/260508-g85-schedule-job-row-fix-no-stripe-loading/) |
 | 260508-ghf | 定时任务 B 层重构：composer typed 入口（3 张 Prompt/Workflow/员工 卡）+ FrequencyPicker（9 种预设替代裸 cron）+ 列表 type chip + type filter + ✏️ 编辑按钮（updateScheduleJob 链路全通）+ 修预存 WorkflowDefinitionSummary 导出 | 2026-05-08 | 077f6e6 | [260508-ghf-schedule-job-typed-composer-frequency-ed](./quick/260508-ghf-schedule-job-typed-composer-frequency-ed/) |
 | 260508-glz | worktree 跑 Electron 自动用 `<worktreeRoot>/.userdata` 隔离 userData（修 0x5 Cache 拒绝访问）+ pnpm start/dev 在 Windows 下自动 chcp 65001（修中文乱码） | 2026-05-08 | a342703 | [260508-glz-worktree-electron-userdata-windows](./quick/260508-glz-worktree-electron-userdata-windows/) |
+| 260508-hcp | 定时任务 Prompt 走真 session：ScheduleJob 加 sessionId+modelProfileId（无 migration）；首次执行新建 `[定时] {title}` session 写回，之后调 invokeRegisteredSessionSendMessage 复用 ChatPage 主链路（工具/技能/MCP/审批全继承）；Editor 加「使用模型」select；Drawer 加「在对话中查看 →」跳转 | 2026-05-08 | 4478e44 | [260508-hcp-schedule-prompt-runs-as-real-session](./quick/260508-hcp-schedule-prompt-runs-as-real-session/) |
 
 ## Session Continuity
 
