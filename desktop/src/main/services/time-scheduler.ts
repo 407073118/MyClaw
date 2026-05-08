@@ -177,8 +177,12 @@ function buildNextScheduleJobState(
 export function createTimeScheduler(deps: TimeSchedulerDeps) {
   const now = deps.now ?? (() => new Date());
   const intervalMs = deps.intervalMs ?? 30_000;
+  // 单次 tick 占用上限：超过此时长强制释放 running 标志，防止某次卡死的 callModel/IPC
+  // 让调度器永久暂停（此前一次 fetch 挂起 = 调度系统永远跳过后续 tick）。
+  const tickWatchdogMs = 5 * 60_000;
   let timer: ReturnType<typeof setInterval> | null = null;
   let running = false;
+  let runningStartedAt = 0;
 
   /** 执行单条计划任务并回写执行记录与下次触发状态。 */
   async function runSingleScheduleJob(job: DueScheduleJob): Promise<ScheduleJob> {
@@ -246,10 +250,18 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
      */
     async tick(): Promise<void> {
       if (running) {
-        console.info("[time-scheduler] 上一轮调度尚未结束，跳过本轮");
-        return;
+        const elapsed = Date.now() - runningStartedAt;
+        if (elapsed < tickWatchdogMs) {
+          console.info("[time-scheduler] 上一轮调度尚未结束，跳过本轮", { elapsedMs: elapsed });
+          return;
+        }
+        console.warn("[time-scheduler] 上一轮调度卡住超过看门狗阈值，强制释放并继续", {
+          elapsedMs: elapsed,
+          watchdogMs: tickWatchdogMs,
+        });
       }
       running = true;
+      runningStartedAt = Date.now();
       const current = now();
       console.info("[time-scheduler] 执行调度轮询", { at: current.toISOString() });
 

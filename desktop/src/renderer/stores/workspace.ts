@@ -499,6 +499,12 @@ function computeCurrentSession(
   return candidates.find((s) => s.id === activeSessionId) ?? candidates[0] ?? null;
 }
 
+/**
+ * 共享 in-flight 引用：让多个 fire-and-forget 的 refreshTodayBrief 调用合并为一次 IPC。
+ * 必须放在 store factory 之外（store 实例化只跑一次，但每次 refresh 调用都会读写它）。
+ */
+let pendingTodayBriefRequest: Promise<TodayBrief> | null = null;
+
 export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   let hasSubscribedToAppUpdates = false;
 
@@ -656,7 +662,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         calendarEvents: replaceTimeItem(state.time.calendarEvents, item, "startsAt"),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -668,7 +674,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         calendarEvents: replaceTimeItem(state.time.calendarEvents, item, "startsAt"),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -680,7 +686,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         taskCommitments: replaceTimeItem(state.time.taskCommitments, item, "dueAt"),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -692,7 +698,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         taskCommitments: replaceTimeItem(state.time.taskCommitments, item, "dueAt"),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -704,7 +710,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         reminders: replaceTimeItem(state.time.reminders, item, "triggerAt"),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -716,7 +722,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         reminders: replaceTimeItem(state.time.reminders, item, "triggerAt"),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -728,7 +734,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         reminders: state.time.reminders.filter((item) => item.id !== id),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
   },
 
   async createScheduleJob(input) {
@@ -739,7 +745,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         scheduleJobs: replaceTimeItem(state.time.scheduleJobs, item, "nextRunAt"),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -751,7 +757,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         scheduleJobs: replaceTimeItem(state.time.scheduleJobs, item, "nextRunAt"),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -763,7 +769,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         scheduleJobs: state.time.scheduleJobs.filter((item) => item.id !== id),
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
   },
 
   async executeScheduleJobNow(id) {
@@ -776,7 +782,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         executionRuns,
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return item;
   },
 
@@ -799,19 +805,29 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         availabilityPolicy: nextPolicy,
       },
     }));
-    await get().refreshTodayBrief();
+    void get().refreshTodayBrief();
     return nextPolicy;
   },
 
   async refreshTodayBrief() {
-    const { brief } = await window.myClawAPI.time.getTodayBrief();
-    set((state) => ({
-      time: {
-        ...state.time,
-        todayBrief: brief,
-      },
-    }));
-    return brief;
+    // 请求合并：同一时刻多个调用方共享一个 IPC roundtrip。create/update 等 action 调用
+    // 此方法（fire-and-forget），避免连续创建 5 个事件触发 5 次全表扫描串行 IPC。
+    if (pendingTodayBriefRequest) return pendingTodayBriefRequest;
+    pendingTodayBriefRequest = (async () => {
+      try {
+        const { brief } = await window.myClawAPI.time.getTodayBrief();
+        set((state) => ({
+          time: {
+            ...state.time,
+            todayBrief: brief,
+          },
+        }));
+        return brief;
+      } finally {
+        pendingTodayBriefRequest = null;
+      }
+    })();
+    return pendingTodayBriefRequest;
   },
 
   async suggestTimeboxes() {

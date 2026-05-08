@@ -136,7 +136,7 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { to: "/", label: "Chat", icon: IconChat, testId: "nav-chat" },
+  { to: "/chat", label: "Chat", icon: IconChat, testId: "nav-chat" },
   { to: "/hub", label: "Hub", icon: IconHub, testId: "nav-hub" },
   { to: "/tools", label: "Tools", icon: IconSkills, testId: "nav-tools" },
   { to: "/mcp", label: "MCP", icon: IconMcp, testId: "nav-mcp" },
@@ -144,7 +144,7 @@ const navItems: NavItem[] = [
   { to: "/employees", label: "硅基员工", icon: IconEmployees, testId: "nav-employees" },
   { to: "/workflows", label: "Workflows", icon: IconWorkflows, testId: "nav-workflows" },
   { to: "/meetings", label: "会议录音", icon: IconMeetings, testId: "nav-meetings" },
-  { to: "/time", label: "时间规划", icon: IconTime, testId: "nav-time" },
+  { to: "/time", label: "日程规划", icon: IconTime, testId: "nav-time" },
   { to: "/files", label: "Files", icon: IconFiles, testId: "nav-files" },
 ];
 
@@ -282,9 +282,12 @@ export default function AppShell() {
   }, []);
 
   useEffect(() => {
+    // 5 分钟刷新一次「现在/即将开始」标签 —— 30s tick 会让 AppShell 整树重渲，
+    // 级联到 TimeCenterPage 的所有 useMemo 重算，是已确认的卡顿源。粒度降到 5 分钟
+    // 与日程时间感知（最小 1 小时块）足够匹配。
     const timer = window.setInterval(() => {
       setTimeAssistantNowIso(new Date().toISOString());
-    }, 30_000);
+    }, 5 * 60_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -312,9 +315,9 @@ export default function AppShell() {
     setTimeAssistantExpanded((current) => !current);
   }
 
-  /** 统一跳转到时间规划，避免常驻助理与主页面入口割裂。 */
+  /** 统一跳转到日程规划，避免常驻助理与主页面入口割裂。 */
   function handleOpenTimeCenter() {
-    console.info("[app-shell] 从全局时间助理打开时间规划", {
+    console.info("[app-shell] 从全局时间助理打开日程规划", {
       routePath: location.pathname,
       compactLabel: timeAssistantSnapshot.compactLabel,
     });

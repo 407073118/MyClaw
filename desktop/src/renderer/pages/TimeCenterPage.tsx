@@ -66,8 +66,11 @@ const DAY_HOURS = Array.from({ length: 25 }, (_, index) => index);
 
 /** 渲染日程规划页：以时间轴为主体，统一呈现我、硅基人和自动任务。 */
 export default function TimeCenterPage() {
-  const workspace = useWorkspaceStore();
-  const time = workspace.time;
+  // 细粒度订阅：只订阅页面要响应的字段，避免无关 store 字段（auth/models/sessions）变化触发整页重渲。
+  const time = useWorkspaceStore((state) => state.time);
+  const siliconPersons = useWorkspaceStore((state) => state.siliconPersons);
+  // actions 通过 getState 调用，不进入订阅链 —— zustand action 引用永远稳定。
+  const workspace = useWorkspaceStore.getState();
   const timezone = time.availabilityPolicy?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const todayDateKey = useMemo(() => isoToDateKey(new Date().toISOString(), timezone), [timezone]);
   const [selectedDate, setSelectedDate] = useState(todayDateKey);
@@ -76,32 +79,42 @@ export default function TimeCenterPage() {
   const [feedback, setFeedback] = useState("");
 
   const siliconPersonNameById = useMemo(
-    () => new Map((workspace.siliconPersons ?? []).map((person) => [person.id, person.name])),
-    [workspace.siliconPersons],
+    () => new Map((siliconPersons ?? []).map((person) => [person.id, person.name])),
+    [siliconPersons],
   );
   const latestRunByJobId = useMemo(() => buildLatestRunByJobId(time.executionRuns), [time.executionRuns]);
-  const planningModel = useMemo(
-    () => buildSchedulePlanningModel({
-      dateKey: selectedDate,
-      timezone,
-      events: time.calendarEvents,
-      tasks: time.taskCommitments,
-      reminders: time.reminders,
-      jobs: time.scheduleJobs,
-      latestRunByJobId,
-      siliconPersonNameById,
-    }),
-    [
-      selectedDate,
-      timezone,
-      time.calendarEvents,
-      time.taskCommitments,
-      time.reminders,
-      time.scheduleJobs,
-      latestRunByJobId,
-      siliconPersonNameById,
-    ],
+
+  // 拆分 useMemo：events / reminders / tasks 与 jobs / latestRun 解耦，
+  // executionRuns 变化只重算 jobEntries+aggregates，不动 events/reminders/tasks。
+  const eventEntries = useMemo(
+    () => buildEventEntries(time.calendarEvents, selectedDate, timezone, siliconPersonNameById),
+    [time.calendarEvents, selectedDate, timezone, siliconPersonNameById],
   );
+  const reminderEntries = useMemo(
+    () => buildReminderEntries(time.reminders, selectedDate, timezone, siliconPersonNameById),
+    [time.reminders, selectedDate, timezone, siliconPersonNameById],
+  );
+  const taskEntries = useMemo(
+    () => buildTaskEntries(time.taskCommitments, selectedDate, timezone, siliconPersonNameById),
+    [time.taskCommitments, selectedDate, timezone, siliconPersonNameById],
+  );
+  const jobEntries = useMemo(
+    () => buildJobEntries(time.scheduleJobs, selectedDate, timezone, latestRunByJobId, siliconPersonNameById),
+    [time.scheduleJobs, selectedDate, timezone, latestRunByJobId, siliconPersonNameById],
+  );
+  const planningModel = useMemo<SchedulePlanningModel>(() => {
+    const entries = [...eventEntries, ...reminderEntries, ...taskEntries, ...jobEntries]
+      .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+    return {
+      entries,
+      personalCount: entries.filter((entry) => entry.ownerScope === "personal" && entry.kind !== "schedule_job").length,
+      siliconCount: entries.filter((entry) => entry.ownerScope === "silicon_person").length,
+      scheduleJobCount: jobEntries.length,
+      failedJobCount: time.scheduleJobs.filter(
+        (job) => job.status === "failed" || latestRunByJobId.get(job.id)?.status === "failed",
+      ).length,
+    };
+  }, [eventEntries, reminderEntries, taskEntries, jobEntries, time.scheduleJobs, latestRunByJobId]);
   const unscheduledTasks = useMemo(
     () => time.taskCommitments.filter((task) => task.status === "pending" && !task.dueAt),
     [time.taskCommitments],
@@ -539,15 +552,16 @@ function TimelineHeader({
 
 /** 渲染统一时间轴，把不同来源的条目按真实触发时间排序。 */
 function ScheduleTimeline({ entries, timezone }: { entries: TimelineEntry[]; timezone: string }) {
-  const entriesByHour = DAY_HOURS.reduce((result, hour) => {
-    result.set(hour, []);
+  // useMemo 缓存 25×N 的分桶计算 —— 之前每次渲染都重建，定时任务很多时是渲染热点。
+  const entriesByHour = useMemo(() => {
+    const result = new Map<number, TimelineEntry[]>();
+    DAY_HOURS.forEach((hour) => result.set(hour, []));
+    entries.forEach((entry) => {
+      const hour = Math.min(23, getLocalHour(entry.startsAt, timezone));
+      result.get(hour)?.push(entry);
+    });
     return result;
-  }, new Map<number, TimelineEntry[]>());
-
-  entries.forEach((entry) => {
-    const hour = Math.min(23, getLocalHour(entry.startsAt, timezone));
-    entriesByHour.get(hour)?.push(entry);
-  });
+  }, [entries, timezone]);
 
   return (
     <div className="timeline-board">
@@ -686,14 +700,14 @@ function ScheduleJobListPage({
 }) {
   const [selectedJobForHistory, setSelectedJobForHistory] = useState<ScheduleJob | null>(null);
   const executionRuns = useWorkspaceStore((state) => state.time.executionRuns);
-  const refreshExecutionRuns = useWorkspaceStore((state) => state.refreshExecutionRuns);
 
-  /** 抽屉打开时主动拉一次执行记录，确保最近一次执行能立刻看到。 */
+  /** 抽屉打开时主动拉一次执行记录，确保最近一次执行能立刻看到。
+   *  通过 getState 直接调 action，不进 effect 依赖 —— 避免 zustand action 引用变化（理论稳定但保险写法）触发循环。 */
   useEffect(() => {
     if (selectedJobForHistory) {
-      void refreshExecutionRuns();
+      void useWorkspaceStore.getState().refreshExecutionRuns();
     }
-  }, [selectedJobForHistory, refreshExecutionRuns]);
+  }, [selectedJobForHistory]);
 
   return (
     <section className="schedule-list-page">
@@ -1145,21 +1159,17 @@ function UnscheduledTaskCard({
   );
 }
 
-/** 构建页面专用聚合模型，JSX 层只关心统一时间轴。 */
-function buildSchedulePlanningModel(input: {
-  dateKey: string;
-  timezone: string;
-  events: CalendarEvent[];
-  tasks: TaskCommitment[];
-  reminders: Reminder[];
-  jobs: ScheduleJob[];
-  latestRunByJobId: ReadonlyMap<string, ExecutionRun>;
-  siliconPersonNameById: ReadonlyMap<string, string>;
-}): SchedulePlanningModel {
-  const eventEntries = input.events
-    .filter((event) => event.status !== "cancelled" && isoToDateKey(event.startsAt, input.timezone) === input.dateKey)
+/** 构建当日个人/硅基人日程的时间轴条目，仅依赖 events/dateKey。 */
+function buildEventEntries(
+  events: CalendarEvent[],
+  dateKey: string,
+  timezone: string,
+  siliconPersonNameById: ReadonlyMap<string, string>,
+): TimelineEntry[] {
+  return events
+    .filter((event) => event.status !== "cancelled" && isoToDateKey(event.startsAt, timezone) === dateKey)
     .map((event): TimelineEntry => {
-      const ownerLabel = resolveOwnerLabel(event.ownerScope, event.ownerId, input.siliconPersonNameById);
+      const ownerLabel = resolveOwnerLabel(event.ownerScope, event.ownerId, siliconPersonNameById);
       return {
         id: `event:${event.id}`,
         kind: "calendar_event",
@@ -1175,9 +1185,17 @@ function buildSchedulePlanningModel(input: {
         tone: event.ownerScope === "silicon_person" ? "silicon" : "personal",
       };
     });
+}
 
-  const reminderEntries = input.reminders
-    .filter((reminder) => reminder.status === "scheduled" && isoToDateKey(reminder.triggerAt, input.timezone) === input.dateKey)
+/** 构建当日提醒的时间轴条目，仅依赖 reminders/dateKey。 */
+function buildReminderEntries(
+  reminders: Reminder[],
+  dateKey: string,
+  timezone: string,
+  siliconPersonNameById: ReadonlyMap<string, string>,
+): TimelineEntry[] {
+  return reminders
+    .filter((reminder) => reminder.status === "scheduled" && isoToDateKey(reminder.triggerAt, timezone) === dateKey)
     .map((reminder): TimelineEntry => ({
       id: `reminder:${reminder.id}`,
       kind: "reminder",
@@ -1185,22 +1203,30 @@ function buildSchedulePlanningModel(input: {
       displayTitle: `提醒：${reminder.title}`,
       ownerScope: reminder.ownerScope,
       ownerId: reminder.ownerId,
-      ownerLabel: resolveOwnerLabel(reminder.ownerScope, reminder.ownerId, input.siliconPersonNameById),
+      ownerLabel: resolveOwnerLabel(reminder.ownerScope, reminder.ownerId, siliconPersonNameById),
       startsAt: reminder.triggerAt,
       sourceLabel: "提醒",
       meta: reminder.body ?? "到点提醒",
       tone: "personal",
     }));
+}
 
-  const taskEntries = input.tasks
+/** 构建当日任务承诺的时间轴条目，仅依赖 tasks/dateKey。 */
+function buildTaskEntries(
+  tasks: TaskCommitment[],
+  dateKey: string,
+  timezone: string,
+  siliconPersonNameById: ReadonlyMap<string, string>,
+): TimelineEntry[] {
+  return tasks
     .filter((task) =>
       task.status !== "completed"
       && task.status !== "cancelled"
       && Boolean(task.dueAt)
-      && isoToDateKey(task.dueAt as string, input.timezone) === input.dateKey
+      && isoToDateKey(task.dueAt as string, timezone) === dateKey
     )
     .map((task): TimelineEntry => {
-      const ownerLabel = resolveOwnerLabel(task.ownerScope, task.ownerId, input.siliconPersonNameById);
+      const ownerLabel = resolveOwnerLabel(task.ownerScope, task.ownerId, siliconPersonNameById);
       return {
         id: `task:${task.id}`,
         kind: "task_commitment",
@@ -1215,21 +1241,19 @@ function buildSchedulePlanningModel(input: {
         tone: task.ownerScope === "silicon_person" ? "silicon" : "personal",
       };
     });
+}
 
-  const jobEntries = input.jobs.flatMap((job) =>
-    buildScheduleJobTimelineEntries(job, input.dateKey, input.timezone, input.latestRunByJobId, input.siliconPersonNameById)
+/** 构建当日定时任务的时间轴投影，依赖 jobs + latestRunByJobId（拆出来让 events/reminders/tasks 不受 executionRuns 变化影响）。 */
+function buildJobEntries(
+  jobs: ScheduleJob[],
+  dateKey: string,
+  timezone: string,
+  latestRunByJobId: ReadonlyMap<string, ExecutionRun>,
+  siliconPersonNameById: ReadonlyMap<string, string>,
+): TimelineEntry[] {
+  return jobs.flatMap((job) =>
+    buildScheduleJobTimelineEntries(job, dateKey, timezone, latestRunByJobId, siliconPersonNameById)
   );
-
-  const entries = [...eventEntries, ...reminderEntries, ...taskEntries, ...jobEntries]
-    .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
-
-  return {
-    entries,
-    personalCount: entries.filter((entry) => entry.ownerScope === "personal" && entry.kind !== "schedule_job").length,
-    siliconCount: entries.filter((entry) => entry.ownerScope === "silicon_person").length,
-    scheduleJobCount: jobEntries.length,
-    failedJobCount: input.jobs.filter((job) => job.status === "failed" || input.latestRunByJobId.get(job.id)?.status === "failed").length,
-  };
 }
 
 /** 构建定时任务在指定日期的时间轴投影。 */
@@ -1298,11 +1322,31 @@ function buildDisplayTitle(ownerLabel: string, title: string, ownerScope: Timeli
   return ownerScope === "silicon_person" ? `${ownerLabel} · ${title}` : title;
 }
 
+/**
+ * Intl.DateTimeFormat 实例化贵且按 timezone+locale+options 完全可缓存。日程页一次渲染会
+ * 调用上百次格式化（每个 timeline entry × 多次 formatClock），统一从 module-level
+ * Map 拿，避免反复 new。
+ */
+const dateTimeFormatterCache = new Map<string, Intl.DateTimeFormat>();
+function getDateTimeFormatter(
+  cacheKey: string,
+  locale: string,
+  timeZone: string,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
+  const fullKey = `${cacheKey}|${locale}|${timeZone}`;
+  let formatter = dateTimeFormatterCache.get(fullKey);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale, { timeZone, ...options });
+    dateTimeFormatterCache.set(fullKey, formatter);
+  }
+  return formatter;
+}
+
 /** 格式化日期标题，给顶部和时间轴标题复用。 */
 function formatDateTitle(dateKey: string, timezone: string): string {
   const [year, month, day] = dateKey.split("-").map((value) => Number(value));
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: timezone,
+  return getDateTimeFormatter("date-title", "zh-CN", timezone, {
     month: "long",
     day: "numeric",
     weekday: "short",
@@ -1311,8 +1355,7 @@ function formatDateTitle(dateKey: string, timezone: string): string {
 
 /** 格式化单个时间点。 */
 function formatClock(iso: string, timezone: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: timezone,
+  return getDateTimeFormatter("clock", "zh-CN", timezone, {
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
@@ -1321,8 +1364,7 @@ function formatClock(iso: string, timezone: string): string {
 
 /** 获取指定时间在目标时区内的小时，用于把条目挂到真实 0-24 小时轴。 */
 function getLocalHour(iso: string, timezone: string): number {
-  const hourText = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
+  const hourText = getDateTimeFormatter("local-hour", "en-CA", timezone, {
     hour: "2-digit",
     hour12: false,
   }).format(new Date(iso));
@@ -1338,8 +1380,7 @@ function formatTimeRange(startsAt: string, endsAt: string | undefined, timezone:
 
 /** 格式化日期时间，供右侧状态栏展示下次运行。 */
 function formatDateTime(iso: string, timezone: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    timeZone: timezone,
+  return getDateTimeFormatter("date-time", "zh-CN", timezone, {
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
