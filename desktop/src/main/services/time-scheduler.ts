@@ -15,10 +15,12 @@ export type TimeExecutionRunInput = {
   jobId?: string;
   outputSummary?: string;
   errorMessage?: string;
+  sessionId?: string;
 };
 
 export type TimeScheduleJobRunResult = {
   outputSummary?: string;
+  sessionId?: string;
 };
 
 export type TimeSchedulerDeps = {
@@ -193,6 +195,7 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
     let succeeded = true;
     let failureNote: string | undefined;
     let outputSummary: string | undefined;
+    let sessionId: string | undefined;
 
     try {
       if (!deps.runScheduleJob) {
@@ -200,6 +203,7 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
       }
       const result = await deps.runScheduleJob(job);
       outputSummary = result?.outputSummary;
+      sessionId = result?.sessionId;
     } catch (error) {
       succeeded = false;
       failureNote = error instanceof Error ? error.message : String(error);
@@ -216,6 +220,7 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
       note: failureNote,
       outputSummary,
       errorMessage: failureNote,
+      sessionId,
     });
     const nextState = buildNextScheduleJobState(job, finishedAt, succeeded);
     await deps.saveScheduleJob(nextState);

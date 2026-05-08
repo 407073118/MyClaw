@@ -21,6 +21,7 @@ import type {
   ModelProfile,
   PersonalPromptProfile,
   ResolvedMcpTool,
+  ScheduleJobSessionMode,
   SkillDefinition,
   SiliconPerson,
   WorkflowDefinition,
@@ -185,6 +186,8 @@ async function buildRuntimeContext(
   const artifactRegistry = new ArtifactRegistry(getSessionDatabase());
   const artifactManager = new ArtifactManager(paths, artifactRegistry);
   const timeStore = await TimeOrchestrationStore.create(paths);
+  const migrationResult = await timeStore.migrateAssistantPromptSessionMode();
+  log.info("assistant_prompt sessionMode migrated", migrationResult);
   const timeApplication = createTimeApplicationService({ store: timeStore });
   const timeNotificationService = createTimeNotificationService();
   let runtimeCtxRef: RuntimeContext | null = null;
@@ -220,62 +223,106 @@ async function buildRuntimeContext(
       });
     },
     runAssistantPrompt: async ({ job, prompt }) => {
-      // 复用或创建该 prompt job 关联的长期 ChatSession，让定时任务跑在与
-      // ChatPage 完全相同的 send-message 主链路上，工具/技能/MCP/审批全部继承。
-      let session: ChatSession | null = job.sessionId
-        ? sessions.find((item) => item.id === job.sessionId) ?? null
-        : null;
-      if (!session) {
-        const profileId = job.modelProfileId
-          ?? defaultModelProfileId
-          ?? models[0]?.id
-          ?? "";
-        if (!profileId) {
-          throw new Error("未配置任何模型，assistant_prompt 计划任务无法执行");
-        }
-        const now = new Date().toISOString();
-        session = {
-          id: randomUUID(),
-          title: `[定时] ${job.title}`,
-          modelProfileId: profileId,
-          attachedDirectory: null,
-          createdAt: now,
-          runtimeVersion: SESSION_RUNTIME_VERSION,
-          messages: [],
-        };
-        if (job.reasoningEffort || job.reasoningEnabled !== undefined) {
-          session.runtimeIntent = {
-            ...(job.reasoningEffort ? { reasoningEffort: job.reasoningEffort } : {}),
-            ...(job.reasoningEnabled !== undefined ? { reasoningEnabled: job.reasoningEnabled } : {}),
+      // 双态分支：sessionMode=shared 走重构前的「单一长期累积 session」路径；
+      // sessionMode=per_run（默认）每次到点触发都新建独立 session，token 干净，
+      // ExecutionRun.sessionId 直接指向本次产出的会话，详情页可逐次展开消息流。
+      const profileId = job.modelProfileId
+        ?? defaultModelProfileId
+        ?? models[0]?.id
+        ?? "";
+      if (!profileId) {
+        throw new Error("未配置任何模型，assistant_prompt 计划任务无法执行");
+      }
+      const sessionMode: ScheduleJobSessionMode = job.sessionMode ?? "per_run";
+      const now = new Date().toISOString();
+
+      // ---- shared 路径：尽量复用 job.sessionId（与重构前完全一致的行为）----
+      if (sessionMode === "shared") {
+        let session: ChatSession | null = job.sessionId
+          ? sessions.find((item) => item.id === job.sessionId) ?? null
+          : null;
+        if (!session) {
+          session = {
+            id: randomUUID(),
+            title: `[定时] ${job.title}`,
+            modelProfileId: profileId,
+            attachedDirectory: null,
+            createdAt: now,
+            runtimeVersion: SESSION_RUNTIME_VERSION,
+            associatedScheduleJobId: job.id,
+            messages: [],
           };
+          if (job.reasoningEffort || job.reasoningEnabled !== undefined) {
+            session.runtimeIntent = {
+              ...(job.reasoningEffort ? { reasoningEffort: job.reasoningEffort } : {}),
+              ...(job.reasoningEnabled !== undefined ? { reasoningEnabled: job.reasoningEnabled } : {}),
+            };
+          }
+          sessions.push(session);
+          await saveSession(paths, session);
+          // 把新 session id 回写到 job（保持原行为），并固化 sessionMode=shared
+          await timeStore.upsertScheduleJob({
+            id: job.id,
+            title: job.title,
+            description: job.description,
+            scheduleKind: job.scheduleKind,
+            timezone: job.timezone,
+            ownerScope: job.ownerScope,
+            ownerId: job.ownerId,
+            status: job.status,
+            source: job.source,
+            externalRef: job.externalRef,
+            startsAt: job.startsAt,
+            intervalMinutes: job.intervalMinutes,
+            cronExpression: job.cronExpression,
+            executor: job.executor,
+            executorTargetId: job.executorTargetId,
+            sessionId: session.id,
+            sessionMode: "shared",
+            modelProfileId: job.modelProfileId,
+            reasoningEffort: job.reasoningEffort,
+            reasoningEnabled: job.reasoningEnabled,
+            lastRunAt: job.lastRunAt,
+            nextRunAt: job.nextRunAt,
+          });
         }
-        sessions.push(session);
-        await saveSession(paths, session);
-        await timeStore.upsertScheduleJob({
-          id: job.id,
-          title: job.title,
-          description: job.description,
-          scheduleKind: job.scheduleKind,
-          timezone: job.timezone,
-          ownerScope: job.ownerScope,
-          ownerId: job.ownerId,
-          status: job.status,
-          source: job.source,
-          externalRef: job.externalRef,
-          startsAt: job.startsAt,
-          intervalMinutes: job.intervalMinutes,
-          cronExpression: job.cronExpression,
-          executor: job.executor,
-          executorTargetId: job.executorTargetId,
-          sessionId: session.id,
-          modelProfileId: job.modelProfileId,
-          reasoningEffort: job.reasoningEffort,
-          reasoningEnabled: job.reasoningEnabled,
-          lastRunAt: job.lastRunAt,
-          nextRunAt: job.nextRunAt,
+        const sendResult = await invokeRegisteredSessionSendMessage(session.id, {
+          content: prompt,
         });
+        const lastAssistant = [...sendResult.session.messages]
+          .reverse()
+          .find((message) => message.role === "assistant");
+        const outputSummary = lastAssistant ? textOfContent(lastAssistant.content) : "";
+        return { outputSummary, sessionId: session.id };
       }
 
+      // ---- per_run 路径：每次到点触发都新建独立 session，不回写 job.sessionId ----
+      const triggerStamp = new Intl.DateTimeFormat("zh-CN", {
+        timeZone: job.timezone,
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).format(new Date(now));
+      const session: ChatSession = {
+        id: randomUUID(),
+        title: `[定时] ${job.title} · ${triggerStamp}`,
+        modelProfileId: profileId,
+        attachedDirectory: null,
+        createdAt: now,
+        runtimeVersion: SESSION_RUNTIME_VERSION,
+        associatedScheduleJobId: job.id,
+        messages: [],
+      };
+      if (job.reasoningEffort || job.reasoningEnabled !== undefined) {
+        session.runtimeIntent = {
+          ...(job.reasoningEffort ? { reasoningEffort: job.reasoningEffort } : {}),
+          ...(job.reasoningEnabled !== undefined ? { reasoningEnabled: job.reasoningEnabled } : {}),
+        };
+      }
+      sessions.push(session);
+      await saveSession(paths, session);
       const sendResult = await invokeRegisteredSessionSendMessage(session.id, {
         content: prompt,
       });
@@ -283,7 +330,7 @@ async function buildRuntimeContext(
         .reverse()
         .find((message) => message.role === "assistant");
       const outputSummary = lastAssistant ? textOfContent(lastAssistant.content) : "";
-      return { outputSummary };
+      return { outputSummary, sessionId: session.id };
     },
   });
   const timeScheduler = createTimeScheduler({

@@ -59,6 +59,13 @@ export const SCHEDULE_JOB_EXECUTOR_VALUES = [
   "assistant_prompt",
 ] as const satisfies readonly ScheduleJobExecutor[];
 
+export type ScheduleJobSessionMode = "per_run" | "shared";
+
+export const SCHEDULE_JOB_SESSION_MODE_VALUES = [
+  "per_run",
+  "shared",
+] as const satisfies readonly ScheduleJobSessionMode[];
+
 export type ScheduleJob = {
   id: string;
   kind: "schedule_job";
@@ -76,7 +83,9 @@ export type ScheduleJob = {
   cronExpression?: string;
   executor: ScheduleJobExecutor;
   executorTargetId?: string;
-  /** Prompt 类型定时任务关联的 ChatSession id；首次执行时自动创建并写回。 */
+  /** Prompt 类型定时任务的 session 模式：per_run=每次新建独立 session（默认），shared=复用 job.sessionId 累积。 */
+  sessionMode?: ScheduleJobSessionMode;
+  /** Prompt 类型定时任务关联的 ChatSession id；shared 模式：单一累积 session；per_run 模式：可缺省或仅作"最近一次 session"指针。 */
   sessionId?: string;
   /** 指定模型 profile id；不指定时执行器走 workspace 默认主模型。 */
   modelProfileId?: string;
@@ -107,6 +116,8 @@ export type ExecutionRun = {
   finishedAt?: string;
   outputSummary?: string;
   errorMessage?: string;
+  /** 本次执行所产出的 ChatSession id；per_run 模式下每次都是新生 id，shared 模式下是 job 共用的 sessionId。 */
+  sessionId?: string;
 };
 
 export type AvailabilityWindow = {

@@ -90,6 +90,8 @@ export type ChatSession = {
   planState?: PlanState | null;
   /** Task V2: session-scoped 任务列表，独立于 Plan Mode，普通对话中自动追踪多步骤工作。 */
   tasks?: Task[];
+  /** 由 Prompt 类型定时任务在 per_run 模式下创建 session 时回填，方便 ChatPage 列表识别这是定时任务产物。 */
+  associatedScheduleJobId?: string | null;
   /** 关联的会议录音 ID，用户点「对话分析」时创建 session 并写入此字段。 */
   linkedMeetingId?: string | null;
   /** Chat run lifecycle metadata for interrupt-aware UI and persistence. */

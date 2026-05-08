@@ -68,6 +68,7 @@ export type ExecutionRunRecordInput = {
   jobId?: string;
   outputSummary?: string;
   errorMessage?: string;
+  sessionId?: string;
 };
 
 export type CalendarEventUpsertInput = {
@@ -117,6 +118,7 @@ export type ScheduleJobUpsertInput = {
   executor?: ScheduleJobExecutor;
   executorTargetId?: string;
   sessionId?: string;
+  sessionMode?: ScheduleJob["sessionMode"];
   modelProfileId?: string;
   reasoningEffort?: ScheduleJob["reasoningEffort"];
   reasoningEnabled?: boolean;
@@ -347,6 +349,7 @@ export class TimeOrchestrationStore {
       executor: input.executor ?? "assistant_prompt",
       executorTargetId: input.executorTargetId,
       sessionId: input.sessionId,
+      sessionMode: input.sessionMode,
       modelProfileId: input.modelProfileId,
       reasoningEffort: input.reasoningEffort,
       reasoningEnabled: input.reasoningEnabled,
@@ -381,6 +384,51 @@ export class TimeOrchestrationStore {
       },
     );
     return job;
+  }
+
+  /**
+   * 启动期一次性迁移：把老的 assistant_prompt job（已存在 sessionId 但缺 sessionMode）
+   * 自动回填为 sessionMode='shared'，保持其重构前累积一段长 session 的行为不变；
+   * 没有 sessionId 的视为「从未跑过」，回填为新默认 per_run。幂等：再次调用不会改任何数据。
+   */
+  async migrateAssistantPromptSessionMode(): Promise<{ migrated: number }> {
+    const all = await this.listScheduleJobs();
+    let migrated = 0;
+    for (const job of all) {
+      if (job.executor !== "assistant_prompt") continue;
+      if (job.sessionMode !== undefined) continue;
+      const nextMode: ScheduleJob["sessionMode"] = job.sessionId ? "shared" : "per_run";
+      await this.upsertScheduleJob({
+        id: job.id,
+        title: job.title,
+        description: job.description,
+        scheduleKind: job.scheduleKind,
+        timezone: job.timezone,
+        ownerScope: job.ownerScope,
+        ownerId: job.ownerId,
+        status: job.status,
+        source: job.source,
+        externalRef: job.externalRef,
+        startsAt: job.startsAt,
+        intervalMinutes: job.intervalMinutes,
+        cronExpression: job.cronExpression,
+        executor: job.executor,
+        executorTargetId: job.executorTargetId,
+        sessionId: job.sessionId,
+        sessionMode: nextMode,
+        modelProfileId: job.modelProfileId,
+        reasoningEffort: job.reasoningEffort,
+        reasoningEnabled: job.reasoningEnabled,
+        lastRunAt: job.lastRunAt,
+        nextRunAt: job.nextRunAt,
+      });
+      migrated += 1;
+    }
+    console.info("[time-store] 迁移老 assistant_prompt job sessionMode", {
+      migrated,
+      total: all.length,
+    });
+    return { migrated };
   }
 
   /**
@@ -540,6 +588,7 @@ export class TimeOrchestrationStore {
       finishedAt: input.finishedAt,
       outputSummary: input.outputSummary,
       errorMessage: input.errorMessage ?? input.note,
+      sessionId: input.sessionId,
     };
     this.database.run(
       `INSERT INTO execution_runs (
