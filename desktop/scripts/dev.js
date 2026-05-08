@@ -22,12 +22,18 @@ function resolvePnpmCommand(platform = process.platform) {
   return platform === "win32" ? "pnpm.cmd" : "pnpm";
 }
 
-/** 启动一个 pnpm 子进程，并复用当前项目根目录作为工作目录。 */
+/**
+ * 启动一个 pnpm 子进程，并复用当前项目根目录作为工作目录。
+ *
+ * Windows 必须 shell:true：Node 20+ 在 CVE-2024-27980 修复后拒绝直接 spawn
+ * `.cmd` / `.bat`，否则会抛 spawn EINVAL。args 全是固定字符串，无注入风险。
+ */
 function spawnPnpm(args, env) {
   return spawn(resolvePnpmCommand(), args, {
     cwd: PROJECT_ROOT,
     env,
     stdio: "inherit",
+    shell: process.platform === "win32",
   });
 }
 
