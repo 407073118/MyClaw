@@ -830,7 +830,7 @@ export default function SettingsPage() {
           gap: 8px;
         }
 
-        /* Generic Settings Panel */
+        /* Generic Settings Panel —— 不限宽度，跟随父容器 detail-content 伸展 */
         .settings-group-panel {
           background: rgba(255, 255, 255, 0.02);
           border: 1px solid rgba(255, 255, 255, 0.06);
@@ -839,7 +839,6 @@ export default function SettingsPage() {
           display: flex;
           flex-direction: column;
           gap: 16px;
-          max-width: 860px; /* Preserve readability max-width for forms */
         }
         .settings-group-panel h4 {
           margin: 0;
