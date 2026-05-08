@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-iju: dev 模式登录跳过 cloud-api 校验
+Last activity: 2026-05-08 - Completed quick task 260508-iy7: 修复 dev.js Windows+Node20 spawn EINVAL
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -125,6 +125,7 @@ None yet.
 | 260507-s7m | 时间规划定时任务三处缺口：assistant_prompt 执行器接 callModel + ExecutionRun 串通 outputSummary；ScheduleJobListPage 行点击右侧抽屉看执行历史全文；composer-tab 圆角 / 反馈色 / 异常 chip / 删除按钮全部 token 化对齐 ui-style-guide | 2026-05-07 | 8b2ea52 | [260507-s7m-assistant-prompt](./quick/260507-s7m-assistant-prompt/) |
 | 260508-hh3 | 登录页 Linear 风极简单列重做：480 宽居中、cyan 径向 blob、56px 框 logo + fade-up、三层文字、label-on-top + Eye/EyeOff toggle、实心 cyan CTA、错误 banner + 整列 4px 抖动、左下角 v0.1.0·DEV 环境角标 | 2026-05-08 | 71d4d06 | [260508-hh3-linear](./quick/260508-hh3-linear/) |
 | 260508-iju | dev 模式登录跳过 cloud-api 校验：auth store 加 isDevAuthBypassEnabled + dev-bypass- token 前缀，login/introspect/refresh/logout 四入口在 dev 时短路 IPC；LoginPage 加 cyan dev banner（仅 dev 显示） | 2026-05-08 | 950790f | [260508-iju-dev-cloud-api](./quick/260508-iju-dev-cloud-api/) |
+| 260508-iy7 | 修复 pnpm dev 在 Windows + Node 20+ 抛 spawn EINVAL：spawnPnpm 加 `shell: process.platform === "win32"`，绕开 Node CVE-2024-27980 对 .cmd/.bat 的直接 spawn 拒绝 | 2026-05-08 | c9623ce | [260508-iy7-dev-js-spawn-einval-on-win-node20](./quick/260508-iy7-dev-js-spawn-einval-on-win-node20/) |
 
 ## Session Continuity
 
