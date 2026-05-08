@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-iy7: 修复 dev.js Windows+Node20 spawn EINVAL
+Last activity: 2026-05-08 - Completed quick task 260508-jmn: Settings 模型卡片改单列 flex（全屏不再折 3 列）
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -126,6 +126,7 @@ None yet.
 | 260508-hh3 | 登录页 Linear 风极简单列重做：480 宽居中、cyan 径向 blob、56px 框 logo + fade-up、三层文字、label-on-top + Eye/EyeOff toggle、实心 cyan CTA、错误 banner + 整列 4px 抖动、左下角 v0.1.0·DEV 环境角标 | 2026-05-08 | 71d4d06 | [260508-hh3-linear](./quick/260508-hh3-linear/) |
 | 260508-iju | dev 模式登录跳过 cloud-api 校验：auth store 加 isDevAuthBypassEnabled + dev-bypass- token 前缀，login/introspect/refresh/logout 四入口在 dev 时短路 IPC；LoginPage 加 cyan dev banner（仅 dev 显示） | 2026-05-08 | 950790f | [260508-iju-dev-cloud-api](./quick/260508-iju-dev-cloud-api/) |
 | 260508-iy7 | 修复 pnpm dev 在 Windows + Node 20+ 抛 spawn EINVAL：spawnPnpm 加 `shell: process.platform === "win32"`，绕开 Node CVE-2024-27980 对 .cmd/.bat 的直接 spawn 拒绝 | 2026-05-08 | c9623ce | [260508-iy7-dev-js-spawn-einval-on-win-node20](./quick/260508-iy7-dev-js-spawn-einval-on-win-node20/) |
+| 260508-jmn | Settings 模型卡片改单列 flex：`.model-rows-container` 从 grid auto-fill minmax(420px,1fr) 改为 flex column，修复全屏窗口下折 3 列且单卡固定 420px 不伸展的问题 | 2026-05-08 | 07e9725 | [260508-jmn-settings-flex](./quick/260508-jmn-settings-flex/) |
 
 ## Session Continuity
 
