@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
-last_updated: "2026-05-06T08:30:00.000Z"
-last_activity: 2026-05-06
+last_updated: "2026-05-08T14:30:00.000Z"
+last_activity: 2026-05-08
 progress:
   total_phases: 8
   completed_phases: 1
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-ic3: 定时任务详情独立页替换抽屉 + Prompt 可继续聊天
+Last activity: 2026-05-08 - Completed quick task 260508-jp9: Prompt 任务 per_run/shared 双态 + ExecutionRun.sessionId 1:1 关联 + 详情页 per_run 行展开内嵌消息流
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -131,9 +131,10 @@ None yet.
 | 260508-hcp | 定时任务 Prompt 走真 session：ScheduleJob 加 sessionId+modelProfileId（无 migration）；首次执行新建 `[定时] {title}` session 写回，之后调 invokeRegisteredSessionSendMessage 复用 ChatPage 主链路（工具/技能/MCP/审批全继承）；Editor 加「使用模型」select；Drawer 加「在对话中查看 →」跳转 | 2026-05-08 | 4478e44 | [260508-hcp-schedule-prompt-runs-as-real-session](./quick/260508-hcp-schedule-prompt-runs-as-real-session/) |
 | 260508-hvr | 定时任务 Prompt 加 4 档推理深度 chip（low/medium/high/xhigh，默认 medium，写入 session.runtimeIntent）+ 抽屉执行历史行 sessionId 存在时可点击 hover 高亮 + 右下「查看详情 →」点击 selectSession+navigate(/chat) | 2026-05-08 | 347555f | [260508-hvr-schedule-prompt-reasoning-effort-clickab](./quick/260508-hvr-schedule-prompt-reasoning-effort-clickab/) |
 | 260508-ic3 | 定时任务详情独立页 /time/jobs/:id 替换抽屉：header（title+chip+frequency+actions）+ Prompt 类型对话流（user/assistant/tool 气泡 + markdown）+ 底部输入框可继续聊天（selectSession+sendMessage 主链路）+ 执行记录时间线 bullet 列；列表行 click 改 navigate；编辑跳回 location.state.editJobId 自动开编辑器；删除全部 drawer JSX/CSS | 2026-05-08 | 4357def | [260508-ic3-schedule-job-detail-page-replace-drawer](./quick/260508-ic3-schedule-job-detail-page-replace-drawer/) |
+| 260508-jp9 | Prompt 任务 per_run/shared 双态 + ExecutionRun.sessionId 1:1 关联：契约加 ScheduleJob.sessionMode + ExecutionRun.sessionId + ChatSession.associatedScheduleJobId；main runAssistantPrompt 重构双态分支（per_run 默认每次新建 session、shared opt-in 复用累积）；启动期幂等迁移老 assistant_prompt job；详情页 per_run 模式行可展开内嵌消息流 + 继续聊天，shared 保留顶部对话区；Editor 加会话模式 chip 二选一；3 vitest 文件 6/6 全绿 | 2026-05-08 | 4d63037 | [260508-jp9-prompt-per-run-session-session-shared-op](./quick/260508-jp9-prompt-per-run-session-session-shared-op/) |
 
 ## Session Continuity
 
-Last session: 2026-04-21T15:08:57.154Z
-Stopped at: Completed 08-document-ir-document-read/08-09-PLAN.md (Phase 08 complete — all 9 plans done)
+Last session: 2026-05-08T14:30:00.000Z
+Stopped at: Completed quick task 260508-jp9 (Prompt per_run/shared 双态 + ExecutionRun.sessionId 1:1 + 详情页 per_run 行展开)
 Resume file: None
