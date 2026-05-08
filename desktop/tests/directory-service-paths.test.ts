@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -18,6 +18,8 @@ describe("directory service path resolution", () => {
   let userDataRoot = "";
   let overrideRoot = "";
   let installerSelectedRoot = "";
+  let worktreeBase = "";
+  let originalCwd = "";
 
   beforeEach(() => {
     vi.resetModules();
@@ -25,10 +27,13 @@ describe("directory service path resolution", () => {
     delete process.env.MYCLAW_DATA_ROOT;
     delete process.env.PORTABLE_EXECUTABLE_DIR;
 
+    originalCwd = process.cwd();
+
     installRoot = mkdtempSync(join(tmpdir(), "myclaw-install-"));
     userDataRoot = mkdtempSync(join(tmpdir(), "myclaw-userdata-"));
     overrideRoot = mkdtempSync(join(tmpdir(), "myclaw-override-"));
     installerSelectedRoot = mkdtempSync(join(tmpdir(), "myclaw-selected-"));
+    worktreeBase = mkdtempSync(join(tmpdir(), "myclaw-worktree-"));
 
     electronAppMock.isPackaged = true;
     electronAppMock.getPath.mockImplementation((name: string) => {
@@ -39,7 +44,10 @@ describe("directory service path resolution", () => {
   });
 
   afterEach(() => {
-    for (const dir of [installRoot, userDataRoot, overrideRoot, installerSelectedRoot]) {
+    if (originalCwd && existsSync(originalCwd)) {
+      process.chdir(originalCwd);
+    }
+    for (const dir of [installRoot, userDataRoot, overrideRoot, installerSelectedRoot, worktreeBase]) {
       if (dir && existsSync(dir)) {
         rmSync(dir, { recursive: true, force: true });
       }
@@ -111,5 +119,71 @@ describe("directory service path resolution", () => {
     expect(electronAppMock.setPath).not.toHaveBeenCalled();
     expect(paths.rootDir).toBe(userDataRoot);
     expect(paths.cacheDir).toBe(join(userDataRoot, "myClaw", "cache"));
+  });
+
+  it("auto-redirects to <worktree-root>/.userdata when cwd lives under .worktrees in dev mode", async () => {
+    electronAppMock.isPackaged = false;
+    const worktreeRoot = join(worktreeBase, ".worktrees", "feature-branch");
+    const desktopDir = join(worktreeRoot, "desktop");
+    mkdirSync(desktopDir, { recursive: true });
+    process.chdir(desktopDir);
+
+    const { initializeDirectories, redirectUserData } = await import("../src/main/services/directory-service");
+
+    redirectUserData();
+    const paths = await initializeDirectories();
+
+    const expectedRoot = join(worktreeRoot, ".userdata");
+    expect(electronAppMock.setPath).toHaveBeenCalledWith("userData", join(expectedRoot, "electron"));
+    expect(paths.rootDir).toBe(expectedRoot);
+    expect(paths.myClawDir).toBe(join(expectedRoot, "myClaw"));
+    expect(existsSync(paths.skillsDir)).toBe(true);
+  });
+
+  it("prefers MYCLAW_DATA_ROOT over worktree auto-detection when both apply", async () => {
+    electronAppMock.isPackaged = false;
+    process.env.MYCLAW_DATA_ROOT = overrideRoot;
+    const desktopDir = join(worktreeBase, ".worktrees", "feature-branch", "desktop");
+    mkdirSync(desktopDir, { recursive: true });
+    process.chdir(desktopDir);
+
+    const { initializeDirectories, redirectUserData } = await import("../src/main/services/directory-service");
+
+    redirectUserData();
+    const paths = await initializeDirectories();
+
+    expect(electronAppMock.setPath).toHaveBeenCalledWith("userData", join(overrideRoot, "electron"));
+    expect(paths.rootDir).toBe(overrideRoot);
+  });
+
+  it("skips worktree auto-detection in packaged builds even when path looks like a worktree", async () => {
+    electronAppMock.isPackaged = true;
+    const desktopDir = join(worktreeBase, ".worktrees", "feature-branch", "desktop");
+    mkdirSync(desktopDir, { recursive: true });
+    process.chdir(desktopDir);
+
+    const { initializeDirectories, redirectUserData } = await import("../src/main/services/directory-service");
+
+    redirectUserData();
+    const paths = await initializeDirectories();
+
+    expect(electronAppMock.setPath).not.toHaveBeenCalled();
+    expect(paths.rootDir).toBe(userDataRoot);
+    expect(paths.myClawDir).toBe(join(userDataRoot, "myClaw"));
+  });
+
+  it("falls back to default userData when dev cwd has no .worktrees segment", async () => {
+    electronAppMock.isPackaged = false;
+    const plainDir = join(worktreeBase, "regular-checkout", "desktop");
+    mkdirSync(plainDir, { recursive: true });
+    process.chdir(plainDir);
+
+    const { initializeDirectories, redirectUserData } = await import("../src/main/services/directory-service");
+
+    redirectUserData();
+    const paths = await initializeDirectories();
+
+    expect(electronAppMock.setPath).not.toHaveBeenCalled();
+    expect(paths.rootDir).toBe(userDataRoot);
   });
 });

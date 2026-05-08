@@ -13,7 +13,7 @@
     "build:prod": "node scripts/set-env.js production && pnpm run build:main && pnpm run build:renderer",
     "build:main": "tsc -p tsconfig.main.json && tsc-alias -p tsconfig.main.json && node scripts/copy-ppt-templates.js",
     "build:renderer": "vite build",
-    "start": "electron dist/src/main/index.js",
+    "start": "node scripts/start.js",
     "pack": "pnpm run build && electron-builder --dir",
     "dist": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false pnpm run build && electron-builder",
     "dist:pre": "cross-env CSC_IDENTITY_AUTO_DISCOVERY=false pnpm run build:pre && electron-builder",

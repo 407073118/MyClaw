@@ -1,4 +1,4 @@
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const { existsSync } = require("node:fs");
 const http = require("node:http");
 const https = require("node:https");
@@ -8,6 +8,20 @@ const PROJECT_ROOT = path.join(__dirname, "..");
 const MAIN_ENTRY = path.join(PROJECT_ROOT, "dist", "src", "main", "index.js");
 const RENDERER_DEV_URL = process.env.MYCLAW_RENDERER_DEV_URL || "http://127.0.0.1:1420";
 const START_TIMEOUT_MS = 60_000;
+
+/** Windows 下把当前控制台 codepage 切到 UTF-8 (65001)，避免 Electron 中文 stdout 乱码。 */
+function ensureUtf8ConsoleOnWindows() {
+  if (process.platform !== "win32") {
+    return;
+  }
+  try {
+    spawnSync("chcp 65001", { stdio: "ignore", shell: true });
+  } catch (error) {
+    console.warn("[dev] 切换控制台 codepage 到 65001 失败，可能出现中文乱码", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
 
 /** 构建开发模式使用的环境变量。 */
 function buildDevEnvironment(baseEnv = process.env) {
@@ -117,6 +131,8 @@ function terminateChildren(children) {
 
 /** 启动桌面端开发环境，兼容 macOS 与 Windows。 */
 async function main() {
+  ensureUtf8ConsoleOnWindows();
+
   const env = buildDevEnvironment();
   const children = [];
   let shuttingDown = false;
@@ -189,6 +205,7 @@ async function main() {
 
 module.exports = {
   buildDevEnvironment,
+  ensureUtf8ConsoleOnWindows,
   main,
   resolvePnpmCommand,
   waitForFile,

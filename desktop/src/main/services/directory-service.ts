@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, parse, resolve } from "node:path";
 
 /** 安装器写入到安装目录旁的数据目录配置文件名。 */
 export const INSTALLER_DATA_ROOT_FILENAME = "myclaw-data-root.txt";
@@ -116,7 +116,62 @@ function readInstallerSelectedDataRoot(): string | null {
   }
 }
 
-/** 解析显式配置的数据根目录，优先级为环境变量、便携目录、安装器配置。 */
+/**
+ * 从给定起点向上查找 `.worktrees` 段，命中则返回 worktree 根目录，否则返回 null。
+ *
+ * 仅做字符串运算，不依赖文件系统真实存在；典型路径形如
+ * `<repo>/.worktrees/<name>/desktop`，命中后返回 `<repo>/.worktrees/<name>`。
+ */
+function findWorktreeRootFromPath(startPath: string): string | null {
+  const normalized = resolve(startPath);
+  const parsed = parse(normalized);
+  const tail = normalized.slice(parsed.root.length);
+  const segments = tail.split(/[\\/]/).filter((segment) => segment.length > 0);
+
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    if (segments[index] !== ".worktrees") {
+      continue;
+    }
+    if (index + 1 >= segments.length) {
+      continue;
+    }
+    const worktreeSegments = segments.slice(0, index + 2);
+    return join(parsed.root, ...worktreeSegments);
+  }
+
+  return null;
+}
+
+/**
+ * 在未显式配置数据目录时，根据当前进程位置兜底定位 worktree 数据根。
+ *
+ * 仅 dev 模式生效（packaged 直接跳过），优先用 `process.cwd()`，其次 `__dirname`。
+ * 命中 worktree 时数据根目录约定为 `<worktreeRoot>/.userdata`。
+ */
+function detectWorktreeDataRoot(): string | null {
+  if (app.isPackaged) {
+    return null;
+  }
+
+  const candidates = [process.cwd(), __dirname];
+  for (const start of candidates) {
+    const worktreeRoot = findWorktreeRootFromPath(start);
+    if (!worktreeRoot) {
+      continue;
+    }
+    const dataRoot = join(worktreeRoot, ".userdata");
+    console.info("[directory-service] 检测到 worktree 路径，自动指向 worktree 内独立数据目录", {
+      startPath: start,
+      worktreeRoot,
+      dataRoot,
+    });
+    return dataRoot;
+  }
+
+  return null;
+}
+
+/** 解析显式配置的数据根目录，优先级为环境变量、便携目录、安装器配置、worktree 自动检测。 */
 function resolveConfiguredDataRoot(): string | null {
   const explicitRoot = process.env.MYCLAW_DATA_ROOT?.trim();
   if (explicitRoot) {
@@ -136,7 +191,17 @@ function resolveConfiguredDataRoot(): string | null {
     return portableRoot;
   }
 
-  return readInstallerSelectedDataRoot();
+  const installerRoot = readInstallerSelectedDataRoot();
+  if (installerRoot) {
+    return installerRoot;
+  }
+
+  const worktreeRoot = detectWorktreeDataRoot();
+  if (worktreeRoot) {
+    return worktreeRoot;
+  }
+
+  return null;
 }
 
 /** 判断当前是否需要重定向 Electron userData。 */
