@@ -12,6 +12,7 @@ import type {
 import { addDaysToDateKey, isoToDateKey } from "@shared/time/local-time";
 import { enumerateCronRunsOnDate } from "@shared/time/cron";
 
+import MarkdownView from "../components/MarkdownView";
 import AvailabilityPolicyForm from "../components/time/AvailabilityPolicyForm";
 import CalendarEventEditor, {
   type CalendarEventEditorSubmitInput,
@@ -784,10 +785,11 @@ function ScheduleJobListPage({
         {jobs.length === 0 ? <p className="side-empty">暂无定时任务。</p> : null}
         {jobs.map((job) => {
           const latestRun = latestRunByJobId.get(job.id);
+          const accent = resolveJobAccent(job, latestRun);
           return (
             <article
               key={job.id}
-              className="list-page-row list-page-row--job is-clickable"
+              className={`list-page-row list-page-row--job list-page-row--job-${accent} is-clickable`}
               role="button"
               tabIndex={0}
               aria-label={`查看 ${job.title} 的执行历史`}
@@ -856,6 +858,7 @@ function ExecutionHistoryDrawer({
       .sort((left, right) => right.startedAt.localeCompare(left.startedAt)),
     [runs, job.id],
   );
+  const drawerAccent = resolveJobAccent(job, sortedRuns[0]);
 
   /** Esc 关闭抽屉，符合桌面端弹层一致行为。 */
   useEffect(() => {
@@ -879,7 +882,7 @@ function ExecutionHistoryDrawer({
       }}
     >
       <aside
-        className="execution-history-drawer"
+        className={`execution-history-drawer execution-history-drawer--${drawerAccent}`}
         role="dialog"
         aria-modal="true"
         aria-label={`计划任务 ${job.title} 的执行历史`}
@@ -904,38 +907,47 @@ function ExecutionHistoryDrawer({
             </div>
           ) : (
             <ul className="execution-history-list">
-              {sortedRuns.map((run) => (
-                <li key={run.id} className="execution-history-row">
-                  <div className="execution-history-row__head">
-                    <span
-                      className={
-                        run.status === "succeeded"
-                          ? "status-badge status-badge--active"
-                          : run.status === "failed"
-                          ? "status-badge status-badge--danger"
-                          : run.status === "running"
-                          ? "status-badge status-badge--normal"
-                          : "status-badge status-badge--muted"
-                      }
-                    >
-                      {formatExecutionRunStatus(run.status)}
-                    </span>
-                    <span className="execution-history-row__time">
-                      {formatDateTime(run.startedAt, job.timezone)}
-                      {run.finishedAt ? ` → ${formatClock(run.finishedAt, job.timezone)}` : ""}
-                    </span>
-                  </div>
-                  {run.outputSummary ? (
-                    <pre className="execution-history-row__output">{run.outputSummary}</pre>
-                  ) : null}
-                  {run.errorMessage ? (
-                    <pre className="execution-history-row__error">{run.errorMessage}</pre>
-                  ) : null}
-                  {!run.outputSummary && !run.errorMessage ? (
-                    <span className="execution-history-row__placeholder">本次执行未记录输出内容</span>
-                  ) : null}
-                </li>
-              ))}
+              {sortedRuns.map((run) => {
+                const runAccent = resolveRunAccent(run);
+                return (
+                  <li
+                    key={run.id}
+                    className={`execution-history-row execution-history-row--${runAccent}`}
+                  >
+                    <div className="execution-history-row__head">
+                      <span
+                        className={
+                          run.status === "succeeded"
+                            ? "status-badge status-badge--active"
+                            : run.status === "failed"
+                            ? "status-badge status-badge--danger"
+                            : run.status === "running"
+                            ? "status-badge status-badge--normal"
+                            : "status-badge status-badge--muted"
+                        }
+                      >
+                        {formatExecutionRunStatus(run.status)}
+                      </span>
+                      <span className="execution-history-row__time">
+                        {formatDateTime(run.startedAt, job.timezone)}
+                        {run.finishedAt ? ` → ${formatClock(run.finishedAt, job.timezone)}` : ""}
+                      </span>
+                    </div>
+                    {run.outputSummary ? (
+                      <MarkdownView
+                        source={run.outputSummary}
+                        className="execution-history-row__markdown"
+                      />
+                    ) : null}
+                    {run.errorMessage ? (
+                      <pre className="execution-history-row__error">{run.errorMessage}</pre>
+                    ) : null}
+                    {!run.outputSummary && !run.errorMessage ? (
+                      <span className="execution-history-row__placeholder">本次执行未记录输出内容</span>
+                    ) : null}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -1435,6 +1447,25 @@ function getLocalHour(iso: string, timezone: string): number {
   }).format(new Date(iso));
   const hour = Number(hourText);
   return hour === 24 ? 0 : hour;
+}
+
+type StatusAccent = "active" | "running" | "failed" | "muted";
+
+/** 综合 job 与最近一次执行的状态，给出列表行 / 抽屉 header 的色条颜色。 */
+function resolveJobAccent(job: ScheduleJob, latestRun: ExecutionRun | undefined): StatusAccent {
+  if (job.status === "paused" || job.status === "cancelled") return "muted";
+  if (latestRun?.status === "running" || job.status === "running") return "running";
+  if (latestRun?.status === "failed" || job.status === "failed") return "failed";
+  if (latestRun?.status === "succeeded") return "active";
+  return "muted";
+}
+
+/** 单次 run 的状态映射到色条颜色。 */
+function resolveRunAccent(run: ExecutionRun): StatusAccent {
+  if (run.status === "succeeded") return "active";
+  if (run.status === "running") return "running";
+  if (run.status === "failed") return "failed";
+  return "muted";
 }
 
 /** 获取指定时间在目标时区内的分钟，用于按分钟比例插值 now-line。 */
@@ -2147,13 +2178,30 @@ const styles = `
   }
 
   .execution-history-drawer__header {
+    position: relative;
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 12px;
-    padding: 20px 24px;
+    padding: 20px 24px 20px 27px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
+
+  .execution-history-drawer__header::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 18px;
+    bottom: 18px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--text-muted);
+  }
+
+  .execution-history-drawer--active .execution-history-drawer__header::before { background: var(--status-green); box-shadow: 0 0 10px rgba(34, 197, 94, 0.45); }
+  .execution-history-drawer--running .execution-history-drawer__header::before { background: var(--accent-cyan); box-shadow: 0 0 10px rgba(16, 163, 127, 0.5); }
+  .execution-history-drawer--failed .execution-history-drawer__header::before { background: var(--status-red); box-shadow: 0 0 10px rgba(239, 68, 68, 0.5); }
+  .execution-history-drawer--muted .execution-history-drawer__header::before { background: var(--text-muted); }
 
   .execution-history-drawer__heading {
     display: flex;
@@ -2167,7 +2215,7 @@ const styles = `
     font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
-    color: var(--text-muted);
+    color: var(--accent-cyan);
   }
 
   .execution-history-drawer__title {
@@ -2217,14 +2265,31 @@ const styles = `
   }
 
   .execution-history-row {
-    padding: 14px 16px;
-    background: var(--bg-surface);
+    position: relative;
+    padding: 14px 16px 14px 19px;
+    background: var(--bg-card);
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
     display: flex;
     flex-direction: column;
     gap: 10px;
   }
+
+  .execution-history-row::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 12px;
+    bottom: 12px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--text-muted);
+  }
+
+  .execution-history-row--active::before { background: var(--status-green); box-shadow: 0 0 6px rgba(34, 197, 94, 0.4); }
+  .execution-history-row--running::before { background: var(--accent-cyan); box-shadow: 0 0 6px rgba(16, 163, 127, 0.45); }
+  .execution-history-row--failed::before { background: var(--status-red); box-shadow: 0 0 6px rgba(239, 68, 68, 0.45); }
+  .execution-history-row--muted::before { background: var(--text-muted); }
 
   .execution-history-row__head {
     display: flex;
@@ -2249,6 +2314,135 @@ const styles = `
     white-space: pre-wrap;
     word-break: break-word;
     font-family: inherit;
+  }
+
+  .execution-history-row__markdown {
+    margin: 0;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.65;
+    word-break: break-word;
+  }
+
+  .execution-history-row__markdown > *:first-child { margin-top: 0; }
+  .execution-history-row__markdown > *:last-child { margin-bottom: 0; }
+
+  .execution-history-row__markdown h1,
+  .execution-history-row__markdown h2,
+  .execution-history-row__markdown h3,
+  .execution-history-row__markdown h4 {
+    margin: 14px 0 6px;
+    color: var(--text-primary);
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  .execution-history-row__markdown h1 { font-size: 18px; }
+  .execution-history-row__markdown h2 { font-size: 16px; }
+  .execution-history-row__markdown h3 { font-size: 14px; }
+  .execution-history-row__markdown h4 { font-size: 13px; color: var(--text-secondary); }
+
+  .execution-history-row__markdown p { margin: 8px 0; }
+
+  .execution-history-row__markdown ul,
+  .execution-history-row__markdown ol {
+    margin: 8px 0;
+    padding-left: 22px;
+  }
+
+  .execution-history-row__markdown li { margin: 3px 0; }
+  .execution-history-row__markdown li > p { margin: 0; }
+
+  .execution-history-row__markdown a {
+    color: var(--accent-cyan);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(16, 163, 127, 0.35);
+  }
+
+  .execution-history-row__markdown a:hover {
+    border-bottom-color: var(--accent-cyan);
+  }
+
+  .execution-history-row__markdown code {
+    padding: 1px 5px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-sm);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .execution-history-row__markdown pre {
+    margin: 10px 0;
+    padding: 12px 14px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+
+  .execution-history-row__markdown pre code {
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    font-size: 12px;
+    color: var(--text-primary);
+  }
+
+  .execution-history-row__markdown blockquote {
+    margin: 10px 0;
+    padding: 4px 12px;
+    border-left: 3px solid var(--glass-border-strong);
+    color: var(--text-secondary);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  }
+
+  .execution-history-row__markdown hr {
+    margin: 14px 0;
+    border: 0;
+    border-top: 1px solid var(--glass-border);
+  }
+
+  .execution-history-row__markdown table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 12px;
+  }
+
+  .execution-history-row__markdown th,
+  .execution-history-row__markdown td {
+    padding: 6px 10px;
+    border: 1px solid var(--glass-border);
+    text-align: left;
+  }
+
+  .execution-history-row__markdown th {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+
+  .execution-history-row__markdown img {
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-md);
+  }
+
+  .execution-history-row__markdown strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .execution-history-row__markdown em {
+    color: var(--text-secondary);
+    font-style: italic;
   }
 
   .execution-history-row__error {
@@ -2307,8 +2501,35 @@ const styles = `
   }
 
   .list-page-row--job {
+    position: relative;
+    padding-left: 27px;
     grid-template-columns: 140px minmax(0, 1.5fr) minmax(0, 1fr) minmax(220px, auto);
   }
+
+  .list-page-row--job::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--text-muted);
+    opacity: 0.55;
+    transition: opacity 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .list-page-row--job:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .list-page-row--job:hover::before {
+    opacity: 1;
+  }
+
+  .list-page-row--job-active::before { background: var(--status-green); box-shadow: 0 0 8px rgba(34, 197, 94, 0.35); }
+  .list-page-row--job-running::before { background: var(--accent-cyan); box-shadow: 0 0 8px rgba(16, 163, 127, 0.45); }
+  .list-page-row--job-failed::before { background: var(--status-red); box-shadow: 0 0 8px rgba(239, 68, 68, 0.45); }
+  .list-page-row--job-muted::before { background: var(--text-muted); }
 
   .job-row__schedule-col,
   .job-row__info-col,
