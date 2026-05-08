@@ -1,173 +1,222 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-import { localDateTimeToUtcIso } from "@shared/time/local-time";
+import type { ScheduleJob, ScheduleJobExecutor, TimeOwnerScope } from "@shared/contracts";
+
+import {
+  defaultFrequencyForKind,
+  frequencyToScheduleInput,
+  parseFrequency,
+  type FrequencyValue,
+} from "../../utils/frequency";
+import FrequencyPicker from "./FrequencyPicker";
 
 export type ScheduleJobEditorSubmitInput = {
   title: string;
   description?: string;
-  scheduleKind: "once" | "interval" | "cron";
   timezone: string;
+  executor: ScheduleJobExecutor;
+  executorTargetId?: string;
+  scheduleKind: "once" | "interval" | "cron";
   startsAt?: string;
   intervalMinutes?: number;
   cronExpression?: string;
-  executor: "workflow" | "silicon_person" | "assistant_prompt";
-  executorTargetId?: string;
 };
 
-type ScheduleJobEditorProps = {
+export type ScheduleJobEditorMode = "create" | "update";
+
+export type WorkflowOption = { id: string; name: string };
+export type SiliconPersonOption = { id: string; name: string };
+
+type Props = {
   timezone: string;
-  ownerScope?: "personal" | "silicon_person";
+  executor: ScheduleJobExecutor;
+  initialJob?: ScheduleJob;
+  workflows: WorkflowOption[];
+  siliconPersons: SiliconPersonOption[];
+  ownerScope?: TimeOwnerScope;
   ownerId?: string;
-  onSave: (input: ScheduleJobEditorSubmitInput) => void | Promise<void>;
+  onSave: (input: ScheduleJobEditorSubmitInput, mode: ScheduleJobEditorMode) => void | Promise<void>;
+  onCancel?: () => void;
 };
 
-/** 渲染计划任务编辑器，支持 once / interval / cron 三种首版调度模式。 */
+const EXECUTOR_LABELS: Record<ScheduleJobExecutor, string> = {
+  assistant_prompt: "Prompt 任务",
+  workflow: "Workflow 任务",
+  silicon_person: "调用员工任务",
+};
+
+/** 计划任务编辑器：按 executor 渲染不同字段，支持新建与编辑两种模式。 */
 export default function ScheduleJobEditor({
   timezone,
+  executor,
+  initialJob,
+  workflows,
+  siliconPersons,
   ownerScope = "personal",
   ownerId,
   onSave,
-}: ScheduleJobEditorProps) {
-  const [title, setTitle] = useState("");
-  const [description, setDescription] = useState("");
-  const [scheduleKind, setScheduleKind] = useState<"once" | "interval" | "cron">("interval");
-  const [startValue, setStartValue] = useState("");
-  const [intervalValue, setIntervalValue] = useState("60");
-  const [cronValue, setCronValue] = useState("0 9 * * 1-5");
-  const [executor, setExecutor] = useState<"workflow" | "silicon_person" | "assistant_prompt">(
-    ownerScope === "silicon_person" ? "workflow" : "assistant_prompt",
+  onCancel,
+}: Props) {
+  const mode: ScheduleJobEditorMode = initialJob ? "update" : "create";
+
+  const [title, setTitle] = useState(initialJob?.title ?? "");
+  const [description, setDescription] = useState(initialJob?.description ?? "");
+  const [frequency, setFrequency] = useState<FrequencyValue>(() =>
+    initialJob ? parseFrequency(initialJob) : defaultFrequencyForKind("every-day"),
   );
-  const [executorTargetId, setExecutorTargetId] = useState(ownerId ?? "");
+  const [executorTargetId, setExecutorTargetId] = useState<string>(
+    initialJob?.executorTargetId ?? (executor === "silicon_person" ? ownerId ?? "" : ""),
+  );
   const [saving, setSaving] = useState(false);
 
-  const scheduleSummary = useMemo(() => {
-    if (scheduleKind === "once") {
-      return "Run once at the selected time.";
-    }
-    if (scheduleKind === "cron") {
-      return "Use a cron expression for repeat execution.";
-    }
-    return "Run on a fixed-minute interval from the selected start time.";
-  }, [scheduleKind]);
+  // executor 切换时（理论上 ComposerModal 已锁，但保险起见兼容）：清掉 target
+  useEffect(() => {
+    if (initialJob) return;
+    setExecutorTargetId(executor === "silicon_person" ? ownerId ?? "" : "");
+  }, [executor, ownerId, initialJob]);
+
+  const submitDisabled = useMemo(() => {
+    if (saving) return true;
+    if (!title.trim()) return true;
+    if (executor === "workflow" && !executorTargetId) return true;
+    if (executor === "silicon_person" && !executorTargetId) return true;
+    if (executor === "assistant_prompt" && !description.trim()) return true;
+    if (executor === "silicon_person" && !description.trim()) return true;
+    return false;
+  }, [saving, title, description, executor, executorTargetId]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!title.trim()) {
-      return;
-    }
+    if (submitDisabled) return;
 
     setSaving(true);
     try {
-      await onSave({
-        title: title.trim(),
-        description: description.trim() || undefined,
-        scheduleKind,
-        timezone,
-        startsAt: startValue ? localDateTimeToUtcIso(startValue, timezone) : undefined,
-        intervalMinutes: scheduleKind === "interval" ? Number(intervalValue || "0") : undefined,
-        cronExpression: scheduleKind === "cron" ? cronValue.trim() || undefined : undefined,
-        executor,
-        executorTargetId: executorTargetId.trim() || undefined,
-      });
-      setTitle("");
-      setDescription("");
-      setStartValue("");
-      setIntervalValue("60");
-      setCronValue("0 9 * * 1-5");
-      setExecutor(ownerScope === "silicon_person" ? "workflow" : "assistant_prompt");
-      setExecutorTargetId(ownerId ?? "");
+      const scheduleFields = frequencyToScheduleInput(frequency);
+      await onSave(
+        {
+          title: title.trim(),
+          description: description.trim() || undefined,
+          timezone,
+          executor,
+          executorTargetId: executorTargetId.trim() || undefined,
+          ...scheduleFields,
+        },
+        mode,
+      );
+      if (mode === "create") {
+        setTitle("");
+        setDescription("");
+        setFrequency(defaultFrequencyForKind("every-day"));
+        setExecutorTargetId(executor === "silicon_person" ? ownerId ?? "" : "");
+      }
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <form className="time-editor-form" onSubmit={handleSubmit}>
-      <label className="time-editor-field">
-        <span>Job Title</span>
-        <input value={title} onChange={(event) => setTitle(event.target.value)} />
-      </label>
-
-      <div className="time-editor-grid">
-        <label className="time-editor-field">
-          <span>Schedule Type</span>
-          <select
-            aria-label="Schedule Type"
-            value={scheduleKind}
-            onChange={(event) => setScheduleKind(event.target.value as typeof scheduleKind)}
-          >
-            <option value="once">once</option>
-            <option value="interval">interval</option>
-            <option value="cron">cron</option>
-          </select>
-        </label>
-
-        <label className="time-editor-field">
-          <span>Job Start</span>
-          <input
-            type="datetime-local"
-            aria-label="Job Start"
-            value={startValue}
-            onChange={(event) => setStartValue(event.target.value)}
-          />
-        </label>
+    <form className="time-editor-form schedule-job-editor" onSubmit={handleSubmit}>
+      <div className="schedule-job-editor__type-line">
+        <span className={`job-type-chip job-type-chip--${executor}`}>{EXECUTOR_LABELS[executor]}</span>
+        {mode === "create" && onCancel ? (
+          <button type="button" className="schedule-job-editor__back" onClick={onCancel}>
+            ← 换类型
+          </button>
+        ) : null}
+        {mode === "update" ? (
+          <span className="schedule-job-editor__mode-hint">编辑模式</span>
+        ) : null}
       </div>
 
-      {scheduleKind === "interval" ? (
+      <label className="time-editor-field">
+        <span>任务标题</span>
+        <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="给任务起个名字" />
+      </label>
+
+      <fieldset className="time-editor-field schedule-job-editor__frequency">
+        <legend>频率</legend>
+        <FrequencyPicker value={frequency} onChange={setFrequency} timezone={timezone} />
+      </fieldset>
+
+      {executor === "assistant_prompt" ? (
         <label className="time-editor-field">
-          <span>Interval Minutes</span>
-          <input
-            type="number"
-            min="5"
-            step="5"
-            aria-label="Interval Minutes"
-            value={intervalValue}
-            onChange={(event) => setIntervalValue(event.target.value)}
+          <span>提示词</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={6}
+            placeholder="例如：用 5 个要点总结今天的科技热点新闻，每点 2 句话以内。"
           />
         </label>
       ) : null}
 
-      {scheduleKind === "cron" ? (
+      {executor === "workflow" ? (
         <label className="time-editor-field">
-          <span>Cron Expression</span>
-          <input
-            aria-label="Cron Expression"
-            value={cronValue}
-            onChange={(event) => setCronValue(event.target.value)}
-          />
-        </label>
-      ) : null}
-
-      <div className="time-editor-grid">
-        <label className="time-editor-field">
-          <span>Executor</span>
-          <select value={executor} onChange={(event) => setExecutor(event.target.value as typeof executor)}>
-            <option value="assistant_prompt">assistant_prompt</option>
-            <option value="workflow">workflow</option>
-            <option value="silicon_person">silicon_person</option>
-          </select>
-        </label>
-
-        <label className="time-editor-field">
-          <span>Executor Target</span>
-          <input
+          <span>选择工作流</span>
+          <select
             value={executorTargetId}
             onChange={(event) => setExecutorTargetId(event.target.value)}
-            placeholder="workflow-id / silicon-person-id"
+          >
+            <option value="">— 请选择 —</option>
+            {workflows.map((workflow) => (
+              <option key={workflow.id} value={workflow.id}>{workflow.name}</option>
+            ))}
+          </select>
+          {workflows.length === 0 ? (
+            <span className="schedule-job-editor__hint">还没有可用的工作流，先去工作流页面新建。</span>
+          ) : null}
+        </label>
+      ) : null}
+
+      {executor === "silicon_person" ? (
+        <>
+          <label className="time-editor-field">
+            <span>选择员工</span>
+            <select
+              value={executorTargetId}
+              onChange={(event) => setExecutorTargetId(event.target.value)}
+            >
+              <option value="">— 请选择 —</option>
+              {siliconPersons.map((person) => (
+                <option key={person.id} value={person.id}>{person.name}</option>
+              ))}
+            </select>
+            {siliconPersons.length === 0 ? (
+              <span className="schedule-job-editor__hint">还没有员工，先去硅基员工页面创建。</span>
+            ) : null}
+          </label>
+          <label className="time-editor-field">
+            <span>派发消息</span>
+            <textarea
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              rows={4}
+              placeholder="任务触发时发送给员工的消息内容。"
+            />
+          </label>
+        </>
+      ) : null}
+
+      {executor === "workflow" ? (
+        <label className="time-editor-field">
+          <span>备注（可选）</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            placeholder="给自己留一句关于这个任务的说明。"
           />
         </label>
+      ) : null}
+
+      <div className="schedule-job-editor__actions">
+        {onCancel && mode === "update" ? (
+          <button type="button" className="time-editor-cancel" onClick={onCancel}>取消</button>
+        ) : null}
+        <button type="submit" className="time-editor-submit" disabled={submitDisabled}>
+          {saving ? "保存中..." : mode === "update" ? "保存修改" : "保存定时任务"}
+        </button>
       </div>
-
-      <label className="time-editor-field">
-        <span>Job Note</span>
-        <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} />
-      </label>
-
-      <p className="time-editor-helper">{scheduleSummary}</p>
-
-      <button type="submit" className="time-editor-submit" disabled={saving}>
-        {saving ? "Saving..." : "Save Job"}
-      </button>
     </form>
   );
 }

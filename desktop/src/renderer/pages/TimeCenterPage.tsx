@@ -6,9 +6,11 @@ import type {
   ExecutionRun,
   Reminder,
   ScheduleJob,
+  ScheduleJobExecutor,
   SiliconPerson,
   TaskCommitment,
 } from "@shared/contracts";
+import { formatJobFrequency } from "../utils/frequency";
 import { addDaysToDateKey, isoToDateKey } from "@shared/time/local-time";
 import { enumerateCronRunsOnDate } from "@shared/time/cron";
 
@@ -70,6 +72,7 @@ export default function TimeCenterPage() {
   // 细粒度订阅：只订阅页面要响应的字段，避免无关 store 字段（auth/models/sessions）变化触发整页重渲。
   const time = useWorkspaceStore((state) => state.time);
   const siliconPersons = useWorkspaceStore((state) => state.siliconPersons);
+  const workflows = useWorkspaceStore((state) => state.workflows);
   // actions 通过 getState 调用，不进入订阅链 —— zustand action 引用永远稳定。
   const workspace = useWorkspaceStore.getState();
   const timezone = time.availabilityPolicy?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -78,6 +81,17 @@ export default function TimeCenterPage() {
   const [activeView, setActiveView] = useState<PlanningView>("timeline");
   const [activeComposer, setActiveComposer] = useState<ComposerKind | null>(null);
   const [feedback, setFeedback] = useState("");
+  const [chosenJobType, setChosenJobType] = useState<ScheduleJobExecutor | null>(null);
+  const [editingJob, setEditingJob] = useState<ScheduleJob | null>(null);
+
+  const workflowOptions = useMemo(
+    () => (workflows ?? []).map((workflow) => ({ id: workflow.id, name: workflow.name })),
+    [workflows],
+  );
+  const siliconPersonOptions = useMemo(
+    () => (siliconPersons ?? []).map((person) => ({ id: person.id, name: person.name })),
+    [siliconPersons],
+  );
 
   const siliconPersonNameById = useMemo(
     () => new Map((siliconPersons ?? []).map((person) => [person.id, person.name])),
@@ -190,32 +204,58 @@ export default function TimeCenterPage() {
     setFeedback(`已保存提醒：${input.title}`);
   }
 
-  /** 创建定时任务；定时任务会同时进入右侧状态栏和当天触发的时间轴。 */
-  async function handleCreateScheduleJob(input: ScheduleJobEditorSubmitInput) {
-    console.info("[日程规划] 创建定时任务", {
+  /** 保存定时任务：根据 mode 决定 create 还是 update，editor 提交后统一回到列表。 */
+  async function handleSaveScheduleJob(input: ScheduleJobEditorSubmitInput, mode: "create" | "update") {
+    console.info("[日程规划] 保存定时任务", {
+      mode,
       title: input.title,
       scheduleKind: input.scheduleKind,
       executor: input.executor,
       executorTargetId: input.executorTargetId ?? null,
     });
-    await workspace.createScheduleJob({
-      kind: "schedule_job",
-      title: input.title,
-      description: input.description,
-      scheduleKind: input.scheduleKind,
-      timezone: input.timezone,
-      ownerScope: "personal",
-      status: "scheduled",
-      source: "manual",
-      startsAt: input.startsAt,
-      intervalMinutes: input.intervalMinutes,
-      cronExpression: input.cronExpression,
-      executor: input.executor,
-      executorTargetId: input.executorTargetId,
-      nextRunAt: input.startsAt,
-    });
+    if (mode === "update" && editingJob) {
+      await workspace.updateScheduleJob({
+        ...editingJob,
+        title: input.title,
+        description: input.description,
+        scheduleKind: input.scheduleKind,
+        timezone: input.timezone,
+        startsAt: input.startsAt,
+        intervalMinutes: input.intervalMinutes,
+        cronExpression: input.cronExpression,
+        executorTargetId: input.executorTargetId,
+        nextRunAt: input.startsAt ?? editingJob.nextRunAt,
+      });
+      setFeedback(`已更新定时任务：${input.title}`);
+    } else {
+      await workspace.createScheduleJob({
+        kind: "schedule_job",
+        title: input.title,
+        description: input.description,
+        scheduleKind: input.scheduleKind,
+        timezone: input.timezone,
+        ownerScope: "personal",
+        status: "scheduled",
+        source: "manual",
+        startsAt: input.startsAt,
+        intervalMinutes: input.intervalMinutes,
+        cronExpression: input.cronExpression,
+        executor: input.executor,
+        executorTargetId: input.executorTargetId,
+        nextRunAt: input.startsAt,
+      });
+      setFeedback(`已保存定时任务：${input.title}`);
+    }
     setActiveComposer(null);
-    setFeedback(`已保存定时任务：${input.title}`);
+    setEditingJob(null);
+    setChosenJobType(null);
+  }
+
+  /** 进入编辑模式：预填编辑器并锁定为该任务的 type。 */
+  function handleEditScheduleJob(job: ScheduleJob) {
+    setEditingJob(job);
+    setChosenJobType(job.executor);
+    setActiveComposer("job");
   }
 
   /** 保存时间规则，作为日程规划的工作时段和静默时段依据。 */
@@ -341,6 +381,7 @@ export default function TimeCenterPage() {
             onToggle={handleToggleScheduleJob}
             onDelete={handleDeleteScheduleJob}
             onRunNow={handleRunScheduleJobNow}
+            onEdit={handleEditScheduleJob}
           />
         ) : null}
 
@@ -358,15 +399,32 @@ export default function TimeCenterPage() {
       {activeComposer ? (
         <ComposerModal
           activeComposer={activeComposer}
-          onSelectComposer={setActiveComposer}
+          onSelectComposer={(composer) => {
+            setActiveComposer(composer);
+            // 切到非定时任务 tab 时清掉 type/edit 状态，避免误带到下次。
+            if (composer !== "job") {
+              setChosenJobType(null);
+              setEditingJob(null);
+            }
+          }}
           timezone={timezone}
           availabilityPolicy={time.availabilityPolicy}
-          onClose={() => setActiveComposer(null)}
+          onClose={() => {
+            setActiveComposer(null);
+            setChosenJobType(null);
+            setEditingJob(null);
+          }}
           onSaveEvent={handleCreateCalendarEvent}
           onSaveTask={handleCreateTaskCommitment}
           onSaveReminder={handleCreateReminder}
-          onSaveJob={handleCreateScheduleJob}
+          onSaveJob={handleSaveScheduleJob}
           onSaveAvailabilityPolicy={handleSaveAvailabilityPolicy}
+          chosenJobType={chosenJobType}
+          editingJob={editingJob}
+          onChooseJobType={setChosenJobType}
+          onClearJobType={() => setChosenJobType(null)}
+          workflowOptions={workflowOptions}
+          siliconPersonOptions={siliconPersonOptions}
         />
       ) : null}
 
@@ -429,6 +487,23 @@ function IconSpinner(): React.JSX.Element {
       />
     </svg>
   );
+}
+
+function IconEdit(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M3 17.25V21h3.75l11-11.04-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0L15.13 5.13l3.75 3.75 1.83-1.84z"
+      />
+    </svg>
+  );
+}
+
+function formatExecutorLabel(executor: ScheduleJobExecutor): string {
+  if (executor === "assistant_prompt") return "Prompt";
+  if (executor === "workflow") return "Workflow";
+  return "员工";
 }
 
 function IconClose(): React.JSX.Element {
@@ -789,6 +864,7 @@ function ScheduleJobListPage({
   onToggle,
   onDelete,
   onRunNow,
+  onEdit,
 }: {
   jobs: ScheduleJob[];
   timezone: string;
@@ -797,10 +873,17 @@ function ScheduleJobListPage({
   onToggle: (job: ScheduleJob) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
   onRunNow: (job: ScheduleJob) => Promise<void>;
+  onEdit: (job: ScheduleJob) => void;
 }) {
   const [selectedJobForHistory, setSelectedJobForHistory] = useState<ScheduleJob | null>(null);
   const [pendingRunIds, setPendingRunIds] = useState<Set<string>>(() => new Set());
+  const [typeFilter, setTypeFilter] = useState<"all" | ScheduleJobExecutor>("all");
   const executionRuns = useWorkspaceStore((state) => state.time.executionRuns);
+
+  const filteredJobs = useMemo(
+    () => (typeFilter === "all" ? jobs : jobs.filter((job) => job.executor === typeFilter)),
+    [jobs, typeFilter],
+  );
 
   /** 抽屉打开时主动拉一次执行记录，确保最近一次执行能立刻看到。
    *  通过 getState 直接调 action，不进 effect 依赖 —— 避免 zustand action 引用变化（理论稳定但保险写法）触发循环。 */
@@ -835,9 +918,23 @@ function ScheduleJobListPage({
         <h3>定时任务</h3>
         <p>{jobs.length} 个自动触发任务 · 点行查看执行历史</p>
       </header>
+      <div className="job-type-filter" role="group" aria-label="按类型筛选">
+        {(["all", "assistant_prompt", "workflow", "silicon_person"] as const).map((value) => (
+          <button
+            key={value}
+            type="button"
+            className={typeFilter === value ? "job-type-filter__chip is-active" : "job-type-filter__chip"}
+            onClick={() => setTypeFilter(value)}
+          >
+            {value === "all" ? "全部" : formatExecutorLabel(value)}
+          </button>
+        ))}
+      </div>
       <div className="list-page-body">
-        {jobs.length === 0 ? <p className="side-empty">暂无定时任务。</p> : null}
-        {jobs.map((job) => {
+        {filteredJobs.length === 0 ? (
+          <p className="side-empty">{jobs.length === 0 ? "暂无定时任务。" : "当前筛选下没有任务。"}</p>
+        ) : null}
+        {filteredJobs.map((job) => {
           const latestRun = latestRunByJobId.get(job.id);
           const isRunPending = pendingRunIds.has(job.id);
           return (
@@ -862,8 +959,11 @@ function ScheduleJobListPage({
                 </span>
               </div>
               <div className="job-row__info-col">
-                <strong>{job.title}</strong>
-                <span>{buildJobOwnerLabel(job, siliconPersonNameById)} · {formatScheduleKind(job.scheduleKind)}</span>
+                <div className="job-row__title-line">
+                  <strong>{job.title}</strong>
+                  <span className={`job-type-chip job-type-chip--${job.executor}`}>{formatExecutorLabel(job.executor)}</span>
+                </div>
+                <span>{buildJobOwnerLabel(job, siliconPersonNameById)} · {formatJobFrequency(job, (iso) => formatDateTime(iso, timezone))}</span>
               </div>
               <div className="job-row__run-col">
                 {latestRun ? <span className={latestRun.status === "failed" ? "job-row__run is-warning" : "job-row__run"}>{formatLatestRunLabel(latestRun)}</span> : <span>—</span>}
@@ -875,6 +975,9 @@ function ScheduleJobListPage({
                   onClick={() => handleRunClick(job)}
                 >
                   <IconPlay />
+                </ActionIconButton>
+                <ActionIconButton title="编辑" onClick={() => onEdit(job)}>
+                  <IconEdit />
                 </ActionIconButton>
                 <ActionIconButton title={job.status === "paused" ? "恢复" : "暂停"} onClick={() => onToggle(job)}>
                   {job.status === "paused" ? <IconRestore /> : <IconPause />}
@@ -1008,6 +1111,54 @@ function ExecutionHistoryDrawer({
     </div>
   );
 }
+type JobTypeCard = {
+  type: ScheduleJobExecutor;
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+};
+
+const JOB_TYPE_CARDS: JobTypeCard[] = [
+  {
+    type: "assistant_prompt",
+    title: "Prompt 任务",
+    description: "让模型按时回答 / 总结，输出 Markdown 直接渲染。",
+    icon: <span aria-hidden="true">💬</span>,
+  },
+  {
+    type: "workflow",
+    title: "Workflow 任务",
+    description: "到点跑工作流（自动发布、检查、提醒等流程）。",
+    icon: <span aria-hidden="true">⚙️</span>,
+  },
+  {
+    type: "silicon_person",
+    title: "调用员工任务",
+    description: "到点向员工派发消息，让员工按其角色处理。",
+    icon: <span aria-hidden="true">👤</span>,
+  },
+];
+
+/** 第一步：选择要创建哪种类型的定时任务。 */
+function ScheduleJobTypePicker({ onPick }: { onPick: (type: ScheduleJobExecutor) => void }) {
+  return (
+    <div className="job-type-picker" role="group" aria-label="选择定时任务类型">
+      {JOB_TYPE_CARDS.map((card) => (
+        <button
+          key={card.type}
+          type="button"
+          className={`job-type-picker__card job-type-picker__card--${card.type}`}
+          onClick={() => onPick(card.type)}
+        >
+          <span className="job-type-picker__icon">{card.icon}</span>
+          <span className="job-type-picker__title">{card.title}</span>
+          <span className="job-type-picker__desc">{card.description}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** 渲染日程规划编辑弹层，采用桌面端居中高斯模糊背景。 */
 function ComposerModal({
   activeComposer,
@@ -1020,6 +1171,12 @@ function ComposerModal({
   onSaveReminder,
   onSaveJob,
   onSaveAvailabilityPolicy,
+  chosenJobType,
+  editingJob,
+  onChooseJobType,
+  onClearJobType,
+  workflowOptions,
+  siliconPersonOptions,
 }: {
   activeComposer: ComposerKind;
   onSelectComposer: (composer: ComposerKind) => void;
@@ -1029,13 +1186,19 @@ function ComposerModal({
   onSaveEvent: (input: CalendarEventEditorSubmitInput) => void | Promise<void>;
   onSaveTask: (input: TaskCommitmentEditorSubmitInput) => void | Promise<void>;
   onSaveReminder: (input: ReminderEditorSubmitInput) => void | Promise<void>;
-  onSaveJob: (input: ScheduleJobEditorSubmitInput) => void | Promise<void>;
+  onSaveJob: (input: ScheduleJobEditorSubmitInput, mode: "create" | "update") => void | Promise<void>;
   onSaveAvailabilityPolicy: (policy: AvailabilityPolicy) => void | Promise<void>;
+  chosenJobType: ScheduleJobExecutor | null;
+  editingJob: ScheduleJob | null;
+  onChooseJobType: (type: ScheduleJobExecutor) => void;
+  onClearJobType: () => void;
+  workflowOptions: { id: string; name: string }[];
+  siliconPersonOptions: { id: string; name: string }[];
 }) {
   const title = {
     event: "新建日程",
     reminder: "新建提醒",
-    job: "新建定时任务",
+    job: editingJob ? "编辑定时任务" : "新建定时任务",
     task: "安排任务",
     rules: "时间规则",
   }[activeComposer];
@@ -1087,7 +1250,21 @@ function ComposerModal({
         <div className="schedule-composer-modal__body">
           {activeComposer === "event" ? <CalendarEventEditor timezone={timezone} onSave={onSaveEvent} /> : null}
           {activeComposer === "reminder" ? <ReminderEditor timezone={timezone} onSave={onSaveReminder} /> : null}
-          {activeComposer === "job" ? <ScheduleJobEditor timezone={timezone} onSave={onSaveJob} /> : null}
+          {activeComposer === "job" ? (
+            chosenJobType === null && !editingJob ? (
+              <ScheduleJobTypePicker onPick={onChooseJobType} />
+            ) : (
+              <ScheduleJobEditor
+                timezone={timezone}
+                executor={editingJob ? editingJob.executor : (chosenJobType ?? "assistant_prompt")}
+                initialJob={editingJob ?? undefined}
+                workflows={workflowOptions}
+                siliconPersons={siliconPersonOptions}
+                onSave={onSaveJob}
+                onCancel={editingJob ? onClose : onClearJobType}
+              />
+            )
+          ) : null}
           {activeComposer === "task" ? <TaskCommitmentEditor timezone={timezone} onSave={onSaveTask} /> : null}
           {activeComposer === "rules" ? (
             <AvailabilityPolicyForm policy={availabilityPolicy} timezone={timezone} onSave={onSaveAvailabilityPolicy} />
@@ -2174,6 +2351,314 @@ const styles = `
 
   @keyframes jobActionSpin {
     to { transform: rotate(360deg); }
+  }
+
+  .job-row__title-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .job-row__title-line strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .job-type-chip {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+  }
+
+  .job-type-chip--assistant_prompt {
+    background: rgba(168, 85, 247, 0.14);
+    color: #c084fc;
+    border: 1px solid rgba(168, 85, 247, 0.32);
+  }
+
+  .job-type-chip--workflow {
+    background: rgba(245, 158, 11, 0.14);
+    color: #fbbf24;
+    border: 1px solid rgba(245, 158, 11, 0.32);
+  }
+
+  .job-type-chip--silicon_person {
+    background: rgba(16, 163, 127, 0.14);
+    color: #2dd4bf;
+    border: 1px solid rgba(16, 163, 127, 0.32);
+  }
+
+  .job-type-filter {
+    display: flex;
+    gap: 6px;
+    padding: 0 24px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  .job-type-filter__chip {
+    padding: 4px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .job-type-filter__chip:hover {
+    color: var(--text-secondary);
+    border-color: var(--glass-border-hover);
+  }
+
+  .job-type-filter__chip.is-active {
+    color: var(--text-primary);
+    border-color: var(--glass-border-strong);
+    background: var(--bg-surface-hover);
+  }
+
+  .job-type-picker {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    padding: 4px 0;
+  }
+
+  .job-type-picker__card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 18px 16px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .job-type-picker__card:hover {
+    transform: translateY(-1px);
+    border-color: var(--glass-border-hover);
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .job-type-picker__icon {
+    font-size: 24px;
+    line-height: 1;
+  }
+
+  .job-type-picker__title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .job-type-picker__desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .schedule-job-editor__type-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+
+  .schedule-job-editor__back {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    color: var(--accent-cyan);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .schedule-job-editor__back:hover {
+    text-decoration: underline;
+  }
+
+  .schedule-job-editor__mode-hint {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+  }
+
+  .schedule-job-editor__hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .schedule-job-editor__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .schedule-job-editor__frequency {
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .schedule-job-editor__frequency legend {
+    padding: 0 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+
+  .frequency-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .frequency-picker__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .frequency-picker__chip {
+    padding: 5px 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+
+  .frequency-picker__chip:hover {
+    color: var(--text-primary);
+    border-color: var(--glass-border-hover);
+  }
+
+  .frequency-picker__chip.is-active {
+    color: var(--accent-cyan);
+    border-color: rgba(16, 163, 127, 0.5);
+    background: rgba(16, 163, 127, 0.1);
+  }
+
+  .frequency-picker__detail {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--glass-border);
+  }
+
+  .frequency-picker__field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .frequency-picker__field input,
+  .frequency-picker__field select {
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+
+  .frequency-picker__field--inline {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .frequency-picker__field--inline > span {
+    flex-shrink: 0;
+  }
+
+  .frequency-picker__inline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .frequency-picker__weekdays {
+    display: inline-flex;
+    gap: 4px;
+  }
+
+  .frequency-picker__weekday {
+    width: 28px;
+    height: 28px;
+    border: 1px solid var(--glass-border);
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .frequency-picker__weekday:hover {
+    color: var(--text-secondary);
+    border-color: var(--glass-border-hover);
+  }
+
+  .frequency-picker__weekday.is-active {
+    color: var(--accent-cyan);
+    border-color: rgba(16, 163, 127, 0.55);
+    background: rgba(16, 163, 127, 0.12);
+  }
+
+  .frequency-picker__preview {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--accent-cyan);
+    font-weight: 600;
+  }
+
+  .time-editor-cancel {
+    height: 32px;
+    padding: 0 14px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .time-editor-cancel:hover {
+    color: var(--text-primary);
+    border-color: var(--glass-border-hover);
   }
 
   .job-action-icon-btn--danger:hover {

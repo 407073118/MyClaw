@@ -77,20 +77,8 @@ export type WorkflowSummary = {
   libraryRootId: string;
 };
 
-export type WorkflowDefinitionSummaryCompat = {
-  id: string;
-  name: string;
-  description: string;
-  status: WorkflowStatus;
-  source: WorkflowPackageSource;
-  updatedAt: string;
-  version?: number;
-  nodeCount?: number;
-  edgeCount?: number;
-  libraryRootId?: string;
-};
-
-export type WorkflowDefinitionSummary = WorkflowSummary | WorkflowDefinitionSummaryCompat;
+/** 与 WorkflowSummary 同形，向 renderer workspace store 暴露的列表项类型别名。 */
+export type WorkflowDefinitionSummary = WorkflowSummary;
 
 export type WorkflowCanvasPoint = {
   x: number;
