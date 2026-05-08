@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-04-04)
 Phase: 08
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-08 - Completed quick task 260508-g85: 撤色条 + 修文字按钮重叠 + 执行按钮 loading
+Last activity: 2026-05-08 - Completed quick task 260508-ghf: 定时任务 typed composer + FrequencyPicker + 编辑按钮
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -126,6 +126,7 @@ None yet.
 | 260508-fc4 | 日程时间轴 ScheduleTimeline 加“当前时间”指示线：仅 today 显示，分钟级刷新，首次落位自动滚动到红线附近 | 2026-05-08 | 0d9ca35 | [260508-fc4-timeline-now-indicator-line](./quick/260508-fc4-timeline-now-indicator-line/) |
 | 260508-fmv | 定时任务列表 + 执行抽屉视觉重做：左侧 3px 状态色条（成功/失败/暂停/运行）、抽屉 row 升 --bg-card、eyebrow 改 accent-cyan；新增 MarkdownView 组件渲染 outputSummary（marked + sanitizePreviewHtml） | 2026-05-08 | 1ba33bb | [260508-fmv-schedule-job-drawer-redesign-markdown](./quick/260508-fmv-schedule-job-drawer-redesign-markdown/) |
 | 260508-g85 | 撤掉 fmv 引入的左侧色条 + 修文字与按钮重叠（操作改纯图标 + col 收紧 + ellipsis）+ 执行按钮加 spinner loading（pendingRunIds + ActionIconButton.loading） | 2026-05-08 | f134b8a | [260508-g85-schedule-job-row-fix-no-stripe-loading](./quick/260508-g85-schedule-job-row-fix-no-stripe-loading/) |
+| 260508-ghf | 定时任务 B 层重构：composer typed 入口（3 张 Prompt/Workflow/员工 卡）+ FrequencyPicker（9 种预设替代裸 cron）+ 列表 type chip + type filter + ✏️ 编辑按钮（updateScheduleJob 链路全通）+ 修预存 WorkflowDefinitionSummary 导出 | 2026-05-08 | 077f6e6 | [260508-ghf-schedule-job-typed-composer-frequency-ed](./quick/260508-ghf-schedule-job-typed-composer-frequency-ed/) |
 
 ## Session Continuity
 
