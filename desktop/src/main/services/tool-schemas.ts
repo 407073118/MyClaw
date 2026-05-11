@@ -36,6 +36,7 @@ function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git
   if (functionName.startsWith("web_")) return "web";
   if (functionName.startsWith("ppt_")) return "ppt";
   if (functionName.startsWith("task_")) return "task";
+  if (functionName.startsWith("calendar_event_")) return "time";
   if (functionName.startsWith("reminder_")) return "time";
   if (functionName.startsWith("schedule_job_")) return "time";
   if (functionName.startsWith("today_brief_")) return "time";
@@ -572,6 +573,43 @@ export function buildToolSchemas(
     {
       type: "function",
       function: {
+        name: "calendar_event_create",
+        description: "Create a calendar event for a meeting, review, appointment, or fixed time block. By default, also creates a user-facing reminder 15 minutes before the event unless createReminder is false.",
+        parameters: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Short calendar event title shown in Time Center." },
+            description: { type: "string", description: "Optional event details." },
+            startsAt: { type: "string", description: "Event start time in ISO-8601 format." },
+            endsAt: { type: "string", description: "Optional event end time in ISO-8601 format. If omitted, durationMinutes or 60 minutes is used." },
+            durationMinutes: { type: "number", description: "Optional duration in minutes when endsAt is unknown. Defaults to 60." },
+            timezone: { type: "string", description: "Optional IANA timezone. Defaults to the current local time policy timezone." },
+            ownerScope: { type: "string", enum: ["personal", "silicon_person"], description: "Event owner scope. Defaults to personal." },
+            ownerId: { type: "string", description: "Optional owner id when the event belongs to a silicon person." },
+            location: { type: "string", description: "Optional meeting location or link." },
+            reminderMinutesBefore: { type: "number", description: "Minutes before startsAt to create the reminder. Defaults to 15. Use 0 or createReminder=false to skip." },
+            reminderAt: { type: "string", description: "Optional explicit reminder trigger time in ISO-8601 format. Overrides reminderMinutesBefore." },
+            createReminder: { type: "boolean", description: "Whether to create a pre-event reminder. Defaults to true." },
+          },
+          required: ["title", "startsAt"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "calendar_event_list",
+        description: "List saved calendar events from the local desktop time center.",
+        parameters: {
+          type: "object",
+          properties: {},
+          required: [],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "reminder_create",
         description: "Create a user-facing reminder for a specific future time. Use this when the assistant should notify the user later, not when the system should execute autonomous work.",
         parameters: {
@@ -997,6 +1035,9 @@ export function functionNameToToolId(name: string): string {
   if (name === "skill_view") {
     return "skill.view";
   }
+  if (name.startsWith("calendar_event_")) {
+    return "calendar_event." + name.slice("calendar_event_".length);
+  }
   if (name.startsWith("schedule_job_")) {
     return "schedule_job." + name.slice("schedule_job_".length);
   }
@@ -1119,6 +1160,8 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
     case "task.list":
     case "task.get":
     case "task.update":
+    case "calendar_event.create":
+    case "calendar_event.list":
     case "reminder.create":
     case "reminder.list":
     case "schedule_job.create":

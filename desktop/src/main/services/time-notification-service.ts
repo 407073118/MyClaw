@@ -3,14 +3,23 @@ import { Notification } from "electron";
 import type { AvailabilityPolicy } from "@shared/contracts";
 
 type ReminderLike = {
+  id?: string;
   title: string;
   body?: string;
   timezone?: string;
 };
 
+export type TimeReminderDeliveredPayload = {
+  id?: string;
+  title: string;
+  body?: string;
+  deliveredAt: string;
+};
+
 export type TimeNotificationServiceDeps = {
   now?: () => Date;
   send?: (title: string, body?: string) => Promise<void>;
+  onDelivered?: (payload: TimeReminderDeliveredPayload) => Promise<void> | void;
 };
 
 export type TimeNotificationService = ReturnType<typeof createTimeNotificationService>;
@@ -54,6 +63,7 @@ export function createTimeNotificationService(deps: TimeNotificationServiceDeps 
   const send = deps.send ?? (async (title: string, body?: string) => {
     new Notification({ title, body }).show();
   });
+  const onDelivered = deps.onDelivered;
 
   return {
     /**
@@ -72,9 +82,30 @@ export function createTimeNotificationService(deps: TimeNotificationServiceDeps 
         return false;
       }
 
-      await send(reminder.title, reminder.body);
-      console.info("[time-notification] 已发送提醒通知", { title: reminder.title });
-      return true;
+      let nativeDelivered = false;
+      try {
+        await send(reminder.title, reminder.body);
+        nativeDelivered = true;
+        console.info("[time-notification] 已发送系统提醒通知", { title: reminder.title });
+      } catch (error) {
+        console.warn("[time-notification] 系统提醒通知发送失败，继续发送应用内提醒", {
+          title: reminder.title,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      if (onDelivered) {
+        await onDelivered({
+          id: reminder.id,
+          title: reminder.title,
+          body: reminder.body,
+          deliveredAt: now().toISOString(),
+        });
+        console.info("[time-notification] 已发送应用内提醒事件", { title: reminder.title });
+        return true;
+      }
+
+      return nativeDelivered;
     },
   };
 }

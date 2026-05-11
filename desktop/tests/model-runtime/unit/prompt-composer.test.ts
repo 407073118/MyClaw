@@ -43,10 +43,11 @@ describe("prompt composer", () => {
     // Task planning 引导必须包含工具名和强制工作流
     expect(rendered).toContain("task_create");
     expect(rendered).toContain("Mandatory Workflow");
+    expect(rendered).toContain("calendar_event_create");
     expect(rendered).toContain("reminder_create");
     expect(rendered).toContain("schedule_job_create");
     expect(rendered).toContain("today_brief_get");
-    expect(rendered).toContain("Use `reminder_create` for user attention and `schedule_job_create` for autonomous time-based execution.");
+    expect(rendered).toContain("Use `calendar_event_create` for meetings/reviews/appointments");
   });
 
   it("adds a route-specific deep planning overlay for br-minimax responses research turns only", () => {

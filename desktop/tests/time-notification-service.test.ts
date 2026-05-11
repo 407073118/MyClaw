@@ -25,4 +25,31 @@ describe("time notification service", () => {
 
     expect(sent).toEqual([]);
   });
+
+  it("still emits an in-app reminder when native notification delivery fails", async () => {
+    const delivered: Array<{ title: string; body?: string }> = [];
+    const service = createTimeNotificationService({
+      send: async () => {
+        throw new Error("native notification unavailable");
+      },
+      onDelivered: async (payload) => {
+        delivered.push({ title: payload.title, body: payload.body });
+      },
+      now: () => new Date("2026-04-20T09:30:00.000Z"),
+    });
+
+    const result = await service.deliverReminder(
+      { title: "需求评审", body: "15 分钟后开始" } as any,
+      {
+        timezone: "Asia/Shanghai",
+        workingHours: [],
+        quietHours: { enabled: false, start: "22:00", end: "08:00" },
+        notificationWindows: [],
+        focusBlocks: [],
+      },
+    );
+
+    expect(result).toBe(true);
+    expect(delivered).toEqual([{ title: "需求评审", body: "15 分钟后开始" }]);
+  });
 });
