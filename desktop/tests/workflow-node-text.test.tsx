@@ -155,10 +155,42 @@ describe("workflow node text", () => {
       }),
     );
 
-    fireEvent.click(screen.getByTitle("{{ vars.limit }}"));
+    fireEvent.click(screen.getByTitle("{{ limit }}"));
 
     expect(onUpdateNode).toHaveBeenCalledWith(expect.objectContaining({
-      llm: expect.objectContaining({ prompt: "限制 {{ vars.limit }}" }),
+      llm: expect.objectContaining({ prompt: "限制 {{ limit }}" }),
+    }));
+  });
+
+  it("offers input variables as plain English-code prompt tokens", () => {
+    const onUpdateNode = vi.fn();
+
+    render(
+      React.createElement(WorkflowNodeEditor, {
+        node: {
+          id: "node-llm",
+          kind: "llm",
+          label: "LLM",
+          llm: {
+            prompt: "主题",
+          },
+        },
+        variableSourceOptions: [
+          {
+            id: "input.topic",
+            group: "启动输入",
+            label: "topic",
+            ref: { scope: "input", path: "topic", valueType: "string" },
+          },
+        ],
+        onUpdateNode,
+      }),
+    );
+
+    fireEvent.click(screen.getByTitle("{{ topic }}"));
+
+    expect(onUpdateNode).toHaveBeenCalledWith(expect.objectContaining({
+      llm: expect.objectContaining({ prompt: "主题 {{ topic }}" }),
     }));
   });
 

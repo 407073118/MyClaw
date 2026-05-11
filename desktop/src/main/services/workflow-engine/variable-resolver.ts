@@ -36,6 +36,15 @@ function stringifyTemplateValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** 从常用变量域按英文 code 兜底读取，支持用户直接写 {{ topic }}。 */
+function readPlainVariableCode(path: string, state: WorkflowStateLike): unknown {
+  for (const scopeName of ["inputs", "vars", "outputs", "secrets"]) {
+    const value = readWorkflowPath(state.get(scopeName), path);
+    if (value !== undefined) return value;
+  }
+  return undefined;
+}
+
 /** 从 state 根对象或临时输入里解析表达式路径。 */
 export function resolveWorkflowPathExpression(
   expression: string,
@@ -61,6 +70,11 @@ export function resolveWorkflowPathExpression(
 
   if (state.has(path)) {
     return state.get(path);
+  }
+
+  const plainVariableValue = readPlainVariableCode(path, state);
+  if (plainVariableValue !== undefined) {
+    return plainVariableValue;
   }
 
   return readWorkflowPath(Object.fromEntries(state), path);

@@ -104,7 +104,7 @@ function collectUpstreamNodeIds(definition: WorkflowDefinition, nodeId: string |
   return upstream;
 }
 
-/** 把工作流变量定义、系统变量和上游节点输出整理成节点参数选择器可消费的选项。 */
+/** 把工作流变量定义和上游节点输出整理成节点参数选择器可消费的选项。 */
 function buildVariableSourceOptions(
   definition: WorkflowDefinition,
   selectedNodeId: string | null,
@@ -120,10 +120,10 @@ function buildVariableSourceOptions(
   }
 
   for (const variable of definition.variables ?? []) {
-    if (variable.scope !== "input" && variable.scope !== "run" && variable.scope !== "system" && variable.scope !== "secret") {
+    if (variable.scope !== "input" && variable.scope !== "run" && variable.scope !== "secret") {
       continue;
     }
-    const group = variable.scope === "input" ? "启动输入" : variable.scope === "run" ? "全局变量" : variable.scope === "system" ? "系统变量" : "密钥变量";
+    const group = variable.scope === "input" ? "启动输入" : variable.scope === "run" ? "全局变量" : "密钥变量";
     addOption(group, variable.label || variable.key, {
       scope: variable.scope,
       path: variable.path || variable.key,
@@ -177,10 +177,6 @@ function buildVariableSourceOptions(
       });
     }
   }
-
-  addOption("系统变量", "Run ID", { scope: "system", path: "runId", valueType: "string" });
-  addOption("系统变量", "Workflow ID", { scope: "system", path: "workflowId", valueType: "string" });
-  addOption("系统变量", "Started At", { scope: "system", path: "startedAt", valueType: "string" });
 
   return options;
 }

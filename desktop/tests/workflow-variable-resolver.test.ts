@@ -36,4 +36,9 @@ describe("workflow variable resolver", () => {
     expect(renderWorkflowTemplate("id={{ inputs.payload.id }} tokens={{ nodes.llm_1.usage.totalTokens }}", state))
       .toBe("id=42 tokens=8");
   });
+
+  it("renders plain English-code variables from input and run scopes", () => {
+    expect(renderWorkflowTemplate("topic={{ topic }} retries={{ retries }}", state))
+      .toBe("topic=季度复盘 retries=2");
+  });
 });

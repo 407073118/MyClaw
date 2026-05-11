@@ -205,12 +205,15 @@ describe("WorkflowStudioPage", () => {
 
     expect(screen.getByTestId("workflow-variables-dialog")).toBeTruthy();
     expect(await screen.findByTestId("workflow-variables-panel")).toBeTruthy();
-    expect(screen.getByText("启动输入")).toBeTruthy();
-    expect(screen.getByText("全局变量")).toBeTruthy();
-    expect(screen.getByText("最终输出")).toBeTruthy();
-    expect(screen.getByText("inputs.topic")).toBeTruthy();
-    expect(screen.getByText("vars.limit")).toBeTruthy();
-    expect(screen.getByText("outputs.summary")).toBeTruthy();
+    expect(screen.getByText("中文名")).toBeTruthy();
+    expect(screen.getByText("英文名")).toBeTruthy();
+    expect(screen.getByText("字段类型")).toBeTruthy();
+    expect(screen.getByDisplayValue("topic")).toBeTruthy();
+    expect(screen.getByDisplayValue("limit")).toBeTruthy();
+    expect(screen.getByDisplayValue("summary")).toBeTruthy();
+    expect(screen.queryByText("inputs.topic")).toBeNull();
+    expect(screen.queryByText("vars.limit")).toBeNull();
+    expect(screen.queryByText("outputs.summary")).toBeNull();
   });
 
   it("can create a run variable from the workflow variables dialog", async () => {
@@ -219,7 +222,7 @@ describe("WorkflowStudioPage", () => {
     render(React.createElement(WorkflowStudioPage));
 
     fireEvent.click(await screen.findByTestId("workflow-canvas-variables-button"));
-    fireEvent.click(await screen.findByTestId("workflow-variables-add-run"));
+    fireEvent.click(screen.getByRole("button", { name: "新增变量" }));
 
     expect(mocks.workspace.updateWorkflow).toHaveBeenCalledWith(
       "workflow-1",
@@ -227,7 +230,7 @@ describe("WorkflowStudioPage", () => {
         variables: expect.arrayContaining([
           expect.objectContaining({
             scope: "run",
-            key: expect.stringMatching(/^var_/),
+            key: expect.stringMatching(/^variable_/),
           }),
         ]),
       }),

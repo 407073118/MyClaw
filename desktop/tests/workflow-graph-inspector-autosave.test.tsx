@@ -83,4 +83,24 @@ describe("WorkflowGraphInspector autosave", () => {
     expect(payload.nodes.find((node: { id: string }) => node.id === "node-llm")?.label).toBe("Auto Saved LLM");
     expect(screen.getByTestId("workflow-graph-inspector-save-state").textContent).toContain("自动保存");
   });
+
+  it("does not expose synthetic system variables on a new workflow", async () => {
+    const { default: WorkflowGraphInspector } = await import("../src/renderer/components/workflow/WorkflowGraphInspector");
+    render(
+      React.createElement(WorkflowGraphInspector, {
+        workflowId: "workflow-1",
+        definition: mocks.definition,
+        selectedNodeId: "node-llm",
+        selectedEdgeId: null,
+        compact: true,
+      }),
+    );
+
+    await screen.findByTestId("workflow-node-editor-label");
+
+    expect(screen.queryByText("系统变量")).toBeNull();
+    expect(screen.queryByText("Run ID")).toBeNull();
+    expect(screen.queryByText("Workflow ID")).toBeNull();
+    expect(screen.queryByText("Started At")).toBeNull();
+  });
 });

@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, Search } from "lucide-react";
 import type {
   WorkflowDefinition,
@@ -14,6 +15,13 @@ type VariableRow = {
   chineseName: string;
   englishName: string;
   fieldType: WorkflowStateValueType | "file";
+};
+
+type FieldTypeMenuState = {
+  rowId: string;
+  top: number;
+  left: number;
+  width: number;
 };
 
 interface WorkflowVariablesPanelProps {
@@ -32,6 +40,10 @@ const fieldTypeOptions: Array<{ value: WorkflowStateValueType | "file"; label: s
   { value: "unknown", label: "未知" },
 ];
 
+const fieldTypeMenuMargin = 8;
+const fieldTypeMenuMinWidth = 128;
+const fieldTypeMenuEstimatedHeight = fieldTypeOptions.length * 30 + 12;
+
 /** 返回字段类型的中文名称，变量中心不暴露底层类型枚举。 */
 function getFieldTypeLabel(value: WorkflowStateValueType | "file"): string {
   return fieldTypeOptions.find((option) => option.value === value)?.label ?? value;
@@ -40,6 +52,24 @@ function getFieldTypeLabel(value: WorkflowStateValueType | "file"): string {
 /** 生成适合系统保存的英文变量名，避免空 key 进入 workflow definition。 */
 function createVariableKey(): string {
   return `variable_${Date.now().toString(36)}`;
+}
+
+/** 根据触发按钮位置计算浮层坐标，底部空间不足时自动向上展开。 */
+function computeFieldTypeMenuPosition(rect: DOMRect): Omit<FieldTypeMenuState, "rowId"> {
+  const viewportHeight = window.innerHeight || 720;
+  const viewportWidth = window.innerWidth || 1024;
+  const width = Math.max(rect.width, fieldTypeMenuMinWidth);
+  const hasEnoughSpaceBelow = viewportHeight - rect.bottom >= fieldTypeMenuEstimatedHeight + fieldTypeMenuMargin;
+  const belowTop = rect.bottom + 4;
+  const aboveTop = rect.top - fieldTypeMenuEstimatedHeight - 4;
+  const top = hasEnoughSpaceBelow
+    ? Math.min(belowTop, viewportHeight - fieldTypeMenuEstimatedHeight - fieldTypeMenuMargin)
+    : Math.max(fieldTypeMenuMargin, aboveTop);
+  const left = Math.max(
+    fieldTypeMenuMargin,
+    Math.min(rect.left, viewportWidth - width - fieldTypeMenuMargin),
+  );
+  return { top, left, width };
 }
 
 /** 把 workflow definition 里的变量定义压平成简单字段表。 */
@@ -94,7 +124,7 @@ export default function WorkflowVariablesPanel({
   onUpdateDefinition,
 }: WorkflowVariablesPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [openFieldTypeRowId, setOpenFieldTypeRowId] = useState<string | null>(null);
+  const [fieldTypeMenu, setFieldTypeMenu] = useState<FieldTypeMenuState | null>(null);
 
   const rows = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -103,6 +133,35 @@ export default function WorkflowVariablesPanel({
       return `${row.chineseName} ${row.englishName}`.toLowerCase().includes(query);
     });
   }, [definition, searchQuery]);
+
+  /** 监听外部滚动、窗口变化和外部点击，避免浮层停留在错误坐标。 */
+  useEffect(() => {
+    if (!fieldTypeMenu) return;
+
+    function closeFloatingMenu() {
+      console.info("[workflow] 关闭变量字段类型浮层", {
+        workflowId: definition.id,
+        rowId: fieldTypeMenu?.rowId,
+      });
+      setFieldTypeMenu(null);
+    }
+
+    function handleDocumentMouseDown(event: MouseEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest(".workflow-variables-panel__type-menu")) return;
+      if (target?.closest(".workflow-variables-panel__type-trigger")) return;
+      closeFloatingMenu();
+    }
+
+    document.addEventListener("mousedown", handleDocumentMouseDown);
+    window.addEventListener("resize", closeFloatingMenu);
+    window.addEventListener("scroll", closeFloatingMenu, true);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentMouseDown);
+      window.removeEventListener("resize", closeFloatingMenu);
+      window.removeEventListener("scroll", closeFloatingMenu, true);
+    };
+  }, [definition.id, fieldTypeMenu]);
 
   /** 新增一条普通变量，默认只需要用户改中文名和英文名。 */
   function handleCreateVariable() {
@@ -177,15 +236,20 @@ export default function WorkflowVariablesPanel({
   }
 
   /** 切换字段类型菜单，避免原生 select 在深色弹窗里使用系统浅色下拉样式。 */
-  function handleToggleFieldTypeMenu(row: VariableRow) {
-    const nextRowId = openFieldTypeRowId === row.id ? null : row.id;
+  function handleToggleFieldTypeMenu(row: VariableRow, trigger: HTMLElement) {
+    const nextMenu = fieldTypeMenu?.rowId === row.id
+      ? null
+      : {
+          rowId: row.id,
+          ...computeFieldTypeMenuPosition(trigger.getBoundingClientRect()),
+        };
     console.info("[workflow] 切换变量字段类型菜单", {
       workflowId: definition.id,
       rowId: row.id,
       scope: row.scope,
-      opened: Boolean(nextRowId),
+      opened: Boolean(nextMenu),
     });
-    setOpenFieldTypeRowId(nextRowId);
+    setFieldTypeMenu(nextMenu);
   }
 
   /** 选择字段类型后复用字段表更新流程，并关闭自绘下拉菜单。 */
@@ -197,7 +261,7 @@ export default function WorkflowVariablesPanel({
       fieldType,
     });
     patchVariableRow(row, { fieldType });
-    setOpenFieldTypeRowId(null);
+    setFieldTypeMenu(null);
   }
 
   /** 删除变量字段；变量中心只删除字段定义，不处理运行时历史值。 */
@@ -288,11 +352,6 @@ export default function WorkflowVariablesPanel({
                 <span
                   role="cell"
                   className="workflow-variables-panel__type-cell"
-                  onBlur={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                      setOpenFieldTypeRowId(null);
-                    }
-                  }}
                 >
                   <button
                     type="button"
@@ -300,19 +359,30 @@ export default function WorkflowVariablesPanel({
                     data-testid={`workflow-variable-field-type-${row.id}`}
                     aria-label="字段类型"
                     aria-haspopup="listbox"
-                    aria-expanded={openFieldTypeRowId === row.id}
-                    onClick={() => handleToggleFieldTypeMenu(row)}
+                    aria-expanded={fieldTypeMenu?.rowId === row.id}
+                    onClick={(event) => handleToggleFieldTypeMenu(row, event.currentTarget)}
                     onKeyDown={(event) => {
                       if (event.key === "Escape") {
-                        setOpenFieldTypeRowId(null);
+                        setFieldTypeMenu(null);
                       }
                     }}
                   >
                     <span>{getFieldTypeLabel(row.fieldType)}</span>
                     <ChevronDown size={14} aria-hidden="true" />
                   </button>
-                  {openFieldTypeRowId === row.id && (
-                    <div className="workflow-variables-panel__type-menu" role="listbox" aria-label="字段类型">
+                  {fieldTypeMenu?.rowId === row.id && createPortal(
+                    <div
+                      className="workflow-variables-panel__type-menu"
+                      role="listbox"
+                      aria-label="字段类型"
+                      style={{
+                        position: "fixed",
+                        top: fieldTypeMenu.top,
+                        left: fieldTypeMenu.left,
+                        width: fieldTypeMenu.width,
+                        zIndex: 500,
+                      }}
+                    >
                       {fieldTypeOptions.map((option) => (
                         <button
                           key={option.value}
@@ -326,7 +396,8 @@ export default function WorkflowVariablesPanel({
                           {option.label}
                         </button>
                       ))}
-                    </div>
+                    </div>,
+                    document.body,
                   )}
                 </span>
               ) : (
@@ -471,11 +542,6 @@ export default function WorkflowVariablesPanel({
           color: var(--text-secondary);
         }
         .workflow-variables-panel__type-menu {
-          position: absolute;
-          z-index: 20;
-          top: calc(100% - 2px);
-          left: 10px;
-          right: 10px;
           display: flex;
           flex-direction: column;
           padding: 5px;

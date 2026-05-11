@@ -116,11 +116,9 @@ function formatNodeChoiceLabel(nodeId: string, nodeLabelOptions: WorkflowNodeLab
 
 /** 把结构化变量引用转换成模板 token，供 prompt、HTTP body 等文本字段插入。 */
 function formatVariableToken(ref: WorkflowVariableRef): string {
-  if (ref.scope === "input") return `{{ inputs.${ref.path} }}`;
-  if (ref.scope === "run") return `{{ vars.${ref.path} }}`;
-  if (ref.scope === "system") return `{{ sys.${ref.path} }}`;
-  if (ref.scope === "output") return `{{ outputs.${ref.path} }}`;
-  if (ref.scope === "secret") return `{{ secrets.${ref.path} }}`;
+  if (ref.scope === "input" || ref.scope === "run" || ref.scope === "system" || ref.scope === "output" || ref.scope === "secret") {
+    return `{{ ${ref.path} }}`;
+  }
   return `{{ nodes.${ref.nodeId ?? ""}.${ref.path} }}`;
 }
 
@@ -267,11 +265,6 @@ export default function WorkflowNodeEditor({
         group: "运行变量",
         label: fieldKey,
         token: `{{ ${fieldKey} }}`,
-      });
-      addItem({
-        group: "开始输入",
-        label: `inputs.${fieldKey}`,
-        token: `{{ inputs.${fieldKey} }}`,
       });
     }
     for (const upstreamNodeId of upstreamCandidateNodeIds) {

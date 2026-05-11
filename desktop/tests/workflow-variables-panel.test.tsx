@@ -91,4 +91,61 @@ describe("WorkflowVariablesPanel", () => {
       ],
     });
   });
+
+  it("renders the field type menu as a fixed overlay that can open upward", () => {
+    const onUpdateDefinition = vi.fn();
+
+    Object.defineProperty(window, "innerHeight", { value: 200, configurable: true });
+
+    render(
+      React.createElement(WorkflowVariablesPanel, {
+        definition: {
+          id: "workflow-1",
+          name: "Variables",
+          description: "variables",
+          version: 1,
+          status: "draft",
+          source: "personal",
+          updatedAt: "2026-05-09T00:00:00.000Z",
+          nodeCount: 0,
+          edgeCount: 0,
+          libraryRootId: "root-1",
+          entryNodeId: "start",
+          nodes: [{ id: "start", kind: "start", label: "Start" }],
+          edges: [],
+          stateSchema: [],
+          variables: [
+            {
+              id: "run-limit",
+              key: "limit",
+              label: "条数限制",
+              scope: "run",
+              valueType: "number",
+            },
+          ],
+        },
+        onUpdateDefinition,
+      }),
+    );
+
+    const fieldTypeTrigger = screen.getByTestId("workflow-variable-field-type-run-limit");
+    vi.spyOn(fieldTypeTrigger, "getBoundingClientRect").mockReturnValue({
+      x: 320,
+      y: 160,
+      top: 160,
+      left: 320,
+      right: 460,
+      bottom: 190,
+      width: 140,
+      height: 30,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent.click(fieldTypeTrigger);
+
+    const menu = screen.getByRole("listbox", { name: "字段类型" });
+    expect(menu.style.position).toBe("fixed");
+    expect(Number.parseFloat(menu.style.top)).toBeLessThan(160);
+    expect(menu.style.zIndex).toBe("500");
+  });
 });
