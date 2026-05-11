@@ -1,4 +1,4 @@
-import { ipcMain, webContents } from "electron";
+import { ipcMain, shell, webContents } from "electron";
 import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
@@ -37,8 +37,10 @@ import { isTerminalBackgroundTaskStatus, syncSessionBackgroundTaskSnapshot } fro
 import { syncSiliconPersonExecutionResult } from "../services/silicon-person-session";
 import { getOrCreateWorkspace } from "../services/silicon-person-workspace";
 import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
+import { getContinuableTasks, isAssistantWaitingForUserInput, markActiveTasksWaitingForUser } from "../services/task-continuation";
 import { createTask, listTasks, getTask, updateTask, clearCompletedTasks } from "../services/task-store";
 import type { TaskCreateInput, TaskUpdateInput } from "../services/task-store";
+import type { TimeSnapshot } from "../services/time-application-service";
 
 type ComputerHarnessBrowser = Parameters<typeof createComputerActionHarness>[0]["browser"];
 
@@ -81,7 +83,7 @@ const PARALLEL_LIMIT = 10;
 
 /** 仅执行读取操作、可安全并行运行的工具集合。 */
 const READ_ONLY_TOOLS = new Set([
-  "fs.read", "fs.list", "fs.search", "fs.find",
+  "fs.read", "fs.list", "fs.search", "fs.find", "file.view",
   "git.status", "git.diff", "git.log", "task.list", "task.get",
   "reminder.list", "schedule_job.list", "today_brief.get",
   "web.search", "http.fetch",  // 网络只读操作，可安全并行
@@ -95,6 +97,7 @@ export function isReadOnlyTool(toolId: string): boolean {
   if (READ_ONLY_TOOLS.has(toolId)) return true;
   if (toolId.startsWith("skill_invoke__")) return true;
   if (toolId === "skill.view") return true;
+  if (toolId === "file.view") return true;
   return false;
 }
 
@@ -123,6 +126,10 @@ function countConsecutiveRepeats(signatures: string[]): number {
 
 /** 共享的工具执行器实例（维护内存中的任务列表状态）。 */
 const toolExecutor = new BuiltinToolExecutor();
+toolExecutor.setFileActionHandlers({
+  openPath: (path) => shell.openPath(path),
+  revealPath: (path) => shell.showItemInFolder(path),
+});
 
 /** 每个 chatSession 保留一份 PathAccessPolicy，跨消息累积 T2 / 缓存决策。 */
 const sessionPathPolicies = new Map<string, PathAccessPolicy>();
@@ -235,6 +242,7 @@ function getToolRisk(toolId: string, toolName: string): ToolRiskCategory {
   // Skill 默认按 Read 风险处理
   if (toolId.startsWith("skill_invoke__")) return ToolRiskCategory.Read;
   if (toolId === "skill.view") return ToolRiskCategory.Read;
+  if (toolId === "file.view") return ToolRiskCategory.Read;
   // MCP 工具：根据名称推断风险
   if (toolName.startsWith("mcp__")) return ToolRiskCategory.Write;
   return ToolRiskCategory.Read;
@@ -263,6 +271,7 @@ type SendMessageInput = {
 
 type SessionPayload = {
   session: ChatSession;
+  time?: TimeSnapshot;
   approvalRequests?: unknown[];
 };
 
@@ -780,6 +789,7 @@ function buildSessionPromptSections(input: {
       layer: "context",
       content: [
         "Execute tasks strictly in order. Complete each task before starting the next one.",
+        "If a task is waiting_user, resume it only after the user answers, then set it back to in_progress before continuing.",
         ...taskLines,
       ].join("\n"),
     });
@@ -1106,13 +1116,14 @@ function buildSystemPrompt(
     parts.push(`3. **Execute** — Work through tasks one by one: \`task_update(id, status: "in_progress")\` → do the work → \`task_update(id, status: "completed")\``);
     parts.push(`\n## Tools`);
     parts.push(`- \`task_create({ subject, description, activeForm })\` — subject: imperative (e.g. "修复登录Bug"), activeForm: present continuous (e.g. "正在修复登录Bug"). Always provide activeForm.`);
-    parts.push(`- \`task_update({ id, status })\` — Mark "in_progress" before starting, "completed" immediately after finishing.`);
+    parts.push(`- \`task_update({ id, status })\` — Mark "in_progress" before starting, "waiting_user" after asking the user to choose or clarify, and "completed" immediately after finishing.`);
     parts.push(`- \`task_list()\` / \`task_get({ id })\` — Check current task state.`);
-    parts.push(`- **Status flow**: pending → in_progress → completed. Only ONE task can be in_progress at a time.`);
+    parts.push(`- **Status flow**: pending → in_progress → completed. Use waiting_user as a pause state when the next step requires the user's answer. Only ONE task can be in_progress at a time.`);
     parts.push(`\n## Key Rules`);
     parts.push(`- **Plan first, execute second** — Create ALL tasks before starting the first one. Let the user see the full plan.`);
     parts.push(`- **Even single-step requests get a task** — Creating a task signals "I understood your request and here's what I'll do."`);
     parts.push(`- **Discover new steps? Add tasks** — If you find additional work during execution, create new tasks to track it.`);
+    parts.push(`- **Clarification UX** — If you need multiple choices or several fields from the user, output a \`\`\`a2ui JSON form with select/text fields instead of plain markdown checkboxes. Stop after the question and wait for the user's submission.`);
     parts.push(`- **Skip tasks ONLY for**: direct factual Q&A, greetings, or clarification questions.`);
     if (effort === "high") {
       parts.push(`\n## Deep Reasoning Protocol (MANDATORY)`);
@@ -1128,6 +1139,7 @@ function buildSystemPrompt(
   parts.push(`\n# Tools`);
   parts.push(`## Files`);
   parts.push(`- \`fs_read\` — Read file contents. **Always read before editing.**`);
+  parts.push(`- \`file_view\` — Open/view a local file in the right-side panel without placing its body in model context.`);
   parts.push(`- \`fs_edit\` — Replace a specific string in a file (preferred for partial edits).`);
   parts.push(`- \`fs_write\` — Create new files or full rewrites only.`);
   parts.push(`- \`fs_list\` / \`fs_find\` / \`fs_search\` — List dirs, find files by glob, grep text.`);
@@ -2397,6 +2409,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       let terminalStatus: ChatRunStatus = "failed";
       let terminalReason: string | null = null;
       let activePlanTaskId: string | null = null;
+      let timeStateMutated = false;
 
       getActiveSessionRuns(ctx).set(sessionId, activeRun);
       syncChatRunState(session, sessionId, activeRun, {
@@ -3413,6 +3426,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   toolOutput = timeResult.output;
                   toolSucceeded = timeResult.success;
                   if (!timeResult.success) failureReason = timeResult.error;
+                  if (timeResult.mutated) timeStateMutated = true;
                 } else if (toolCall.name.startsWith("mcp__")) {
                   const mcpTool = mcpTools.find((t) => {
                     const safeName = t.id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -3769,6 +3783,24 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               }
             }
 
+            const isWaitingForUserInput = !isBackgroundHandoff && isAssistantWaitingForUserInput(result.content ?? "");
+            if (isWaitingForUserInput && session.tasks && session.tasks.length > 0) {
+              const waitingResult = markActiveTasksWaitingForUser(session.tasks, "助手正在等待用户补充或选择");
+              if (waitingResult.changed) {
+                session.tasks = waitingResult.tasks;
+                broadcastToRenderers("session:stream", {
+                  type: EventType.TasksUpdated,
+                  sessionId,
+                  tasks: session.tasks,
+                });
+                broadcastToRenderers("session:stream", {
+                  type: EventType.SessionUpdated,
+                  sessionId,
+                  session,
+                });
+              }
+            }
+
             if (!isPlanTaskBlocked(session, activePlanTaskId)) {
               markPlanTaskCompleted(session, activePlanTaskId, new Date().toISOString());
               if (session.planModeState?.mode === "executing") {
@@ -3810,9 +3842,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
             // ---- Task V2 续行：模型停止但仍有未完成任务时自动推进 ----
             // 仅在 Plan Mode 未接管执行时生效，避免与 Plan Mode 的续行逻辑冲突
-            const unfinishedV2Tasks = (session.tasks ?? []).filter(
-              (t) => t.status !== "completed",
-            );
+            const unfinishedV2Tasks = getContinuableTasks(session.tasks ?? []);
             const isPlanModeManagingExecution = session.planModeState?.mode === "executing";
             if (
               unfinishedV2Tasks.length > 0 &&
@@ -3936,7 +3966,10 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       });
 
       // 将更新后的消息持久化到磁盘
-      return { session };
+      const time = timeStateMutated && ctx.services.timeApplication
+        ? await ctx.services.timeApplication.getSnapshot()
+        : undefined;
+      return time ? { session, time } : { session };
   };
 
   registeredSessionSendMessageBridge = (sessionId, input) =>

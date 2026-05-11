@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useAuthStore } from "@/stores/auth";
 import { useWorkspaceStore } from "@/stores/workspace";
 import type { AsrConfig, ProtocolTarget } from "@shared/contracts";
 import { DEFAULT_ASR_CONFIG } from "@shared/contracts";
@@ -7,7 +8,7 @@ import { readBrMiniMaxRuntimeDiagnostics } from "@shared/br-minimax";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
 import { formatCapabilitySource } from "../utils/context-ui-helpers";
 import { getModelVendorLabel } from "../utils/model-profile-display";
-import { Box, Sliders, ShieldCheck, Mic, ChevronRight, CheckCircle2, AlertCircle } from "lucide-react";
+import { Box, Sliders, ShieldCheck, Mic, ChevronRight, CheckCircle2, AlertCircle, UserCog, Sparkles, LogOut } from "lucide-react";
 
 type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
 
@@ -46,6 +47,7 @@ const TABS = [
   { id: "通用", label: "通用偏好", icon: Sliders },
   { id: "审批", label: "执行与审批策略", icon: ShieldCheck },
   { id: "语音识别", label: "ASR 语音识别", icon: Mic },
+  { id: "账户", label: "账户与个性", icon: UserCog },
 ] as const;
 
 type TabName = typeof TABS[number]["id"];
@@ -53,6 +55,7 @@ type TabName = typeof TABS[number]["id"];
 export default function SettingsPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const auth = useAuthStore();
   const workspace = useWorkspaceStore();
   const defaultApprovalPolicy = createDefaultApprovalPolicy();
   const locationState = location.state as { activeTab?: TabName; modelConfigNotice?: string } | null;
@@ -127,6 +130,17 @@ export default function SettingsPage() {
     downloadPageUrl: null,
   };
   const appUpdateSourceLabel = appUpdate.feedLabel ?? "未配置公开发布仓库";
+  const currentUserDisplayName = auth.session?.user?.displayName ?? "未登录用户";
+  const currentUserAccount = auth.session?.user?.account ?? "未绑定账号";
+
+  /** 从设置页退出当前账号，并记录账号信息便于排查登录状态。 */
+  async function handleSettingsLogout() {
+    console.info("[settings] 用户从设置页请求退出登录", {
+      account: auth.session?.user?.account ?? null,
+    });
+    await auth.logout();
+    void navigate("/login", { replace: true });
+  }
 
   async function testModelProfile(profileId: string) {
     setModelConnectivityLoading((prev) => ({ ...prev, [profileId]: true }));
@@ -307,19 +321,27 @@ export default function SettingsPage() {
               </div>
 
               {/* 高密度列表视图改良：去掉巨型网格，采用行或更紧凑的卡片 */}
-              <div data-testid="model-cards-container" className="model-rows-container">
+              <div data-testid="model-cards-container" className="model-rows-container single-column">
                 {(workspace.models ?? []).map((profile: any) => (
                   <div key={profile.id} className={`model-row-card ${workspace.defaultModelProfileId === profile.id ? "is-active" : ""}`}>
                     <div className="row-card-left">
                       <div className="model-row-header">
-                        <strong className="model-name">{profile.name}</strong>
-                        {workspace.defaultModelProfileId === profile.id && (
-                          <span className="badge badge-active">当前默认</span>
-                        )}
-                        <span className="badge badge-provider">{getProviderLabel(profile)}</span>
-                        {formatProtocolTargetLabel(profile.protocolTarget) && (
-                          <span className="badge badge-route">{formatProtocolTargetLabel(profile.protocolTarget)}</span>
-                        )}
+                        <strong data-testid="model-name-title" className="model-name">{profile.name}</strong>
+                        <div data-testid="model-name-tags" className="model-name-tags">
+                          {workspace.defaultModelProfileId === profile.id && (
+                            <span className="badge badge-active">当前默认</span>
+                          )}
+                          <span className="badge badge-provider">{getProviderLabel(profile)}</span>
+                          {formatProtocolTargetLabel(profile.protocolTarget) && (
+                            <span className="badge badge-route">{formatProtocolTargetLabel(profile.protocolTarget)}</span>
+                          )}
+                          {formatProtocolSelectionSourceLabel(profile.protocolSelectionSource) && (
+                            <span className="badge badge-source">{formatProtocolSelectionSourceLabel(profile.protocolSelectionSource)}</span>
+                          )}
+                          {profile.discoveredCapabilities?.source && (
+                            <span className="badge badge-source">{formatCapabilitySource(profile.discoveredCapabilities.source)}</span>
+                          )}
+                        </div>
                       </div>
                       <div className="model-row-meta">
                         <span className="meta-item">ID: <code>{profile.model || "--"}</code></span>
@@ -361,7 +383,7 @@ export default function SettingsPage() {
                 ))}
               </div>
 
-              <div className="settings-group-panel">
+              <div data-testid="app-update-section" className="settings-group-panel">
                 <h4>应用更新 (桌面端版本)</h4>
                 <div className="panel-grid meta-grid">
                   <div className="meta-field">
@@ -379,7 +401,7 @@ export default function SettingsPage() {
                     </div>
                   )}
                 </div>
-                <p className="update-status-text">{appUpdate.message}</p>
+                <p data-testid="app-update-status" className="update-status-text">{appUpdate.message}</p>
                 <div className="update-actions">
                   {renderAppUpdatePrimaryAction()}
                   {appUpdate.downloadPageUrl && (
@@ -610,6 +632,80 @@ export default function SettingsPage() {
               </div>
             </div>
           )}
+
+          {/* ---- 账户与个性 ---- */}
+          {activeTab === "账户" && (
+            <div className="settings-section account-settings-section" data-density="compact">
+              <p className="description">管理当前登录状态，以及会影响助手长期理解的个人偏好。</p>
+
+              <div data-testid="settings-account-summary" className="settings-group-panel account-summary-panel">
+                <h4>当前账号</h4>
+                <div className="list-row list-row--with-avatar account-summary-row">
+                  <span className="list-row__lead">
+                    <span className="list-row__avatar account-avatar">
+                      {currentUserDisplayName.charAt(0).toUpperCase()}
+                    </span>
+                  </span>
+                  <span className="list-row__main">
+                    <span className="list-row__title-row">
+                      <strong className="list-row__title">{currentUserDisplayName}</strong>
+                      <span className="tag tag--green">已登录</span>
+                    </span>
+                    <span className="list-row__meta-row">
+                      <span className="list-row__meta">{currentUserAccount}</span>
+                    </span>
+                  </span>
+                </div>
+              </div>
+
+              <div className="settings-group-panel account-actions-panel">
+                <h4>账户操作</h4>
+                <div className="list-rows account-action-list">
+                  <button
+                    data-testid="settings-account-personal-prompt"
+                    type="button"
+                    className="list-row account-action-row"
+                    onClick={() => navigate("/me/prompt")}
+                  >
+                    <span className="list-row__lead account-row-icon">
+                      <Sparkles size={18} />
+                    </span>
+                    <span className="list-row__main">
+                      <span className="list-row__title-row">
+                        <strong className="list-row__title">我的个性</strong>
+                        <span className="tag tag--accent">Personal</span>
+                      </span>
+                      <span className="list-row__description">维护助手的称呼、语气、偏好和长期个人上下文。</span>
+                    </span>
+                    <span className="list-row__trailing">
+                      <ChevronRight size={16} className="account-action-chevron" />
+                    </span>
+                  </button>
+
+                  <button
+                    data-testid="settings-account-logout"
+                    type="button"
+                    className="list-row account-action-row account-action-row--danger"
+                    onClick={() => void handleSettingsLogout()}
+                  >
+                    <span className="list-row__lead account-row-icon account-row-icon--danger">
+                      <LogOut size={18} />
+                    </span>
+                    <span className="list-row__main">
+                      <span className="list-row__title-row">
+                        <strong className="list-row__title">退出登录</strong>
+                        <span className="tag tag--red">Sign out</span>
+                      </span>
+                      <span className="list-row__description">结束当前本地会话，返回登录页面。</span>
+                    </span>
+                    <span className="list-row__trailing">
+                      <ChevronRight size={16} className="account-action-chevron" />
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </main>
 
@@ -788,6 +884,12 @@ export default function SettingsPage() {
           font-weight: 600;
           color: #e6edf3;
         }
+        .model-name-tags {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
         .badge {
           font-size: 10px;
           padding: 2px 8px;
@@ -798,6 +900,7 @@ export default function SettingsPage() {
         .badge-active { background: rgba(16, 163, 127, 0.15); color: #10a37f; }
         .badge-provider { background: rgba(255, 255, 255, 0.1); color: rgba(255,255,255,0.7); }
         .badge-route { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+        .badge-source { background: rgba(148, 163, 184, 0.14); color: rgba(226, 232, 240, 0.76); }
         
         .model-row-meta {
           display: flex;
@@ -845,6 +948,57 @@ export default function SettingsPage() {
           font-size: 15px;
           font-weight: 600;
           color: rgba(255,255,255,0.85);
+        }
+
+        .account-settings-section {
+          max-width: none;
+          gap: 16px;
+        }
+        .account-summary-panel,
+        .account-actions-panel {
+          gap: 12px;
+        }
+        .account-summary-row {
+          min-height: 56px;
+          cursor: default;
+        }
+        .account-summary-row:hover {
+          background: var(--bg-surface);
+          border-color: var(--row-border);
+        }
+        .account-avatar {
+          background: linear-gradient(135deg, var(--accent-cyan), #0d9668);
+        }
+        .account-action-list {
+          gap: 6px;
+        }
+        .account-action-row {
+          width: 100%;
+          min-height: 58px;
+          color: var(--text-primary);
+          cursor: pointer;
+          text-align: left;
+        }
+        .account-row-icon {
+          width: 32px;
+          height: 32px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: var(--radius-md);
+          color: var(--accent-cyan);
+          background: rgba(16, 163, 127, 0.12);
+        }
+        .account-action-chevron {
+          color: var(--text-muted);
+        }
+        .account-row-icon--danger {
+          color: var(--status-red);
+          background: rgba(239, 68, 68, 0.1);
+        }
+        .account-action-row--danger:hover {
+          background: rgba(239, 68, 68, 0.08);
+          border-color: rgba(239, 68, 68, 0.24);
         }
 
         /* Desktop Form Controls */

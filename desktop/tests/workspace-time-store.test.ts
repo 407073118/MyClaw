@@ -187,4 +187,58 @@ describe("workspace time store", () => {
     expect(useWorkspaceStore.getState().time.scheduleJobs.length).toBeGreaterThan(0);
     expect(useWorkspaceStore.getState().time.availabilityPolicy).not.toBeNull();
   });
+
+  it("merges time snapshot returned after a chat time-tool mutation", async () => {
+    const session = buildBootstrapPayload().sessions[0];
+    const createdReminder = {
+      id: "rem-from-chat",
+      kind: "reminder",
+      title: "周会提醒",
+      triggerAt: "2026-05-11T17:50:00+08:00",
+      timezone: "Asia/Shanghai",
+      ownerScope: "personal",
+      status: "scheduled",
+      source: "agent",
+      createdAt: "2026-05-11T06:36:55.878Z",
+      updatedAt: "2026-05-11T06:36:55.878Z",
+    };
+
+    useWorkspaceStore.setState({
+      ready: true,
+      loading: false,
+      activeSessionId: session.id,
+      sessions: [session],
+      currentSession: session,
+      time: {
+        calendarEvents: [],
+        taskCommitments: [],
+        reminders: [],
+        scheduleJobs: [],
+        executionRuns: [],
+        availabilityPolicy: null,
+        todayBrief: null,
+      },
+    } as any);
+    (window.myClawAPI as any).sendMessage = vi.fn().mockResolvedValue({
+      session,
+      time: {
+        calendarEvents: [],
+        taskCommitments: [],
+        reminders: [createdReminder],
+        scheduleJobs: [],
+        executionRuns: [],
+        availabilityPolicy: null,
+        todayBrief: {
+          generatedAt: "2026-05-11T06:36:55.878Z",
+          timezone: "Asia/Shanghai",
+          items: [],
+        },
+      },
+    });
+
+    await useWorkspaceStore.getState().sendMessage("我下午6点有一个周会，帮我记录一下");
+
+    expect(useWorkspaceStore.getState().time.reminders).toEqual([createdReminder]);
+    expect(useWorkspaceStore.getState().time.todayBrief?.timezone).toBe("Asia/Shanghai");
+  });
 });

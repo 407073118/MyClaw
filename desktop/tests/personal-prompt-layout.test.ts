@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 
 const mocks = vi.hoisted(() => {
@@ -45,10 +45,15 @@ describe("PersonalPromptPage layout contract", () => {
 
     const headerText = container.querySelector(".personal-prompt-header-text");
     const metaInline = container.querySelector(".header-meta-inline");
+    const view = screen.getByTestId("personal-prompt-view");
     const styleText = Array.from(container.querySelectorAll("style"))
       .map((styleNode) => styleNode.textContent ?? "")
       .join("\n");
 
+    expect(view.className).toContain("page-shell");
+    expect(view.className).not.toContain("page-container");
+    expect(container.querySelector(".page-header--sticky")).not.toBeNull();
+    expect(container.querySelector(".page-content")).not.toBeNull();
     expect(headerText).not.toBeNull();
     expect(metaInline).not.toBeNull();
     expect(headerText?.contains(metaInline)).toBe(true);

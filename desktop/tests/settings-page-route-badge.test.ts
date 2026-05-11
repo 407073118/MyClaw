@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
 
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const workspace = {
@@ -62,9 +62,20 @@ const mocks = vi.hoisted(() => {
     },
   );
 
+  const auth = {
+    session: {
+      user: {
+        displayName: "测试用户",
+        account: "tester@example.com",
+      },
+    },
+    logout: vi.fn().mockResolvedValue(undefined),
+  };
+
   return {
     workspace,
     useWorkspaceStoreMock,
+    auth,
   };
 });
 
@@ -72,7 +83,20 @@ vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
 }));
 
+vi.mock("../src/renderer/stores/auth", () => ({
+  useAuthStore: () => mocks.auth,
+}));
+
 describe("SettingsPage route badge", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as any).window ??= {};
+    (window as any).myClawAPI = {
+      getAsrConfig: vi.fn().mockResolvedValue({ config: null }),
+      saveAsrConfig: vi.fn(),
+    };
+  });
+
   afterEach(() => {
     cleanup();
   });
@@ -240,5 +264,32 @@ describe("SettingsPage route badge", () => {
     expect(screen.getByText("Qwen")).toBeTruthy();
     expect(screen.getByText("OpenAI Responses")).toBeTruthy();
     expect(screen.queryByText("openai-compatible")).toBeNull();
+  });
+
+  it("groups personal prompt and logout under account settings", async () => {
+    const { default: SettingsPage } = await import("../src/renderer/pages/SettingsPage");
+
+    const { container } = render(
+      React.createElement(
+        MemoryRouter,
+        undefined,
+        React.createElement(SettingsPage),
+      ),
+    );
+
+    fireEvent.click(screen.getByTestId("settings-tab-账户"));
+
+    const personalPromptAction = screen.getByTestId("settings-account-personal-prompt");
+
+    expect(personalPromptAction.textContent).toContain("我的个性");
+    expect(personalPromptAction.className).toContain("list-row");
+    expect(container.querySelector(".account-profile-panel")).toBeNull();
+    expect(screen.getByText("测试用户")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("settings-account-logout"));
+
+    await waitFor(() => {
+      expect(mocks.auth.logout).toHaveBeenCalledTimes(1);
+    });
   });
 });

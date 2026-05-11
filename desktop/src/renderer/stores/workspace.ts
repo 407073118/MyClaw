@@ -931,6 +931,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         };
       });
     }
+
+    if (payload?.time) {
+      set({ time: payload.time });
+    }
   },
 
   async cancelSessionRun(input) {

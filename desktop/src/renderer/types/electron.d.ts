@@ -111,6 +111,15 @@ type BootstrapPayload = {
 
 type SessionPayload = {
   session: ChatSession;
+  time?: {
+    calendarEvents: CalendarEvent[];
+    taskCommitments: TaskCommitment[];
+    reminders: Reminder[];
+    scheduleJobs: ScheduleJob[];
+    executionRuns: ExecutionRun[];
+    availabilityPolicy: AvailabilityPolicy | null;
+    todayBrief: TodayBrief | null;
+  };
   approvals?: ApprovalPolicy;
   approvalRequests?: ApprovalRequest[];
 };
@@ -470,6 +479,14 @@ declare global {
       // --- Web Panels ---
       webPanelResolvePage: (skillId: string, relativePath: string) => Promise<string | null>;
       onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void) => () => void;
+      fileViewerOpenExternal: (path: string) => Promise<{ success: boolean }>;
+      fileViewerReveal: (path: string) => Promise<{ success: boolean }>;
+      fileViewerPreview: (input: { path: string; baseDirectory?: string | null }) => Promise<{
+        success: boolean;
+        error?: string;
+        resolvedPath?: string;
+        viewMeta?: { viewPath: string; title: string; data: unknown };
+      }>;
 
       // --- Skill Files ---
       skillReadTree: (skillId: string) => Promise<import("@shared/contracts").FileTreeNode[]>;

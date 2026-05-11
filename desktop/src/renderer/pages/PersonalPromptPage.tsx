@@ -1,4 +1,5 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { FileText, Save, Sparkles, Tag, UserRound } from "lucide-react";
 import { UNSAFE_NavigationContext, useBeforeUnload } from "react-router-dom";
 
 import { useWorkspaceStore } from "../stores/workspace";
@@ -136,17 +137,20 @@ export default function PersonalPromptPage() {
   }
 
   return (
-    <main data-testid="personal-prompt-view" className="page-container personal-prompt-page">
-      <header className="page-header personal-prompt-header">
-        <div className="header-text personal-prompt-header-text">
-          <p className="eyebrow">Personality</p>
+    <div data-testid="personal-prompt-view" className="page-shell personal-prompt-page">
+      <header className="page-header page-header--sticky personal-prompt-header">
+        <div className="page-header__lead personal-prompt-header-text">
+          <div className="page-header__eyebrow">
+            <Sparkles size={14} />
+            <span>Personality</span>
+          </div>
           <div className="title-row">
-            <h2 className="page-title">我的个性</h2>
-            <span className={`header-status-chip${isDirty ? " is-dirty" : ""}`}>
+            <h2 className="page-header__title">我的个性</h2>
+            <span className={`tag ${isDirty ? "tag--yellow" : "tag--green"}`}>
               {isDirty ? "未保存" : "已同步"}
             </span>
           </div>
-          <p className="page-subtitle personal-prompt-subtitle">
+          <p className="page-header__subtitle personal-prompt-subtitle">
             维护一段长期说明，让助手持续理解你的角色、职责和协作方式。
           </p>
           <div className="header-meta-inline">
@@ -154,153 +158,137 @@ export default function PersonalPromptPage() {
             <span className="meta-inline-item">系统会自动提炼摘要和标签</span>
           </div>
         </div>
+        <div className="page-header__actions personal-prompt-actions">
+          <span className="char-count">{draft.trim().length} 字</span>
+          <button
+            data-testid="personal-prompt-save"
+            className="btn-primary save-button"
+            type="button"
+            disabled={isSaving || !isDirty}
+            onClick={() => void handleSave()}
+          >
+            <Save size={14} />
+            {isSaving ? "保存中..." : "保存"}
+          </button>
+        </div>
       </header>
 
-      <section className="prompt-layout">
-        <article className="prompt-editor-card">
-          <div className="section-head compact">
-            <div className="section-head-copy">
-              <p className="section-eyebrow">长期原文</p>
-              <h3>你的长期工作说明</h3>
-              <p className="section-helper">建议直接写角色、主要职责、常见产出，以及你希望助手如何配合你。</p>
+      <main className="page-content personal-prompt-content">
+        <section className="prompt-layout">
+          <article className="prompt-editor-panel">
+            <div className="section-head compact">
+              <div className="section-head-copy">
+                <div className="section-title-row">
+                  <FileText size={15} />
+                  <h3>你的长期工作说明</h3>
+                </div>
+                <p className="section-helper">建议直接写角色、主要职责、常见产出，以及你希望助手如何配合你。</p>
+              </div>
             </div>
-            <div className="section-head-actions">
-              <span className="char-count">{draft.trim().length} 字</span>
-              <button
-                data-testid="personal-prompt-save"
-                className="primary save-button"
-                type="button"
-                disabled={isSaving || !isDirty}
-                onClick={() => void handleSave()}
-              >
-                {isSaving ? "保存中..." : "保存个性"}
-              </button>
+
+            <textarea
+              ref={textareaRef}
+              data-testid="personal-prompt-textarea"
+              className="textarea prompt-textarea"
+              value={draft}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setSaveSuccess("");
+              }}
+              placeholder="例如：我是黑盒测试，主要负责需求测试、回归测试和上线验证。平时会看 PRD、原型、接口文档，输出测试点、测试用例和缺陷单。我希望你先帮我补齐测试思路，再帮我整理输出。"
+              rows={16}
+            />
+
+            <div className="editor-footer">
+              <div className="status-copy" role="status" aria-live="polite">
+                {saveError && <span className="error-copy">保存失败，未能更新个性设置。请重试；如果仍失败，请检查本地运行状态或重新打开工作区。</span>}
+                {!saveError && saveSuccess && <span className="success-copy">{saveSuccess}</span>}
+                {!saveError && !saveSuccess && (
+                  <span className="hint-copy">草稿保存后会用于后续对话理解。</span>
+                )}
+              </div>
             </div>
-          </div>
+          </article>
 
-          <textarea
-            ref={textareaRef}
-            data-testid="personal-prompt-textarea"
-            className="prompt-textarea"
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setSaveSuccess("");
-            }}
-            placeholder="例如：我是黑盒测试，主要负责需求测试、回归测试和上线验证。平时会看 PRD、原型、接口文档，输出测试点、测试用例和缺陷单。我希望你先帮我补齐测试思路，再帮我整理输出。"
-            rows={16}
-          />
+          <aside className="prompt-side-panel">
+            <section className="prompt-info-panel">
+              <div className="section-title-row">
+                <UserRound size={15} />
+                <h3>已提炼摘要</h3>
+              </div>
+              <p className="summary-copy">
+                {savedProfile.summary || "保存后，系统会自动生成一段简短摘要，供运行时理解使用。"}
+              </p>
+            </section>
 
-          <div className="editor-footer">
-            <div className="status-copy" role="status" aria-live="polite">
-              {saveError && <span className="error-copy">保存失败，未能更新个性设置。请重试；如果仍失败，请检查本地运行状态或重新打开工作区。</span>}
-              {!saveError && saveSuccess && <span className="success-copy">{saveSuccess}</span>}
-              {!saveError && !saveSuccess && (
-                <span className="hint-copy">支持 `Cmd/Ctrl + S` 快速保存。</span>
-              )}
-            </div>
-          </div>
-        </article>
+            <section className="prompt-info-panel">
+              <div className="section-title-row">
+                <Tag size={15} />
+                <h3>识别到的工作标签</h3>
+              </div>
+              <div className="tag-list">
+                {savedProfile.tags.length > 0 ? (
+                  savedProfile.tags.map((tag) => (
+                    <span key={tag} className="tag tag--accent">{tag}</span>
+                  ))
+                ) : (
+                  <span className="tag tag--muted">保存后自动生成</span>
+                )}
+              </div>
+            </section>
 
-        <aside className="prompt-sidebar">
-          <section className="sidebar-card">
-            <p className="section-eyebrow">系统理解</p>
-            <h3>已提炼摘要</h3>
-            <p className="summary-copy">
-              {savedProfile.summary || "保存后，系统会自动生成一段简短摘要，供运行时理解使用。"}
-            </p>
-          </section>
-
-          <section className="sidebar-card">
-            <p className="section-eyebrow">自动标签</p>
-            <h3>识别到的工作标签</h3>
-            <div className="tag-list">
-              {savedProfile.tags.length > 0 ? (
-                savedProfile.tags.map((tag) => (
-                  <span key={tag} className="tag-pill">{tag}</span>
-                ))
-              ) : (
-                <span className="empty-pill">保存后自动生成</span>
-              )}
-            </div>
-          </section>
-
-          <section className="sidebar-card">
-            <p className="section-eyebrow">参考示例</p>
-            <h3>快速起步</h3>
-            <div className="example-list">
-              {exampleDescriptors.map(({ example, title, preview }) => (
-                <button
-                  key={example}
-                  type="button"
-                  className="example-card"
-                  onClick={() => applyExample(example)}
-                >
-                  <span className="example-title">{title}</span>
-                  <span className="example-preview">{preview}</span>
-                </button>
-              ))}
-            </div>
-          </section>
-        </aside>
-      </section>
+            <section className="prompt-info-panel prompt-examples-panel">
+              <div className="section-title-row">
+                <Sparkles size={15} />
+                <h3>快速起步</h3>
+              </div>
+              <div className="list-rows example-list">
+                {exampleDescriptors.map(({ example, title, preview }) => (
+                  <button
+                    key={example}
+                    type="button"
+                    className="list-row example-card"
+                    onClick={() => applyExample(example)}
+                  >
+                    <span className="list-row__main">
+                      <span className="list-row__title">{title}</span>
+                      <span className="list-row__description">{preview}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          </aside>
+        </section>
+      </main>
 
       <style>{`
         .personal-prompt-page {
-          display: flex;
-          flex: 1;
-          flex-direction: column;
-          gap: 24px;
-          background: var(--bg-base);
-          width: 100%;
-          max-width: none;
-          margin: 0;
-          min-height: 0;
-          overflow: hidden;
           container-type: inline-size;
         }
 
         .personal-prompt-header {
-          display: flex;
-          align-items: center;
-          justify-content: flex-start;
-          gap: 24px;
+          align-items: flex-end;
         }
 
         .personal-prompt-header-text {
-          flex: 1;
-          min-width: 0;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
+          gap: 8px;
         }
 
         .title-row {
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 10px;
           flex-wrap: wrap;
         }
 
-        .section-head h3,
-        .sidebar-card h3 {
-          margin: 0;
-          color: var(--text-primary);
-          letter-spacing: -0.02em;
+        .personal-prompt-actions {
+          flex-wrap: wrap;
+          justify-content: flex-end;
         }
 
         .personal-prompt-subtitle {
           max-width: 760px;
-        }
-
-        .prompt-editor-card,
-        .sidebar-card {
-          border-radius: var(--radius-xl, 16px);
-          border: 1px solid rgba(255,255,255,0.06);
-          background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
-          box-shadow: 0 12px 32px rgba(0,0,0,0.2);
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
         }
 
         .header-meta-inline {
@@ -308,59 +296,56 @@ export default function PersonalPromptPage() {
           align-items: center;
           gap: 8px;
           flex-wrap: wrap;
-          justify-content: flex-end;
         }
 
-        .meta-inline-item,
-        .header-status-chip {
+        .meta-inline-item {
           display: inline-flex;
           align-items: center;
-          height: 28px;
-          padding: 0 10px;
-          border-radius: 999px;
+          min-height: 24px;
+          padding: 3px 8px;
+          border-radius: var(--radius-sm);
           border: 1px solid var(--glass-border);
           background: rgba(255,255,255,0.03);
           color: var(--text-secondary);
           font-size: 12px;
         }
 
-        .header-status-chip {
-          color: var(--accent-cyan);
-          border-color: rgba(16, 163, 127, 0.2);
-          background: rgba(16, 163, 127, 0.08);
-        }
-
-        .header-status-chip.is-dirty {
-          color: #f59e0b;
-          border-color: rgba(245, 158, 11, 0.22);
-          background: rgba(245, 158, 11, 0.08);
+        .personal-prompt-content {
+          min-height: 0;
+          overflow: hidden;
         }
 
         .prompt-layout {
           display: grid;
-          grid-template-columns: minmax(0, 1.55fr) minmax(280px, 360px);
+          grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
           grid-template-rows: minmax(0, 1fr);
-          gap: 18px;
+          gap: 16px;
+          height: 100%;
           min-height: 0;
-          flex: 1;
           align-items: stretch;
           overflow: hidden;
         }
 
-        .prompt-editor-card {
-          padding: 24px;
+        .prompt-editor-panel,
+        .prompt-info-panel {
+          background: var(--bg-surface);
+          border: 1px solid var(--row-border);
+          border-radius: var(--radius-lg);
+        }
+
+        .prompt-editor-panel {
+          padding: 20px;
           display: flex;
           flex-direction: column;
-          gap: 16px;
+          gap: 14px;
           min-height: 0;
-          height: 100%;
           overflow: hidden;
         }
 
         .section-head.compact {
           display: flex;
           justify-content: space-between;
-          gap: 16px;
+          gap: 12px;
           align-items: flex-start;
           flex-wrap: wrap;
         }
@@ -372,6 +357,23 @@ export default function PersonalPromptPage() {
           gap: 4px;
         }
 
+        .section-title-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: var(--text-secondary);
+          min-width: 0;
+        }
+
+        .section-title-row h3 {
+          margin: 0;
+          color: var(--text-primary);
+          font-size: 15px;
+          line-height: 1.4;
+          font-weight: 600;
+          letter-spacing: 0;
+        }
+
         .section-helper {
           margin: 0;
           color: var(--text-muted);
@@ -379,20 +381,11 @@ export default function PersonalPromptPage() {
           line-height: 1.5;
         }
 
-        .section-head-actions {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-shrink: 0;
-          flex-wrap: wrap;
-          justify-content: flex-end;
-        }
-
         .char-count {
           flex-shrink: 0;
-          height: 28px;
+          height: 32px;
           padding: 0 10px;
-          border-radius: 999px;
+          border-radius: var(--radius-md);
           background: rgba(255,255,255,0.03);
           border: 1px solid var(--glass-border);
           color: var(--text-secondary);
@@ -404,25 +397,16 @@ export default function PersonalPromptPage() {
 
         .prompt-textarea {
           flex: 1;
-          min-height: 120px;
-          height: 100%;
+          min-height: 280px;
           resize: none;
           width: 100%;
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 12px;
-          background: rgba(0, 0, 0, 0.25);
-          color: rgba(255,255,255,0.95);
-          padding: 20px;
-          font: 400 15px/1.8 "Inter", "SF Pro Text", "PingFang SC", sans-serif;
-          outline: none;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-          box-shadow: inset 0 2px 8px rgba(0,0,0,0.2);
+          padding: 14px;
+          font: 400 14px/1.8 "Inter", "SF Pro Text", "PingFang SC", sans-serif;
         }
 
         .prompt-textarea:focus {
-          border-color: rgba(52, 211, 153, 0.4);
-          background: rgba(0, 0, 0, 0.35);
-          box-shadow: inset 0 2px 8px rgba(0,0,0,0.2), 0 0 0 4px rgba(52, 211, 153, 0.1);
+          border-color: var(--accent-cyan);
+          box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
         }
 
         .editor-footer {
@@ -453,16 +437,10 @@ export default function PersonalPromptPage() {
         }
 
         .save-button {
-          min-width: 132px;
-          height: 32px;
-          padding: 0 12px;
-          border-radius: var(--radius-md);
-          font-size: 12px;
-          font-weight: 600;
           flex-shrink: 0;
         }
 
-        .prompt-sidebar {
+        .prompt-side-panel {
           display: flex;
           flex-direction: column;
           gap: 12px;
@@ -472,18 +450,11 @@ export default function PersonalPromptPage() {
           padding-right: 2px;
         }
 
-        .sidebar-card {
+        .prompt-info-panel {
           padding: 16px;
           display: flex;
           flex-direction: column;
           gap: 12px;
-        }
-
-        .section-head h3,
-        .sidebar-card h3 {
-          font-size: 17px;
-          line-height: 1.4;
-          font-weight: 600;
         }
 
         .summary-copy {
@@ -499,65 +470,18 @@ export default function PersonalPromptPage() {
           gap: 8px;
         }
 
-        .tag-pill,
-        .empty-pill {
-          padding: 6px 10px;
-          border-radius: 999px;
-          font-size: 12px;
-          font-weight: 600;
-        }
-
-        .tag-pill {
-          border: 1px solid rgba(16, 163, 127, 0.22);
-          background: rgba(16, 163, 127, 0.08);
-          color: var(--accent-cyan);
-        }
-
-        .empty-pill {
-          border: 1px dashed rgba(255,255,255,0.12);
-          color: var(--text-muted);
-        }
-
         .example-list {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        .example-card {
-          border: 1px solid rgba(255,255,255,0.08);
-          background: rgba(255,255,255,0.02);
-          color: var(--text-secondary);
-          border-radius: 12px;
-          padding: 14px;
-          text-align: left;
-          font: inherit;
-          cursor: pointer;
-          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
           display: flex;
           flex-direction: column;
           gap: 6px;
         }
 
-        .example-card:hover {
-          border-color: rgba(52, 211, 153, 0.3);
-          background: rgba(52, 211, 153, 0.05);
-          color: var(--text-primary);
-          transform: translateY(-2px);
-          box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        }
-
-        .example-title {
-          color: var(--text-primary);
-          font-size: 12px;
-          font-weight: 600;
-          line-height: 1.4;
-        }
-
-        .example-preview {
-          color: var(--text-secondary);
-          font-size: 12px;
-          line-height: 1.5;
+        .example-card {
+          width: 100%;
+          min-height: 64px;
+          text-align: left;
+          font: inherit;
+          cursor: pointer;
         }
 
         @container (max-width: 1180px) {
@@ -571,26 +495,37 @@ export default function PersonalPromptPage() {
             flex-direction: column;
           }
 
-          .header-meta-inline {
+          .personal-prompt-actions {
+            width: 100%;
             justify-content: flex-start;
           }
 
-          .prompt-editor-card {
-            height: 100%;
+          .header-meta-inline {
+            justify-content: flex-start;
           }
         }
 
         @container (max-width: 860px) {
-          .personal-prompt-page {
-            padding: 24px;
+          .personal-prompt-content {
+            overflow-y: auto;
+            padding: 20px 24px 24px;
           }
 
-          .section-head-actions {
-            width: 100%;
-            justify-content: space-between;
+          .prompt-layout {
+            grid-template-columns: minmax(0, 1fr);
+            height: auto;
+            overflow: visible;
+          }
+
+          .prompt-side-panel {
+            overflow: visible;
+          }
+
+          .prompt-textarea {
+            min-height: 320px;
           }
         }
       `}</style>
-    </main>
+    </div>
   );
 }
