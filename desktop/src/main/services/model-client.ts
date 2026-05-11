@@ -136,6 +136,10 @@ function normalizeBaseUrl(url: string): string {
  */
 function stripKnownEndpointSuffixes(baseUrl: string): string {
   const suffixes = [
+    "/anthropic/v1/messages",
+    "/anthropic/v1",
+    "/anthropic/messages",
+    "/anthropic",
     "/chat/completions",
     "/v1/messages",
     "/compatible-mode/v1",
@@ -159,7 +163,7 @@ function isCodingDashscopeBaseUrl(baseUrl: string): boolean {
   return normalizeBaseUrl(baseUrl).toLowerCase().includes("coding.dashscope.aliyuncs.com");
 }
 
-type ProviderFlavor = "anthropic" | "qwen" | "qwen-coding" | "generic";
+type ProviderFlavor = "anthropic" | "qwen" | "qwen-coding" | "deepseek" | "generic";
 
 /**
  * 根据 profile 判定应使用哪种 URL 与请求头风格。
@@ -182,6 +186,10 @@ function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
 
   if (profile.provider === "anthropic") {
     return "anthropic";
+  }
+
+  if (profile.providerFlavor === "deepseek" || lowerUrl.includes("api.deepseek.com") || lowerModel.startsWith("deepseek")) {
+    return "deepseek";
   }
 
   if (lowerUrl.includes("dashscope.aliyuncs.com") || lowerModel.startsWith("qwen")) {
@@ -222,6 +230,10 @@ function resolveApiRoot(profile: ModelProfile): string {
     case "qwen":
       // 非 coding 版 dashscope 需要补上 /compatible-mode/v1
       return appendIfMissing(cleaned, "/compatible-mode/v1");
+
+    case "deepseek":
+      // DeepSeek 官方 OpenAI base_url 为 https://api.deepseek.com，默认不额外补 /v1。
+      return cleaned;
 
     case "qwen-coding":
     case "generic":
@@ -277,6 +289,14 @@ export function resolveProtocolEndpointUrl(
     return appendIfMissing(anthropicRoot, "/messages");
   }
 
+  if (
+    protocolTarget === "anthropic-messages"
+    && resolveProviderFlavor(profile as ModelProfile) === "deepseek"
+  ) {
+    const deepSeekAnthropicRoot = appendIfMissing(cleaned, "/anthropic/v1");
+    return appendIfMissing(deepSeekAnthropicRoot, "/messages");
+  }
+
   const protocolRoot = profile.baseUrlMode === "provider-root"
     ? appendIfMissing(cleaned, "/v1")
     : cleaned;
@@ -304,7 +324,7 @@ export function buildRequestHeaders(
   );
 }
 
-/** 按协议目标构造请求头，允许兼容 Anthropic 路由时继续使用 Bearer 认证。 */
+/** 按协议目标构造请求头，DeepSeek/Anthropic Messages 路线使用 x-api-key，其余兼容路线使用 Bearer。 */
 export function buildProtocolRequestHeaders(
   profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "apiKey" | "model" | "headers" | "responsesApiConfig">,
   protocolTarget: ProtocolTarget,
@@ -316,7 +336,7 @@ export function buildProtocolRequestHeaders(
   };
 
   const usesAnthropicNativeHeaders = protocolTarget === "anthropic-messages"
-    && (profile.provider === "anthropic" || flavor === "anthropic");
+    && (profile.provider === "anthropic" || flavor === "anthropic" || flavor === "deepseek");
 
   if (usesAnthropicNativeHeaders) {
     base["x-api-key"] = profile.apiKey;

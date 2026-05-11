@@ -46,6 +46,22 @@ class StubToolExecutor implements NodeExecutor {
   }
 }
 
+/** 回显已解析输入的工具执行器，用于验证变量传递链路。 */
+class EchoResolvedInputToolExecutor implements NodeExecutor {
+  readonly kind = "tool" as const;
+
+  /** 将 resolvedInputs.value 写入指定输出字段，证明节点真正收到了变量值。 */
+  async execute(ctx: NodeExecutionContext): Promise<NodeExecutionResult> {
+    const node = ctx.node as any;
+    const outputKey = node.tool?.outputKey ?? "echo";
+    return {
+      writes: [{ channelName: outputKey, value: ctx.resolvedInputs.value }],
+      outputs: { value: ctx.resolvedInputs.value },
+      durationMs: 0,
+    };
+  }
+}
+
 // ── Loop executor: writes to a counter and routes back to itself if under limit ──
 
 class IncrementExecutor implements NodeExecutor {
@@ -174,7 +190,7 @@ describe("PregelRunner", () => {
       }
     });
 
-    it("accepts initial input and writes it to channels", async () => {
+  it("accepts initial input and writes it to channels", async () => {
       const registry = createRegistry([stubLlm]);
       const runner = new PregelRunner(definition, createDefaultConfig(), { executorRegistry: registry });
 
@@ -183,6 +199,145 @@ describe("PregelRunner", () => {
       // The LLM executor overwrites the response channel, so final state should be the LLM output
       expect(result.status).toBe("succeeded");
       expect(result.finalState.response).toBe("stub-llm-response");
+    });
+
+    it("keeps start inputs under the inputs scope for variable pickers and expressions", async () => {
+      const registry = createRegistry([stubLlm]);
+      const runner = new PregelRunner(definition, createDefaultConfig(), { executorRegistry: registry });
+
+      const result = await runner.run({ topic: "季度复盘", response: "initial-input" });
+
+      expect(result.status).toBe("succeeded");
+      expect(result.finalState.inputs).toEqual({
+        topic: "季度复盘",
+        response: "initial-input",
+      });
+    });
+
+    it("stores node outputs under nodes.<nodeId> for downstream variable references", async () => {
+      const registry = createRegistry([stubLlm]);
+      const runner = new PregelRunner(definition, createDefaultConfig(), { executorRegistry: registry });
+
+      const result = await runner.run();
+
+      expect(result.status).toBe("succeeded");
+      expect(result.finalState.nodes).toEqual(
+        expect.objectContaining({
+          "llm-1": { response: "stub-llm-response" },
+        }),
+      );
+    });
+
+    it("keeps workflow inputs available to downstream node bindings", async () => {
+      const tool = new StubToolExecutor();
+      tool.fixedOutput = "tool-bound-output";
+      const inputBoundDefinition: WorkflowDefinition = {
+        ...definition,
+        nodes: [
+          definition.nodes[0],
+          {
+            id: "tool-1",
+            kind: "tool",
+            label: "Tool",
+            inputBindings: { prompt: "title" },
+            tool: { toolId: "some-tool", outputKey: "toolResult" },
+          },
+          definition.nodes[2],
+        ],
+        edges: [
+          { id: "e1", fromNodeId: "start-1", toNodeId: "tool-1", kind: "normal" },
+          { id: "e2", fromNodeId: "tool-1", toNodeId: "end-1", kind: "normal" },
+        ],
+        stateSchema: [
+          {
+            key: "title",
+            label: "Title",
+            description: "Workflow input",
+            valueType: "string",
+            mergeStrategy: "replace",
+            required: false,
+            producerNodeIds: [],
+            consumerNodeIds: ["tool-1"],
+          },
+          {
+            key: "toolResult",
+            label: "Tool result",
+            description: "Tool output",
+            valueType: "string",
+            mergeStrategy: "replace",
+            required: false,
+            producerNodeIds: ["tool-1"],
+            consumerNodeIds: [],
+          },
+        ],
+      };
+
+      const registry = createRegistry([tool]);
+      const runner = new PregelRunner(inputBoundDefinition, createDefaultConfig(), { executorRegistry: registry });
+      const result = await runner.run({ title: "Workflow title" });
+
+      expect(result.status).toBe("succeeded");
+      expect(result.finalState.toolResult).toBe("tool-bound-output");
+    });
+
+    it("hydrates run variables into typed input sources before node execution", async () => {
+      const nodes: WorkflowNode[] = [
+        { id: "start-1", kind: "start", label: "Start" },
+        {
+          id: "tool-1",
+          kind: "tool",
+          label: "Echo variable",
+          inputSources: {
+            value: { mode: "variable", ref: { scope: "run", path: "limit", valueType: "number" } },
+          },
+          tool: { toolId: "echo", outputKey: "echoedLimit" },
+        },
+        { id: "end-1", kind: "end", label: "End" },
+      ];
+      const edges: WorkflowEdge[] = [
+        { id: "e1", fromNodeId: "start-1", toNodeId: "tool-1", kind: "normal" },
+        { id: "e2", fromNodeId: "tool-1", toNodeId: "end-1", kind: "normal" },
+      ];
+      const def: WorkflowDefinition = {
+        ...definition,
+        nodes,
+        edges,
+        stateSchema: [
+          {
+            key: "echoedLimit",
+            label: "Echoed limit",
+            description: "工具接收到的运行变量",
+            valueType: "number",
+            mergeStrategy: "replace",
+            required: false,
+            producerNodeIds: ["tool-1"],
+            consumerNodeIds: [],
+          },
+        ],
+        variables: [
+          {
+            id: "var-limit",
+            key: "limit",
+            label: "Limit",
+            scope: "run",
+            valueType: "number",
+            defaultValue: 3,
+          },
+        ],
+      };
+
+      const registry = createRegistry([new EchoResolvedInputToolExecutor()]);
+      const runner = new PregelRunner(def, createDefaultConfig({ variables: { limit: 7 } }), { executorRegistry: registry });
+      const result = await runner.run();
+
+      expect(result.status).toBe("succeeded");
+      expect(result.finalState.vars).toEqual(expect.objectContaining({ limit: 7 }));
+      expect(result.finalState.echoedLimit).toBe(7);
+      expect(result.finalState.nodes).toEqual(
+        expect.objectContaining({
+          "tool-1": { value: 7 },
+        }),
+      );
     });
   });
 

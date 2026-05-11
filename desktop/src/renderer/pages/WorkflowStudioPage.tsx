@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { AlertTriangle, Bug, ChevronDown, ChevronLeft, PanelRight, Play, Save, Square, ToggleLeft, ToggleRight } from "lucide-react";
+import { AlertTriangle, Bug, ChevronLeft, Database, FolderArchive, PanelRight, Play, Save, Square, ToggleRight, X } from "lucide-react";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useWorkflowRunsStore, type NodeLiveStatus } from "../stores/workflow-runs";
 import type { ArtifactScopeRef, WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowNodeKind, WorkflowInterruptPayload } from "@shared/contracts";
@@ -8,12 +8,17 @@ import WorkflowCanvas from "../components/workflow/WorkflowCanvas";
 import WorkflowGraphInspector from "../components/workflow/WorkflowGraphInspector";
 import WorkflowRunPanel from "../components/workflow/WorkflowRunPanel";
 import { WorkflowDebugPanel } from "../components/workflow/WorkflowDebugPanel";
+import WorkflowVariablesPanel from "../components/workflow/WorkflowVariablesPanel";
 import { createWorkflowNodeDraft } from "../components/workflow/workflow-node-factory";
 import WorkFilesPanel from "../components/WorkFilesPanel";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 type StudioMode = "edit" | "debug";
+type DockTab = "inspect" | "run" | "artifacts" | "debug";
+
+const STUDIO_DOCK_MIN_WIDTH = 360;
+const STUDIO_DOCK_MAX_WIDTH = 760;
 
 /** 每个节点在调试期间的运行状态。 */
 export interface DebugNodeStatus {
@@ -21,6 +26,7 @@ export interface DebugNodeStatus {
   content?: string;
   durationMs?: number;
   error?: string;
+  outputs?: Record<string, unknown>;
 }
 
 /** 将 store 的 NodeLiveStatus 映射为 Canvas 使用的 DebugNodeStatus。 */
@@ -33,7 +39,7 @@ function toDebugNodeStatus(live: NodeLiveStatus): DebugNodeStatus {
     case "streaming":
       return { phase: "streaming", content: live.content };
     case "completed":
-      return { phase: "completed", durationMs: live.durationMs };
+      return { phase: "completed", durationMs: live.durationMs, outputs: live.outputs };
     case "error":
       return { phase: "error", error: live.error };
     case "interrupted":
@@ -152,8 +158,11 @@ export default function WorkflowStudioPage() {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [canvasFeedback, setCanvasFeedbackState] = useState("");
-  const [showRunPanel, setShowRunPanel] = useState(false);
-  const [showInspector, setShowInspector] = useState(true);
+  const [showDock, setShowDock] = useState(true);
+  const [dockWidth, setDockWidth] = useState(520);
+  const [isDockResizing, setIsDockResizing] = useState(false);
+  const [activeDockTab, setActiveDockTab] = useState<DockTab>("inspect");
+  const [showVariablesDialog, setShowVariablesDialog] = useState(false);
 
   const [draftName, setDraftName] = useState("");
   const [draftDescription, setDraftDescription] = useState("");
@@ -194,6 +203,10 @@ export default function WorkflowStudioPage() {
     () => (workspace.workflowDefinitions?.[workflowId] as WorkflowDefinition | undefined) ?? null,
     [workspace.workflowDefinitions, workflowId],
   );
+  const workflowNodeLabels = useMemo<Record<string, string>>(() => {
+    if (!workflowDefinition) return {};
+    return Object.fromEntries(workflowDefinition.nodes.map((node) => [node.id, node.label || "未命名节点"]));
+  }, [workflowDefinition]);
   const workFilesScope = useMemo<ArtifactScopeRef | null>(() => {
     if (activeRunId) {
       return { scopeKind: "workflowRun", scopeId: activeRunId };
@@ -251,6 +264,32 @@ export default function WorkflowStudioPage() {
       if (canvasFeedbackTimer.current) clearTimeout(canvasFeedbackTimer.current);
     };
   }, []);
+
+  /** 右侧工作台宽度拖拽：按鼠标到窗口右侧的距离计算宽度，并限制在可用范围内。 */
+  useEffect(() => {
+    if (!isDockResizing) return;
+    function handleMouseMove(event: MouseEvent) {
+      const nextWidth = Math.min(
+        STUDIO_DOCK_MAX_WIDTH,
+        Math.max(STUDIO_DOCK_MIN_WIDTH, window.innerWidth - event.clientX),
+      );
+      setDockWidth(nextWidth);
+    }
+    function handleMouseUp() {
+      console.info("[workflow] 结束拖拽右侧工作台宽度", { width: dockWidth });
+      setIsDockResizing(false);
+    }
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDockResizing, dockWidth]);
 
   function setCanvasFeedback(message: string) {
     setCanvasFeedbackState(message);
@@ -313,6 +352,8 @@ export default function WorkflowStudioPage() {
       if (runId) {
         setActiveRunId(runId);
         setStudioMode("debug");
+        setActiveDockTab("debug");
+        setShowDock(true);
         setIsDebugResuming(false);
       }
     } catch (err) {
@@ -337,7 +378,16 @@ export default function WorkflowStudioPage() {
     }
     setStudioMode("edit");
     setActiveRunId(null);
+    setActiveDockTab("inspect");
+    setShowDock(true);
     setIsDebugResuming(false);
+  }
+
+  /** 开始拖拽右侧工作台宽度，避免在表单里误触文本选择。 */
+  function handleDockResizeStart(event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    console.info("[workflow] 开始拖拽右侧工作台宽度", { width: dockWidth });
+    setIsDockResizing(true);
   }
 
   /** 通过调试面板提交中断输入以恢复运行（通过 store）。 */
@@ -361,12 +411,28 @@ export default function WorkflowStudioPage() {
     setCanvasFeedbackState("");
     setSelectedNodeId(nodeId);
     setSelectedEdgeId(null);
+    setActiveDockTab("inspect");
+    setShowDock(true);
   }
 
   function handleEdgeSelection(edgeId: string) {
     setCanvasFeedbackState("");
     setSelectedEdgeId(edgeId);
     setSelectedNodeId(null);
+    setActiveDockTab("inspect");
+    setShowDock(true);
+  }
+
+  /** 打开画布级变量中心弹窗，让变量管理从右侧配置栏回到工作流全局入口。 */
+  function handleOpenVariablesDialog() {
+    console.info("[workflow] 打开画布变量中心弹窗", { workflowId });
+    setShowVariablesDialog(true);
+  }
+
+  /** 关闭变量中心弹窗，并记录用户操作来源。 */
+  function handleCloseVariablesDialog() {
+    console.info("[workflow] 关闭画布变量中心弹窗", { workflowId });
+    setShowVariablesDialog(false);
   }
 
   async function handleCanvasDeleteEdge(edgeId: string) {
@@ -638,20 +704,23 @@ export default function WorkflowStudioPage() {
             </>
           )}
           <button
-            className={`topbar-icon-btn${showRunPanel ? " active" : ""}`}
-            title="运行/记录"
-            onClick={() => setShowRunPanel((v) => !v)}
+            className={`topbar-icon-btn${showDock && activeDockTab === "run" ? " active" : ""}`}
+            title="运行面板"
+            onClick={() => {
+              setShowDock(true);
+              setActiveDockTab("run");
+            }}
           >
             <Play size={15} />
             <span>运行</span>
           </button>
           <button
-            className={`topbar-icon-btn${showInspector ? " active" : ""}`}
-            title="检查面板"
-            onClick={() => setShowInspector((v) => !v)}
+            className={`topbar-icon-btn${showDock ? " active" : ""}`}
+            title="侧边工作台"
+            onClick={() => setShowDock((v) => !v)}
           >
             <PanelRight size={15} />
-            <span>侧栏</span>
+            <span>工作台</span>
           </button>
           <div className="divider" />
           <button
@@ -699,6 +768,18 @@ export default function WorkflowStudioPage() {
               selectedNodeId={selectedNodeId}
               selectedEdgeId={selectedEdgeId}
               feedbackMessage={canvasFeedback}
+              headerLeading={(
+                <button
+                  type="button"
+                  className="canvas-variable-btn"
+                  data-testid="workflow-canvas-variables-button"
+                  onClick={handleOpenVariablesDialog}
+                  title="变量中心"
+                >
+                  <Database size={14} />
+                  <span>变量</span>
+                </button>
+              )}
               onSelectNode={handleNodeSelection}
               onSelectEdge={handleEdgeSelection}
               onAddNode={handleAddNode}
@@ -717,74 +798,173 @@ export default function WorkflowStudioPage() {
               <p>正在加载工作流定义...</p>
             </div>
           )}
-
-          {/* Run panel slides up from bottom */}
-          {showRunPanel && workflowDefinition && (
-            <div className="run-panel-drawer">
-              <div
-                className="run-panel-drag-bar"
-                onClick={() => setShowRunPanel(false)}
-              >
-                <ChevronDown size={16} />
-                <span>收起运行面板</span>
-              </div>
-              <div className="studio-run-panel">
-                <WorkflowRunPanel
-                  workflowId={workflowId}
-                  definition={workflowDefinition}
-                />
-              </div>
-            </div>
-          )}
         </section>
 
-        {/* Right inspector panel */}
-        {showInspector && (
-          <aside className="studio-right-panel">
-            {studioMode === "debug" && activeRunId ? (
-              <WorkflowDebugPanel
-                runId={activeRunId}
-                status={debugRunStatus}
-                currentStep={debugStep}
-                state={debugState}
-                events={debugEvents}
-                interruptPayload={debugInterruptPayload}
-                onResumeWithInput={handleDebugResumeWithInput}
-                isResuming={isDebugResuming}
-              />
-            ) : (
-              <div className="inspector-content">
-                {workflowDefinition ? (
-                  <WorkflowGraphInspector
-                    workflowId={workflowId}
-                    definition={workflowDefinition}
-                    selectedNodeId={selectedNodeId}
-                    selectedEdgeId={selectedEdgeId}
-                    compact
+        {showDock && (
+          <aside
+            className={`studio-dock${isDockResizing ? " is-resizing" : ""}`}
+            data-testid="workflow-studio-dock"
+            style={{ width: dockWidth }}
+          >
+            <button
+              type="button"
+              className="studio-dock-resize-handle"
+              aria-label="拖拽调整右侧栏宽度"
+              onMouseDown={handleDockResizeStart}
+            />
+            <div className="studio-dock-tabs">
+              <button
+                type="button"
+                className={`studio-dock-tab${activeDockTab === "inspect" ? " active" : ""}`}
+                data-testid="workflow-studio-tab-inspect"
+                onClick={() => setActiveDockTab("inspect")}
+              >
+                <PanelRight size={14} />
+                <span>Inspect</span>
+              </button>
+              <button
+                type="button"
+                className={`studio-dock-tab${activeDockTab === "run" ? " active" : ""}`}
+                data-testid="workflow-studio-tab-run"
+                onClick={() => setActiveDockTab("run")}
+              >
+                <Play size={14} />
+                <span>Run</span>
+              </button>
+              <button
+                type="button"
+                className={`studio-dock-tab${activeDockTab === "artifacts" ? " active" : ""}`}
+                data-testid="workflow-studio-tab-artifacts"
+                onClick={() => setActiveDockTab("artifacts")}
+              >
+                <FolderArchive size={14} />
+                <span>运行产物</span>
+              </button>
+              <button
+                type="button"
+                className={`studio-dock-tab${activeDockTab === "debug" ? " active" : ""}`}
+                data-testid="workflow-studio-tab-debug"
+                onClick={() => {
+                  setActiveDockTab("debug");
+                  if (studioMode !== "debug") {
+                    setShowDock(true);
+                  }
+                }}
+              >
+                <Bug size={14} />
+                <span>Debug</span>
+              </button>
+            </div>
+
+            <div className="studio-dock-body">
+              {activeDockTab === "inspect" && (
+                <div className="dock-scroll">
+                  {workflowDefinition ? (
+                    <WorkflowGraphInspector
+                      workflowId={workflowId}
+                      definition={workflowDefinition}
+                      selectedNodeId={selectedNodeId}
+                      selectedEdgeId={selectedEdgeId}
+                      compact
+                    />
+                  ) : definitionError ? (
+                    <p className="error-copy dock-empty-copy">{definitionError}</p>
+                  ) : (
+                    <p className="dock-empty-copy">加载中...</p>
+                  )}
+                </div>
+              )}
+
+              {activeDockTab === "run" && workflowDefinition && (
+                <div className="dock-scroll">
+                  <WorkflowRunPanel workflowId={workflowId} definition={workflowDefinition} />
+                </div>
+              )}
+
+              {activeDockTab === "artifacts" && (
+                <div className="dock-scroll">
+                  <WorkFilesPanel
+                    scope={workFilesScope}
+                    title="运行产物"
+                    description={workFilesScope ? "查看本次工作流运行生成的输出文件、日志和交付物。" : "运行完成后会在这里显示产物。"}
+                    emptyHint="本次工作流运行还没有产物。"
+                    mode="page"
                   />
-                ) : definitionError ? (
-                  <p className="error-copy" style={{ padding: "20px" }}>
-                    {definitionError}
-                  </p>
-                ) : (
-                  <p className="subtitle" style={{ padding: "20px" }}>
-                    加载中...
-                  </p>
-                )}
-              </div>
-            )}
+                </div>
+              )}
+
+              {activeDockTab === "debug" && (
+                <div className="dock-scroll">
+                  {studioMode === "debug" && activeRunId ? (
+                    <WorkflowDebugPanel
+                      runId={activeRunId}
+                      status={debugRunStatus}
+                      currentStep={debugStep}
+                      state={debugState}
+                      events={debugEvents}
+                      nodeLabels={workflowNodeLabels}
+                      interruptPayload={debugInterruptPayload}
+                      onResumeWithInput={handleDebugResumeWithInput}
+                      isResuming={isDebugResuming}
+                    />
+                  ) : (
+                    <div className="dock-empty-state">
+                      <p className="dock-empty-copy">先启动一次调试运行，再查看 Debug 面板。</p>
+                      <button
+                        type="button"
+                        className="btn-toolbar wf-btn-compact"
+                        onClick={handleStartDebugRun}
+                      >
+                        启动调试
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </aside>
         )}
-
-        <aside className="studio-files-panel">
-          <WorkFilesPanel
-            scope={workFilesScope}
-            title="Run Files"
-            description={workFilesScope ? "Managed outputs, logs, and deliverables for the current workflow run." : "Managed workflow files will appear here after the first run."}
-            emptyHint="No indexed files for this workflow yet. Run it once to populate this panel."
-          />
-        </aside>
       </main>
+
+      {showVariablesDialog && workflowDefinition && (
+        <div
+          className="variables-dialog-backdrop"
+          data-testid="workflow-variables-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="变量中心"
+          onMouseDown={handleCloseVariablesDialog}
+        >
+          <section
+            className="variables-dialog"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="variables-dialog__header">
+              <div>
+                <h3>变量中心</h3>
+                <p>维护启动输入、全局变量、节点输出和最终输出。</p>
+              </div>
+              <button
+                type="button"
+                className="variables-dialog__close"
+                aria-label="关闭变量中心"
+                onClick={handleCloseVariablesDialog}
+              >
+                <X size={17} />
+              </button>
+            </header>
+            <div className="variables-dialog__body">
+              <WorkflowVariablesPanel
+                definition={workflowDefinition}
+                runState={activeLiveRun?.state ?? null}
+                onUpdateDefinition={async (updates) => {
+                  await workspace.updateWorkflow(workflowId, updates);
+                }}
+              />
+            </div>
+          </section>
+        </div>
+      )}
 
       <style>{`
         .studio-layout {
@@ -985,9 +1165,9 @@ export default function WorkflowStudioPage() {
 
         .flex-fill { flex: 1; min-height: 0; }
 
-        .studio-right-panel {
-          width: 440px;
-          min-width: 400px;
+        .studio-dock {
+          min-width: ${STUDIO_DOCK_MIN_WIDTH}px;
+          max-width: ${STUDIO_DOCK_MAX_WIDTH}px;
           border-left: 1px solid #27272a;
           background: #161618;
           display: flex;
@@ -995,67 +1175,127 @@ export default function WorkflowStudioPage() {
           flex-shrink: 0;
           z-index: 10;
           overflow: hidden;
+          position: relative;
         }
 
-        .studio-files-panel {
-          width: 340px;
-          min-width: 320px;
-          border-left: 1px solid #27272a;
-          background: #121214;
-          display: flex;
-          flex-direction: column;
-          min-height: 0;
+        .studio-dock.is-resizing {
+          transition: none;
         }
 
-        .inspector-content {
-          flex: 1;
-          overflow-y: auto;
-          padding: 12px;
-          min-height: 0;
-        }
-
-        .inspector-placeholder {
-          padding: 8px;
-        }
-
-        .run-panel-drawer {
+        .studio-dock-resize-handle {
           position: absolute;
+          left: -4px;
+          top: 0;
           bottom: 0;
-          left: 0;
-          right: 0;
-          max-height: 50%;
-          display: flex;
-          flex-direction: column;
-          background: #161618;
-          border-top: 1px solid #27272a;
-          box-shadow: 0 -8px 24px rgba(0,0,0,0.4);
-          z-index: 50;
+          width: 8px;
+          border: 0;
+          padding: 0;
+          background: transparent;
+          cursor: col-resize;
+          z-index: 30;
         }
 
-        .run-panel-drag-bar {
-          display: flex;
+        .studio-dock-resize-handle::after {
+          content: "";
+          position: absolute;
+          left: 3px;
+          top: 0;
+          bottom: 0;
+          width: 1px;
+          background: transparent;
+        }
+
+        .studio-dock-resize-handle:hover::after,
+        .studio-dock.is-resizing .studio-dock-resize-handle::after {
+          background: #60a5fa;
+          box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.28);
+        }
+
+        .canvas-variable-btn {
+          display: inline-flex;
           align-items: center;
-          justify-content: center;
           gap: 6px;
-          padding: 6px 0;
+          height: 28px;
+          padding: 0 10px;
+          border: 1px solid rgba(20, 184, 166, 0.35);
+          border-radius: 6px;
+          background: rgba(20, 184, 166, 0.1);
+          color: #99f6e4;
+          font: inherit;
+          font-size: 13px;
+          font-weight: 650;
           cursor: pointer;
-          color: #52525b;
-          font-size: 11px;
-          font-weight: 500;
-          border-bottom: 1px solid #1f1f23;
+        }
+
+        .canvas-variable-btn:hover {
+          background: rgba(20, 184, 166, 0.18);
+          border-color: rgba(20, 184, 166, 0.55);
+          color: #ccfbf1;
+        }
+
+        .studio-dock-tabs {
+          display: flex;
+          gap: 0;
+          padding: 8px 8px 0;
+          border-bottom: 1px solid #27272a;
+          background: #121214;
+        }
+
+        .studio-dock-tab {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          height: 30px;
+          padding: 0 10px;
+          border: 1px solid transparent;
+          border-bottom: none;
+          border-radius: 6px 6px 0 0;
+          background: transparent;
+          color: #71717a;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
           transition: all 0.15s;
-          user-select: none;
         }
 
-        .run-panel-drag-bar:hover {
-          color: #a1a1aa;
-          background: #1a1a1d;
+        .studio-dock-tab:hover {
+          color: #d4d4d8;
+          background: rgba(255,255,255,0.03);
         }
 
-        .studio-run-panel {
+        .studio-dock-tab.active {
+          color: #f4f4f5;
+          background: #161618;
+          border-color: #27272a;
+        }
+
+        .studio-dock-body {
           flex: 1;
+          min-height: 0;
+          overflow: hidden;
+        }
+
+        .dock-scroll {
+          height: 100%;
           overflow-y: auto;
           min-height: 0;
+          padding: 10px;
+          box-sizing: border-box;
+        }
+
+        .dock-empty-state {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 12px;
+          padding: 20px;
+          color: #a1a1aa;
+        }
+
+        .dock-empty-copy {
+          margin: 0;
+          color: #a1a1aa;
+          font-size: 12px;
         }
 
         .top-banner {
@@ -1089,6 +1329,77 @@ export default function WorkflowStudioPage() {
         }
 
         .error-copy { color: #f87171; }
+
+        .variables-dialog-backdrop {
+          position: fixed;
+          inset: 0;
+          z-index: 300;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 28px;
+          background: rgba(9, 9, 11, 0.72);
+          backdrop-filter: blur(8px);
+        }
+
+        .variables-dialog {
+          width: min(980px, 100%);
+          max-height: min(760px, calc(100vh - 56px));
+          display: flex;
+          flex-direction: column;
+          border: 1px solid rgba(63, 63, 70, 0.95);
+          border-radius: 10px;
+          background: #161618;
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+          overflow: hidden;
+        }
+
+        .variables-dialog__header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 16px;
+          padding: 18px 20px 14px;
+          border-bottom: 1px solid #27272a;
+          background: #121214;
+        }
+
+        .variables-dialog__header h3 {
+          margin: 0;
+          color: #f4f4f5;
+          font-size: 18px;
+          font-weight: 700;
+        }
+
+        .variables-dialog__header p {
+          margin: 6px 0 0;
+          color: #a1a1aa;
+          font-size: 13px;
+        }
+
+        .variables-dialog__close {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 30px;
+          height: 30px;
+          border: 1px solid #27272a;
+          border-radius: 7px;
+          background: transparent;
+          color: #a1a1aa;
+          cursor: pointer;
+        }
+
+        .variables-dialog__close:hover {
+          background: #27272a;
+          color: #f4f4f5;
+        }
+
+        .variables-dialog__body {
+          min-height: 0;
+          overflow: auto;
+          padding: 18px 20px 20px;
+        }
 
         @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -1240,14 +1551,8 @@ export default function WorkflowStudioPage() {
         }
 
         @media (max-width: 1200px) {
-          .studio-right-panel {
-            width: 380px;
+          .studio-dock {
             min-width: 340px;
-          }
-
-          .studio-files-panel {
-            width: 300px;
-            min-width: 280px;
           }
         }
       `}</style>

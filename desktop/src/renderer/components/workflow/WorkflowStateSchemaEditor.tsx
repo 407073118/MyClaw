@@ -6,9 +6,10 @@ interface WorkflowStateSchemaEditorProps {
   onUpdateModelValue: (value: WorkflowStateSchemaField[]) => void;
   onValidation: (payload: { errors: string[] }) => void;
   className?: string;
+  nodeOptions?: string[];
 }
 
-/** 创建默认字段，保证后续编辑结构稳定。 */
+/** 创建默认字段，保证后续编辑结构稳定。*/
 function createDefaultField(): WorkflowStateSchemaField {
   return {
     key: "",
@@ -22,7 +23,7 @@ function createDefaultField(): WorkflowStateSchemaField {
   };
 }
 
-/** 校验 stateSchema（UI 层），用于禁用保存并提示用户。 */
+/** 校验运行数据字段，禁止空 key、重复 key 和不合法的合并策略组合。*/
 function validateStateSchema(fields: WorkflowStateSchemaField[]): string[] {
   const errors: string[] = [];
   const keyCount = new Map<string, number>();
@@ -43,7 +44,6 @@ function validateStateSchema(fields: WorkflowStateSchemaField[]): string[] {
       errors.push("description: required");
     }
 
-    // 最小实现：object-merge 只能用于 object。
     if (field.mergeStrategy === "object-merge" && field.valueType !== "object") {
       errors.push("mergeStrategy: object-merge requires valueType=object");
     }
@@ -58,17 +58,17 @@ function validateStateSchema(fields: WorkflowStateSchemaField[]): string[] {
   return errors;
 }
 
-/** 渲染工作流状态字段编辑器，并负责字段级校验。 */
+/** 渲染工作流状态字段编辑器，并负责字段级校验。*/
 export default function WorkflowStateSchemaEditor({
   modelValue,
   onUpdateModelValue,
   onValidation,
   className,
+  nodeOptions = [],
 }: WorkflowStateSchemaEditorProps) {
   const [localErrors, setLocalErrors] = useState<string[]>([]);
   const errorText = localErrors.length ? localErrors.join("; ") : "";
 
-  // `modelValue` 变化时立即重新校验，保持错误提示与保存态同步。
   const prevModelValueRef = useRef<WorkflowStateSchemaField[] | null>(null);
   useEffect(() => {
     const errors = validateStateSchema(modelValue);
@@ -77,9 +77,9 @@ export default function WorkflowStateSchemaEditor({
     prevModelValueRef.current = modelValue;
   }, [modelValue]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** 新增 schema field。 */
+  /** 新增运行数据字段。*/
   function handleAddField() {
-    console.info("[workflow] 新增 state schema 字段");
+    console.info("[workflow] 新增运行数据字段");
     const next = [...modelValue, createDefaultField()];
     const errors = validateStateSchema(next);
     setLocalErrors(errors);
@@ -87,17 +87,17 @@ export default function WorkflowStateSchemaEditor({
     onValidation({ errors });
   }
 
-  /** 更新字段片段，避免整行重写。 */
+  /** 更新指定字段的局部内容。*/
   function handleFieldPatch(index: number, patch: Partial<WorkflowStateSchemaField>) {
     const next = modelValue.map((field, idx) => (idx === index ? { ...field, ...patch } : field));
-    console.info("[workflow] 更新 state schema 字段", { index, patch });
+    console.info("[workflow] 更新运行数据字段", { index, patch });
     const errors = validateStateSchema(next);
     setLocalErrors(errors);
     onUpdateModelValue(next);
     onValidation({ errors });
   }
 
-  /** 处理字段值类型切换，并约束到受支持的枚举值。 */
+  /** 处理字段值类型切换。*/
   function handleValueTypeChange(index: number, event: React.ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value as WorkflowStateValueType | undefined;
     const nextValue: WorkflowStateValueType =
@@ -112,7 +112,7 @@ export default function WorkflowStateSchemaEditor({
     handleFieldPatch(index, { valueType: nextValue });
   }
 
-  /** 处理合并策略切换，并约束到受支持的枚举值。 */
+  /** 处理合并策略切换。*/
   function handleMergeStrategyChange(index: number, event: React.ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value as WorkflowMergeStrategy | undefined;
     const nextValue: WorkflowMergeStrategy =
@@ -120,12 +120,28 @@ export default function WorkflowStateSchemaEditor({
     handleFieldPatch(index, { mergeStrategy: nextValue });
   }
 
+  /** 更新字段生产者节点，显式记录谁会把值写入这个状态字段。*/
+  function handleProducerChange(index: number, event: React.ChangeEvent<HTMLSelectElement>) {
+    const raw = event.target.value;
+    handleFieldPatch(index, {
+      producerNodeIds: raw ? [raw] : [],
+    });
+  }
+
+  /** 更新字段消费者节点，显式记录谁会读取这个状态字段。*/
+  function handleConsumerChange(index: number, event: React.ChangeEvent<HTMLSelectElement>) {
+    const raw = event.target.value;
+    handleFieldPatch(index, {
+      consumerNodeIds: raw ? [raw] : [],
+    });
+  }
+
   return (
     <section className={`schema-editor${className ? ` ${className}` : ""}`} data-testid="workflow-state-schema-editor">
       <header className="header">
-        <h4 className="title">State Schema</h4>
+        <h4 className="title">运行数据字段</h4>
         <button data-testid="workflow-state-schema-add-field" type="button" className="ghost" onClick={handleAddField}>
-          Add field
+          新增字段
         </button>
       </header>
 
@@ -136,7 +152,7 @@ export default function WorkflowStateSchemaEditor({
       {modelValue.map((field, index) => (
         <div key={index} className="row">
           <label className="field">
-            <span>Key</span>
+            <span>字段标识</span>
             <input
               data-testid={`workflow-state-schema-key-${index}`}
               type="text"
@@ -146,7 +162,7 @@ export default function WorkflowStateSchemaEditor({
           </label>
 
           <label className="field">
-            <span>Label</span>
+            <span>显示名称</span>
             <input
               data-testid={`workflow-state-schema-label-${index}`}
               type="text"
@@ -156,7 +172,7 @@ export default function WorkflowStateSchemaEditor({
           </label>
 
           <label className="field">
-            <span>Description</span>
+            <span>用途说明</span>
             <input
               data-testid={`workflow-state-schema-description-${index}`}
               type="text"
@@ -166,7 +182,7 @@ export default function WorkflowStateSchemaEditor({
           </label>
 
           <label className="field">
-            <span>Value type</span>
+            <span>值类型</span>
             <select
               data-testid={`workflow-state-schema-valueType-${index}`}
               value={field.valueType}
@@ -183,17 +199,45 @@ export default function WorkflowStateSchemaEditor({
           </label>
 
           <label className="field">
-            <span>Merge strategy</span>
+            <span>合并方式</span>
             <select
               data-testid={`workflow-state-schema-mergeStrategy-${index}`}
               value={field.mergeStrategy}
               onChange={(e) => handleMergeStrategyChange(index, e)}
             >
-              <option value="replace">replace</option>
-              <option value="append">append</option>
-              <option value="union">union</option>
-              <option value="object-merge">object-merge</option>
-              <option value="custom">custom</option>
+              <option value="replace">覆盖 replace</option>
+              <option value="append">追加 append</option>
+              <option value="union">去重合并 union</option>
+              <option value="object-merge">对象合并 object-merge</option>
+              <option value="custom">自定义 custom</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>写入节点</span>
+            <select
+              data-testid={`workflow-state-schema-producer-${index}`}
+              value={field.producerNodeIds[0] ?? ""}
+              onChange={(e) => handleProducerChange(index, e)}
+            >
+              <option value="">不指定</option>
+              {nodeOptions.map((nodeId) => (
+                <option key={nodeId} value={nodeId}>{nodeId}</option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field">
+            <span>读取节点</span>
+            <select
+              data-testid={`workflow-state-schema-consumer-${index}`}
+              value={field.consumerNodeIds[0] ?? ""}
+              onChange={(e) => handleConsumerChange(index, e)}
+            >
+              <option value="">不指定</option>
+              {nodeOptions.map((nodeId) => (
+                <option key={nodeId} value={nodeId}>{nodeId}</option>
+              ))}
             </select>
           </label>
         </div>
@@ -218,7 +262,7 @@ export default function WorkflowStateSchemaEditor({
         .schema-editor .title {
           margin: 0;
           color: var(--text-primary);
-          font-size: 14px;
+          font-size: 15px;
         }
         .schema-editor .ghost {
           border: 1px solid var(--glass-border);
@@ -231,7 +275,7 @@ export default function WorkflowStateSchemaEditor({
         }
         .schema-editor .row {
           display: grid;
-          grid-template-columns: 1.1fr 1.1fr 1.3fr 1fr 1fr;
+          grid-template-columns: 1.1fr 1.1fr 1.3fr 1fr 1fr 1fr 1fr;
           gap: 10px;
         }
         @media (max-width: 1100px) {

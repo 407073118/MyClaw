@@ -45,6 +45,17 @@ function parseExecutionRun(row: Record<string, unknown>): ExecutionRun {
   return JSON.parse(String(row.payload_json)) as ExecutionRun;
 }
 
+/** 统一推导定时任务归属，避免硅基员工任务被误存到主日程 personal 分区。 */
+function resolveScheduleJobOwner(input: ScheduleJobUpsertInput): { ownerScope: TimeOwnerScope; ownerId?: string } {
+  if (input.ownerScope === "silicon_person") {
+    return { ownerScope: "silicon_person", ownerId: input.ownerId ?? input.executorTargetId };
+  }
+  if (!input.ownerScope && input.executor === "silicon_person" && input.executorTargetId) {
+    return { ownerScope: "silicon_person", ownerId: input.executorTargetId };
+  }
+  return { ownerScope: "personal" };
+}
+
 export type ReminderUpsertInput = {
   id?: string;
   title: string;
@@ -331,6 +342,7 @@ export class TimeOrchestrationStore {
       timezone: input.timezone,
     });
     const now = new Date().toISOString();
+    const owner = resolveScheduleJobOwner(input);
     const job: ScheduleJob = {
       id: input.id ?? randomUUID(),
       kind: "schedule_job",
@@ -338,8 +350,8 @@ export class TimeOrchestrationStore {
       description: input.description,
       scheduleKind: input.scheduleKind,
       timezone: input.timezone,
-      ownerScope: input.ownerScope ?? "personal",
-      ownerId: input.ownerId,
+      ownerScope: owner.ownerScope,
+      ownerId: owner.ownerId,
       status: input.status ?? "scheduled",
       source: input.source ?? "manual",
       externalRef: input.externalRef,
@@ -360,14 +372,16 @@ export class TimeOrchestrationStore {
     };
     this.database.run(
       `INSERT INTO schedule_jobs (
-        id, title, schedule_kind, timezone, status, next_run_at, updated_at, payload_json
+        id, title, schedule_kind, timezone, owner_scope, owner_id, status, next_run_at, updated_at, payload_json
       ) VALUES (
-        @id, @title, @schedule_kind, @timezone, @status, @next_run_at, @updated_at, @payload_json
+        @id, @title, @schedule_kind, @timezone, @owner_scope, @owner_id, @status, @next_run_at, @updated_at, @payload_json
       )
       ON CONFLICT(id) DO UPDATE SET
         title = excluded.title,
         schedule_kind = excluded.schedule_kind,
         timezone = excluded.timezone,
+        owner_scope = excluded.owner_scope,
+        owner_id = excluded.owner_id,
         status = excluded.status,
         next_run_at = excluded.next_run_at,
         updated_at = excluded.updated_at,
@@ -377,6 +391,8 @@ export class TimeOrchestrationStore {
         title: job.title,
         schedule_kind: job.scheduleKind,
         timezone: job.timezone,
+        owner_scope: job.ownerScope,
+        owner_id: job.ownerId,
         status: job.status,
         next_run_at: job.nextRunAt,
         updated_at: job.updatedAt,

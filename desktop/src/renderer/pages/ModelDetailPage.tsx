@@ -25,7 +25,10 @@ type ProviderPreset = {
   baseUrlMode: "provider-root" | "manual";
   provider: ProviderKind;
   providerFlavor?: ModelProfile["providerFlavor"];
+  defaultModel?: string;
 };
+
+type RouteSelectionSource = "manual" | "probe-recommended" | "saved" | "auto-probe-on-save";
 
 const providerPresets: ProviderPreset[] = [
   { id: "br-minimax", label: "BR MiniMax", baseUrl: BR_MINIMAX_BASE_URL, baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: BR_MINIMAX_PROVIDER_FLAVOR },
@@ -33,7 +36,7 @@ const providerPresets: ProviderPreset[] = [
   { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimaxi.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
   { id: "moonshot", label: "Moonshot", baseUrl: "https://api.moonshot.cn", baseUrlMode: "provider-root", provider: "openai-compatible" },
   { id: "qwen", label: "Qwen", baseUrl: "https://dashscope.aliyuncs.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
-  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "deepseek" },
+  { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "deepseek", defaultModel: "deepseek-v4-pro" },
   { id: "volcengine-ark", label: "火山引擎 (Ark)", baseUrl: "https://ark.cn-beijing.volces.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "volcengine-ark" },
   { id: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com", baseUrlMode: "provider-root", provider: "anthropic" },
   { id: "custom", label: "Custom", baseUrl: "", baseUrlMode: "manual", provider: "openai-compatible" },
@@ -46,14 +49,34 @@ function formatProtocolTargetLabel(target: ProtocolTarget): string {
   return "OpenAI Compatible";
 }
 
+/** 从持久化来源恢复页面路线状态，自动来源允许重新探测后被最新推荐覆盖。 */
+function resolveRouteSelectionSourceFromProfile(
+  profile: Pick<ModelProfile, "protocolTarget" | "protocolSelectionSource">,
+): RouteSelectionSource | null {
+  if (!profile.protocolTarget) {
+    return null;
+  }
+
+  if (
+    profile.protocolSelectionSource === "probe"
+    || profile.protocolSelectionSource === "registry-default"
+    || profile.protocolSelectionSource === "fallback"
+  ) {
+    return "probe-recommended";
+  }
+
+  return "saved";
+}
+
 /** 根据模型配置推断应该命中的供应商预设。 */
-function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "baseUrl" | "model">): string {
-  if (isBrMiniMaxProfile({ ...profile, providerFlavor: (profile as ModelProfile).providerFlavor })) return "br-minimax";
+function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "model">): string {
+  if (isBrMiniMaxProfile({ ...profile, providerFlavor: profile.providerFlavor })) return "br-minimax";
   const normalizedBaseUrl = profile.baseUrl.trim().toLowerCase();
   const normalizedModel = profile.model.trim().toLowerCase();
 
   if (normalizedBaseUrl.includes("minimax") || normalizedBaseUrl.includes("minimaxi") || normalizedModel.startsWith("minimax")) return "minimax";
   if (profile.provider === "anthropic" || normalizedBaseUrl.includes("anthropic")) return "anthropic";
+  if (profile.providerFlavor === "deepseek" || normalizedBaseUrl.includes("api.deepseek.com") || normalizedModel.startsWith("deepseek")) return "deepseek";
   if (normalizedBaseUrl.includes("dashscope.aliyuncs.com") || normalizedModel.startsWith("qwen")) return "qwen";
   if (normalizedBaseUrl.includes("moonshot")) return "moonshot";
   if (normalizedBaseUrl.includes("openai.com")) return "openai";
@@ -135,7 +158,7 @@ export default function ModelDetailPage() {
   const [testResult, setTestResult] = useState<{ ok: boolean; latencyMs?: number; error?: string } | null>(null);
   const [routeProbeResult, setRouteProbeResult] = useState<ModelRouteProbeResult | null>(null);
   const [selectedRoute, setSelectedRoute] = useState<ProtocolTarget | null>(null);
-  const [routeSelectionSource, setRouteSelectionSource] = useState<"manual" | "probe-recommended" | "saved" | "auto-probe-on-save" | null>(null);
+  const [routeSelectionSource, setRouteSelectionSource] = useState<RouteSelectionSource | null>(null);
   const [isProbingRoutes, setIsProbingRoutes] = useState(false);
   const [routeProbeError, setRouteProbeError] = useState("");
   const [routeStatusMessage, setRouteStatusMessage] = useState("");
@@ -172,7 +195,7 @@ export default function ModelDetailPage() {
         budgetPolicy: preset.id === "br-minimax" ? prev.budgetPolicy : undefined,
         ...(preset.id === "br-minimax"
           ? createBrMiniMaxProfile({ apiKey: prev.apiKey.trim() })
-          : { model: "", ...(isNew ? { name: `New ${preset.label} Config` } : {}) }),
+          : { model: preset.defaultModel ?? "", ...(isNew ? { name: `New ${preset.label} Config` } : {}) }),
       }));
       if (preset.id === "br-minimax") {
         setHeadersText("");
@@ -251,7 +274,7 @@ export default function ModelDetailPage() {
         const presetId = resolveProviderPresetId(existing);
         setSelectedPresetId(presetId);
         setSelectedRoute(existing.protocolTarget ?? null);
-        setRouteSelectionSource(existing.protocolTarget ? "saved" : null);
+        setRouteSelectionSource(resolveRouteSelectionSourceFromProfile(existing));
       } else {
         navigate("/settings");
       }

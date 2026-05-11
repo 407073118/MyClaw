@@ -3,6 +3,7 @@ import { registerApprovalHandlers } from "./approvals";
 import { registerArtifactHandlers } from "./artifacts";
 import { registerBootstrapHandlers } from "./bootstrap";
 import { registerCloudHandlers } from "./cloud";
+import { registerFileViewerHandlers } from "./file-viewer";
 import { registerMcpHandlers } from "./mcp";
 import { registerMeetingHandlers } from "./meetings";
 import { registerModelHandlers } from "./models";
@@ -31,6 +32,7 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerApprovalHandlers(ctx);
   registerWorkflowHandlers(ctx);
   registerCloudHandlers(ctx);
+  registerFileViewerHandlers();
   registerUpdateHandlers(ctx);
   registerSiliconPersonHandlers(ctx);
   registerWebPanelHandlers(ctx);

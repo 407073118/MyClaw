@@ -111,6 +111,17 @@ function resolveActiveNativeToolStackId(input: {
   return input.declaredNativeToolStackId ?? routedToolStackId ?? null;
 }
 
+/** 按实际协议选择工具 wire 编译目标，Anthropic Messages 必须输出 input_schema 工具结构。 */
+function resolveToolCompileTargetForProtocol(
+  providerFamily: ProviderFamily,
+  protocolTarget: ProtocolTarget,
+): ProviderFamily {
+  if (protocolTarget === "anthropic-messages") {
+    return "anthropic-native";
+  }
+  return providerFamily;
+}
+
 /** 在保留 legacy execution plan 的同时补齐 family / protocol / policy / telemetry 维度。 */
 export function resolveTurnExecutionPlan(
   input: ResolveTurnExecutionPlanInput,
@@ -158,6 +169,10 @@ export function resolveTurnExecutionPlan(
     declaredNativeToolStackId: input.capability?.nativeToolStackId ?? null,
     capabilityRoutes,
   });
+  const toolCompileTarget = resolveToolCompileTargetForProtocol(
+    familyPolicy.providerFamily,
+    familyPolicy.protocolTarget,
+  );
 
   return {
     runtimeVersion: SESSION_RUNTIME_VERSION,
@@ -182,7 +197,7 @@ export function resolveTurnExecutionPlan(
     replayMode: familyPolicy.replayMode,
     cacheMode: familyPolicy.cacheMode,
     multimodalMode: familyPolicy.multimodalMode,
-    toolCompileTarget: familyPolicy.providerFamily,
+    toolCompileTarget,
     reasoningEnabled: (legacyExecutionPlan as { reasoningEnabled?: boolean } | null)?.reasoningEnabled,
     reasoningEffort: (legacyExecutionPlan as { reasoningEffort?: TurnExecutionPlan["reasoningEffort"] } | null)?.reasoningEffort,
     thinkingControlKind: input.capability?.thinkingControlKind,
@@ -209,7 +224,7 @@ export function resolveTurnExecutionPlan(
       toolPolicyId: familyPolicy.toolPolicyId,
       contextPolicyId: familyPolicy.contextPolicyId,
       reliabilityPolicyId: familyPolicy.reliabilityPolicyId,
-      toolCompileMode: resolveToolCompileMode(familyPolicy.providerFamily),
+      toolCompileMode: resolveToolCompileMode(toolCompileTarget),
       reasoningEnabled: String((legacyExecutionPlan as { reasoningEnabled?: boolean } | null)?.reasoningEnabled ?? "auto"),
       thinkingControlKind: input.capability?.thinkingControlKind ?? "unknown",
       toolChoiceConstraint: input.capability?.toolChoiceConstraint ?? "none",

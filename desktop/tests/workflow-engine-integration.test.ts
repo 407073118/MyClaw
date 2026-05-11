@@ -20,6 +20,7 @@ import { LlmNodeExecutor } from "../src/main/services/workflow-engine/executors/
 import type { ModelCaller, ModelProfileResolver } from "../src/main/services/workflow-engine/executors/llm";
 import { ToolNodeExecutor } from "../src/main/services/workflow-engine/executors/tool";
 import type { ToolExecutorFn } from "../src/main/services/workflow-engine/executors/tool";
+import { HttpRequestNodeExecutor } from "../src/main/services/workflow-engine/executors/http-request";
 import { HumanInputNodeExecutor } from "../src/main/services/workflow-engine/executors/human-input";
 import { JoinNodeExecutor } from "../src/main/services/workflow-engine/executors/join";
 
@@ -57,6 +58,12 @@ function buildRegistry(modelCaller?: ModelCaller): NodeExecutorRegistry {
   registry.register(new ConditionNodeExecutor());
   registry.register(new LlmNodeExecutor(modelCaller ?? createStubModelCaller(), stubProfileResolver));
   registry.register(new ToolNodeExecutor(stubToolExecutor, null));
+  registry.register(new HttpRequestNodeExecutor(async () => ({
+    ok: true,
+    status: 200,
+    text: async () => "{\"remote\":\"ok\"}",
+    headers: new Headers(),
+  }) as Response));
   registry.register(new HumanInputNodeExecutor());
   registry.register(new JoinNodeExecutor());
   return registry;
@@ -243,6 +250,56 @@ describe("Workflow Engine Integration — Linear Pipeline", () => {
     const channelNames = stateUpdates.map((e) => (e as any).channelName);
     expect(channelNames).toContain("llmOutput");
     expect(channelNames).toContain("toolOutput");
+  });
+
+  it("should execute http-request nodes and write their response to state", async () => {
+    const nodes: WorkflowNode[] = [
+      { id: "start-1", kind: "start", label: "Start" },
+      {
+        id: "http-1",
+        kind: "http-request",
+        label: "Fetch Remote",
+        httpRequest: {
+          method: "GET",
+          url: "https://example.com/api",
+          headers: {},
+          outputKey: "httpResult",
+        },
+      },
+      { id: "end-1", kind: "end", label: "End" },
+    ];
+
+    const edges: WorkflowEdge[] = [
+      { id: "e1", fromNodeId: "start-1", toNodeId: "http-1", kind: "normal" },
+      { id: "e2", fromNodeId: "http-1", toNodeId: "end-1", kind: "normal" },
+    ];
+
+    const def: WorkflowDefinition = {
+      ...definitionBase("wf-http", "HTTP Node"),
+      entryNodeId: "start-1",
+      nodes,
+      edges,
+      stateSchema: [
+        {
+          key: "httpResult",
+          label: "HTTP Result",
+          description: "Remote response body",
+          valueType: "object",
+          mergeStrategy: "replace",
+          required: false,
+          producerNodeIds: ["http-1"],
+          consumerNodeIds: ["end-1"],
+        },
+      ],
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+    };
+
+    const runner = new PregelRunner(def, defaultRunConfig(), { executorRegistry: buildRegistry() });
+    const result = await runner.run();
+
+    expect(result.status).toBe("succeeded");
+    expect(result.finalState.httpResult).toEqual({ remote: "ok" });
   });
 });
 

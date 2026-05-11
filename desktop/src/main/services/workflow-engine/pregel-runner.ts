@@ -9,6 +9,10 @@ import type { NodeExecutionResult, NodeWrite } from "./node-executor";
 import { NodeExecutorRegistry } from "./node-executor";
 import { WorkflowEventEmitter } from "./event-emitter";
 import { GraphInterrupt, RecursionLimitError, isGraphInterrupt } from "./errors";
+import {
+  resolveLegacyInputBindings,
+  resolveWorkflowInputSources,
+} from "./variable-resolver";
 
 // ── Result type ──
 
@@ -115,7 +119,9 @@ export class PregelRunner {
     const runStart = Date.now();
     this.status = "running";
 
-    // 1. Write initial input to channels
+    // 1. 写入系统变量、运行变量和初始输入，保持新变量作用域与旧 channel 同步。
+    this.writeSystemVariablesToChannels();
+    this.writeRunVariablesToChannels();
     if (input) {
       this.writeInputToChannels(input);
     }
@@ -227,6 +233,10 @@ export class PregelRunner {
           // Fulfilled
           const execResult = result.value;
           allWrites.push(...execResult.writes);
+          allWrites.push({
+            channelName: "nodes",
+            value: { [node.id]: execResult.outputs },
+          });
 
           // Emit node-complete
           this.emitter.emit({
@@ -532,6 +542,7 @@ export class PregelRunner {
       const result = await executor.execute({
         node,
         state: stateSnapshot,
+        resolvedInputs: this.resolveNodeInputs(node, stateSnapshot),
         config: {
           recursionLimit: this.config.recursionLimit,
           workingDirectory: this.config.workingDirectory,
@@ -558,7 +569,15 @@ export class PregelRunner {
   // ── Channel writes ──
 
   private writeInputToChannels(input: Record<string, unknown>): void {
+    let inputsChannel = this.channels.get("inputs");
+    if (!inputsChannel) {
+      inputsChannel = new LastValueChannel("inputs", {});
+      this.channels.set("inputs", inputsChannel);
+    }
+    inputsChannel.update([input]);
+
     for (const [key, value] of Object.entries(input)) {
+      if (key === "inputs") continue;
       let channel = this.channels.get(key);
       if (!channel) {
         // Auto-create a LastValueChannel for unknown keys
@@ -567,6 +586,64 @@ export class PregelRunner {
       }
       channel.update([value]);
     }
+  }
+
+  /** 写入系统级变量，供模板通过 sys.runId / sys.workflowId 读取。 */
+  private writeSystemVariablesToChannels(): void {
+    let sysChannel = this.channels.get("sys");
+    if (!sysChannel) {
+      sysChannel = new LastValueChannel("sys", {});
+      this.channels.set("sys", sysChannel);
+    }
+    sysChannel.update([{
+      runId: this.runId,
+      workflowId: this.definition.id,
+      workflowVersion: this.definition.version ?? 1,
+      startedAt: new Date().toISOString(),
+    }]);
+  }
+
+  /** 写入运行级全局变量，供节点通过 vars.xxx 或 scope=run 引用。 */
+  private writeRunVariablesToChannels(): void {
+    const defaults: Record<string, unknown> = {};
+    for (const variable of this.definition.variables ?? []) {
+      if (variable.scope !== "run") continue;
+      if (!variable.key.trim()) continue;
+      if (variable.defaultValue === undefined) continue;
+      defaults[variable.key] = variable.defaultValue;
+    }
+
+    const mergedVariables = {
+      ...defaults,
+      ...(this.config.variables ?? {}),
+    };
+
+    let varsChannel = this.channels.get("vars");
+    if (!varsChannel) {
+      varsChannel = new LastValueChannel("vars", {});
+      this.channels.set("vars", varsChannel);
+    }
+    varsChannel.update([mergedVariables]);
+    console.info("[PregelRunner] 已写入运行级全局变量", {
+      runId: this.runId,
+      variableNames: Object.keys(mergedVariables),
+    });
+  }
+
+  /** 统一解析节点输入，先兼容旧 inputBindings，再应用 typed inputSources。 */
+  private resolveNodeInputs(
+    node: WorkflowNode,
+    stateSnapshot: ReadonlyMap<string, unknown>,
+  ): Record<string, unknown> {
+    const legacyInputs = resolveLegacyInputBindings(node.inputBindings, stateSnapshot);
+    const typedInputs = resolveWorkflowInputSources(node.inputSources, stateSnapshot, legacyInputs);
+    const resolvedInputs = { ...legacyInputs, ...typedInputs };
+    console.info("[PregelRunner] 已解析节点输入变量", {
+      runId: this.runId,
+      nodeId: node.id,
+      inputNames: Object.keys(resolvedInputs),
+    });
+    return resolvedInputs;
   }
 
   private applyWrites(writes: NodeWrite[]): string[] {
@@ -671,6 +748,13 @@ export class PregelRunner {
     try {
       await this.checkpointer.saveCheckpoint(data);
       this.lastCheckpointId = checkpointId;
+      this.emitter.emit({
+        type: "checkpoint-saved",
+        runId: this.runId,
+        checkpointId,
+        step: this.step,
+        status: checkpointStatus,
+      });
     } catch (err) {
       console.error("[PregelRunner] 保存 checkpoint 失败", {
         runId: this.runId,

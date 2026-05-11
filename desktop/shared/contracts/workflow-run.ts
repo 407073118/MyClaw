@@ -22,6 +22,8 @@ export type WorkflowRunSummary = {
   finishedAt?: string;
   totalSteps?: number;
   error?: string;
+  state?: Record<string, unknown>;
+  outputs?: Record<string, unknown>;
   lastTurnOutcomeId?: string;
 };
 
@@ -30,6 +32,7 @@ export type WorkflowCheckpointSummary = {
   step: number;
   status: "running" | "interrupted" | "succeeded" | "failed";
   triggeredNodes: string[];
+  nodeOutputs?: Record<string, unknown>;
   durationMs: number;
   createdAt: string;
   interruptPayload?: WorkflowInterruptPayload;

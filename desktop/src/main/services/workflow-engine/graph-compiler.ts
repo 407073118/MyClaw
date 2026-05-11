@@ -9,6 +9,21 @@ export type CompiledGraph = {
   edges: WorkflowEdge[];
 };
 
+/** 将结构化变量来源转换为运行时 channel 订阅，保证 typed inputSources 能参与调度。 */
+function collectInputSourceChannels(node: WorkflowNode): string[] {
+  const channels = new Set<string>();
+  for (const source of Object.values(node.inputSources ?? {})) {
+    if (source.mode !== "variable") continue;
+    if (source.ref.scope === "input") channels.add("inputs");
+    if (source.ref.scope === "system") channels.add("sys");
+    if (source.ref.scope === "node") channels.add("nodes");
+    if (source.ref.scope === "output") channels.add("outputs");
+    if (source.ref.scope === "secret") channels.add("secrets");
+    if (source.ref.scope === "run") channels.add("vars");
+  }
+  return [...channels];
+}
+
 export function compileGraph(def: WorkflowDefinition): CompiledGraph {
   const nodeMap = new Map(def.nodes.map((n) => [n.id, n]));
 
@@ -81,6 +96,9 @@ export function compileGraph(def: WorkflowDefinition): CompiledGraph {
       for (const channelName of Object.values(node.inputBindings)) {
         channels.add(channelName);
       }
+    }
+    for (const channelName of collectInputSourceChannels(node)) {
+      channels.add(channelName);
     }
     nodeSubscriptions.set(node.id, [...channels]);
   }

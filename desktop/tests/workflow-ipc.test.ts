@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const handleMock = vi.fn();
 const saveWorkflowMock = vi.fn(() => Promise.resolve());
 const saveWorkflowRunMock = vi.fn(() => Promise.resolve());
+const workflowEngineMockState = vi.hoisted(() => ({
+  run: vi.fn(() => new Promise(() => {})),
+  resume: vi.fn(),
+  abort: vi.fn(),
+}));
 
 vi.mock("electron", () => ({
   ipcMain: {
@@ -43,9 +48,9 @@ vi.mock("../src/main/services/workflow-engine", () => ({
     runId = "mock-run-id";
     emitter = { on: vi.fn() };
     /** 返回一个永远不 resolve 的 promise，避免异步回调修改运行状态。 */
-    run = vi.fn(() => new Promise(() => {}));
-    resume = vi.fn();
-    abort = vi.fn();
+    run = workflowEngineMockState.run;
+    resume = workflowEngineMockState.resume;
+    abort = workflowEngineMockState.abort;
   },
   NodeExecutorRegistry: class {
     register() {}
@@ -55,6 +60,7 @@ vi.mock("../src/main/services/workflow-engine", () => ({
   ConditionNodeExecutor: class {},
   LlmNodeExecutor: class { constructor() {} },
   ToolNodeExecutor: class { constructor() {} },
+  HttpRequestNodeExecutor: class {},
   HumanInputNodeExecutor: class {},
   JoinNodeExecutor: class {},
 }));
@@ -137,6 +143,10 @@ describe("workflow IPC handlers", () => {
     handleMock.mockClear();
     saveWorkflowMock.mockClear();
     saveWorkflowRunMock.mockClear();
+    workflowEngineMockState.run.mockReset();
+    workflowEngineMockState.run.mockImplementation(() => new Promise(() => {}));
+    workflowEngineMockState.resume.mockReset();
+    workflowEngineMockState.abort.mockReset();
   });
 
   it("keeps stateSchema defined after creating and updating a workflow", async () => {
@@ -328,6 +338,86 @@ describe("workflow IPC handlers", () => {
     expect(resumedPayload.run.status).toBe("running");
     expect(ctx.state.workflowRuns.find((run: { id: string }) => run.id === "run-1")?.status).toBe("running");
     expect(saveWorkflowRunMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("persists the final workflow state on completed run summaries", async () => {
+    workflowEngineMockState.run.mockResolvedValue({
+      status: "succeeded",
+      finalState: {
+        inputs: { topic: "季度复盘" },
+        nodes: { "llm-1": { content: "完成" } },
+        outputs: { summary: "完成" },
+      },
+      totalSteps: 3,
+      durationMs: 12,
+    });
+    const workflowRuns: Array<Record<string, unknown>> = [];
+    const workflows = [
+      {
+        id: "workflow-1",
+        name: "Visible Workflow",
+        description: "workflow",
+        status: "draft",
+        source: "personal",
+        version: 1,
+        nodeCount: 0,
+        edgeCount: 0,
+        libraryRootId: "",
+        updatedAt: "2026-04-06T00:00:00.000Z",
+      },
+    ];
+    const ctx = {
+      state: {
+        workflowRuns,
+        workflowDefinitions: {
+          "workflow-1": {
+            ...workflows[0],
+            entryNodeId: "start",
+            nodes: [
+              { id: "start", kind: "start", label: "Start" },
+              { id: "end", kind: "end", label: "End" },
+            ],
+            edges: [
+              { id: "edge-1", fromNodeId: "start", toNodeId: "end", kind: "normal" },
+            ],
+            stateSchema: [],
+          },
+        } as Record<string, unknown>,
+        getWorkflows: () => workflows,
+        getDefaultModelProfileId: () => "profile-1",
+        activeWorkflowRuns: new Map(),
+      },
+      runtime: {
+        paths: { myClawDir: "/tmp/myclaw" },
+        myClawRootPath: "/tmp/myclaw",
+      },
+      services: {
+        mcpManager: null,
+      },
+    } as any;
+
+    const { registerWorkflowHandlers } = await import("../src/main/ipc/workflows");
+    registerWorkflowHandlers(ctx);
+    const startRunHandler = findHandler("workflow:start-run");
+
+    await startRunHandler(null, { workflowId: "workflow-1", initialState: { topic: "季度复盘" } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(ctx.state.workflowRuns[0]).toMatchObject({
+      status: "succeeded",
+      state: {
+        outputs: { summary: "完成" },
+      },
+      totalSteps: 3,
+    });
+    expect(saveWorkflowRunMock).toHaveBeenLastCalledWith(
+      ctx.runtime.paths,
+      expect.objectContaining({
+        state: expect.objectContaining({
+          nodes: { "llm-1": { content: "完成" } },
+        }),
+      }),
+    );
   });
 
   it("rejects resuming a workflow run that is already terminal", async () => {

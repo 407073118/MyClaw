@@ -24,6 +24,7 @@ describe("vendor policy contracts", () => {
       "kimi",
       "volcengine-ark",
       "minimax",
+      "deepseek",
       "generic-openai-compatible",
       "generic-local-gateway",
     ]));
@@ -35,6 +36,11 @@ describe("vendor policy contracts", () => {
     expect(qwenPolicy.supportedProtocols).toEqual(expect.arrayContaining([
       "openai-chat-compatible",
       "openai-responses",
+      "anthropic-messages",
+    ]));
+    const deepSeekPolicy = getVendorPolicy("deepseek");
+    expect(deepSeekPolicy.supportedProtocols).toEqual(expect.arrayContaining([
+      "openai-chat-compatible",
       "anthropic-messages",
     ]));
   });
@@ -59,6 +65,7 @@ describe("vendor policy contracts", () => {
       "kimi",
       "volcengine-ark",
       "minimax",
+      "deepseek",
     ]));
   });
 });

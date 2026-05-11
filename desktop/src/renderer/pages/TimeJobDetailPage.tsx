@@ -8,7 +8,7 @@ import { useWorkspaceStore } from "../stores/workspace";
 import { formatJobFrequency } from "../utils/frequency";
 
 /** 单个定时任务的独立详情页：header 元信息 + 触发记录。
- *  对话本身不在此页承载——点击触发记录行跳到对应 ChatPage session。 */
+ *  触发记录卡片优先展示本次结果，聊天入口保留为独立按钮。 */
 export default function TimeJobDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -29,6 +29,7 @@ export default function TimeJobDetailPage() {
 
   const [running, setRunning] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
   useEffect(() => {
     void useWorkspaceStore.getState().refreshExecutionRuns();
@@ -38,7 +39,7 @@ export default function TimeJobDetailPage() {
     return (
       <main className="time-job-detail-page" data-testid="time-job-detail-not-found">
         <header className="time-job-detail__topbar">
-          <button type="button" className="time-job-detail__back" onClick={() => navigate("/time")}>← 日程规划</button>
+          <button type="button" className="time-job-detail__back" onClick={() => navigate("/time", { state: { activeView: "jobs" } })}>← 定时任务列表</button>
         </header>
         <div className="time-job-detail__missing">
           <h2>找不到这个定时任务</h2>
@@ -65,7 +66,7 @@ export default function TimeJobDetailPage() {
 
   function handleEdit() {
     if (!job) return;
-    void navigate("/time", { state: { editJobId: job.id } });
+    void navigate("/time", { state: { activeView: "jobs", editJobId: job.id } });
   }
 
   async function handleTogglePause() {
@@ -79,7 +80,7 @@ export default function TimeJobDetailPage() {
     if (!job) return;
     if (!window.confirm(`确认删除定时任务「${job.title}」？此操作不可撤销。`)) return;
     await useWorkspaceStore.getState().deleteScheduleJob(job.id);
-    void navigate("/time");
+    void navigate("/time", { state: { activeView: "jobs" } });
   }
 
   function handleOpenRunSession(sessionId: string) {
@@ -88,13 +89,14 @@ export default function TimeJobDetailPage() {
 
   const supportsChat = job.executor === "assistant_prompt";
   const lastRun = runs[0] ?? null;
+  const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null;
   // shared 模式：所有触发都汇入同一 session（job.sessionId）；提供一个直达按钮即可。
   const sharedSessionId = isShared && supportsChat ? job.sessionId ?? null : null;
 
   return (
     <main className="time-job-detail-page" data-testid="time-job-detail">
       <header className="time-job-detail__topbar">
-        <button type="button" className="time-job-detail__back" onClick={() => navigate("/time")}>← 日程规划</button>
+        <button type="button" className="time-job-detail__back" onClick={() => navigate("/time", { state: { activeView: "jobs" } })}>← 定时任务列表</button>
       </header>
 
       <section className="time-job-detail__header">
@@ -160,7 +162,7 @@ export default function TimeJobDetailPage() {
       <section className="time-job-detail__runs">
         <header className="time-job-detail__section-head">
           <h2>触发记录</h2>
-          <span>{runs.length} 次{supportsChat ? " · 点击行进入对应聊天" : ""}</span>
+          <span>{runs.length} 次{supportsChat ? " · 点击卡片查看结果" : ""}</span>
         </header>
         {runs.length === 0 ? (
           <p className="time-job-detail__empty-hint">这个任务还没有执行过。</p>
@@ -171,11 +173,16 @@ export default function TimeJobDetailPage() {
                 key={run.id}
                 run={run}
                 timezone={job.timezone}
+                selected={selectedRunId === run.id}
+                onSelect={() => setSelectedRunId(run.id)}
                 onOpenSession={handleOpenRunSession}
               />
             ))}
           </ol>
         )}
+        {selectedRun ? (
+          <RunResultPanel run={selectedRun} timezone={job.timezone} />
+        ) : null}
       </section>
 
       <style>{styles}</style>
@@ -186,23 +193,24 @@ export default function TimeJobDetailPage() {
 type RunRowProps = {
   run: ExecutionRun;
   timezone: string;
+  selected: boolean;
+  onSelect: () => void;
   onOpenSession: (sessionId: string) => void;
 };
 
-function RunRow({ run, timezone, onOpenSession }: RunRowProps) {
+function RunRow({ run, timezone, selected, onSelect, onOpenSession }: RunRowProps) {
   const summaryPreview = run.outputSummary
     ? run.outputSummary.replace(/\s+/g, " ").trim().slice(0, 160)
     : "";
   const canOpen = Boolean(run.sessionId);
 
   return (
-    <li className={`run-row run-row--${run.status}${canOpen ? " run-row--openable" : ""}`}>
+    <li className={`run-row run-row--${run.status}${selected ? " is-selected" : ""}`}>
       <button
         type="button"
-        className="run-row__btn-row"
-        onClick={canOpen && run.sessionId ? () => onOpenSession(run.sessionId!) : undefined}
-        disabled={!canOpen}
-        aria-label={canOpen ? `打开这次触发的聊天会话` : `本次触发没有关联会话`}
+        className="run-row__select"
+        onClick={onSelect}
+        aria-label="查看本次触发结果"
       >
         <span className="run-row__bullet" aria-hidden="true">{run.status === "succeeded" ? "✓" : run.status === "failed" ? "✗" : run.status === "running" ? "…" : "•"}</span>
         <div className="run-row__body">
@@ -214,13 +222,44 @@ function RunRow({ run, timezone, onOpenSession }: RunRowProps) {
             <span className={`status-badge status-badge--${run.status === "succeeded" ? "active" : run.status === "failed" ? "danger" : run.status === "running" ? "normal" : "muted"}`}>
               {formatRunStatusZh(run.status)}
             </span>
-            {canOpen ? <span className="run-row__open-hint" aria-hidden="true">打开聊天 →</span> : null}
           </div>
           {summaryPreview ? <p className="run-row__summary">{summaryPreview}{(run.outputSummary?.length ?? 0) > 160 ? "…" : ""}</p> : null}
           {run.errorMessage ? <pre className="run-row__error">{run.errorMessage}</pre> : null}
         </div>
       </button>
+      <div className="run-row__actions">
+        <button
+          type="button"
+          className="run-row__chat-btn"
+          disabled={!canOpen}
+          onClick={canOpen && run.sessionId ? () => onOpenSession(run.sessionId!) : undefined}
+          title={canOpen ? "打开这次触发的聊天会话" : "本次触发没有关联会话"}
+        >
+          打开聊天
+        </button>
+      </div>
     </li>
+  );
+}
+
+function RunResultPanel({ run, timezone }: { run: ExecutionRun; timezone: string }) {
+  const output = run.outputSummary?.trim();
+  const error = run.errorMessage?.trim();
+  return (
+    <section className="run-result-panel" aria-label="本次执行结果">
+      <header className="run-result-panel__head">
+        <div>
+          <h3>本次执行结果</h3>
+          <p>{formatLocal(run.startedAt, timezone)}{run.finishedAt ? ` → ${formatClock(run.finishedAt, timezone)}` : ""}</p>
+        </div>
+        <span className={`status-badge status-badge--${run.status === "succeeded" ? "active" : run.status === "failed" ? "danger" : run.status === "running" ? "normal" : "muted"}`}>
+          {formatRunStatusZh(run.status)}
+        </span>
+      </header>
+      {output ? <p className="run-result-panel__output">{output}</p> : null}
+      {error ? <pre className="run-result-panel__error">{error}</pre> : null}
+      {!output && !error ? <p className="run-result-panel__empty">这次触发还没有写入可展示的执行结果。</p> : null}
+    </section>
   );
 }
 
@@ -477,12 +516,17 @@ const styles = `
     transition: border-color 0.15s ease, background 0.15s ease;
   }
 
-  .run-row.run-row--openable:hover {
+  .run-row:hover,
+  .run-row.is-selected {
     border-color: var(--glass-border-hover);
     background: var(--bg-surface-hover);
   }
 
-  .run-row__btn-row {
+  .run-row.is-selected {
+    box-shadow: inset 0 0 0 1px rgba(16, 163, 127, 0.22);
+  }
+
+  .run-row__select {
     all: unset;
     box-sizing: border-box;
     display: grid;
@@ -493,11 +537,7 @@ const styles = `
     cursor: pointer;
   }
 
-  .run-row__btn-row:disabled {
-    cursor: default;
-  }
-
-  .run-row__btn-row:focus-visible {
+  .run-row__select:focus-visible {
     outline: 1px solid var(--accent-cyan);
     outline-offset: -2px;
   }
@@ -512,20 +552,6 @@ const styles = `
     font-size: 12px;
     font-weight: 700;
     line-height: 1;
-  }
-
-  .run-row__open-hint {
-    margin-left: auto;
-    font-size: 11px;
-    color: var(--accent-cyan);
-    font-weight: 600;
-    opacity: 0;
-    transition: opacity 0.15s ease;
-  }
-
-  .run-row.run-row--openable:hover .run-row__open-hint,
-  .run-row__btn-row:focus-visible .run-row__open-hint {
-    opacity: 1;
   }
 
   .session-mode-chip {
@@ -597,6 +623,90 @@ const styles = `
     color: var(--status-red);
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .run-row__actions {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 12px 10px 46px;
+  }
+
+  .run-row__chat-btn {
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--accent-cyan);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .run-row__chat-btn:hover:not(:disabled) {
+    border-color: rgba(16, 163, 127, 0.55);
+    background: rgba(16, 163, 127, 0.1);
+  }
+
+  .run-row__chat-btn:disabled {
+    cursor: default;
+    color: var(--text-muted);
+    opacity: 0.6;
+  }
+
+  .run-result-panel {
+    margin: 0 20px 18px;
+    padding: 14px 16px;
+    border: 1px solid rgba(16, 163, 127, 0.28);
+    border-radius: var(--radius-md);
+    background: rgba(16, 163, 127, 0.07);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .run-result-panel__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .run-result-panel__head h3 {
+    margin: 0 0 4px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .run-result-panel__head p {
+    margin: 0;
+    color: var(--text-muted);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+  }
+
+  .run-result-panel__output,
+  .run-result-panel__empty {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .run-result-panel__error {
+    margin: 0;
+    padding: 10px 12px;
+    background: rgba(239, 68, 68, 0.09);
+    border: 1px solid rgba(239, 68, 68, 0.24);
+    border-radius: var(--radius-sm);
+    color: var(--status-red);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
     white-space: pre-wrap;
     word-break: break-word;
   }

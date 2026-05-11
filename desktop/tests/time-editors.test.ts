@@ -90,9 +90,9 @@ describe("time editors", () => {
     }
     fireEvent.click(within(composerModal).getByRole("button", { name: "定时任务" }));
     fireEvent.change(screen.getByLabelText("任务标题"), { target: { value: "每周跟进流程" } });
-    fireEvent.change(screen.getByLabelText("调度类型"), { target: { value: "interval" } });
-    fireEvent.change(screen.getByLabelText("开始时间"), { target: { value: "2026-04-22T10:00" } });
-    fireEvent.change(screen.getByLabelText("间隔分钟"), { target: { value: "120" } });
+    fireEvent.click(screen.getByRole("radio", { name: "每 N 分钟" }));
+    fireEvent.change(screen.getByLabelText("间隔分钟（5 - 1440）"), { target: { value: "120" } });
+    fireEvent.change(screen.getByLabelText("提示词"), { target: { value: "检查流程推进并给出下一步。" } });
     fireEvent.click(screen.getByRole("button", { name: "保存定时任务" }));
 
     await waitFor(() => {
@@ -109,7 +109,6 @@ describe("time editors", () => {
           title: "每周跟进流程",
           scheduleKind: "interval",
           intervalMinutes: 120,
-          startsAt: "2026-04-22T02:00:00.000Z",
         }),
       );
       expect(state.saveAvailabilityPolicy).toHaveBeenCalledWith(
@@ -180,6 +179,59 @@ describe("time editors", () => {
         }),
       );
       expect(state.deleteReminder).toHaveBeenCalledWith("rem-1");
+    });
+  });
+
+  it("stores silicon person scheduled messages under the employee owner", async () => {
+    useWorkspaceStore.setState({
+      siliconPersons: [
+        {
+          id: "sp-1",
+          name: "运营助手",
+          title: "运营助手",
+          description: "处理周期运营事项",
+          status: "idle",
+          source: "personal",
+          approvalMode: "inherit",
+          currentSessionId: null,
+          sessions: [],
+          unreadCount: 0,
+          hasUnread: false,
+          needsApproval: false,
+          workflowIds: [],
+          updatedAt: "2026-04-18T00:00:00.000Z",
+        },
+      ],
+    } as any);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "新建" }));
+    const composerModal = screen.getByTestId("schedule-composer-modal");
+    fireEvent.click(within(composerModal).getByRole("button", { name: "定时任务" }));
+    const changeTypeButton = within(composerModal).queryByRole("button", { name: "← 换类型" });
+    if (changeTypeButton) {
+      fireEvent.click(changeTypeButton);
+    }
+    fireEvent.click(within(composerModal).getByRole("button", { name: /调用员工任务/ }));
+    fireEvent.change(screen.getByLabelText("任务标题"), { target: { value: "每日运营巡检" } });
+    fireEvent.click(screen.getByRole("radio", { name: "每 N 分钟" }));
+    fireEvent.change(screen.getByLabelText("间隔分钟（5 - 1440）"), { target: { value: "120" } });
+    fireEvent.change(screen.getByLabelText("选择员工"), { target: { value: "sp-1" } });
+    fireEvent.change(screen.getByLabelText("派发消息"), { target: { value: "检查今日运营异常并回复结果。" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存定时任务" }));
+
+    await waitFor(() => {
+      const state = useWorkspaceStore.getState() as any;
+      expect(state.createScheduleJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "每日运营巡检",
+          ownerScope: "silicon_person",
+          ownerId: "sp-1",
+          executor: "silicon_person",
+          executorTargetId: "sp-1",
+        }),
+      );
     });
   });
 });

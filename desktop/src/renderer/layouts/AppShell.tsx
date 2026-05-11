@@ -98,12 +98,6 @@ const IconSettings = () => (
   </svg>
 );
 
-const IconPrompt = () => (
-  <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-    <path d="M12 2l2.4 7.4h7.6l-6.2 4.5 2.4 7.4-6.2-4.5-6.2 4.5 2.4-7.4-6.2-4.5h7.6z" />
-  </svg>
-);
-
 const IconBrand = () => (
   <svg viewBox="0 0 24 24" width="24" height="24">
     <path
@@ -236,7 +230,6 @@ export default function AppShell() {
     : "Preparing the local runtime, restoring workspace state, and opening your last session.";
 
   const currentUserDisplayName = auth.session.user?.displayName ?? "未登录用户";
-  const currentUserAccount = auth.session.user?.account ?? "未绑定账号";
   const runtimeStatusLabel = !ready ? (error ? "异常" : loading ? "连接中" : "未就绪") : "";
   const [timeAssistantExpanded, setTimeAssistantExpanded] = useState(false);
   const [timeAssistantNowIso, setTimeAssistantNowIso] = useState(() => new Date().toISOString());
@@ -290,15 +283,6 @@ export default function AppShell() {
     }, 5 * 60_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  /** 执行登出并返回登录页。 */
-  async function handleLogout() {
-    console.info("[app-shell] 用户请求退出当前账号", {
-      account: auth.session.user?.account ?? null,
-    });
-    await auth.logout();
-    void navigate("/login", { replace: true });
-  }
 
   /** 触发一次工作区 bootstrap 重试。 */
   function handleBootstrapRetry() {
@@ -412,44 +396,17 @@ export default function AppShell() {
                   )}
                 </span>
               </div>
-            </div>
-            <div className="user-card-actions">
-              <NavLink
-                data-testid="nav-personal-prompt"
-                to="/me/prompt"
-                className={["user-action-btn", location.pathname.startsWith("/me/prompt") ? "active" : ""]
-                  .filter(Boolean)
-                  .join(" ")}
-                title="我的个性"
-              >
-                <div style={{ position: "relative", display: "inline-flex" }}>
-                  <IconPrompt />
-                </div>
-                <span>个性</span>
-              </NavLink>
               <NavLink
                 data-testid="nav-settings"
                 to="/settings"
-                className={["user-action-btn", location.pathname.startsWith("/settings") ? "active" : ""]
+                aria-label="打开设置"
+                className={["user-settings-icon", location.pathname.startsWith("/settings") ? "active" : ""]
                   .filter(Boolean)
                   .join(" ")}
-                title="Settings"
+                title="打开设置"
               >
                 <IconSettings />
-                <span>设置</span>
               </NavLink>
-              <button
-                data-testid="auth-logout"
-                type="button"
-                className="user-action-btn logout"
-                onClick={() => void handleLogout()}
-                title="退出登录"
-              >
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                <span>退出</span>
-              </button>
             </div>
           </div>
         </footer>
@@ -680,44 +637,31 @@ export default function AppShell() {
           background: rgba(248, 113, 113, 0.12);
         }
 
-        .user-card-actions {
-          display: flex;
-          border-top: 1px solid var(--glass-border);
-        }
-
-        .user-action-btn {
-          flex: 1;
-          display: flex;
+        .user-settings-icon {
+          width: 32px;
+          height: 32px;
+          flex: 0 0 32px;
+          display: inline-flex;
           align-items: center;
           justify-content: center;
-          gap: 6px;
-          padding: 8px 0;
-          background: none;
-          border: none;
           color: var(--text-muted);
-          font-size: 12px;
-          font-weight: 500;
-          cursor: pointer;
+          background: rgba(255, 255, 255, 0.04);
+          border: 1px solid var(--glass-border);
+          border-radius: 8px;
           text-decoration: none;
-          transition: all 0.15s ease;
+          transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
         }
 
-        .user-action-btn:hover {
+        .user-settings-icon:hover {
           color: var(--text-primary);
           background: var(--glass-reflection);
+          border-color: rgba(255, 255, 255, 0.14);
         }
 
-        .user-action-btn.active {
+        .user-settings-icon.active {
           color: var(--accent-cyan);
-        }
-
-        .user-action-btn.logout:hover {
-          color: #f87171;
-          background: rgba(239, 68, 68, 0.08);
-        }
-
-        .user-action-btn + .user-action-btn {
-          border-left: 1px solid var(--glass-border);
+          background: rgba(45, 212, 191, 0.08);
+          border-color: rgba(45, 212, 191, 0.22);
         }
 
         .shell-content {

@@ -37,6 +37,16 @@ export { compileGraph } from "./graph-compiler";
 export type { WorkflowRunResult, CheckpointData, WorkflowCheckpointer, PregelRunnerDeps } from "./pregel-runner";
 export { PregelRunner } from "./pregel-runner";
 
+// ── Variables ──
+export {
+  readWorkflowPath,
+  renderWorkflowTemplate,
+  resolveLegacyInputBindings,
+  resolveWorkflowInputSources,
+  resolveWorkflowPathExpression,
+  resolveWorkflowVariableRef,
+} from "./variable-resolver";
+
 // ── Executors ──
 export { StartNodeExecutor } from "./executors/start";
 export { EndNodeExecutor } from "./executors/end";
@@ -45,5 +55,6 @@ export type { ModelCaller, ModelProfileResolver } from "./executors/llm";
 export { LlmNodeExecutor } from "./executors/llm";
 export type { ToolExecutorFn, McpToolCallerFn } from "./executors/tool";
 export { ToolNodeExecutor, parseMcpToolId } from "./executors/tool";
+export { HttpRequestNodeExecutor } from "./executors/http-request";
 export { HumanInputNodeExecutor } from "./executors/human-input";
 export { JoinNodeExecutor } from "./executors/join";

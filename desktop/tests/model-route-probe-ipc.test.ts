@@ -564,6 +564,56 @@ describe("model route probe ipc", () => {
     expect(result.recommendedProtocolTarget).toBe("openai-responses");
   });
 
+  it("keeps DeepSeek route probing on vendor-preferred OpenAI Chat when Anthropic is also reachable", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      expect(url === "https://api.deepseek.com/chat/completions" || url === "https://api.deepseek.com/anthropic/v1/messages").toBe(true);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { registerModelHandlers } = await import("../src/main/ipc/models");
+    registerModelHandlers({
+      state: {
+        models: [],
+        sessions: [],
+        getDefaultModelProfileId: () => null,
+        setDefaultModelProfileId: () => {},
+        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
+      },
+      runtime: {
+        paths: { myClawDir: "/tmp" },
+      },
+    } as any);
+
+    const handler = findHandler("model:probe-routes-by-config");
+    const result = await handler(null, {
+      provider: "openai-compatible",
+      providerFlavor: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      baseUrlMode: "provider-root",
+      apiKey: "test-key",
+      model: "deepseek-v4-pro",
+      headers: {},
+      requestBody: {},
+    }) as {
+      availableProtocolTargets: string[];
+      recommendedProtocolTarget: string | null;
+      entries: Array<{ protocolTarget: string; ok: boolean }>;
+    };
+
+    expect(result.entries.map((entry) => entry.protocolTarget)).toEqual([
+      "openai-chat-compatible",
+      "anthropic-messages",
+    ]);
+    expect(result.availableProtocolTargets).toEqual([
+      "openai-chat-compatible",
+      "anthropic-messages",
+    ]);
+    expect(result.recommendedProtocolTarget).toBe("openai-chat-compatible");
+  });
+
   it("does not recommend routes that fail authentication or timeout", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);

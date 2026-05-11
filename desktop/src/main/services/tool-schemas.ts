@@ -23,6 +23,7 @@ export type OpenAIFunctionTool = {
 
 function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git" | "http" | "web" | "ppt" | "task" | "time" | "browser" | null {
   if (functionName.startsWith("fs_")) return "fs";
+  if (functionName === "file_view") return "fs";
   // document.read（Phase 8）共用 fs 授权策略（路径审批同一 PathAccessPolicy），
   // 所以分组归入 fs，跟随 fs_* 一起被 tool policy 允许或屏蔽。
   if (functionName === "document_read" || functionName.startsWith("document_")) return "fs";
@@ -64,6 +65,33 @@ export function buildToolSchemas(
             path: {
               type: "string",
               description: "File path. Relative paths resolve against the working directory; absolute paths (including workspace-external paths) are supported subject to user approval.",
+            },
+          },
+          required: ["path"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "file_view",
+        description: [
+          `Open a local file for the user in the right-side viewer panel without returning the file body to the model context.`,
+          `Use this when the user says view/open/browse a file. Use document_read instead when you need to analyze, summarize, search, or quote file contents.`,
+          `Supported panel previews include markdown, text/code, JSON, CSV/TSV, images, PDF, Office semantic previews, media, archives, plus fallback metadata.`,
+          `Working directory: ${cwd}`,
+        ].join("\n"),
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Absolute or relative local file path. Subject to the same path-access approval rules as fs_read.",
+            },
+            mode: {
+              type: "string",
+              enum: ["auto", "panel", "external", "reveal"],
+              description: "auto/panel opens the right viewer; external opens with the system default app; reveal locates it in file manager.",
             },
           },
           required: ["path"],
@@ -489,7 +517,7 @@ export function buildToolSchemas(
             subject: { type: "string", description: "Imperative description of what needs to be done (e.g., 'Fix authentication bug')" },
             description: { type: "string", description: "Detailed description of the task requirements" },
             activeForm: { type: "string", description: "Present continuous form shown during execution (e.g., 'Fixing authentication bug')" },
-            status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "Initial status. Defaults to 'pending'." },
+            status: { type: "string", enum: ["pending", "in_progress", "waiting_user", "completed"], description: "Initial status. Defaults to 'pending'. Use 'waiting_user' only when the task is paused until the user answers a clarification question." },
             blockedBy: { type: "array", items: { type: "string" }, description: "Task IDs that must complete before this task can start. Omit to auto-chain to previous task; pass [] for no dependencies." },
           },
           required: ["subject", "description"],
@@ -525,7 +553,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_update",
-        description: "Update a task's status or details. Set 'in_progress' before you start working on a task, 'completed' immediately after you finish. Only ONE task should be in_progress at a time — others are automatically demoted to pending. IMPORTANT: Setting status to 'in_progress' will FAIL if the task has unfinished blockers (blockedBy). You must complete blocking tasks first, in order.",
+        description: "Update a task's status or details. Set 'in_progress' before you start working on a task, 'waiting_user' when you asked the user to choose or clarify something, and 'completed' immediately after you finish. Only ONE task should be in_progress at a time — others are automatically demoted to pending. IMPORTANT: Setting status to 'in_progress' will FAIL if the task has unfinished blockers (blockedBy). You must complete blocking tasks first, in order.",
         parameters: {
           type: "object",
           properties: {
@@ -533,7 +561,7 @@ export function buildToolSchemas(
             subject: { type: "string", description: "Updated task subject" },
             description: { type: "string", description: "Updated description" },
             activeForm: { type: "string", description: "Updated present continuous form" },
-            status: { type: "string", enum: ["pending", "in_progress", "completed"], description: "Updated status" },
+            status: { type: "string", enum: ["pending", "in_progress", "waiting_user", "completed"], description: "Updated status" },
             blocks: { type: "array", items: { type: "string" }, description: "Task IDs this task blocks" },
             blockedBy: { type: "array", items: { type: "string" }, description: "Task IDs that block this task" },
           },
@@ -1021,6 +1049,12 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
       const searchPath = String(args.path ?? ".");
       return searchPath !== "." ? `${pattern}::${searchPath}` : pattern;
     }
+
+    case "file.view":
+      return JSON.stringify({
+        path: args.path ?? "",
+        mode: args.mode ?? "auto",
+      });
 
     case "exec.command": {
       // 判定是否需要附带配置字段，触发 JSON 形式

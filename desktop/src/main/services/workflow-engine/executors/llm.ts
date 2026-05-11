@@ -1,5 +1,6 @@
 import type { ExperienceProfileId, ProtocolTarget, ProviderFamily, WorkflowLlmNode } from "@shared/contracts";
 import type { NodeExecutor, NodeExecutionContext, NodeExecutionResult } from "../node-executor";
+import { renderWorkflowTemplate } from "../variable-resolver";
 
 export type ModelCaller = (options: {
   profile: unknown;
@@ -26,10 +27,15 @@ export class LlmNodeExecutor implements NodeExecutor {
   async execute(ctx: NodeExecutionContext): Promise<NodeExecutionResult> {
     const start = Date.now();
     const node = ctx.node as WorkflowLlmNode;
-    const prompt = this.resolvePrompt(node.llm.prompt, ctx.state);
-    const messages: Array<{ role: string; content: string }> = [
-      { role: "user", content: prompt },
-    ];
+    const systemPrompt = node.llm.systemPrompt
+      ? renderWorkflowTemplate(node.llm.systemPrompt, ctx.state, ctx.resolvedInputs)
+      : "";
+    const prompt = renderWorkflowTemplate(node.llm.prompt, ctx.state, ctx.resolvedInputs);
+    const messages: Array<{ role: string; content: string }> = [];
+    if (systemPrompt.trim()) {
+      messages.push({ role: "system", content: systemPrompt });
+    }
+    messages.push({ role: "user", content: prompt });
     const profileId = (node as any).llm?.model ?? ctx.config.modelProfileId;
     const profile = this.profileResolver(profileId);
     let content = "";
@@ -65,11 +71,4 @@ export class LlmNodeExecutor implements NodeExecutor {
     };
   }
 
-  private resolvePrompt(template: string, state: ReadonlyMap<string, unknown>): string {
-    return template.replace(/\{\{(\w+)\}\}/g, (_match, key) => {
-      const val = state.get(key);
-      if (val === undefined || val === null) return "";
-      return typeof val === "string" ? val : JSON.stringify(val);
-    });
-  }
 }

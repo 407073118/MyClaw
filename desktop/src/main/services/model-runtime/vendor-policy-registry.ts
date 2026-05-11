@@ -72,7 +72,7 @@ const PROMPT_POLICY_LINES: Record<string, string[]> = {
     "Use fallback-friendly wording and preserve compatible thinking hints.",
   ],
   "deepseek.compat.default": [
-    "DeepSeek-R1 的推理为 always-on，不需要 effort 参数；保持兼容安全的提示风格。",
+    "DeepSeek V4 默认启用 thinking，使用 high/max effort；兼容路线保持 OpenAI Chat 形态。",
   ],
   "generic.compat.default": [
     "Keep prompts transport-safe and avoid provider-specific assumptions.",
@@ -172,7 +172,7 @@ const REASONING_PROFILE_LINES: Record<string, string[]> = {
     "Use compatibility-safe reasoning patches when native replay is unavailable.",
   ],
   "deepseek.reasoning.native": [
-    "DeepSeek-R1 内置推理为 always-on；effort 级别不影响推理行为。",
+    "DeepSeek V4 使用 thinking 开关与 high/max effort；reasoning_content 需要按工具调用语义重放。",
   ],
   "generic.reasoning.compat": [
     "Use the default compatibility reasoning strategy.",
@@ -371,26 +371,30 @@ const VENDOR_POLICY_REGISTRY: Record<VendorFamily, VendorPolicy> = {
   },
   deepseek: {
     vendorFamily: "deepseek",
-    supportedProtocols: ["openai-chat-compatible"],
+    supportedProtocols: ["openai-chat-compatible", "anthropic-messages"],
     legacyProviderFamilies: ["deepseek"],
     recommendedProtocolsByUseCase: {
-      default: ["openai-chat-compatible"],
-      coding: ["openai-chat-compatible"],
-      review: ["openai-chat-compatible"],
+      default: ["openai-chat-compatible", "anthropic-messages"],
+      coding: ["openai-chat-compatible", "anthropic-messages"],
+      review: ["openai-chat-compatible", "anthropic-messages"],
     },
     defaultExperienceProfileId: "balanced",
     familyOverlayLines: [
-      "DeepSeek-R1 系列内置推理能力（always-on），不需要通过 effort 控制。",
-      "使用 reasoning_content 字段回传思考过程。",
+      "DeepSeek V4 支持 thinking 开关与 high/max effort，默认走 OpenAI Chat 兼容协议。",
+      "官方 Anthropic API 可作为路线探测与手动选择的备用协议。",
+      "工具调用后的多轮请求需要保留 reasoning_content。",
     ],
     promptPolicyIdByProtocol: {
       "openai-chat-compatible": "deepseek.compat.default",
+      "anthropic-messages": "deepseek.compat.default",
     },
     toolPolicyIdByProtocol: {
       "openai-chat-compatible": "deepseek.tools.full",
+      "anthropic-messages": "deepseek.tools.full",
     },
     reasoningProfileIdByProtocol: {
       "openai-chat-compatible": "deepseek.reasoning.native",
+      "anthropic-messages": "deepseek.reasoning.native",
     },
     toolCompileModesByProviderFamily: {
       "deepseek": "openai-compatible-relaxed",

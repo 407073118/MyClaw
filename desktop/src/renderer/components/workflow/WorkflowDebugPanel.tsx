@@ -1,10 +1,6 @@
-import React, { useState, useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import type { WorkflowInterruptPayload } from "@shared/contracts";
 import { InterruptInputForm } from "./InterruptInputForm";
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface WorkflowDebugPanelProps {
   runId: string;
@@ -12,16 +8,14 @@ interface WorkflowDebugPanelProps {
   currentStep: number;
   state: Record<string, unknown>;
   events: Array<{ type: string; timestamp: number; [key: string]: unknown }>;
+  nodeOutputs?: Record<string, unknown>;
+  nodeLabels?: Record<string, string>;
   interruptPayload?: WorkflowInterruptPayload;
   onResumeWithInput?: (value: unknown) => void;
   isResuming?: boolean;
 }
 
-type TabKey = "state" | "timeline" | "logs";
-
-// ---------------------------------------------------------------------------
-// Event type -> badge color mapping
-// ---------------------------------------------------------------------------
+type TabKey = "state" | "nodeOutputs" | "timeline" | "logs";
 
 const eventBadgeColors: Record<string, string> = {
   "run-start": "#3b82f6",
@@ -38,73 +32,102 @@ const eventBadgeColors: Record<string, string> = {
   "checkpoint-saved": "#6366f1",
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** 将时间戳转为相对起始时间的秒数字符串，如 "+2.3s"。 */
+/** 将时间戳转成相对起点的秒数文本，如 "+2.3s"。*/
 function relativeTime(timestamp: number, origin: number): string {
   const delta = (timestamp - origin) / 1000;
   return `+${delta.toFixed(1)}s`;
 }
 
-/** 截断字符串至指定长度。 */
+/** 截断字符串到指定长度。*/
 function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) + "..." : value;
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+/** 将运行状态转成中文，减少调试面板里的协议字段感。 */
+function formatDebugStatus(status: string): string {
+  switch (status) {
+    case "running":
+      return "运行中";
+    case "succeeded":
+      return "已成功";
+    case "failed":
+      return "已失败";
+    case "waiting-input":
+      return "等待输入";
+    case "retry-scheduled":
+      return "等待重试";
+    default:
+      return status;
+  }
+}
 
-/** 工作流调试面板 -- 显示运行时状态、事件时间轴和原始日志。 */
+/** 工作流调试面板，展示运行状态、事件时间线和原始日志。*/
 export function WorkflowDebugPanel({
   runId,
   status,
   currentStep,
   state,
   events,
+  nodeOutputs,
+  nodeLabels = {},
   interruptPayload,
   onResumeWithInput,
   isResuming,
 }: WorkflowDebugPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("state");
 
-  // Filter out internal state keys
   const visibleState = useMemo(() => {
     return Object.entries(state).filter(([key]) => !key.startsWith("__"));
   }, [state]);
 
-  // Reverse chronological events for timeline
-  const timelineEvents = useMemo(() => [...events].reverse(), [events]);
+  const visibleNodeOutputs = useMemo(() => {
+    const outputs = nodeOutputs ?? (state.nodes as Record<string, unknown> | undefined) ?? {};
+    return Object.entries(outputs);
+  }, [nodeOutputs, state.nodes]);
 
-  // Origin timestamp for relative time display
+  const finalOutputEntries = useMemo(() => {
+    const outputs = state.outputs;
+    if (outputs && typeof outputs === "object" && !Array.isArray(outputs)) {
+      return Object.entries(outputs as Record<string, unknown>);
+    }
+    if (state.lastLlmOutput !== undefined) {
+      return [["output", state.lastLlmOutput] as const];
+    }
+    return [] as Array<readonly [string, unknown]>;
+  }, [state.outputs, state.lastLlmOutput]);
+
+  const timelineEvents = useMemo(() => [...events].reverse(), [events]);
   const originTs = useMemo(() => events[0]?.timestamp ?? Date.now(), [events]);
+
+  /** 根据节点 ID 返回节点名称，只有技术信息才保留原始 ID。 */
+  function resolveNodeLabel(nodeId: string): string {
+    return nodeLabels[nodeId]?.trim() || "未命名节点";
+  }
 
   const tabs: { key: TabKey; label: string }[] = [
     { key: "state", label: "状态" },
-    { key: "timeline", label: "时间轴" },
+    { key: "nodeOutputs", label: "节点输出" },
+    { key: "timeline", label: "时间线" },
     { key: "logs", label: "日志" },
   ];
 
   return (
     <div className="wf-debug-panel">
-      {/* Panel header */}
       <div className="wf-debug-panel__header">
         <span className="wf-debug-panel__title">调试面板</span>
-        <span className="wf-debug-panel__run-id" title={runId}>
-          {runId.slice(0, 8)}
-        </span>
         <span
           className="wf-debug-panel__status-pill"
           data-status={status}
         >
-          {status}
+          {formatDebugStatus(status)}
         </span>
         <span className="wf-debug-panel__step">步骤 {currentStep}</span>
+        <details className="wf-debug-panel__technical">
+          <summary>技术信息</summary>
+          <code>{runId}</code>
+        </details>
       </div>
 
-      {/* Interrupt form */}
       {interruptPayload && onResumeWithInput && (
         <div className="wf-debug-panel__interrupt">
           <InterruptInputForm
@@ -115,7 +138,18 @@ export function WorkflowDebugPanel({
         </div>
       )}
 
-      {/* Tabs */}
+      {finalOutputEntries.length > 0 && (
+        <section className="wf-debug-panel__final-output">
+          <div className="wf-debug-panel__final-title">最终输出</div>
+          {finalOutputEntries.map(([key, value]) => (
+            <div key={key} className="wf-debug-panel__final-row">
+              <span>{key}</span>
+              <pre>{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
+            </div>
+          ))}
+        </section>
+      )}
+
       <div className="wf-debug-panel__tabs">
         {tabs.map((tab) => (
           <button
@@ -128,9 +162,7 @@ export function WorkflowDebugPanel({
         ))}
       </div>
 
-      {/* Tab content */}
       <div className="wf-debug-panel__body">
-        {/* ── State tab ─────────────────────────────────────── */}
         {activeTab === "state" && (
           <div className="wf-debug-panel__state-list">
             {visibleState.length === 0 ? (
@@ -143,7 +175,25 @@ export function WorkflowDebugPanel({
           </div>
         )}
 
-        {/* ── Timeline tab ──────────────────────────────────── */}
+        {activeTab === "nodeOutputs" && (
+          <div className="wf-debug-panel__node-output-list">
+            {visibleNodeOutputs.length === 0 ? (
+              <div className="wf-debug-panel__empty">暂无节点输出</div>
+            ) : (
+              visibleNodeOutputs.map(([nodeId, value]) => (
+                <div key={nodeId} className="wf-debug-panel__node-output-row">
+                  <span className="wf-debug-panel__node-output-id" title={nodeId}>
+                    {resolveNodeLabel(nodeId)}
+                  </span>
+                  <pre className="wf-debug-panel__node-output-json">
+                    {JSON.stringify(value, null, 2)}
+                  </pre>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
         {activeTab === "timeline" && (
           <div className="wf-debug-panel__timeline">
             {timelineEvents.length === 0 ? (
@@ -162,7 +212,7 @@ export function WorkflowDebugPanel({
                   </span>
                   {typeof evt.nodeId === "string" && (
                     <span className="wf-debug-panel__tl-node" title={evt.nodeId}>
-                      {evt.nodeId.slice(0, 12)}
+                      {resolveNodeLabel(evt.nodeId)}
                     </span>
                   )}
                   {typeof evt.error === "string" && (
@@ -176,7 +226,6 @@ export function WorkflowDebugPanel({
           </div>
         )}
 
-        {/* ── Logs tab ──────────────────────────────────────── */}
         {activeTab === "logs" && (
           <div className="wf-debug-panel__logs">
             {events.length === 0 ? (
@@ -204,7 +253,6 @@ export function WorkflowDebugPanel({
           font-size: 12px;
           color: #a1a1aa;
         }
-
         .wf-debug-panel__header {
           display: flex;
           align-items: center;
@@ -213,19 +261,25 @@ export function WorkflowDebugPanel({
           border-bottom: 1px solid #27272a;
           flex-shrink: 0;
         }
-
         .wf-debug-panel__title {
           font-weight: 700;
           font-size: 13px;
           color: #f4f4f5;
         }
-
-        .wf-debug-panel__run-id {
-          font-family: monospace;
+        .wf-debug-panel__technical {
+          margin-left: auto;
           font-size: 11px;
           color: #52525b;
         }
-
+        .wf-debug-panel__technical summary {
+          cursor: pointer;
+          user-select: none;
+        }
+        .wf-debug-panel__technical code {
+          display: block;
+          margin-top: 4px;
+          font-family: monospace;
+        }
         .wf-debug-panel__status-pill {
           padding: 1px 6px;
           border-radius: 999px;
@@ -251,25 +305,57 @@ export function WorkflowDebugPanel({
           background: rgba(239, 68, 68, 0.15);
           color: #f87171;
         }
-
         .wf-debug-panel__step {
           margin-left: auto;
           font-size: 11px;
           color: #71717a;
         }
-
         .wf-debug-panel__interrupt {
           padding: 8px 12px;
           border-bottom: 1px solid #27272a;
           flex-shrink: 0;
         }
-
+        .wf-debug-panel__final-output {
+          display: grid;
+          gap: 8px;
+          padding: 10px 12px;
+          border-bottom: 1px solid #27272a;
+          background: rgba(16, 185, 129, 0.06);
+          flex-shrink: 0;
+        }
+        .wf-debug-panel__final-title {
+          color: #34d399;
+          font-size: 12px;
+          font-weight: 800;
+        }
+        .wf-debug-panel__final-row {
+          display: grid;
+          gap: 5px;
+        }
+        .wf-debug-panel__final-row span {
+          color: #a1a1aa;
+          font-size: 11px;
+          font-weight: 700;
+        }
+        .wf-debug-panel__final-row pre {
+          margin: 0;
+          max-height: 180px;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+          border: 1px solid rgba(16, 185, 129, 0.18);
+          border-radius: 6px;
+          padding: 8px;
+          background: #0d0d0f;
+          color: #d4d4d8;
+          font-size: 12px;
+          line-height: 1.5;
+        }
         .wf-debug-panel__tabs {
           display: flex;
           border-bottom: 1px solid #27272a;
           flex-shrink: 0;
         }
-
         .wf-debug-panel__tab {
           flex: 1;
           padding: 6px 0;
@@ -287,35 +373,56 @@ export function WorkflowDebugPanel({
           color: #f4f4f5;
           border-bottom-color: #3b82f6;
         }
-
         .wf-debug-panel__body {
           flex: 1;
           overflow-y: auto;
           min-height: 0;
         }
-
         .wf-debug-panel__empty {
           padding: 24px;
           text-align: center;
           color: #52525b;
         }
-
-        /* ── State tab ──────────────────────────────── */
         .wf-debug-panel__state-list {
           padding: 8px 12px;
           display: flex;
           flex-direction: column;
           gap: 6px;
         }
-
-        /* ── Timeline tab ───────────────────────────── */
         .wf-debug-panel__timeline {
           padding: 8px 12px;
           display: flex;
           flex-direction: column;
           gap: 4px;
         }
-
+        .wf-debug-panel__node-output-list {
+          padding: 8px 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .wf-debug-panel__node-output-row {
+          border-bottom: 1px solid #1c1c1f;
+          padding-bottom: 8px;
+        }
+        .wf-debug-panel__node-output-id {
+          display: inline-flex;
+          min-width: 80px;
+          color: #f4f4f5;
+          font-size: 11px;
+          font-weight: 700;
+        }
+        .wf-debug-panel__node-output-json {
+          margin: 4px 0 0;
+          padding: 6px 8px;
+          background: #0d0d0f;
+          border-radius: 4px;
+          font-size: 10px;
+          color: #a1a1aa;
+          overflow-x: auto;
+          white-space: pre-wrap;
+          word-break: break-all;
+        }
         .wf-debug-panel__tl-row {
           display: flex;
           align-items: center;
@@ -324,7 +431,6 @@ export function WorkflowDebugPanel({
           border-bottom: 1px solid #1c1c1f;
           flex-wrap: wrap;
         }
-
         .wf-debug-panel__tl-badge {
           display: inline-block;
           padding: 1px 6px;
@@ -334,46 +440,38 @@ export function WorkflowDebugPanel({
           color: #fff;
           white-space: nowrap;
         }
-
         .wf-debug-panel__tl-time {
           font-family: monospace;
           font-size: 11px;
           color: #52525b;
           min-width: 52px;
         }
-
         .wf-debug-panel__tl-node {
           font-family: monospace;
           font-size: 11px;
           color: #71717a;
         }
-
         .wf-debug-panel__tl-error {
           font-size: 11px;
           color: #f87171;
           word-break: break-all;
         }
-
-        /* ── Logs tab ───────────────────────────────── */
         .wf-debug-panel__logs {
           padding: 8px 12px;
           display: flex;
           flex-direction: column;
           gap: 4px;
         }
-
         .wf-debug-panel__log-row {
           border-bottom: 1px solid #1c1c1f;
           padding: 4px 0;
         }
-
         .wf-debug-panel__log-type {
           font-family: monospace;
           font-size: 11px;
           font-weight: 600;
           color: #71717a;
         }
-
         .wf-debug-panel__log-json {
           margin: 4px 0 0;
           padding: 6px 8px;
@@ -391,10 +489,6 @@ export function WorkflowDebugPanel({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// State entry sub-component
-// ---------------------------------------------------------------------------
 
 function StateEntry({ stateKey, value }: { stateKey: string; value: unknown }) {
   const [expanded, setExpanded] = useState(false);

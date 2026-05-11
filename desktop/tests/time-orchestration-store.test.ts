@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import initSqlJs from "sql.js";
 
 import { derivePaths } from "../src/main/services/directory-service";
 import { TimeOrchestrationStore } from "../src/main/services/time-orchestration-store";
@@ -92,5 +93,94 @@ describe("TimeOrchestrationStore", () => {
     expect(second.migrated).toBe(0);
 
     store.close();
+  });
+
+  it("persists schedule job ownership columns for silicon person separation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "myclaw-time-owner-"));
+    const paths = derivePaths(root);
+    const store = await TimeOrchestrationStore.create(paths);
+
+    const personalJob = await store.upsertScheduleJob({
+      title: "个人日报",
+      scheduleKind: "interval",
+      timezone: "Asia/Shanghai",
+      intervalMinutes: 60,
+      executor: "assistant_prompt",
+    });
+    const siliconPersonJob = await store.upsertScheduleJob({
+      title: "运营助手巡检",
+      scheduleKind: "interval",
+      timezone: "Asia/Shanghai",
+      ownerScope: "silicon_person",
+      ownerId: "sp-1",
+      intervalMinutes: 120,
+      executor: "workflow",
+      executorTargetId: "wf-1",
+    });
+    store.close();
+
+    const SQL = await initSqlJs();
+    const db = new SQL.Database(readFileSync(paths.timeDbFile));
+    const columns = db.exec("PRAGMA table_info(schedule_jobs)")[0]?.values.map((row) => row[1]);
+    expect(columns).toContain("owner_scope");
+    expect(columns).toContain("owner_id");
+
+    const rows = db.exec("SELECT id, owner_scope, owner_id FROM schedule_jobs ORDER BY id")[0]?.values ?? [];
+    expect(rows).toContainEqual([personalJob.id, "personal", null]);
+    expect(rows).toContainEqual([siliconPersonJob.id, "silicon_person", "sp-1"]);
+    db.close();
+  });
+
+  it("migrates legacy schedule job tables and backfills owner columns from payload", async () => {
+    const root = mkdtempSync(join(tmpdir(), "myclaw-time-owner-legacy-"));
+    const paths = derivePaths(root);
+    const SQL = await initSqlJs();
+    const legacyDb = new SQL.Database();
+    legacyDb.exec(`
+      CREATE TABLE schedule_jobs (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        schedule_kind TEXT NOT NULL,
+        timezone TEXT NOT NULL,
+        status TEXT NOT NULL,
+        next_run_at TEXT,
+        updated_at TEXT NOT NULL,
+        payload_json TEXT NOT NULL
+      );
+    `);
+    const legacyPayload = JSON.stringify({
+      id: "job-legacy",
+      kind: "schedule_job",
+      title: "历史员工任务",
+      scheduleKind: "interval",
+      timezone: "Asia/Shanghai",
+      ownerScope: "silicon_person",
+      ownerId: "sp-legacy",
+      status: "scheduled",
+      source: "manual",
+      intervalMinutes: 60,
+      executor: "workflow",
+      executorTargetId: "wf-legacy",
+      createdAt: "2026-04-20T00:00:00.000Z",
+      updatedAt: "2026-04-20T00:00:00.000Z",
+    }).replace(/'/g, "''");
+    legacyDb.exec(`
+      INSERT INTO schedule_jobs (
+        id, title, schedule_kind, timezone, status, next_run_at, updated_at, payload_json
+      ) VALUES (
+        'job-legacy', '历史员工任务', 'interval', 'Asia/Shanghai', 'scheduled', NULL, '2026-04-20T00:00:00.000Z', '${legacyPayload}'
+      );
+    `);
+    mkdirSync(dirname(paths.timeDbFile), { recursive: true });
+    writeFileSync(paths.timeDbFile, Buffer.from(legacyDb.export()));
+    legacyDb.close();
+
+    const store = await TimeOrchestrationStore.create(paths);
+    store.close();
+
+    const migratedDb = new SQL.Database(readFileSync(paths.timeDbFile));
+    const row = migratedDb.exec("SELECT owner_scope, owner_id FROM schedule_jobs WHERE id = 'job-legacy'")[0]?.values[0];
+    expect(row).toEqual(["silicon_person", "sp-legacy"]);
+    migratedDb.close();
   });
 });

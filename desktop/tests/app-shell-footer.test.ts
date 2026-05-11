@@ -22,8 +22,15 @@ const mocks = vi.hoisted(() => {
     loading: false,
     error: "",
     requiresInitialSetup: false,
+    time: {
+      calendarEvents: [],
+      reminders: [],
+      availabilityPolicy: null,
+    },
     models: [{ id: "qwen-plus", name: "Qwen 3.5 Plus" }],
     defaultModelProfileId: "qwen-plus",
+    activeSiliconPersonId: null,
+    setActiveSiliconPersonId: vi.fn(),
     personalPrompt: {
       prompt: "我是黑盒测试。",
       summary: "",
@@ -104,5 +111,35 @@ describe("AppShell footer status", () => {
 
     expect(modelRow).not.toBeNull();
     expect(modelRow?.querySelector(".model-dot")).toBeNull();
+  });
+
+  it("keeps personal prompt and logout out of the sidebar footer", async () => {
+    const { default: AppShell } = await import("../src/renderer/layouts/AppShell");
+    render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ["/chat"] },
+        React.createElement(
+          Routes,
+          undefined,
+          React.createElement(
+            Route,
+            { path: "/", element: React.createElement(AppShell) },
+            React.createElement(Route, {
+              path: "chat",
+              element: React.createElement("div", { "data-testid": "chat-route" }),
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const settingsLink = screen.getByTestId("nav-settings");
+
+    expect(screen.queryByTestId("nav-personal-prompt")).toBeNull();
+    expect(screen.queryByTestId("auth-logout")).toBeNull();
+    expect(settingsLink.textContent?.trim()).toBe("");
+    expect(settingsLink.getAttribute("aria-label")).toBe("打开设置");
+    expect(settingsLink.closest(".user-card-top")).not.toBeNull();
   });
 });

@@ -184,6 +184,74 @@ describe("coerceManagedProfileWrite", () => {
     });
   });
 
+  it("fills DeepSeek identity and compatible default route when no explicit route has been saved", () => {
+    const coerced = coerceManagedProfileWrite(null, {
+      name: "DeepSeek",
+      provider: "openai-compatible",
+      providerFlavor: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "deepseek-key",
+      model: "deepseek-v4-pro",
+    });
+
+    expect(coerced).toMatchObject({
+      providerFlavor: "deepseek",
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      protocolTarget: "openai-chat-compatible",
+      savedProtocolPreferences: ["openai-chat-compatible"],
+      protocolSelectionSource: "registry-default",
+    });
+  });
+
+  it("preserves explicitly saved DeepSeek Anthropic routes", () => {
+    const normalized = normalizeFirstClassVendorRoute({
+      name: "DeepSeek",
+      provider: "openai-compatible",
+      providerFlavor: "deepseek",
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "deepseek-key",
+      model: "deepseek-v4-pro",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages", "openai-chat-compatible"],
+      protocolSelectionSource: "saved",
+    });
+
+    expect(normalized).toMatchObject({
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages", "openai-chat-compatible"],
+      protocolSelectionSource: "saved",
+    });
+  });
+
+  it("migrates stale DeepSeek probe-selected Anthropic routes back to the registry default", () => {
+    const normalized = normalizeFirstClassVendorRoute({
+      name: "DeepSeek",
+      provider: "openai-compatible",
+      providerFlavor: "deepseek",
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      apiKey: "deepseek-key",
+      model: "deepseek-v4-pro",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages", "openai-chat-compatible"],
+      protocolSelectionSource: "probe",
+    });
+
+    expect(normalized).toMatchObject({
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      protocolTarget: "openai-chat-compatible",
+      savedProtocolPreferences: ["openai-chat-compatible"],
+      protocolSelectionSource: "registry-default",
+    });
+  });
+
   it("corrects stale moonshot identity for volcengine profiles without overwriting probed routes", () => {
     const normalized = normalizeFirstClassVendorRoute({
       name: "Ark Kimi",

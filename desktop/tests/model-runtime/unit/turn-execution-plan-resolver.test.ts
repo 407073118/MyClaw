@@ -36,6 +36,7 @@ describe("turn execution plan resolver", () => {
     [buildProfile({ providerFlavor: "br-minimax", baseUrl: "https://api.minimax.chat/v1", model: "minimax-m2-5" }), "br-minimax", "minimax", "openai-chat-compatible", "anthropic-messages"],
     [buildProfile({ providerFlavor: "minimax-anthropic", baseUrl: "https://api.minimax.chat/v1", model: "minimax-m2-5" }), "generic-openai-compatible", "minimax", "openai-chat-compatible", "anthropic-messages"],
     [buildProfile({ providerFlavor: "volcengine-ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3" }), "volcengine-ark", "volcengine-ark", "openai-chat-compatible", "openai-responses"],
+    [buildProfile({ providerFlavor: "deepseek", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-pro" }), "deepseek", "deepseek", "openai-chat-compatible", "openai-chat-compatible"],
     [buildProfile({ providerFlavor: "generic-openai-compatible" }), "generic-openai-compatible", "generic-openai-compatible", "openai-chat-compatible", "openai-chat-compatible"],
   ])("maps %s to %s / %s / %s / %s", (profile, providerFamily, vendorFamily, protocolTarget, recommendedProtocolTarget) => {
     const plan = resolveTurnExecutionPlan({

@@ -6,10 +6,11 @@ import { LlmNodeExecutor } from "../src/main/services/workflow-engine/executors/
 import { WorkflowEventEmitter } from "../src/main/services/workflow-engine/event-emitter";
 import type { WorkflowConditionNode, WorkflowLlmNode } from "@shared/contracts";
 
-function makeCtx(node: any, state: Record<string, unknown> = {}) {
+function makeCtx(node: any, state: Record<string, unknown> = {}, resolvedInputs: Record<string, unknown> = {}) {
   return {
     node,
     state: new Map(Object.entries(state)),
+    resolvedInputs,
     config: { recursionLimit: 50, workingDirectory: "/tmp", modelProfileId: "default", checkpointPolicy: "every-step" as const },
     emitter: new WorkflowEventEmitter(),
     signal: new AbortController().signal,
@@ -30,6 +31,31 @@ describe("EndNodeExecutor", () => {
     const exec = new EndNodeExecutor();
     const result = await exec.execute(makeCtx({ id: "e1", kind: "end", label: "End" }));
     expect(result.writes).toEqual([{ channelName: "__done__", value: true }]);
+  });
+
+  it("maps configured final outputs from workflow variables", async () => {
+    const exec = new EndNodeExecutor();
+    const result = await exec.execute(makeCtx(
+      {
+        id: "e2",
+        kind: "end",
+        label: "End",
+        outputSources: {
+          summary: { mode: "variable", ref: { scope: "node", nodeId: "llm_1", path: "content", valueType: "string" } },
+          title: { mode: "expression", expression: "标题：{{ inputs.topic }}" },
+        },
+      },
+      {
+        inputs: { topic: "季度复盘" },
+        nodes: { llm_1: { content: "分析完成" } },
+      },
+    ));
+
+    expect(result.writes).toEqual([
+      { channelName: "outputs", value: { summary: "分析完成", title: "标题：季度复盘" } },
+      { channelName: "__done__", value: true },
+    ]);
+    expect(result.outputs).toEqual({ summary: "分析完成", title: "标题：季度复盘" });
   });
 });
 
@@ -112,5 +138,31 @@ describe("LlmNodeExecutor", () => {
 
     expect(result.writes).toEqual([{ channelName: "lastLlmOutput", value: "final reply" }]);
     expect(result.outputs).toEqual({ content: "final reply" });
+  });
+
+  it("renders dotted workflow variable references in prompts", async () => {
+    const modelCaller = vi.fn(async () => ({ content: "final reply" }));
+    const exec = new LlmNodeExecutor(modelCaller, () => ({ id: "profile-1" }));
+    const node: WorkflowLlmNode = {
+      id: "llm-3",
+      kind: "llm",
+      label: "Summarize",
+      llm: {
+        prompt: "主题 {{ inputs.topic }}；上游 {{ nodes.fetch.body.title }}；跟踪 {{ traceId }}",
+      },
+    };
+
+    await exec.execute(makeCtx(
+      node,
+      {
+        inputs: { topic: "季度复盘" },
+        nodes: { fetch: { body: { title: "接口返回" } } },
+      },
+      { traceId: "trace-1" },
+    ));
+
+    expect(modelCaller).toHaveBeenCalledWith(expect.objectContaining({
+      messages: [{ role: "user", content: "主题 季度复盘；上游 接口返回；跟踪 trace-1" }],
+    }));
   });
 });

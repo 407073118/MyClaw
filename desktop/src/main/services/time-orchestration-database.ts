@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS schedule_jobs (
   title TEXT NOT NULL,
   schedule_kind TEXT NOT NULL,
   timezone TEXT NOT NULL,
+  owner_scope TEXT NOT NULL DEFAULT 'personal',
+  owner_id TEXT,
   status TEXT NOT NULL,
   next_run_at TEXT,
   updated_at TEXT NOT NULL,
@@ -101,8 +103,50 @@ export class TimeOrchestrationDatabase {
 
     const instance = new TimeOrchestrationDatabase(db, dbPath);
     instance.db.exec(SCHEMA_SQL);
+    instance.migrateScheduleJobOwnerColumns();
     instance.flush();
     return instance;
+  }
+
+  /**
+   * 补齐定时任务 owner 列，确保历史 time.db 也能按主日程/硅基员工拆分查询。
+   */
+  private migrateScheduleJobOwnerColumns(): void {
+    console.info("[time-db] 检查定时任务归属列", { dbPath: this.dbPath });
+    const columnsResult = this.db.exec("PRAGMA table_info(schedule_jobs)");
+    const columnNames = new Set((columnsResult[0]?.values ?? []).map((row) => String(row[1])));
+    if (!columnNames.has("owner_scope")) {
+      this.db.exec("ALTER TABLE schedule_jobs ADD COLUMN owner_scope TEXT NOT NULL DEFAULT 'personal';");
+      this.dirty = true;
+    }
+    if (!columnNames.has("owner_id")) {
+      this.db.exec("ALTER TABLE schedule_jobs ADD COLUMN owner_id TEXT;");
+      this.dirty = true;
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_schedule_jobs_owner ON schedule_jobs(owner_scope, owner_id);");
+
+    const rows = this.queryAll("SELECT id, payload_json FROM schedule_jobs");
+    for (const row of rows) {
+      try {
+        const payload = JSON.parse(String(row.payload_json)) as { ownerScope?: string; ownerId?: string | null };
+        const ownerScope = payload.ownerScope === "silicon_person" ? "silicon_person" : "personal";
+        const ownerId = ownerScope === "silicon_person" ? payload.ownerId ?? null : null;
+        this.run(
+          "UPDATE schedule_jobs SET owner_scope = @owner_scope, owner_id = @owner_id WHERE id = @id",
+          {
+            id: String(row.id),
+            owner_scope: ownerScope,
+            owner_id: ownerId,
+          },
+        );
+      } catch (error) {
+        console.warn("[time-db] 回填定时任务归属列失败", {
+          dbPath: this.dbPath,
+          id: row.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   /**

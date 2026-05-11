@@ -58,12 +58,13 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   {
     id: "deepseek",
     label: "DeepSeek",
-    description: "DeepSeek-V3、R1 等推理模型",
+    description: "DeepSeek V4，支持长上下文、工具调用与 thinking",
     baseUrl: "https://api.deepseek.com",
     baseUrlMode: "provider-root",
     provider: "openai-compatible",
     providerFlavor: "deepseek",
-    modelPlaceholder: "deepseek-chat",
+    defaultModel: "deepseek-v4-pro",
+    modelPlaceholder: "deepseek-v4-pro",
   },
   {
     id: "qwen",

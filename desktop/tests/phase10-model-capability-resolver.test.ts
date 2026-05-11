@@ -160,6 +160,39 @@ describe("resolveModelCapability", () => {
     expect(kimiResolved.effective.nativeToolStackId).toBe("moonshot-formula");
     expect(kimiThinkingResolved.effective.thinkingControlKind).toBe("always_on");
   });
+
+  it("resolves DeepSeek V4 capabilities from the current registry", () => {
+    const v4Resolved = resolveModelCapability(buildProfile({
+      providerFlavor: "deepseek",
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+    }));
+    const legacyReasonerResolved = resolveModelCapability(buildProfile({
+      providerFlavor: "deepseek",
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-reasoner",
+    }));
+
+    expect(v4Resolved.effective).toMatchObject({
+      contextWindowTokens: 1_000_000,
+      maxInputTokens: 616_000,
+      maxOutputTokens: 384_000,
+      supportsTools: true,
+      supportsReasoning: true,
+      supportsPromptCaching: true,
+      thinkingControlKind: "effort",
+      requiresReasoningReplay: true,
+    });
+    expect(legacyReasonerResolved.effective).toMatchObject({
+      supportsTools: false,
+      supportsReasoning: true,
+      thinkingControlKind: "always_on",
+    });
+  });
 });
 
 describe("findRegistryCapability", () => {
@@ -191,5 +224,19 @@ describe("findRegistryCapability", () => {
     expect(capability?.supportsPromptCaching).toBe(true);
     expect(capability?.supportsReasoning).toBe(true);
     expect(capability?.contextWindowTokens).toBe(262144);
+  });
+
+  it("returns capability from registry for DeepSeek V4 profiles inferred by model id", () => {
+    const profile = buildProfile({
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+    });
+
+    const capability = findRegistryCapability(profile);
+
+    expect(capability).not.toBeNull();
+    expect(capability?.source).toBe("registry");
+    expect(capability?.contextWindowTokens).toBe(1_000_000);
+    expect(capability?.maxOutputTokens).toBe(384_000);
   });
 });

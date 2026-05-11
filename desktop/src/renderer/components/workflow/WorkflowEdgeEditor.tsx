@@ -14,7 +14,7 @@ interface WorkflowEdgeEditorProps {
 
 const conditionOperatorOptions = Object.values(WorkflowTransitionConditionOperator);
 
-/** 这些算子不需要右值，仅做存在性判断。 */
+/** 这些算子不需要右侧值，仅做存在性判断。*/
 const NO_RHS_OPERATORS = new Set<string>([
   WorkflowTransitionConditionOperator.Exists,
   WorkflowTransitionConditionOperator.NotExists,
@@ -40,7 +40,7 @@ function formatRightValue(value: WorkflowTransitionCondition["rightValue"]): str
   return String(value);
 }
 
-/** 解析右值字符串：保持与 condition 节点同样的弱类型推断。 */
+/** 解析右侧值字符串，保持与 condition 节点一致的弱类型推断。*/
 function parseRightValue(text: string, operator: WorkflowTransitionCondition["operator"]) {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
@@ -61,7 +61,7 @@ export default function WorkflowEdgeEditor({ edge, onUpdateEdge }: WorkflowEdgeE
   const operator = condition?.operator ?? WorkflowTransitionConditionOperator.Equals;
   const isRightValueHidden = NO_RHS_OPERATORS.has(operator);
 
-  /** 更新 edge.kind，并保持 payload 结构合法。 */
+  /** 切换 edge.kind，并同步补齐对应 payload。*/
   function handleKindChange(event: React.ChangeEvent<HTMLSelectElement>) {
     const value = event.target.value as WorkflowEdgeKind | undefined;
     const kind = value === "parallel" || value === "conditional" ? value : "normal";
@@ -101,7 +101,7 @@ export default function WorkflowEdgeEditor({ edge, onUpdateEdge }: WorkflowEdgeE
     if (NO_RHS_OPERATORS.has(nextCondition.operator)) {
       delete nextCondition.rightValue;
     }
-    console.info("[workflow] 更新 conditional edge 条件", {
+    console.info("[workflow] 更新条件连线规则", {
       edgeId: edge.id,
       operator: nextCondition.operator,
       leftPath: nextCondition.leftPath,
@@ -134,10 +134,10 @@ export default function WorkflowEdgeEditor({ edge, onUpdateEdge }: WorkflowEdgeE
 
   return (
     <section className="edge-editor" data-testid="workflow-edge-editor">
-      <h4 className="title">Edge</h4>
+      <h4 className="title">连线配置</h4>
 
       <label className="field">
-        <span>Kind</span>
+        <span>类型</span>
         <select
           data-testid="workflow-edge-editor-kind"
           value={edge.kind}
@@ -165,7 +165,7 @@ export default function WorkflowEdgeEditor({ edge, onUpdateEdge }: WorkflowEdgeE
           </label>
 
           <label className="field">
-            <span>左值路径</span>
+            <span>左侧路径</span>
             <input
               data-testid="workflow-edge-editor-left-path"
               type="text"
@@ -177,7 +177,7 @@ export default function WorkflowEdgeEditor({ edge, onUpdateEdge }: WorkflowEdgeE
 
           {!isRightValueHidden && (
             <label className="field">
-              <span>右值</span>
+              <span>右侧值</span>
               <input
                 data-testid="workflow-edge-editor-right-value"
                 type="text"

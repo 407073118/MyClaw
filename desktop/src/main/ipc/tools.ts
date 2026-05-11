@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { BrowserWindow, ipcMain, shell } from "electron";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -26,10 +26,28 @@ type ToolExecutionResult = {
   success: boolean;
   output: string;
   error?: string;
+  viewMeta?: {
+    viewPath: string;
+    title: string;
+    data: unknown;
+  };
 };
 
 // One executor instance per app lifetime; holds in-memory task list state.
 const builtinExecutor = new BuiltinToolExecutor();
+builtinExecutor.setFileActionHandlers({
+  openPath: (path) => shell.openPath(path),
+  revealPath: (path) => shell.showItemInFolder(path),
+});
+
+/** 向所有渲染窗口广播工具触发的右侧面板事件。 */
+function broadcastToRenderers(channel: string, payload: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send(channel, payload);
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Tool preference persistence
@@ -125,11 +143,15 @@ export function registerToolHandlers(ctx: RuntimeContext): void {
   ipcMain.handle(
     "tool:execute-builtin",
     async (_event, input: BuiltinToolExecuteInput): Promise<ToolExecutionResult> => {
-      return builtinExecutor.execute(
+      const result = await builtinExecutor.execute(
         input.toolId,
         input.label,
         input.attachedDirectory ?? null,
       );
+      if (result.viewMeta) {
+        broadcastToRenderers("web-panel:open", result.viewMeta);
+      }
+      return result;
     },
   );
 

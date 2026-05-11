@@ -10,6 +10,7 @@ type PlanStatePanelProps = {
 const TASK_V2_STATUS_ICONS: Record<string, string> = {
   pending: "o",
   in_progress: "~",
+  waiting_user: "?",
   completed: "+",
 };
 
@@ -38,8 +39,10 @@ const TASK_V2_STYLES = `
   .task-v2-task-icon { flex-shrink: 0; width: 18px; text-align: center; font-size: 12px; line-height: 20px; }
   .task-v2-task-icon[data-status="pending"] { color: var(--text-muted); }
   .task-v2-task-icon[data-status="in_progress"] { color: var(--accent-cyan); }
+  .task-v2-task-icon[data-status="waiting_user"] { color: var(--status-yellow); }
   .task-v2-task-icon[data-status="completed"] { color: var(--status-green); }
   .task-v2-task-title { color: var(--text-primary); line-height: 20px; }
+  .task-v2-task-title[data-status="waiting_user"] { color: var(--text-secondary); }
   .task-v2-task-title[data-status="completed"] { color: var(--text-muted); text-decoration: line-through; }
   .task-v2-task-status { flex-shrink: 0; margin-left: auto; font-size: 11px; color: var(--text-muted); }
 `;
@@ -55,6 +58,8 @@ export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
   const completed = items.filter((item) => item.task.status === "completed").length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const activeTask = items.find((item) => item.task.status === "in_progress")?.task;
+  const waitingTask = items.find((item) => item.task.status === "waiting_user")?.task;
+  const summaryTask = activeTask ?? waitingTask;
 
   /** 有新逻辑任务加入时自动展开，确保用户能看到新的执行顺序。 */
   useEffect(() => {
@@ -98,7 +103,7 @@ export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
               <div className="task-v2-progress-fill" style={{ width: `${pct}%` }} />
             </div>
 
-            {activeTask && (
+            {summaryTask && (
               <span
                 style={{
                   fontSize: 12,
@@ -109,7 +114,7 @@ export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
                   maxWidth: 200,
                 }}
               >
-                {activeTask.activeForm ?? activeTask.subject}
+                {summaryTask.activeForm ?? summaryTask.subject}
               </span>
             )}
 
@@ -143,6 +148,9 @@ export function PlanStatePanel({ tasks, onDismiss }: PlanStatePanelProps) {
                     </span>
                     {task.status === "in_progress" && (
                       <span className="task-v2-task-status">进行中</span>
+                    )}
+                    {task.status === "waiting_user" && (
+                      <span className="task-v2-task-status">等待用户</span>
                     )}
                   </li>
                 );

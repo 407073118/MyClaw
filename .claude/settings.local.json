@@ -308,7 +308,11 @@
       "WebFetch(domain:1password.com)",
       "WebFetch(domain:pageflows.com)",
       "WebFetch(domain:community.openai.com)",
-      "Bash(pnpm prisma:generate)"
+      "Bash(pnpm prisma:generate)",
+      "WebFetch(domain:api.python.langchain.com)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:docs.letta.com)",
+      "WebFetch(domain:docs.mem0.ai)"
     ]
   }
 }

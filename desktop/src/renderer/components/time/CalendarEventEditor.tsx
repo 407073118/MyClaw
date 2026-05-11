@@ -13,16 +13,29 @@ export type CalendarEventEditorSubmitInput = {
 
 type CalendarEventEditorProps = {
   timezone: string;
+  initialTitle?: string;
+  initialLocation?: string;
+  initialDescription?: string;
+  initialStartsAt?: string;
+  initialEndsAt?: string;
   onSave: (input: CalendarEventEditorSubmitInput) => void | Promise<void>;
 };
 
-/** 渲染手动日历事件编辑器，负责把本地时间输入标准化为 UTC 时间戳。 */
-export default function CalendarEventEditor({ timezone, onSave }: CalendarEventEditorProps) {
-  const [title, setTitle] = useState("");
-  const [location, setLocation] = useState("");
-  const [description, setDescription] = useState("");
-  const [startValue, setStartValue] = useState("");
-  const [endValue, setEndValue] = useState("");
+/** 渲染日程事件编辑器，并把本地时间输入标准化为 UTC 时间戳。 */
+export default function CalendarEventEditor({
+  timezone,
+  initialTitle = "",
+  initialLocation = "",
+  initialDescription = "",
+  initialStartsAt = "",
+  initialEndsAt = "",
+  onSave,
+}: CalendarEventEditorProps) {
+  const [title, setTitle] = useState(initialTitle);
+  const [location, setLocation] = useState(initialLocation);
+  const [description, setDescription] = useState(initialDescription);
+  const [startValue, setStartValue] = useState(initialStartsAt);
+  const [endValue, setEndValue] = useState(initialEndsAt);
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -61,20 +74,12 @@ export default function CalendarEventEditor({ timezone, onSave }: CalendarEventE
       <div className="time-editor-grid">
         <label className="time-editor-field">
           <span>开始时间</span>
-          <input
-            type="datetime-local"
-            value={startValue}
-            onChange={(event) => setStartValue(event.target.value)}
-          />
+          <input type="datetime-local" value={startValue} onChange={(event) => setStartValue(event.target.value)} />
         </label>
 
         <label className="time-editor-field">
           <span>结束时间</span>
-          <input
-            type="datetime-local"
-            value={endValue}
-            onChange={(event) => setEndValue(event.target.value)}
-          />
+          <input type="datetime-local" value={endValue} onChange={(event) => setEndValue(event.target.value)} />
         </label>
       </div>
 

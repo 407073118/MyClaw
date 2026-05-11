@@ -81,6 +81,14 @@ describe("rollout gates", () => {
       enabled: false,
       state: "beta",
     });
+    expect(resolveVendorProtocolRolloutGate("deepseek", "openai-chat-compatible")).toMatchObject({
+      enabled: true,
+      state: "stable",
+    });
+    expect(resolveVendorProtocolRolloutGate("deepseek", "anthropic-messages")).toMatchObject({
+      enabled: true,
+      state: "beta",
+    });
   });
 
   it("keeps Qwen responses available by default so canonical routing does not fall back to compatible", () => {

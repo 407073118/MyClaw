@@ -190,12 +190,28 @@ const DEFAULT_VENDOR_PROTOCOL_ROLLOUT_GATES: Partial<Record<`${VendorFamily}:${P
     rolloutOrder: 14,
     reason: "disabled-until-explicit-rollout",
   },
+  "deepseek:openai-chat-compatible": {
+    vendorFamily: "deepseek",
+    protocolTarget: "openai-chat-compatible",
+    state: "stable",
+    enabled: true,
+    rolloutOrder: 15,
+    reason: "default-compatible-baseline",
+  },
+  "deepseek:anthropic-messages": {
+    vendorFamily: "deepseek",
+    protocolTarget: "anthropic-messages",
+    state: "beta",
+    enabled: true,
+    rolloutOrder: 16,
+    reason: "official-anthropic-route-enabled",
+  },
   "generic-openai-compatible:openai-chat-compatible": {
     vendorFamily: "generic-openai-compatible",
     protocolTarget: "openai-chat-compatible",
     state: "stable",
     enabled: true,
-    rolloutOrder: 15,
+    rolloutOrder: 17,
     reason: "default-compatible-baseline",
   },
   "generic-local-gateway:openai-chat-compatible": {
@@ -203,7 +219,7 @@ const DEFAULT_VENDOR_PROTOCOL_ROLLOUT_GATES: Partial<Record<`${VendorFamily}:${P
     protocolTarget: "openai-chat-compatible",
     state: "stable",
     enabled: true,
-    rolloutOrder: 16,
+    rolloutOrder: 18,
     reason: "default-compatible-baseline",
   },
 };

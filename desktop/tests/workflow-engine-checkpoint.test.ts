@@ -1156,6 +1156,36 @@ describe("SqliteCheckpointer", () => {
       expect(summaries[3].step).toBe(0);
     });
 
+    it("should include node outputs for triggered nodes", () => {
+      checkpointer.createRun({
+        id: "run-node-outputs",
+        workflowId: "wf-1",
+        workflowVersion: 1,
+        config: null,
+      });
+
+      checkpointer.saveCheckpoint({
+        runId: "run-node-outputs",
+        checkpointId: "cp-node-output",
+        parentId: null,
+        step: 1,
+        status: "running",
+        channelVersions: { nodes: 1 },
+        versionsSeen: {},
+        triggeredNodes: ["node-llm"],
+        durationMs: 25,
+        channelData: new Map([
+          ["nodes", { version: 1, value: { "node-llm": { content: "节点返回内容" } } }],
+        ]),
+      });
+
+      const summaries = checkpointer.listCheckpoints("run-node-outputs");
+
+      expect(summaries[0].nodeOutputs).toEqual({
+        "node-llm": { content: "节点返回内容" },
+      });
+    });
+
     it("should return empty array for a run with no checkpoints", () => {
       const summaries = checkpointer.listCheckpoints("non-existent");
       expect(summaries).toEqual([]);

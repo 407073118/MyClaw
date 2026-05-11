@@ -114,15 +114,16 @@ function buildTaskPlanningContent(effort: string): string {
     "",
     "## Task Tools",
     "- `task_create({ subject, description, activeForm })` — subject: imperative (e.g. \"修复登录Bug\"), activeForm: present continuous (e.g. \"正在修复登录Bug\"). Always provide activeForm.",
-    "- `task_update({ id, status })` — Mark \"in_progress\" before starting, \"completed\" immediately after finishing.",
+    "- `task_update({ id, status })` — Mark \"in_progress\" before starting, \"waiting_user\" after asking the user to choose or clarify, and \"completed\" immediately after finishing.",
     "- `task_list()` / `task_get({ id })` — Check current task state.",
-    "- **Status flow**: pending → in_progress → completed. Only ONE task can be in_progress at a time.",
+    "- **Status flow**: pending → in_progress → completed. Use waiting_user as a pause state when the next step requires the user's answer. Only ONE task can be in_progress at a time.",
     "",
     "## Key Rules",
     "- **Plan first, execute second** — Create ALL tasks before starting the first one. These two phases MUST be in separate responses.",
     "- **Even single-step requests get a task** — Creating a task signals \"I understood your request and here's what I'll do.\"",
     "- **Discover new steps? Add tasks** — If you find additional work during execution, call task_create alone (no other work tools in the same response).",
     "- **Finish ALL tasks** — Never stop responding while tasks are still pending or in_progress. Complete every task you created.",
+    "- **Clarification UX** — If you need multiple choices or several fields from the user, output a ```a2ui JSON form with select/text fields instead of plain markdown checkboxes. Stop after the question and wait for the user's submission.",
     "- **Skip tasks ONLY for**: direct factual Q&A, greetings, or clarification questions.",
   ];
   if (effort === "high") {
@@ -237,6 +238,7 @@ function buildToolUsageContent(
   const lines: string[] = [
     "## Files",
     "- `fs_read` — Read file contents. **Always read before editing.**",
+    "- `file_view` — Open/view a local file in the right-side panel without placing its body in model context.",
     "- `fs_edit` — Replace a specific string in a file (preferred for partial edits).",
     "- `fs_write` — Create new files or full rewrites only.",
     "- `fs_list` / `fs_find` / `fs_search` — List dirs, find files by glob, grep text.",

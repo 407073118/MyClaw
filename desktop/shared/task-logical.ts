@@ -3,6 +3,7 @@ import type { Task, TaskStatus } from "./contracts";
 const TASK_STATUS_PRIORITY: Record<TaskStatus, number> = {
   pending: 0,
   in_progress: 1,
+  waiting_user: 1,
   completed: 2,
 };
 

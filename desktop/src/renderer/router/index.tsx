@@ -88,7 +88,7 @@ export function AppRoutes() {
         }
       >
         {/* 默认入口为日程规划，让用户打开桌面就先看见自己、硅基人和自动任务的时间轴。 */}
-        <Route index element={<Navigate to="/time" replace />} />
+        <Route index element={<Navigate to="/chat" replace />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/hub" element={<HubPage />} />
         <Route path="/tools" element={<ToolsPage />} />

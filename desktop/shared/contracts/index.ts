@@ -23,4 +23,5 @@ export * from "./workflow";
 export * from "./workflow-run";
 export * from "./workflow-stream";
 export * from "./file-tree";
+export * from "./file-viewer";
 export * from "./meeting";

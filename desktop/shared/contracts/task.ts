@@ -1,9 +1,10 @@
 /** Task V2 状态枚举。 */
-export type TaskStatus = "pending" | "in_progress" | "completed";
+export type TaskStatus = "pending" | "in_progress" | "waiting_user" | "completed";
 
 export const TASK_STATUS_VALUES = [
   "pending",
   "in_progress",
+  "waiting_user",
   "completed",
 ] as const satisfies readonly TaskStatus[];
 

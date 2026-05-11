@@ -18,6 +18,7 @@ export type NodeWrite = {
 export type NodeExecutionContext = {
   node: WorkflowNode;
   state: ReadonlyMap<string, unknown>;
+  resolvedInputs: Record<string, unknown>;
   config: WorkflowRunConfigLite;
   emitter: WorkflowEventEmitter;
   signal: AbortSignal;

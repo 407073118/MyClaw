@@ -1,9 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { WorkflowDefinition, WorkflowEdge, WorkflowNode } from "@shared/contracts";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import type { WorkflowDefinition, WorkflowEdge, WorkflowNode, WorkflowVariableRef } from "@shared/contracts";
 
 import WorkflowEdgeEditor from "./WorkflowEdgeEditor";
-import WorkflowNodeEditor, { type WorkflowEditorOption } from "./WorkflowNodeEditor";
-import WorkflowStateSchemaEditor from "./WorkflowStateSchemaEditor";
+import WorkflowNodeEditor, { type WorkflowEditorOption, type WorkflowNodeLabelOption, type WorkflowVariableSourceOption } from "./WorkflowNodeEditor";
 import { useWorkspaceStore } from "../../stores/workspace";
 
 interface WorkflowGraphInspectorProps {
@@ -11,13 +10,19 @@ interface WorkflowGraphInspectorProps {
   definition: WorkflowDefinition;
   selectedNodeId?: string | null;
   selectedEdgeId?: string | null;
-  showGraphList?: boolean;
   compact?: boolean;
 }
+
+type AutoSaveState = "idle" | "saving" | "saved" | "blocked" | "error";
 
 /** 深拷贝工作流定义，避免编辑草稿和上游引用共享对象。 */
 function cloneDefinition(definition: WorkflowDefinition): WorkflowDefinition {
   return JSON.parse(JSON.stringify(definition)) as WorkflowDefinition;
+}
+
+/** 根据节点 ID 解析可读名称，校验错误面向用户时不直接暴露内部 ID。 */
+function resolveNodeLabel(definition: WorkflowDefinition, nodeId: string): string {
+  return definition.nodes.find((node) => node.id === nodeId)?.label || "已删除节点";
 }
 
 /** 校验工作流图引用是否合法，包括入口、边关系和 join/condition 约束。 */
@@ -26,12 +31,12 @@ function validateGraph(definition: WorkflowDefinition): string[] {
   const nodeIds = new Set(definition.nodes.map((node) => node.id));
 
   if (definition.entryNodeId && !nodeIds.has(definition.entryNodeId)) {
-    errors.push(`entryNodeId: missing "${definition.entryNodeId}"`);
+    errors.push("入口节点已不存在，请重新指定开始节点");
   }
 
   for (const edge of definition.edges) {
     if (!nodeIds.has(edge.fromNodeId) || !nodeIds.has(edge.toNodeId)) {
-      errors.push(`edge: "${edge.id}" references missing node`);
+      errors.push("连线引用了已删除节点，请重新连线");
     }
   }
 
@@ -41,7 +46,8 @@ function validateGraph(definition: WorkflowDefinition): string[] {
     const candidates = new Set(incoming.map((edge) => edge.fromNodeId));
     const invalidUpstreams = node.join.upstreamNodeIds.filter((id) => !candidates.has(id));
     if (invalidUpstreams.length) {
-      errors.push(`join: "${node.id}" upstream missing ${invalidUpstreams.join(", ")}`);
+      const labels = invalidUpstreams.map((id) => resolveNodeLabel(definition, id)).join("、");
+      errors.push(`${node.label || "汇聚节点"} 的上游节点不可达：${labels}`);
     }
   }
 
@@ -63,23 +69,120 @@ function validateGraph(definition: WorkflowDefinition): string[] {
     ));
 
     if (!hasInlineRule && !hasConditionalEdgeRule) {
-      errors.push(`condition: "${node.id}" requires rule config`);
+      errors.push(`${node.label || "条件分支"} 需要配置判断条件`);
     }
     if (node.route?.trueNodeId && !nodeIds.has(node.route.trueNodeId)) {
-      errors.push(`condition: "${node.id}" true route missing "${node.route.trueNodeId}"`);
+      errors.push(`${node.label || "条件分支"} 的 True 路由目标已不存在`);
     }
     if (node.route?.falseNodeId && !nodeIds.has(node.route.falseNodeId)) {
-      errors.push(`condition: "${node.id}" false route missing "${node.route.falseNodeId}"`);
+      errors.push(`${node.label || "条件分支"} 的 False 路由目标已不存在`);
     }
     if (node.route?.trueNodeId && !outgoing.some((edge) => edge.toNodeId === node.route?.trueNodeId)) {
-      errors.push(`condition: "${node.id}" true route edge missing`);
+      errors.push(`${node.label || "条件分支"} 的 True 路由还没有连线`);
     }
     if (node.route?.falseNodeId && !outgoing.some((edge) => edge.toNodeId === node.route?.falseNodeId)) {
-      errors.push(`condition: "${node.id}" false route edge missing`);
+      errors.push(`${node.label || "条件分支"} 的 False 路由还没有连线`);
     }
   }
 
   return errors;
+}
+
+/** 递归收集当前节点的上游节点，避免参数选择器默认暴露明显不可达的下游输出。 */
+function collectUpstreamNodeIds(definition: WorkflowDefinition, nodeId: string | null): Set<string> {
+  if (!nodeId) return new Set();
+  const upstream = new Set<string>();
+  const queue = definition.edges.filter((edge) => edge.toNodeId === nodeId).map((edge) => edge.fromNodeId);
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || upstream.has(current)) continue;
+    upstream.add(current);
+    for (const edge of definition.edges) {
+      if (edge.toNodeId === current) queue.push(edge.fromNodeId);
+    }
+  }
+  return upstream;
+}
+
+/** 把工作流变量定义、系统变量和上游节点输出整理成节点参数选择器可消费的选项。 */
+function buildVariableSourceOptions(
+  definition: WorkflowDefinition,
+  selectedNodeId: string | null,
+): WorkflowVariableSourceOption[] {
+  const options: WorkflowVariableSourceOption[] = [];
+  const seen = new Set<string>();
+
+  function addOption(group: string, label: string, ref: WorkflowVariableRef) {
+    const id = `${ref.scope}:${ref.nodeId ?? ""}:${ref.path}`;
+    if (seen.has(id)) return;
+    seen.add(id);
+    options.push({ id, group, label, ref });
+  }
+
+  for (const variable of definition.variables ?? []) {
+    if (variable.scope !== "input" && variable.scope !== "run" && variable.scope !== "system" && variable.scope !== "secret") {
+      continue;
+    }
+    const group = variable.scope === "input" ? "启动输入" : variable.scope === "run" ? "全局变量" : variable.scope === "system" ? "系统变量" : "密钥变量";
+    addOption(group, variable.label || variable.key, {
+      scope: variable.scope,
+      path: variable.path || variable.key,
+      valueType: variable.valueType,
+    });
+  }
+
+  for (const field of definition.stateSchema ?? []) {
+    if (!field.required || field.producerNodeIds.length > 0) continue;
+    addOption("启动输入", field.label || field.key, {
+      scope: "input",
+      path: field.key,
+      valueType: field.valueType,
+    });
+  }
+
+  const upstreamNodeIds = collectUpstreamNodeIds(definition, selectedNodeId);
+  for (const node of definition.nodes) {
+    if (!upstreamNodeIds.has(node.id)) continue;
+    const nodeLabel = node.label || node.id;
+    if (node.kind === "llm") {
+      addOption("节点输出", `${nodeLabel}.content`, {
+        scope: "node",
+        nodeId: node.id,
+        path: "content",
+        valueType: "string",
+      });
+    }
+    if (node.kind === "tool") {
+      addOption("节点输出", `${nodeLabel}.output`, {
+        scope: "node",
+        nodeId: node.id,
+        path: "output",
+        valueType: "unknown",
+      });
+    }
+    if (node.kind === "http-request") {
+      addOption("节点输出", `${nodeLabel}.body`, {
+        scope: "node",
+        nodeId: node.id,
+        path: "body",
+        valueType: "object",
+      });
+    }
+    for (const bindingKey of Object.keys(node.outputBindings ?? {})) {
+      addOption("节点输出", `${nodeLabel}.${bindingKey}`, {
+        scope: "node",
+        nodeId: node.id,
+        path: bindingKey,
+        valueType: "unknown",
+      });
+    }
+  }
+
+  addOption("系统变量", "Run ID", { scope: "system", path: "runId", valueType: "string" });
+  addOption("系统变量", "Workflow ID", { scope: "system", path: "workflowId", valueType: "string" });
+  addOption("系统变量", "Started At", { scope: "system", path: "startedAt", valueType: "string" });
+
+  return options;
 }
 
 /** 渲染工作流图检查器，负责节点/连线编辑与保存。 */
@@ -88,30 +191,32 @@ export default function WorkflowGraphInspector({
   definition,
   selectedNodeId: propSelectedNodeId = null,
   selectedEdgeId: propSelectedEdgeId = null,
-  showGraphList = true,
   compact = false,
 }: WorkflowGraphInspectorProps) {
   const workspace = useWorkspaceStore();
-  const useSingleColumnLayout = compact || !showGraphList;
 
   const [draft, setDraft] = useState<WorkflowDefinition>(() => cloneDefinition(definition));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  const [autoSaveState, setAutoSaveState] = useState<AutoSaveState>("idle");
   const [saveError, setSaveError] = useState("");
-  const [schemaErrors, setSchemaErrors] = useState<string[]>([]);
 
-  // 外部定义变化后，同步刷新本地草稿。
   const prevDefinitionRef = useRef<WorkflowDefinition | null>(null);
+  const draftRef = useRef(draft);
+  const saveSequenceRef = useRef(0);
+  draftRef.current = draft;
+
   useEffect(() => {
     if (prevDefinitionRef.current === definition) return;
     const cloned = cloneDefinition(definition);
     setDraft(cloned);
+    draftRef.current = cloned;
+    setAutoSaveState("idle");
+    setSaveError("");
     console.info("[workflow] 同步 workflow definition 草稿", { workflowId });
     prevDefinitionRef.current = definition;
   }, [definition, workflowId]);
 
-  // 根据外部选中状态同步节点或连线高亮。
   useEffect(() => {
     if (propSelectedNodeId && draft.nodes.some((node) => node.id === propSelectedNodeId)) {
       setSelectedNodeId(propSelectedNodeId);
@@ -148,6 +253,13 @@ export default function WorkflowGraphInspector({
     return draft.nodes.filter((node) => node.id !== selectedNode?.id).map((node) => node.id);
   }, [selectedNode, draft.nodes]);
 
+  const nodeLabelOptions = useMemo<WorkflowNodeLabelOption[]>(() => {
+    return draft.nodes.map((node) => ({
+      id: node.id,
+      label: node.label || "未命名节点",
+    }));
+  }, [draft.nodes]);
+
   const toolCandidateOptions = useMemo<WorkflowEditorOption[]>(() => {
     const optionMap = new Map<string, WorkflowEditorOption>();
     for (const tool of workspace.builtinTools) {
@@ -175,100 +287,127 @@ export default function WorkflowGraphInspector({
       }));
   }, [workspace.workflowSummaries, workflowId]);
 
+  const modelCandidateOptions = useMemo<WorkflowEditorOption[]>(() => {
+    return (workspace.models ?? [])
+      .map((model) => ({
+        value: model.id,
+        label: model.name || model.id,
+        hint: [model.providerFamily, model.protocolTarget].filter(Boolean).join(" / ") || "工作区模型",
+      }));
+  }, [workspace.models]);
+
   const stateFieldKeyOptions = useMemo<string[]>(() => {
     return draft.stateSchema
       .map((field) => field.key.trim())
       .filter((key, index, list) => Boolean(key) && list.indexOf(key) === index);
   }, [draft.stateSchema]);
 
+  const variableSourceOptions = useMemo<WorkflowVariableSourceOption[]>(() => {
+    return buildVariableSourceOptions(draft, selectedNodeId);
+  }, [draft, selectedNodeId]);
+
   const graphErrors = useMemo(() => validateGraph(draft), [draft]);
   const graphErrorText = graphErrors.length ? graphErrors.join("; ") : "";
-  const canSave = !isSaving && schemaErrors.length === 0 && graphErrors.length === 0;
 
-  /** 选中节点，并清空连线选中态。 */
-  function selectNode(nodeId: string) {
-    console.info("[workflow] 选择节点", { workflowId, nodeId });
-    setSelectedNodeId(nodeId);
-    setSelectedEdgeId(null);
+  const autoSaveLabel = useMemo(() => {
+    if (autoSaveState === "saving") return "正在自动保存";
+    if (autoSaveState === "saved") return "已自动保存";
+    if (autoSaveState === "blocked") return "修正错误后自动保存";
+    if (autoSaveState === "error") return "自动保存失败";
+    return "自动保存已开启";
+  }, [autoSaveState]);
+
+  /** 自动持久化工作流定义草稿，让运行按钮始终读取最新配置。 */
+  async function persistDraft(nextDraft: WorkflowDefinition, reason: string) {
+    const nextGraphErrors = validateGraph(nextDraft);
+    if (nextGraphErrors.length) {
+      setAutoSaveState("blocked");
+      const errorText = nextGraphErrors.join("; ");
+      setSaveError(errorText);
+      console.info("[workflow] 自动保存被校验拦截", {
+        workflowId,
+        reason,
+        graphErrors: nextGraphErrors,
+      });
+      return;
+    }
+
+    const saveSequence = saveSequenceRef.current + 1;
+    saveSequenceRef.current = saveSequence;
+    setSaveError("");
+    setAutoSaveState("saving");
+    console.info("[workflow] 开始自动保存 workflow definition", {
+      workflowId,
+      reason,
+      nodes: nextDraft.nodes.length,
+      edges: nextDraft.edges.length,
+      stateSchema: nextDraft.stateSchema.length,
+    });
+
+    try {
+      await workspace.updateWorkflow(workflowId, {
+        entryNodeId: nextDraft.entryNodeId,
+        nodes: nextDraft.nodes,
+        edges: nextDraft.edges,
+        stateSchema: nextDraft.stateSchema,
+        editor: nextDraft.editor,
+        defaults: nextDraft.defaults,
+      });
+      if (saveSequenceRef.current === saveSequence) {
+        setAutoSaveState("saved");
+      }
+      console.info("[workflow] 自动保存 workflow definition 成功", { workflowId, reason });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "自动保存 workflow definition 失败。";
+      if (saveSequenceRef.current === saveSequence) {
+        setSaveError(message);
+        setAutoSaveState("error");
+      }
+      console.info("[workflow] 自动保存 workflow definition 失败", { workflowId, reason, error: message });
+    }
   }
 
-  /** 选中连线，并清空节点选中态。 */
-  function selectEdge(edgeId: string) {
-    console.info("[workflow] 选择连线", { workflowId, edgeId });
-    setSelectedEdgeId(edgeId);
-    setSelectedNodeId(null);
+  /** 提交下一版草稿并集中触发自动保存，避免在 React state updater 中执行副作用。 */
+  function commitDraft(reason: string, buildNext: (prev: WorkflowDefinition) => WorkflowDefinition) {
+    const prevDraft = draftRef.current;
+    const nextDraft = buildNext(prevDraft);
+    if (nextDraft === prevDraft) return;
+    draftRef.current = nextDraft;
+    setDraft(nextDraft);
+    console.info("[workflow] 提交 workflow definition 草稿", {
+      workflowId,
+      reason,
+      nodes: nextDraft.nodes.length,
+      edges: nextDraft.edges.length,
+      stateSchema: nextDraft.stateSchema.length,
+    });
+    void persistDraft(nextDraft, reason);
   }
 
-  /** 更新草稿中的节点定义。 */
+  /** 更新草稿中的节点定义，并立即自动保存到工作流。 */
   function handleNodeUpdate(nextNode: WorkflowNode) {
-    setDraft((prev) => {
+    commitDraft("node", (prev) => {
       const nodes = [...prev.nodes];
       const index = nodes.findIndex((node) => node.id === nextNode.id);
       if (index < 0) return prev;
       nodes.splice(index, 1, nextNode);
-      console.info("[workflow] 更新草稿节点", { workflowId, nodeId: nextNode.id });
-      return { ...prev, nodes };
+      const nextDraft = { ...prev, nodes };
+      console.info("[workflow] 更新节点并触发自动保存", { workflowId, nodeId: nextNode.id });
+      return nextDraft;
     });
   }
 
-  /** 更新草稿中的连线定义。 */
+  /** 更新草稿中的连线定义，并立即自动保存到工作流。 */
   function handleEdgeUpdate(nextEdge: WorkflowEdge) {
-    setDraft((prev) => {
+    commitDraft("edge", (prev) => {
       const edges = [...prev.edges];
       const index = edges.findIndex((edge) => edge.id === nextEdge.id);
       if (index < 0) return prev;
       edges.splice(index, 1, nextEdge);
-      console.info("[workflow] 更新草稿连线", { workflowId, edgeId: nextEdge.id });
-      return { ...prev, edges };
+      const nextDraft = { ...prev, edges };
+      console.info("[workflow] 更新连线并触发自动保存", { workflowId, edgeId: nextEdge.id });
+      return nextDraft;
     });
-  }
-
-  /** 更新状态字段定义，并记录调试日志。 */
-  function handleStateSchemaUpdate(nextSchema: WorkflowDefinition["stateSchema"]) {
-    setDraft((prev) => {
-      console.info("[workflow] 更新草稿 state schema", { workflowId, fields: nextSchema.length });
-      return { ...prev, stateSchema: nextSchema as never };
-    });
-  }
-
-  function handleSchemaValidation(payload: { errors: string[] }) {
-    setSchemaErrors(payload.errors);
-    if (payload.errors.length) {
-      console.info("[workflow] state schema 校验失败", { workflowId, errors: payload.errors });
-    }
-  }
-
-  async function handleSave() {
-    if (!canSave) {
-      if (graphErrors.length) {
-        console.info("[workflow] graph 引用校验失败，禁止保存", { workflowId, errors: graphErrors });
-      }
-      return;
-    }
-    setSaveError("");
-    setIsSaving(true);
-    console.info("[workflow] 开始保存 workflow definition", {
-      workflowId,
-      nodes: draft.nodes.length,
-      edges: draft.edges.length,
-      stateSchema: draft.stateSchema.length,
-    });
-    try {
-      await workspace.updateWorkflow(workflowId, {
-        entryNodeId: draft.entryNodeId,
-        nodes: draft.nodes,
-        edges: draft.edges,
-        stateSchema: draft.stateSchema,
-        editor: draft.editor,
-        defaults: draft.defaults,
-      });
-      console.info("[workflow] 保存 workflow definition 成功", { workflowId });
-    } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Save definition failed.");
-      console.info("[workflow] 保存 workflow definition 失败", { workflowId, error: saveError });
-    } finally {
-      setIsSaving(false);
-    }
   }
 
   return (
@@ -283,82 +422,34 @@ export default function WorkflowGraphInspector({
           </span>
         )}
         {saveError && <span className="error">{saveError}</span>}
-        <button
-          data-testid="workflow-graph-inspector-save"
-          type="button"
-          className="primary"
-          disabled={!canSave}
-          onClick={handleSave}
+        <span
+          data-testid="workflow-graph-inspector-save-state"
+          className={`save-state save-state--${autoSaveState}`}
         >
-          保存图定义
-        </button>
+          {autoSaveLabel}
+        </span>
       </div>
 
-      <section className={`grid${useSingleColumnLayout ? " grid--single" : ""}`}>
-        {showGraphList && (
-          <section className="panel">
-            <h4 className="panel-title">节点列表</h4>
-            <ul className="list">
-              {draft.nodes.map((node) => (
-                <li key={node.id}>
-                  <button
-                    type="button"
-                    className="row"
-                    data-testid={`workflow-graph-node-row-${node.id}`}
-                    data-active={node.id === selectedNodeId ? "true" : "false"}
-                    onClick={() => selectNode(node.id)}
-                  >
-                    <strong data-testid={`workflow-graph-node-label-${node.id}`}>{node.label}</strong>
-                    <span className="muted">{node.kind}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-
-            <h4 className="panel-title">连线列表</h4>
-            <ul className="list">
-              {draft.edges.map((edge) => (
-                <li key={edge.id}>
-                  <button
-                    type="button"
-                    className="row"
-                    data-testid={`workflow-graph-edge-row-${edge.id}`}
-                    data-active={edge.id === selectedEdgeId ? "true" : "false"}
-                    onClick={() => selectEdge(edge.id)}
-                  >
-                    <span className="edge-label">{edge.fromNodeId} → {edge.toNodeId}</span>
-                    <span data-testid={`workflow-graph-edge-kind-${edge.id}`} className="muted">{edge.kind}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </section>
+      <section className="panel">
+        {selectedNode ? (
+          <WorkflowNodeEditor
+            node={selectedNode}
+            upstreamCandidateNodeIds={joinUpstreamCandidates}
+            routeCandidateNodeIds={conditionRouteCandidates}
+            nodeLabelOptions={nodeLabelOptions}
+            modelCandidateOptions={modelCandidateOptions}
+            toolCandidateOptions={toolCandidateOptions}
+            workflowCandidateOptions={workflowCandidateOptions}
+            stateFieldKeyOptions={stateFieldKeyOptions}
+            variableSourceOptions={variableSourceOptions}
+            onUpdateNode={handleNodeUpdate}
+          />
+        ) : selectedEdge ? (
+          <WorkflowEdgeEditor edge={selectedEdge} onUpdateEdge={handleEdgeUpdate} />
+        ) : (
+          <p className="placeholder">请在左侧侧栏或画布中选择一个节点或连线开始编辑。</p>
         )}
 
-        <section className="panel">
-          {selectedNode ? (
-            <WorkflowNodeEditor
-              node={selectedNode}
-              upstreamCandidateNodeIds={joinUpstreamCandidates}
-              routeCandidateNodeIds={conditionRouteCandidates}
-              toolCandidateOptions={toolCandidateOptions}
-              workflowCandidateOptions={workflowCandidateOptions}
-              stateFieldKeyOptions={stateFieldKeyOptions}
-              onUpdateNode={handleNodeUpdate}
-            />
-          ) : selectedEdge ? (
-            <WorkflowEdgeEditor edge={selectedEdge} onUpdateEdge={handleEdgeUpdate} />
-          ) : (
-            <p className="placeholder">请在左侧侧栏或画布中选择一个节点或连线开始编辑。</p>
-          )}
-
-          <WorkflowStateSchemaEditor
-            className="schema"
-            modelValue={draft.stateSchema}
-            onUpdateModelValue={handleStateSchemaUpdate}
-            onValidation={handleSchemaValidation}
-          />
-        </section>
       </section>
 
       <style>{`
@@ -374,117 +465,70 @@ export default function WorkflowGraphInspector({
           flex-wrap: wrap;
           justify-content: flex-end;
         }
-        .inspector .primary {
-          border: none;
+        .inspector .save-state {
+          border: 1px solid var(--glass-border);
           border-radius: 999px;
-          padding: 10px 14px;
-          background: var(--accent-primary);
-          color: var(--accent-text);
-          font: inherit;
-          cursor: pointer;
+          padding: 7px 11px;
+          color: var(--text-secondary);
+          background: color-mix(in srgb, var(--bg-base) 82%, transparent);
+          font-size: 13px;
+          white-space: nowrap;
         }
-        .inspector .primary[disabled] {
-          cursor: not-allowed;
-          opacity: 0.55;
+        .inspector .save-state--saving {
+          color: #2563eb;
+          border-color: rgba(37, 99, 235, 0.32);
+        }
+        .inspector .save-state--saved {
+          color: #0f766e;
+          border-color: rgba(15, 118, 110, 0.32);
+        }
+        .inspector .save-state--blocked,
+        .inspector .save-state--error {
+          color: #b83333;
+          border-color: rgba(184, 51, 51, 0.28);
         }
         .inspector .error {
           color: #b83333;
           font-size: 12px;
         }
-        .inspector .grid {
-          display: grid;
-          grid-template-columns: minmax(260px, 0.9fr) minmax(0, 1.1fr);
-          gap: 14px;
-          align-items: start;
-        }
-        .inspector .grid--single {
-          grid-template-columns: 1fr;
-        }
-        .inspector--compact .actions {
-          justify-content: flex-start;
-        }
         .inspector--compact .panel,
-        .inspector--compact .row,
-        .inspector--compact .node-editor,
-        .inspector--compact .schema-editor {
+        .inspector--compact .node-editor {
           min-width: 0;
-        }
-        .inspector--compact .edge-label {
-          overflow-wrap: anywhere;
         }
         .inspector--compact .node-editor .field input,
         .inspector--compact .node-editor .field textarea,
-        .inspector--compact .node-editor .field select,
-        .inspector--compact .schema-editor input,
-        .inspector--compact .schema-editor select {
+        .inspector--compact .node-editor .field select {
           width: 100%;
           min-width: 0;
           box-sizing: border-box;
-        }
-        .inspector--compact .schema-editor .header {
-          flex-direction: column;
-          align-items: stretch;
-        }
-        .inspector--compact .schema-editor .row {
-          grid-template-columns: 1fr;
         }
         .inspector--compact .node-editor .candidate-toggle {
           align-items: flex-start;
         }
         .inspector .panel {
-          border: 1px solid var(--glass-border);
-          border-radius: var(--radius-lg);
-          background: var(--bg-card);
-          padding: 14px;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+          padding: 0;
           display: flex;
           flex-direction: column;
-          gap: 12px;
+          gap: 14px;
+        }
+        .inspector .node-editor {
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+          padding: 0;
         }
         .inspector .panel-title {
           margin: 0;
           color: var(--text-primary);
-          font-size: 14px;
-        }
-        .inspector .list {
-          list-style: none;
-          margin: 0;
-          padding: 0;
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-        .inspector .row {
-          width: 100%;
-          border: 1px solid var(--glass-border);
-          border-radius: var(--radius-md);
-          padding: 10px 12px;
-          background: var(--bg-base);
-          color: var(--text-primary);
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          cursor: pointer;
-          text-align: left;
-        }
-        .inspector .row[data-active="true"] {
-          border-color: color-mix(in srgb, var(--accent-primary) 40%, var(--glass-border));
-        }
-        .inspector .muted {
-          color: var(--text-secondary);
-          font-size: 12px;
-        }
-        .inspector .edge-label {
-          font-size: 12px;
-          color: var(--text-primary);
+          font-size: 15px;
         }
         .inspector .placeholder {
           margin: 0;
           color: var(--text-secondary);
-          font-size: 12px;
-        }
-        .inspector .schema {
-          margin-top: 6px;
+          font-size: 13px;
         }
         @media (max-width: 960px) {
           .inspector .grid {

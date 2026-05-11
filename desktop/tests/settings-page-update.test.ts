@@ -3,7 +3,7 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const workspace = {
@@ -41,9 +41,20 @@ const mocks = vi.hoisted(() => {
     },
   );
 
+  const auth = {
+    session: {
+      user: {
+        displayName: "测试用户",
+        account: "tester@example.com",
+      },
+    },
+    logout: vi.fn().mockResolvedValue(undefined),
+  };
+
   return {
     workspace,
     useWorkspaceStoreMock,
+    auth,
   };
 });
 
@@ -51,7 +62,20 @@ vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
 }));
 
+vi.mock("../src/renderer/stores/auth", () => ({
+  useAuthStore: () => mocks.auth,
+}));
+
 describe("SettingsPage update actions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as any).window ??= {};
+    (window as any).myClawAPI = {
+      getAsrConfig: vi.fn().mockResolvedValue({ config: null }),
+      saveAsrConfig: vi.fn(),
+    };
+  });
+
   afterEach(() => {
     cleanup();
     mocks.workspace.checkForAppUpdates.mockReset();

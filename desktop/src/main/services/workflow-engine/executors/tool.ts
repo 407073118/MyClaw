@@ -1,5 +1,6 @@
 import type { WorkflowToolNode } from "@shared/contracts";
 import type { NodeExecutor, NodeExecutionContext, NodeExecutionResult } from "../node-executor";
+import { resolveLegacyInputBindings } from "../variable-resolver";
 
 export type ToolExecutorFn = (
   toolId: string,
@@ -30,7 +31,10 @@ export class ToolNodeExecutor implements NodeExecutor {
     const start = Date.now();
     const node = ctx.node as WorkflowToolNode;
     const { toolId } = node.tool;
-    const args = this.resolveArgs(node, ctx.state);
+    const args = {
+      ...this.resolveArgs(node, ctx.state),
+      ...ctx.resolvedInputs,
+    };
     let output: string;
     if (toolId.startsWith("mcp__") && this.mcpCaller) {
       const { serverId, toolName } = parseMcpToolId(toolId);
@@ -51,12 +55,6 @@ export class ToolNodeExecutor implements NodeExecutor {
   }
 
   private resolveArgs(node: WorkflowToolNode, state: ReadonlyMap<string, unknown>): Record<string, unknown> {
-    const args: Record<string, unknown> = {};
-    if (node.inputBindings) {
-      for (const [paramName, channelName] of Object.entries(node.inputBindings)) {
-        args[paramName] = state.get(channelName);
-      }
-    }
-    return args;
+    return resolveLegacyInputBindings(node.inputBindings, state);
   }
 }

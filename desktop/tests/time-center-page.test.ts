@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from "react";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,9 +9,14 @@ import TimeCenterPage from "../src/renderer/pages/TimeCenterPage";
 import { useWorkspaceStore } from "../src/renderer/stores/workspace";
 
 describe("TimeCenterPage", () => {
+  const updateCalendarEventMock = vi.fn();
+  const deleteReminderMock = vi.fn();
+
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-07T01:00:00.000Z"));
+    updateCalendarEventMock.mockResolvedValue(undefined);
+    deleteReminderMock.mockResolvedValue(undefined);
     useWorkspaceStore.setState({
       time: {
         calendarEvents: [
@@ -125,6 +130,8 @@ describe("TimeCenterPage", () => {
         },
       ],
       suggestTimeboxes: async () => [],
+      updateCalendarEvent: updateCalendarEventMock,
+      deleteReminder: deleteReminderMock,
     } as any);
   });
 
@@ -132,16 +139,20 @@ describe("TimeCenterPage", () => {
     vi.useRealTimers();
   });
 
-  function renderPage() {
+  function renderPage(initialEntries?: React.ComponentProps<typeof MemoryRouter>["initialEntries"]) {
+    const routerProps: React.ComponentProps<typeof MemoryRouter> = {
+      future: {
+        v7_startTransition: true,
+        v7_relativeSplatPath: true,
+      },
+    };
+    if (initialEntries) {
+      routerProps.initialEntries = initialEntries;
+    }
     return render(
       React.createElement(
         MemoryRouter,
-        {
-          future: {
-            v7_startTransition: true,
-            v7_relativeSplatPath: true,
-          },
-        },
+        routerProps,
         React.createElement(TimeCenterPage),
       ),
     );
@@ -188,11 +199,52 @@ describe("TimeCenterPage", () => {
     expect(screen.getByText("日报汇总")).toBeTruthy();
   });
 
+  it("opens the schedule job list when navigation state requests it", () => {
+    renderPage([{ pathname: "/time", state: { activeView: "jobs" } }]);
+
+    expect(screen.getByRole("heading", { name: "定时任务" })).toBeTruthy();
+    expect(screen.getByText("日报汇总")).toBeTruthy();
+  });
+
   it("keeps unscheduled tasks visible without taking over the timeline", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "待安排任务" })).toBeTruthy();
     expect(screen.getByText("整理季度复盘素材")).toBeTruthy();
     expect(screen.getByRole("button", { name: "安排时间" })).toBeTruthy();
+  });
+
+  it("opens timeline event details and supports edit and delete actions", async () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /查看产品例会/ }));
+
+    const detailDialog = within(screen.getByRole("dialog", { name: "日程详情" }));
+    expect(detailDialog.getByRole("heading", { name: "产品例会" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    expect(screen.getByRole("dialog", { name: "编辑日程" })).toBeTruthy();
+    expect(screen.getByDisplayValue("产品例会")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: /查看产品例会/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    });
+
+    expect(updateCalendarEventMock).toHaveBeenCalledWith(expect.objectContaining({ id: "event-personal", status: "cancelled" }));
+  });
+
+  it("opens timeline reminder details and supports deleting the reminder", async () => {
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /查看提醒：提交报销材料/ }));
+
+    expect(screen.getByRole("dialog", { name: "提醒详情" })).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "删除" }));
+    });
+
+    expect(deleteReminderMock).toHaveBeenCalledWith("rem-1");
   });
 });

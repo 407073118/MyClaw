@@ -492,6 +492,19 @@ const myClawAPI = {
   onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void): UnsubscribeFn =>
     onChannel("web-panel:open", callback),
 
+  fileViewerOpenExternal: (path: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke("file-viewer:open-external", path),
+
+  fileViewerReveal: (path: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke("file-viewer:reveal", path),
+
+  fileViewerPreview: (input: { path: string; baseDirectory?: string | null }): Promise<{
+    success: boolean;
+    error?: string;
+    resolvedPath?: string;
+    viewMeta?: { viewPath: string; title: string; data: unknown };
+  }> => ipcRenderer.invoke("file-viewer:preview", input),
+
   // ---- 技能文件 ------------------------------------------------------------
   skillReadTree: (skillId: string) => ipcRenderer.invoke("skill:read-tree", skillId),
   skillReadFile: (skillId: string, relativePath: string) => ipcRenderer.invoke("skill:read-file", skillId, relativePath),

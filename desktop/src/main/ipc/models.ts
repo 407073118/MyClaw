@@ -88,6 +88,7 @@ function resolveProviderFlavor(
   if (baseUrl.includes("vercel") && baseUrl.includes("gateway")) return "vercel-ai-gateway";
   if (baseUrl.includes("dashscope.aliyuncs.com") || model.startsWith("qwen")) return "qwen";
   if (baseUrl.includes("moonshot")) return "moonshot";
+  if (baseUrl.includes("api.deepseek.com") || model.startsWith("deepseek")) return "deepseek";
   if (baseUrl.includes("api.openai.com")) return "openai";
   if (baseUrl.includes("ollama") || baseUrl.includes(":11434")) return "ollama";
   if (baseUrl.includes("minimax") || baseUrl.includes("minimaxi") || model.startsWith("minimax")) return "minimax-anthropic";
@@ -226,9 +227,12 @@ function resolveRouteProbeUrl(
   return resolveModelEndpointUrl(profile, protocolTarget);
 }
 
-/** 依据固定优先级从可用路线中选出推荐项。 */
-function resolveRecommendedProtocolTarget(availableRoutes: ProtocolTarget[]): ProtocolTarget | null {
-  for (const target of PROTOCOL_TARGET_RECOMMENDATION_ORDER) {
+/** 依据当前厂商候选顺序从可用路线中选出推荐项，避免全局优先级覆盖厂商默认路线。 */
+function resolveRecommendedProtocolTarget(
+  availableRoutes: ProtocolTarget[],
+  preferredOrder: readonly ProtocolTarget[] = PROTOCOL_TARGET_RECOMMENDATION_ORDER,
+): ProtocolTarget | null {
+  for (const target of preferredOrder) {
     if (availableRoutes.includes(target)) {
       return target;
     }
@@ -655,7 +659,7 @@ export function registerModelHandlers(ctx: RuntimeContext): void {
       const availableProtocolTargets = entries
         .filter((entry) => entry.ok)
         .map((entry) => entry.protocolTarget);
-      const recommendedProtocolTarget = resolveRecommendedProtocolTarget(availableProtocolTargets);
+      const recommendedProtocolTarget = resolveRecommendedProtocolTarget(availableProtocolTargets, candidates);
 
       return {
         recommendedProtocolTarget,

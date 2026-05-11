@@ -552,6 +552,46 @@ describe("ModelDetailPage route probe", () => {
     expect(screen.getByText("当前已保存路线：OpenAI Compatible")).toBeTruthy();
   });
 
+  it("updates stale DeepSeek probe-selected Anthropic routes to the new recommended route after re-probing", async () => {
+    mocks.workspace.models = [buildProfile({
+      name: "DeepSeek Profile",
+      providerFlavor: "deepseek",
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-pro",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages", "openai-chat-compatible"],
+      protocolSelectionSource: "probe",
+    })];
+    mocks.workspace.probeModelRoutes.mockResolvedValueOnce({
+      recommendedProtocolTarget: "openai-chat-compatible",
+      availableProtocolTargets: ["openai-chat-compatible", "anthropic-messages"],
+      testedAt: "2026-05-09T00:00:00.000Z",
+      entries: [
+        {
+          protocolTarget: "openai-chat-compatible",
+          ok: true,
+          latencyMs: 120,
+          notes: ["DeepSeek 官方 OpenAI ChatCompletions 兼容路线"],
+        },
+        {
+          protocolTarget: "anthropic-messages",
+          ok: true,
+          latencyMs: 160,
+          notes: ["DeepSeek 官方 Anthropic Messages 兼容路线"],
+        },
+      ],
+    });
+
+    renderModelDetail("/settings/models/profile-1");
+    fireEvent.click(screen.getByRole("button", { name: "探测路线" }));
+
+    await waitFor(() => expect(mocks.workspace.probeModelRoutes).toHaveBeenCalledTimes(1));
+    expect((screen.getByLabelText("执行路线") as HTMLSelectElement).value).toBe("openai-chat-compatible");
+    expect(screen.getAllByText(/推荐路线：OpenAI Compatible/).length).toBeGreaterThan(0);
+  });
+
   it("invalidates a probed route after model changes and re-probes on save", async () => {
     renderModelDetail("/settings/models/profile-1");
 

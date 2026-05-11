@@ -284,6 +284,70 @@ describe("execution gateway", () => {
     ]);
   });
 
+  it("compiles DeepSeek Anthropic-route tools as Anthropic input_schema instead of OpenAI function tools", async () => {
+    const gateway = createExecutionGateway();
+    const profile: ModelProfile = {
+      id: "profile-deepseek-anthropic",
+      name: "DeepSeek V4",
+      provider: "openai-compatible",
+      providerFlavor: "deepseek",
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages", "openai-chat-compatible"],
+      baseUrl: "https://api.deepseek.com",
+      baseUrlMode: "provider-root",
+      apiKey: "key",
+      model: "deepseek-v4-pro",
+    };
+    const executionPlan: ExecutionPlan = {
+      runtimeVersion: SESSION_RUNTIME_VERSION,
+      adapterId: "deepseek",
+      adapterSelectionSource: "profile",
+      reasoningMode: "auto",
+      replayPolicy: "assistant-turn-with-reasoning",
+      fallbackAdapterIds: [],
+    };
+
+    const result = await gateway.executeTurn({
+      mode: "canonical",
+      profile,
+      executionPlan,
+      messages: [{ role: "user", content: "hello" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "web_search",
+          description: "Search the web",
+          parameters: {
+            type: "object",
+            properties: {
+              query: { type: "string" },
+            },
+            required: ["query"],
+          },
+        },
+      }],
+      sessionId: "session-deepseek-anthropic",
+    });
+
+    expect(result.plan.protocolTarget).toBe("anthropic-messages");
+    expect(result.plan.toolCompileTarget).toBe("anthropic-native");
+    expect(result.toolBundle.compileMode).toBe("anthropic-detailed-description");
+    expect(result.requestShape.tools).toEqual([
+      expect.objectContaining({
+        name: "web_search",
+        input_schema: expect.objectContaining({
+          type: "object",
+          properties: {
+            query: { type: "string" },
+          },
+        }),
+      }),
+    ]);
+    expect(JSON.stringify(result.requestShape.tools)).not.toContain("\"type\":\"function\"");
+  });
+
   it("uses direct transport for canonical openai-native execution", async () => {
     const gateway = createExecutionGateway({
       rolloutFlags: {

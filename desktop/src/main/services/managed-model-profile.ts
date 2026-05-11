@@ -53,6 +53,7 @@ function resolveFirstClassVendorIdentityPatch(
     vendorFamily !== "qwen"
     && vendorFamily !== "kimi"
     && vendorFamily !== "volcengine-ark"
+    && vendorFamily !== "deepseek"
   ) {
     return null;
   }
@@ -94,7 +95,29 @@ function isLegacyFirstClassVendorCompatDefault(
       );
   }
 
+  if (vendorFamily === "deepseek") {
+    return savedPreferences.length === 0
+      || savedPreferences[0] === "openai-chat-compatible";
+  }
+
   return false;
+}
+
+/** 判断是否属于早期探测误保存的 DeepSeek Anthropic 默认路线，命中后允许迁回官方默认路线。 */
+function isStaleDeepSeekProbeAnthropicDefault(
+  profile: Partial<ModelProfile>,
+  vendorFamily: VendorFamily | undefined,
+): boolean {
+  if (vendorFamily !== "deepseek") {
+    return false;
+  }
+
+  if (profile.protocolSelectionSource !== "probe" || profile.protocolTarget !== "anthropic-messages") {
+    return false;
+  }
+
+  const savedPreferences = profile.savedProtocolPreferences ?? [];
+  return savedPreferences.length === 0 || savedPreferences.includes("openai-chat-compatible");
 }
 
 /** 判断当前配置是否已经保存过显式协议选择，避免用户主动选择被默认迁移覆盖。 */
@@ -102,6 +125,10 @@ function hasExplicitProtocolSelection(
   profile: Partial<ModelProfile>,
   vendorFamily: VendorFamily | undefined,
 ): boolean {
+  if (isStaleDeepSeekProbeAnthropicDefault(profile, vendorFamily)) {
+    return false;
+  }
+
   if (
     profile.protocolSelectionSource === "saved"
     || profile.protocolSelectionSource === "probe"
@@ -137,6 +164,14 @@ function resolveFirstClassVendorDefaultRoutePatch(
     return {
       protocolTarget: "anthropic-messages" satisfies ProtocolTarget,
       savedProtocolPreferences: ["anthropic-messages"],
+      protocolSelectionSource: "registry-default",
+    };
+  }
+
+  if (vendorFamily === "deepseek") {
+    return {
+      protocolTarget: "openai-chat-compatible" satisfies ProtocolTarget,
+      savedProtocolPreferences: ["openai-chat-compatible"],
       protocolSelectionSource: "registry-default",
     };
   }

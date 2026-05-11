@@ -83,6 +83,23 @@ export type LatestCheckpointResult = {
   interruptPayload?: unknown;
 };
 
+/** 从 checkpoint 的 nodes channel 中提取本轮触发节点的返回值。 */
+function extractTriggeredNodeOutputs(
+  channelData: Map<string, unknown>,
+  triggeredNodes: string[],
+): Record<string, unknown> | undefined {
+  const nodes = channelData.get("nodes");
+  if (!nodes || typeof nodes !== "object" || Array.isArray(nodes)) return undefined;
+  const nodeOutputMap = nodes as Record<string, unknown>;
+  const outputs: Record<string, unknown> = {};
+  for (const nodeId of triggeredNodes) {
+    if (Object.prototype.hasOwnProperty.call(nodeOutputMap, nodeId)) {
+      outputs[nodeId] = nodeOutputMap[nodeId];
+    }
+  }
+  return Object.keys(outputs).length > 0 ? outputs : undefined;
+}
+
 // ── SqliteCheckpointer ──
 
 export class SqliteCheckpointer {
@@ -308,10 +325,10 @@ export class SqliteCheckpointer {
 
   listCheckpoints(runId: string): WorkflowCheckpointSummary[] {
     const db = this.ensureDb();
-    const summaries: WorkflowCheckpointSummary[] = [];
+    const rows: Array<WorkflowCheckpointSummary & { channelVersions: Record<string, number> }> = [];
 
     const stmt = db.prepare(
-      `SELECT checkpoint_id, step, status, triggered_nodes, duration_ms,
+      `SELECT checkpoint_id, step, status, channel_versions, triggered_nodes, duration_ms,
               created_at, interrupt_payload
        FROM checkpoints
        WHERE thread_id = ?
@@ -321,10 +338,11 @@ export class SqliteCheckpointer {
 
     while (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
-      summaries.push({
+      rows.push({
         checkpointId: row.checkpoint_id as string,
         step: row.step as number,
         status: row.status as WorkflowCheckpointSummary["status"],
+        channelVersions: JSON.parse(row.channel_versions as string),
         triggeredNodes: JSON.parse(row.triggered_nodes as string),
         durationMs: row.duration_ms as number,
         createdAt: row.created_at as string,
@@ -334,7 +352,12 @@ export class SqliteCheckpointer {
       });
     }
     stmt.free();
-    return summaries;
+
+    return rows.map(({ channelVersions, ...summary }) => {
+      const channelData = this.restoreChannelData(runId, channelVersions);
+      const nodeOutputs = extractTriggeredNodeOutputs(channelData, summary.triggeredNodes);
+      return nodeOutputs ? { ...summary, nodeOutputs } : summary;
+    });
   }
 
   restoreChannelData(

@@ -12,11 +12,13 @@ import {
   Plug,
   Save,
   Send,
+  Trash2,
   Users,
   Workflow,
   Wrench,
 } from "lucide-react";
 import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, McpServer, ModelProfile, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
+import MarkdownView from "../components/MarkdownView";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
 import { useWorkspaceStore } from "../stores/workspace";
@@ -146,7 +148,7 @@ function readWorkflowRunSummary(value: unknown): {
   };
 }
 
-/** 编辑硅基员工实体，同时承载最小私域会话工作台。 */
+/** 缂栬緫纭呭熀鍛樺伐瀹炰綋锛屽悓鏃舵壙杞芥渶灏忕鍩熶細璇濆伐浣滃彴銆?*/
 export default function SiliconPersonWorkspacePage() {
   const { id: siliconPersonId = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -192,6 +194,7 @@ export default function SiliconPersonWorkspacePage() {
   const [saveError, setSaveError] = useState("");
   const [sessionError, setSessionError] = useState("");
   const [approvalError, setApprovalError] = useState("");
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [activeStudioTab, setActiveStudioTab] = useState<"chat" | "profile" | "tasks" | "capabilities">("chat");
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
@@ -555,7 +558,7 @@ export default function SiliconPersonWorkspacePage() {
       executorTargetId: scheduledWorkflowId,
       nextRunAt: startsAt,
     });
-    setScheduleMessage("已创建定时工作流。");
+    setScheduleMessage("创建周期性工作流任务失败。");
   }
 
   /** 保存侧栏中的硅基员工角色卡和 workflow 绑定信息。 */
@@ -608,7 +611,7 @@ export default function SiliconPersonWorkspacePage() {
       }
       setViewVersion((value) => value + 1);
     } catch (error) {
-      setSessionError(error instanceof Error ? error.message : "新建硅基员工会话失败。");
+      setSessionError(error instanceof Error ? error.message : "创建硅基员工会话失败。");
     } finally {
       setIsCreatingSession(false);
     }
@@ -640,6 +643,50 @@ export default function SiliconPersonWorkspacePage() {
 
   /** 处理当前会话里的审批请求，按钮只负责把决定转给 workspace。 */
   /** 向当前硅基员工的 currentSession 继续发送消息，保持私域会话连续性。 */
+
+  /** 删除指定硅基员工会话，并同步刷新该员工配置用于更新会话列表。 */
+  async function handleDeleteSession(sessionId: string) {
+    if (!siliconPersonId || !siliconPerson) return;
+    if (deletingSessionId) return;
+
+    const targetSession = siliconPerson.sessions.find((item) => item.id === sessionId);
+    if (!targetSession) {
+      setSessionError("当前会话不存在或已被移除，无法删除。");
+      return;
+    }
+    const targetTitle = targetSession?.title ?? `会话 ${sessionId.slice(0, 8)}`;
+
+    if (!window.confirm(`确认要删除「${targetTitle}」吗？`)) {
+      return;
+    }
+
+    setSessionError("");
+    setDeletingSessionId(sessionId);
+    try {
+      console.info("[silicon-person-studio] 请求删除会话", {
+        siliconPersonId,
+        sessionId,
+      });
+      await workspace.deleteSession(sessionId);
+      await workspace.loadSiliconPersonById(siliconPersonId);
+      const latestPerson = useWorkspaceStore.getState().siliconPersons.find((item) => item.id === siliconPersonId) ?? null;
+      if (currentSessionSummary?.id === sessionId) {
+        const fallbackSession = latestPerson?.sessions.find((item) => item.id !== sessionId);
+        if (fallbackSession) {
+          await workspace.switchSiliconPersonSession(siliconPersonId, fallbackSession.id);
+        }
+      }
+      if (currentSessionSummary?.id === sessionId) {
+        setDraftMessage("");
+      }
+      setViewVersion((value) => value + 1);
+    } catch (error) {
+      setSessionError(error instanceof Error ? error.message : "删除硅基员工会话失败。");
+    } finally {
+      setDeletingSessionId(null);
+    }
+  }
+
   async function handleSendMessage() {
     if (!siliconPersonId) return;
     const content = draftMessage.trim();
@@ -648,7 +695,7 @@ export default function SiliconPersonWorkspacePage() {
     setSessionError("");
     setIsSending(true);
     try {
-      console.info("[silicon-person-studio] 请求向当前会话继续发送消息", {
+      console.info("[silicon-person-studio] 请求删除当前会话及其消息", {
         siliconPersonId,
         sessionId: currentSessionSummary?.id ?? null,
         contentLength: content.length,
@@ -657,7 +704,7 @@ export default function SiliconPersonWorkspacePage() {
       setDraftMessage("");
       setViewVersion((value) => value + 1);
     } catch (error) {
-      setSessionError(error instanceof Error ? error.message : "发送硅基员工消息失败。");
+      setSessionError(error instanceof Error ? error.message : "删除硅基员工会话失败。");
     } finally {
       setIsSending(false);
     }
@@ -735,7 +782,7 @@ export default function SiliconPersonWorkspacePage() {
         <nav className="ws-tabs" data-testid="studio-tab-bar">
           {([
             ["chat", "聊天"],
-            ["profile", "资料"],
+            ["profile", "配置"],
             ["capabilities", "能力"],
             ["tasks", "任务"],
           ] as const).map(([key, label]) => (
@@ -812,26 +859,42 @@ export default function SiliconPersonWorkspacePage() {
 
               <div className="ws-session-bar">
                 <div className="ws-session-pills" role="tablist" aria-label="硅基员工会话">
-                  {siliconPerson.sessions.map((session) => {
-                    const isActive = currentSessionSummary?.id === session.id;
-                    return (
-                      <button
-                        key={session.id}
-                        type="button"
-                        role="tab"
-                        aria-selected={isActive}
-                        className={`ws-session-pill${isActive ? " is-active" : ""}`}
-                        data-testid={`silicon-person-session-pill-${session.id}`}
-                        onClick={() => void handleSwitchSession(session.id)}
-                      >
-                        <span className="ws-session-pill__label">{session.title || "未命名会话"}</span>
-                        {session.needsApproval && <span className="ws-session-badge warn">!</span>}
-                        {session.unreadCount > 0 && !session.needsApproval && (
-                          <span className="ws-session-badge">{session.unreadCount > 9 ? "9+" : session.unreadCount}</span>
-                        )}
-                      </button>
-                    );
-                  })}
+                    {siliconPerson.sessions.map((session) => {
+                      const isActive = currentSessionSummary?.id === session.id;
+                      const isDeleting = deletingSessionId === session.id;
+                      return (
+                        <div className="ws-session-row" key={session.id}>
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={isActive}
+                            className={`ws-session-pill${isActive ? " is-active" : ""}`}
+                            data-testid={`silicon-person-session-pill-${session.id}`}
+                            onClick={() => void handleSwitchSession(session.id)}
+                            disabled={isDeleting}
+                          >
+                            <span className="ws-session-pill__label">{session.title || "未命名会话"}</span>
+                            {session.needsApproval && <span className="ws-session-badge warn">!</span>}
+                            {session.unreadCount > 0 && !session.needsApproval && (
+                              <span className="ws-session-badge">{session.unreadCount > 9 ? "9+" : session.unreadCount}</span>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            className="ws-session-delete"
+                            aria-label={`删除会话 ${session.title || "未命名会话"}`}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void handleDeleteSession(session.id);
+                            }}
+                            disabled={isDeleting}
+                          >
+                            {isDeleting ? <span aria-hidden>...</span> : <Trash2 size={12} aria-hidden />}
+                          </button>
+                        </div>
+                      );
+                    })}
                 </div>
                 <button
                   type="button"
@@ -860,7 +923,7 @@ export default function SiliconPersonWorkspacePage() {
 
               {currentSessionSummary && (
                 <>
-                  <div className="ws-section">
+                <div className="ws-section">
                     <h4>当前会话</h4>
                     <div className="ws-meta-row ws-meta-row--inline">
                       <span className="ws-meta-name" title={currentSessionSummary.title || "未命名会话"}>
@@ -888,25 +951,40 @@ export default function SiliconPersonWorkspacePage() {
                           const showDateSep = typeof message.createdAt === "string" && (
                             index === 0 || (typeof prev?.createdAt === "string" && isDifferentDay(prev.createdAt, message.createdAt))
                           );
-                          return (
-                            <React.Fragment key={message.id}>
-                              {showDateSep && (
-                                <div className="ws-date-separator"><span>{formatDateSeparator(message.createdAt)}</span></div>
-                              )}
-                              <div className={`ws-msg ws-msg--${message.role}`}>
-                                <span className="ws-msg-role">{roleLabel(message.role)}</span>
-                                <div className="ws-msg-body">
-                                  <p>{textOf(message.content) || "暂不支持展示的消息内容"}</p>
-                                  {typeof message.createdAt === "string" && (
-                                    <span className="ws-msg-time" title={formatFullTime(message.createdAt)}>
-                                      {formatMessageTime(message.createdAt)}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </React.Fragment>
-                          );
-                        })}
+                           return (
+                             <React.Fragment key={message.id}>
+                               {showDateSep && (
+                                 <div className="ws-date-separator"><span>{formatDateSeparator(message.createdAt)}</span></div>
+                               )}
+                               <article className={`message-row role-${message.role}`}>
+                                 <div className="message-avatar" aria-hidden>
+                                   {message.role === "user" ? "我" : message.role === "assistant" ? "AI" : message.role === "tool" ? "T" : "S"}
+                                 </div>
+                                 <div className="message-body">
+                                   <div className="message-header">
+                                     <span>{roleLabel(message.role)}</span>
+                                     {typeof message.createdAt === "string" && (
+                                       <span className="message-time" title={formatFullTime(message.createdAt)}>
+                                         {formatMessageTime(message.createdAt)}
+                                       </span>
+                                     )}
+                                   </div>
+                                   {(() => {
+                                     const renderedMessage = (message as { renderedHtml?: string }).renderedHtml
+                                       ?? textOf(message.content);
+                                     return renderedMessage ? (
+                                       <MarkdownView source={renderedMessage} className="message-content" />
+                                     ) : (
+                                       <div className="message-content">
+                                         <p>暂不支持展示的消息内容</p>
+                                       </div>
+                                     );
+                                   })()}
+                                 </div>
+                               </article>
+                             </React.Fragment>
+                           );
+                      })}
                       </div>
                     ) : (
                       <section className="empty-state empty-state--minimal">
@@ -999,7 +1077,7 @@ export default function SiliconPersonWorkspacePage() {
                       <div className="ws-path-display" title={personPaths.personDir}>{personPaths.personDir}</div>
                     </div>
                   )}
-                  {personPaths.skillsDir && (
+                {personPaths.skillsDir && (
                     <div className="ws-field ws-field--full">
                       <span>技能目录</span>
                       <div className="ws-path-display" title={personPaths.skillsDir}>{personPaths.skillsDir}</div>
@@ -1010,18 +1088,18 @@ export default function SiliconPersonWorkspacePage() {
 
               {/* 身份与人格 */}
               <div className="ws-card ws-form-card" data-testid="profile-persona-form">
-                <h3>身份与人格</h3>
+                <h3>人格画像</h3>
                 <div className="ws-form-fields">
                   <label className="ws-field ws-field--full">
-                    <span>灵魂定义</span>
-                    <textarea value={draftSoul} onChange={(e) => setDraftSoul(e.target.value)} data-testid="profile-tab-soul" rows={6} placeholder="定义这个硅基员工的角色身份、行为风格与个性特征。例如：&#10;我是一个专注于数据分析的研究助手，擅长结构化思考，回答简洁精准。" />
+                    <span>人格定义</span>
+                    <textarea value={draftSoul} onChange={(e) => setDraftSoul(e.target.value)} data-testid="profile-tab-soul" rows={6} placeholder="定义这个硅基员工的行为特点和人格风格。示例：这是一个偏向严谨、善于数据分析、回答稳定可复现的助手。" />
                   </label>
                 </div>
               </div>
 
               {/* 模型与策略 */}
               <div className="ws-card ws-form-card" data-testid="profile-model-form">
-                <h3>模型与策略</h3>
+                <h3>模型参数</h3>
                 <div className="ws-form-fields">
                   <label className="ws-field ws-field--full">
                     <span>使用模型</span>
@@ -1078,7 +1156,7 @@ export default function SiliconPersonWorkspacePage() {
                     <span className="ws-stat-value">{sourceLabel[siliconPerson.source] ?? siliconPerson.source}</span>
                   </div>
                   <div className="ws-stat-cell">
-                    <span className="ws-stat-label">最后更新</span>
+                    <span className="ws-stat-label">更新时间</span>
                     <span className="ws-stat-value">{siliconPerson.updatedAt}</span>
                   </div>
                 </div>
@@ -1108,8 +1186,8 @@ export default function SiliconPersonWorkspacePage() {
               ) : (
                 <section className="empty-state empty-state--minimal" style={{ marginTop: 16 }}>
                   <ListTodo size={32} className="empty-state__icon" aria-hidden />
-                  <h3 className="empty-state__title">还没有任务</h3>
-                  <p className="empty-state__body">任务会随执行自动产生。</p>
+                  <h3 className="empty-state__title">暂无任务</h3>
+                  <p className="empty-state__body">当前会话暂无任务记录</p>
                 </section>
               )}
             </article>
@@ -1121,10 +1199,10 @@ export default function SiliconPersonWorkspacePage() {
           <section className="ws-col">
             {/* ── 员工独立 Skills ── */}
             <article className="ws-card">
-              <div className="ws-cap-header">
-                <div>
+                <div className="ws-cap-header">
+                  <div>
                   <h3>技能</h3>
-                  <p className="ws-card-desc">员工独立工作空间中的 Skills，可从 Hub 单独安装</p>
+                  <p className="ws-card-desc">硅基员工工作台支持的 Skills，可从 Hub 安装。</p>
                 </div>
                 <button
                   type="button"
@@ -1144,7 +1222,7 @@ export default function SiliconPersonWorkspacePage() {
                       <div className="list-row__main">
                         <div className="list-row__title-row">
                           <span className="list-row__title">{skill.name}</span>
-                          <span className="tag tag--accent">已安装</span>
+                          <span className="tag tag--accent">系统内置</span>
                         </div>
                         <div className="list-row__description">{skill.description || skill.id}</div>
                       </div>
@@ -1267,15 +1345,15 @@ export default function SiliconPersonWorkspacePage() {
               <div className="ws-cap-header">
                 <div>
                   <h3>定时任务</h3>
-                  <p className="ws-card-desc">为硅基员工绑定周期性 workflow 运行窗口，并复用时间规划的统一调度。</p>
+                  <p className="ws-card-desc">当前员工绑定的 workflow 工作流将按设置的间隔与时区执行定时任务。</p>
                 </div>
                 <span className="tag tag--muted">工作时段 {siliconPersonWorkingHoursSummary}</span>
               </div>
 
               <div className="ws-schedule-form">
                 <label className="ws-field">
-                  <span>定时工作流</span>
-                  <select value={scheduledWorkflowId} onChange={(e) => setScheduledWorkflowId(e.target.value)} aria-label="定时工作流">
+                <span>定时工作流</span>
+                          <select value={scheduledWorkflowId} onChange={(e) => setScheduledWorkflowId(e.target.value)} aria-label="定时工作流">
                     <option value="">选择工作流</option>
                     {boundWorkflows.map(({ workflowId, summary }) => (
                       <option key={workflowId} value={workflowId}>{summary.name}</option>
@@ -1325,7 +1403,7 @@ export default function SiliconPersonWorkspacePage() {
                           <span className="list-row__title">{job.title}</span>
                           <span className="tag tag--muted">{job.scheduleKind}</span>
                         </div>
-                        <div className="list-row__description">{job.nextRunAt ? `下次运行 ${job.nextRunAt}` : "等待下一次计算"}</div>
+                        <div className="list-row__description">{job.nextRunAt ? `下次执行 ${job.nextRunAt}` : "等待下一次执行"}</div>
                       </div>
                     </article>
                   ))}
@@ -1333,8 +1411,8 @@ export default function SiliconPersonWorkspacePage() {
               ) : (
                 <section className="empty-state empty-state--minimal" style={{ marginTop: 16 }}>
                   <Clock size={32} className="empty-state__icon" aria-hidden />
-                  <h3 className="empty-state__title">还没有定时任务</h3>
-                  <p className="empty-state__body">为该硅基员工创建周期性 workflow 运行。</p>
+                  <h3 className="empty-state__title">暂无定时任务</h3>
+                  <p className="empty-state__body">该硅基员工还未创建定时 workflow 任务。</p>
                 </section>
               )}
             </article>
@@ -1389,8 +1467,8 @@ export default function SiliconPersonWorkspacePage() {
             <div className="sp-confirm-icon">
               <Save size={24} aria-hidden />
             </div>
-            <h3 id="sp-confirm-title" className="sp-confirm-message">确定保存对「{draftName || siliconPerson?.name}」的配置修改吗？</h3>
-            <p id="sp-confirm-hint" className="sp-confirm-hint">修改将立即生效，新会话将使用更新后的配置。</p>
+            <h3 id="sp-confirm-title" className="sp-confirm-message">确定保存“{draftName || siliconPerson?.name}”的配置修改？</h3>
+            <p id="sp-confirm-hint" className="sp-confirm-hint">确认保存后请刷新会话列表和聊天区。</p>
             <div className="sp-confirm-actions">
               <button
                 type="button"
@@ -1476,6 +1554,31 @@ export default function SiliconPersonWorkspacePage() {
         .ws-session-pill:hover { background: var(--bg-surface-hover); border-color: var(--glass-border-hover); color: var(--text-primary); }
         .ws-session-pill:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 2px; }
         .ws-session-pill.is-active { background: rgba(16, 163, 127, 0.10); border-color: rgba(16, 163, 127, 0.32); color: var(--accent-cyan); }
+        .ws-session-row { display: inline-flex; align-items: center; gap: 6px; flex: 0 1 auto; }
+        .ws-session-delete {
+          width: 30px;
+          height: 30px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid transparent;
+          border-radius: var(--radius-md);
+          color: var(--text-muted);
+          background: transparent;
+          cursor: pointer;
+          opacity: 0.45;
+          transition: all 0.2s ease;
+          flex: 0 0 auto;
+        }
+        .ws-session-row:hover .ws-session-delete,
+        .ws-session-delete:focus-visible { opacity: 1; }
+        .ws-session-delete:hover:not(:disabled),
+        .ws-session-delete:active:not(:disabled) {
+          border-color: rgba(239, 68, 68, 0.3);
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.08);
+        }
+        .ws-session-delete:disabled { cursor: not-allowed; opacity: 0.4; }
         .ws-session-badge { min-width: 16px; height: 16px; border-radius: 999px; background: var(--accent-cyan); color: #fff; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
         .ws-session-badge.warn { background: var(--status-yellow); color: #000; }
         .ws-empty-hint { color: var(--text-muted); font-size: 12px; }
@@ -1485,18 +1588,125 @@ export default function SiliconPersonWorkspacePage() {
         .ws-chat-header { margin-bottom: 14px; }
         .ws-chat-header h3 { margin: 0; }
 
-        .ws-message-list { display: flex; flex-direction: column; gap: 8px; max-height: 400px; overflow-y: auto; padding-right: 4px; }
-        .ws-msg { display: flex; gap: 10px; align-items: flex-start; }
-        .ws-msg-role { flex-shrink: 0; width: 56px; font-size: 0.7rem; font-weight: 700; color: var(--text-muted); text-align: right; padding-top: 8px; }
-        .ws-msg-body { flex: 1; padding: 10px 14px; border-radius: var(--radius-lg); background: var(--bg-base); border: 1px solid var(--glass-border); min-width: 0; }
-        .ws-msg-body p { margin: 0; color: var(--text-primary); font-size: 0.85rem; line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
-        .ws-msg-time { display: block; margin-top: 6px; font-size: 0.65rem; color: var(--text-muted); cursor: default; }
+        .ws-message-list { display: flex; flex-direction: column; gap: 24px; max-height: 440px; overflow-y: auto; padding-right: 4px; }
+        .message-row { display: flex; align-items: flex-start; gap: 16px; width: 100%; }
+        .message-avatar {
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          background: var(--bg-card);
+          border: 1px solid var(--glass-border);
+          color: var(--text-primary);
+          font-size: 12px;
+          font-weight: 700;
+          letter-spacing: 0.02em;
+          box-sizing: border-box;
+        }
+        .role-assistant .message-avatar { background: var(--glass-reflection); border-color: var(--glass-border); color: var(--accent-cyan); }
+        .role-tool .message-avatar { color: #c4b5fd; border-color: rgba(196, 181, 253, 0.4); }
+        .role-system .message-avatar { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); }
+        .message-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+        .message-header {
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--text-primary);
+          margin-bottom: 2px;
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+        }
+        .message-time { font-size: 11px; font-weight: 400; color: var(--text-muted); cursor: default; }
+        .message-content {
+          line-height: 1.7;
+          font-size: 14px;
+          color: var(--text-primary);
+          background: var(--bg-base);
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-lg);
+          padding: 10px 14px;
+          margin: 0;
+          min-width: 0;
+          word-break: break-word;
+        }
+        .message-content p { margin: 0 0 16px; }
+        .message-content p:last-child { margin-bottom: 0; }
+        .message-content ul,
+        .message-content ol { margin: 0 0 16px; padding-left: 24px; }
+        .message-content li { margin-bottom: 6px; }
+        .message-content code { background: var(--glass-reflection); padding: 3px 6px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.85em; color: var(--accent-cyan); }
+        .message-content code:has(.inline-file-ref) {
+          background: transparent;
+          padding: 0;
+        }
+        .message-content pre { background: var(--bg-sidebar); padding: 16px; border-radius: var(--radius-lg); overflow-x: auto; margin: 16px 0; border: 1px solid var(--glass-border); }
+        .message-content pre code { background: transparent; padding: 0; color: inherit; }
+        .message-content .inline-file-ref {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          min-height: 20px;
+          margin: 0 1px;
+          padding: 1px 6px;
+          border: 1px solid rgba(103, 232, 249, 0.18);
+          border-radius: 5px;
+          background: rgba(103, 232, 249, 0.07);
+          color: var(--accent-cyan);
+          font: inherit;
+          font-size: 0.92em;
+          cursor: pointer;
+          vertical-align: baseline;
+          white-space: nowrap;
+          transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+        }
+        .message-content .inline-file-ref::before {
+          content: "";
+          width: 7px;
+          height: 9px;
+          border: 1px solid currentColor;
+          border-radius: 2px;
+          opacity: 0.82;
+          flex-shrink: 0;
+        }
+        .message-content .inline-file-ref:hover,
+        .message-content .inline-file-ref:focus-visible {
+          border-color: rgba(103, 232, 249, 0.5);
+          background: rgba(103, 232, 249, 0.14);
+          color: var(--text-primary);
+          outline: none;
+        }
+        .message-content .inline-file-ref[data-state="loading"] {
+          cursor: progress;
+          opacity: 0.78;
+        }
+        .message-content .inline-file-ref[data-state="missing"] {
+          border-color: rgba(248, 113, 113, 0.35);
+          background: rgba(248, 113, 113, 0.08);
+          color: #fca5a5;
+        }
+        .message-content a { color: var(--accent-cyan); text-decoration: underline; text-underline-offset: 2px; }
+        .message-content h1, .message-content h2, .message-content h3 { margin: 24px 0 12px; color: var(--text-primary); font-weight: 600; }
+        .message-content blockquote {
+          border-left: 4px solid var(--accent-cyan);
+          margin: 16px 0;
+          padding: 8px 0 8px 16px;
+          color: var(--text-secondary);
+          background: var(--glass-reflection);
+          border-radius: 0 var(--radius-md) var(--radius-md) 0;
+        }
+        .message-row.role-user { flex-direction: row-reverse; }
+        .role-user .message-body { align-items: flex-end; max-width: 72%; }
+        .role-user .message-header { justify-content: flex-end; margin-right: 0; }
+        .role-user .message-avatar { background: transparent; border-color: var(--glass-border); color: var(--text-primary); }
+        .role-user .message-content { background: rgba(16, 163, 127, 0.08); border-color: rgba(16, 163, 127, 0.3); }
+        .role-system .message-content { background: rgba(245,158,11,0.06); border-color: rgba(245,158,11,0.22); }
+        .role-tool .message-content { background: rgba(139,92,246,0.06); border-color: rgba(139,92,246,0.2); }
         .ws-date-separator { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
         .ws-date-separator::before, .ws-date-separator::after { content: ""; flex: 1; height: 1px; background: var(--glass-border); }
         .ws-date-separator span { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
-        .ws-msg--assistant .ws-msg-body { background: rgba(16,163,127,0.06); border-color: rgba(16,163,127,0.15); }
-        .ws-msg--system .ws-msg-body { background: rgba(245,158,11,0.05); border-color: rgba(245,158,11,0.15); }
-        .ws-msg--tool .ws-msg-body { background: rgba(139,92,246,0.05); border-color: rgba(139,92,246,0.15); }
 
         /* ── Sections inside chat（11px caps eyebrow，对齐 ui-style-guide 的 eyebrow 规则）── */
         .ws-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--glass-border); }
@@ -1571,7 +1781,7 @@ export default function SiliconPersonWorkspacePage() {
         .ws-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
         .ws-text-muted { color: var(--text-muted); }
 
-        /* ── Capabilities ── */
+        /* 鈹€鈹€ Capabilities 鈹€鈹€ */
         .ws-cap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
         .ws-cap-header > div:first-child { min-width: 0; flex: 1; }
         .ws-bind-row { display: flex; gap: 8px; align-items: center; }

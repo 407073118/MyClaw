@@ -12,7 +12,7 @@ import type {
   TaskCommitment,
 } from "@shared/contracts";
 import { formatJobFrequency } from "../utils/frequency";
-import { addDaysToDateKey, isoToDateKey } from "@shared/time/local-time";
+import { addDaysToDateKey, isoToDateKey, utcIsoToLocalDateTimeInput } from "@shared/time/local-time";
 import { enumerateCronRunsOnDate } from "@shared/time/cron";
 
 import MarkdownView from "../components/MarkdownView";
@@ -44,6 +44,7 @@ type TimelineOwnerScope = "personal" | "silicon_person";
 
 type TimelineEntry = {
   id: string;
+  itemId: string;
   kind: TimelineEntryKind;
   title: string;
   displayTitle: string;
@@ -56,6 +57,48 @@ type TimelineEntry = {
   meta: string;
   tone: "personal" | "silicon" | "automation" | "warning";
   lastRunLabel?: string;
+};
+
+type TimelineEntryItem = CalendarEvent | Reminder | TaskCommitment | ScheduleJob;
+
+type TimelineComposerDefaults = {
+  event?: {
+    initialTitle?: string;
+    initialLocation?: string;
+    initialDescription?: string;
+    initialStartsAt?: string;
+    initialEndsAt?: string;
+  };
+  reminder?: {
+    initialTitle?: string;
+    initialBody?: string;
+    initialTriggerAt?: string;
+  };
+  task?: {
+    initialTitle?: string;
+    initialDescription?: string;
+    initialDueAt?: string;
+    initialDurationMinutes?: string;
+  };
+};
+
+type TimelineInteractionState = {
+  startY: number;
+  currentY: number;
+  startInput: string;
+  currentInput: string;
+};
+
+type TimelineContextMenuState = {
+  x: number;
+  y: number;
+  anchorInput: string;
+  entry?: TimelineEntry | null;
+};
+
+type ScheduleJobOwnerDraft = {
+  ownerScope: TimelineOwnerScope;
+  ownerId?: string;
 };
 
 type SchedulePlanningModel = {
@@ -85,19 +128,33 @@ export default function TimeCenterPage() {
   const [feedback, setFeedback] = useState("");
   const [chosenJobType, setChosenJobType] = useState<ScheduleJobExecutor | null>(null);
   const [editingJob, setEditingJob] = useState<ScheduleJob | null>(null);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [editingReminder, setEditingReminder] = useState<Reminder | null>(null);
+  const [editingTask, setEditingTask] = useState<TaskCommitment | null>(null);
+  const [selectedTimelineEntry, setSelectedTimelineEntry] = useState<TimelineEntry | null>(null);
+  const [timelineDefaults, setTimelineDefaults] = useState<TimelineComposerDefaults>({});
+  const [timelineInteraction, setTimelineInteraction] = useState<TimelineInteractionState | null>(null);
+  const [timelineContextMenu, setTimelineContextMenu] = useState<TimelineContextMenuState | null>(null);
 
-  // 详情页通过 navigate("/time", { state: { editJobId } }) 触发编辑器自动打开
+  // 详情页通过 navigate("/time", { state }) 返回定时任务列表或触发编辑器。
   const location = useLocation();
   const navigate = useNavigate();
   useEffect(() => {
-    const state = location.state as { editJobId?: string } | null;
+    const state = location.state as { editJobId?: string; activeView?: PlanningView } | null;
     const editJobId = state?.editJobId;
-    if (!editJobId) return;
-    const target = time.scheduleJobs.find((job) => job.id === editJobId);
-    if (target) {
-      setEditingJob(target);
-      setChosenJobType(target.executor);
-      setActiveComposer("job");
+    const nextActiveView = state?.activeView;
+    if (!editJobId && !nextActiveView) return;
+    if (nextActiveView === "timeline" || nextActiveView === "events" || nextActiveView === "reminders" || nextActiveView === "jobs") {
+      setActiveView(nextActiveView);
+    }
+    if (editJobId) {
+      const target = time.scheduleJobs.find((job) => job.id === editJobId);
+      if (target) {
+        setEditingJob(target);
+        setChosenJobType(target.executor);
+        setActiveComposer("job");
+        setActiveView("jobs");
+      }
     }
     // 清掉 history.state 防止刷新时重复触发
     void navigate(location.pathname, { replace: true, state: null });
@@ -158,88 +215,149 @@ export default function TimeCenterPage() {
     () => time.taskCommitments.filter((task) => task.status === "pending" && !task.dueAt),
     [time.taskCommitments],
   );
+  const selectedTimelineItem = useMemo(
+    () => resolveTimelineEntryItem(selectedTimelineEntry, time),
+    [selectedTimelineEntry, time],
+  );
 
-  /** 创建日程事件，并给用户明确的保存反馈。 */
-  async function handleCreateCalendarEvent(input: CalendarEventEditorSubmitInput) {
-    console.info("[日程规划] 创建个人日程", {
-      title: input.title,
-      startsAt: input.startsAt,
-      endsAt: input.endsAt,
-      timezone: input.timezone,
-    });
-    await workspace.createCalendarEvent({
-      kind: "calendar_event",
-      title: input.title,
-      description: input.description,
-      location: input.location,
-      startsAt: input.startsAt,
-      endsAt: input.endsAt,
-      timezone: input.timezone,
-      ownerScope: "personal",
-      status: "confirmed",
-      source: "manual",
-    });
-    setActiveComposer(null);
-    setFeedback(`已保存日程：${input.title}`);
+  /** 清空所有编辑态，避免从详情进入编辑后把旧实体带到下一次新建。 */
+  function clearEditingState() {
+    setEditingEvent(null);
+    setEditingReminder(null);
+    setEditingTask(null);
+    setEditingJob(null);
+    setChosenJobType(null);
   }
 
-  /** 创建任务承诺；有截止时间的任务会进入时间轴，没有时间的留在待安排任务。 */
-  async function handleCreateTaskCommitment(input: TaskCommitmentEditorSubmitInput) {
-    console.info("[日程规划] 创建待安排任务", {
+  /** 保存日程事件；有编辑目标时更新原日程，否则创建新日程。 */
+  async function handleSaveCalendarEvent(input: CalendarEventEditorSubmitInput) {
+    console.info("[日程规划] 保存日程", {
+      mode: editingEvent ? "update" : "create",
+      title: input.title,
+      startsAt: input.startsAt,
+      endsAt: input.endsAt,
+      timezone: input.timezone,
+    });
+    if (editingEvent) {
+      await workspace.updateCalendarEvent({
+        ...editingEvent,
+        title: input.title,
+        description: input.description,
+        location: input.location,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        timezone: input.timezone,
+      });
+    } else {
+      await workspace.createCalendarEvent({
+        kind: "calendar_event",
+        title: input.title,
+        description: input.description,
+        location: input.location,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        timezone: input.timezone,
+        ownerScope: "personal",
+        status: "confirmed",
+        source: "manual",
+      });
+    }
+    setActiveComposer(null);
+    setEditingEvent(null);
+    setTimelineDefaults({});
+    setFeedback(`${editingEvent ? "已更新" : "已保存"}日程：${input.title}`);
+  }
+
+  /** 保存任务承诺；有截止时间的任务会进入时间轴，没有时间的留在待安排任务。 */
+  async function handleSaveTaskCommitment(input: TaskCommitmentEditorSubmitInput) {
+    console.info("[日程规划] 保存待安排任务", {
+      mode: editingTask ? "update" : "create",
       title: input.title,
       dueAt: input.dueAt ?? null,
       durationMinutes: input.durationMinutes ?? null,
       priority: input.priority,
     });
-    await workspace.createTaskCommitment({
-      kind: "task_commitment",
-      title: input.title,
-      description: input.description,
-      dueAt: input.dueAt,
-      durationMinutes: input.durationMinutes,
-      timezone: input.timezone,
-      ownerScope: "personal",
-      priority: input.priority,
-      status: "pending",
-      source: "manual",
-    });
+    if (editingTask) {
+      await workspace.updateTaskCommitment({
+        ...editingTask,
+        title: input.title,
+        description: input.description,
+        dueAt: input.dueAt,
+        durationMinutes: input.durationMinutes,
+        timezone: input.timezone,
+        priority: input.priority,
+      });
+    } else {
+      await workspace.createTaskCommitment({
+        kind: "task_commitment",
+        title: input.title,
+        description: input.description,
+        dueAt: input.dueAt,
+        durationMinutes: input.durationMinutes,
+        timezone: input.timezone,
+        ownerScope: "personal",
+        priority: input.priority,
+        status: "pending",
+        source: "manual",
+      });
+    }
     setActiveComposer(null);
-    setFeedback(`已保存任务：${input.title}`);
+    setEditingTask(null);
+    setTimelineDefaults({});
+    setFeedback(`${editingTask ? "已更新" : "已保存"}任务：${input.title}`);
   }
 
-  /** 创建提醒，并把提醒投影到对应日期的时间轴。 */
-  async function handleCreateReminder(input: ReminderEditorSubmitInput) {
-    console.info("[日程规划] 创建提醒", {
+  /** 保存提醒，并把提醒投影到对应日期的时间轴。 */
+  async function handleSaveReminder(input: ReminderEditorSubmitInput) {
+    console.info("[日程规划] 保存提醒", {
+      mode: editingReminder ? "update" : "create",
       title: input.title,
       triggerAt: input.triggerAt,
       timezone: input.timezone,
     });
-    await workspace.createReminder({
-      kind: "reminder",
-      title: input.title,
-      body: input.body,
-      triggerAt: input.triggerAt,
-      timezone: input.timezone,
-      ownerScope: "personal",
-      status: "scheduled",
-      source: "manual",
-    });
+    if (editingReminder) {
+      await workspace.updateReminder({
+        ...editingReminder,
+        title: input.title,
+        body: input.body,
+        triggerAt: input.triggerAt,
+        timezone: input.timezone,
+      });
+    } else {
+      await workspace.createReminder({
+        kind: "reminder",
+        title: input.title,
+        body: input.body,
+        triggerAt: input.triggerAt,
+        timezone: input.timezone,
+        ownerScope: "personal",
+        status: "scheduled",
+        source: "manual",
+      });
+    }
     setActiveComposer(null);
-    setFeedback(`已保存提醒：${input.title}`);
+    setEditingReminder(null);
+    setTimelineDefaults({});
+    setFeedback(`${editingReminder ? "已更新" : "已保存"}提醒：${input.title}`);
   }
 
   /** 保存定时任务：根据 mode 决定 create 还是 update，editor 提交后统一回到列表。 */
   async function handleSaveScheduleJob(input: ScheduleJobEditorSubmitInput, mode: "create" | "update") {
+    const owner = resolveScheduleJobOwnerDraft(input, editingJob);
     console.info("[日程规划] 保存定时任务", {
       mode,
       title: input.title,
       scheduleKind: input.scheduleKind,
       executor: input.executor,
       executorTargetId: input.executorTargetId ?? null,
+      ownerScope: owner.ownerScope,
+      ownerId: owner.ownerId ?? null,
     });
     if (mode === "update" && editingJob) {
       await workspace.updateScheduleJob({
         ...editingJob,
+        ownerScope: owner.ownerScope,
+        ownerId: owner.ownerId,
         title: input.title,
         description: input.description,
         scheduleKind: input.scheduleKind,
@@ -261,7 +379,8 @@ export default function TimeCenterPage() {
         description: input.description,
         scheduleKind: input.scheduleKind,
         timezone: input.timezone,
-        ownerScope: "personal",
+        ownerScope: owner.ownerScope,
+        ownerId: owner.ownerId,
         status: "scheduled",
         source: "manual",
         startsAt: input.startsAt,
@@ -283,9 +402,62 @@ export default function TimeCenterPage() {
 
   /** 进入编辑模式：预填编辑器并锁定为该任务的 type。 */
   function handleEditScheduleJob(job: ScheduleJob) {
+    setSelectedTimelineEntry(null);
     setEditingJob(job);
     setChosenJobType(job.executor);
     setActiveComposer("job");
+  }
+
+  /** 从时间轴详情进入编辑模式，沿用已有编辑弹层。 */
+  function handleEditSelectedTimelineItem() {
+    const item = selectedTimelineItem;
+    if (!item) return;
+    console.info("[日程规划] 从时间轴详情编辑条目", {
+      kind: item.kind,
+      id: item.id,
+      title: item.title,
+    });
+    setSelectedTimelineEntry(null);
+    if (item.kind === "calendar_event") {
+      setEditingEvent(item);
+      setTimelineDefaults({
+        event: {
+          initialTitle: item.title,
+          initialLocation: item.location,
+          initialDescription: item.description,
+          initialStartsAt: utcIsoToLocalDateTimeInput(item.startsAt, item.timezone),
+          initialEndsAt: utcIsoToLocalDateTimeInput(item.endsAt, item.timezone),
+        },
+      });
+      setActiveComposer("event");
+      return;
+    }
+    if (item.kind === "reminder") {
+      setEditingReminder(item);
+      setTimelineDefaults({
+        reminder: {
+          initialTitle: item.title,
+          initialBody: item.body,
+          initialTriggerAt: utcIsoToLocalDateTimeInput(item.triggerAt, item.timezone),
+        },
+      });
+      setActiveComposer("reminder");
+      return;
+    }
+    if (item.kind === "task_commitment") {
+      setEditingTask(item);
+      setTimelineDefaults({
+        task: {
+          initialTitle: item.title,
+          initialDescription: item.description,
+          initialDueAt: item.dueAt ? utcIsoToLocalDateTimeInput(item.dueAt, item.timezone) : undefined,
+          initialDurationMinutes: item.durationMinutes ? String(item.durationMinutes) : undefined,
+        },
+      });
+      setActiveComposer("task");
+      return;
+    }
+    handleEditScheduleJob(item);
   }
 
   /** 保存时间规则，作为日程规划的工作时段和静默时段依据。 */
@@ -330,6 +502,31 @@ export default function TimeCenterPage() {
     setFeedback("已删除定时任务");
   }
 
+  /** 删除当前详情条目：日程/任务走取消态，提醒/定时任务走已有删除接口。 */
+  async function handleDeleteSelectedTimelineItem() {
+    const item = selectedTimelineItem;
+    if (!item) return;
+    console.info("[日程规划] 从时间轴详情删除条目", {
+      kind: item.kind,
+      id: item.id,
+      title: item.title,
+    });
+    if (item.kind === "calendar_event") {
+      await workspace.updateCalendarEvent({ ...item, status: "cancelled" });
+      setFeedback(`已删除日程：${item.title}`);
+    } else if (item.kind === "reminder") {
+      await workspace.deleteReminder(item.id);
+      setFeedback(`已删除提醒：${item.title}`);
+    } else if (item.kind === "task_commitment") {
+      await workspace.updateTaskCommitment({ ...item, status: "cancelled" });
+      setFeedback(`已删除任务：${item.title}`);
+    } else {
+      await workspace.deleteScheduleJob(item.id);
+      setFeedback(`已删除定时任务：${item.title}`);
+    }
+    setSelectedTimelineEntry(null);
+  }
+
   /** 编辑弹层开启时允许 ESC 快速关闭，符合桌面端操作习惯。 */
   useEffect(() => {
     if (!activeComposer) {
@@ -338,17 +535,75 @@ export default function TimeCenterPage() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setActiveComposer(null);
+        clearEditingState();
+        setTimelineDefaults({});
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeComposer]);
 
+  useEffect(() => {
+    function handleWindowPointerUp() {
+      if (!timelineInteraction) return;
+      const start = Math.min(timelineInteraction.startY, timelineInteraction.currentY);
+      const end = Math.max(timelineInteraction.startY, timelineInteraction.currentY);
+      const startInput = timelineInteraction.startInput;
+      const currentInput = timelineInteraction.currentInput;
+      const nextStart = startInput < currentInput ? startInput : currentInput;
+      const nextEnd = startInput < currentInput ? currentInput : startInput;
+      setTimelineInteraction(null);
+      setTimelineDefaults({
+        event: {
+          initialStartsAt: nextStart,
+          initialEndsAt: nextEnd,
+        },
+      });
+      setTimelineContextMenu(null);
+      setActiveComposer("event");
+    }
+
+    if (!timelineInteraction) return;
+    window.addEventListener("pointerup", handleWindowPointerUp);
+    return () => window.removeEventListener("pointerup", handleWindowPointerUp);
+  }, [timelineInteraction]);
+
   /** 立即执行定时任务，让用户可手动触发一次任务而不必等待调度窗口。 */
   async function handleRunScheduleJobNow(job: ScheduleJob) {
     console.info("[日程规划] 立即执行定时任务", { id: job.id, title: job.title });
     await workspace.executeScheduleJobNow(job.id);
     setFeedback(`已触发立即执行：${job.title}`);
+  }
+
+  /** 打开日程编辑器，并把时间轴空白区选择的默认时间带进去。 */
+  function openEventComposer(defaults: TimelineComposerDefaults["event"]) {
+    console.info("[日程规划] 打开日程编辑器", {
+      startsAt: defaults?.initialStartsAt ?? null,
+      endsAt: defaults?.initialEndsAt ?? null,
+    });
+    clearEditingState();
+    setTimelineDefaults({ event: defaults });
+    setActiveComposer("event");
+  }
+
+  /** 打开时间轴上下文菜单，支持用户从空白时间段直接新建日程。 */
+  function handleTimelineContextMenu(event: React.MouseEvent, anchorInput: string, entry?: TimelineEntry | null) {
+    event.preventDefault();
+    console.info("[日程规划] 打开时间轴菜单", {
+      anchorInput,
+      entryId: entry?.id ?? null,
+    });
+    setTimelineContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      anchorInput,
+      entry: entry ?? null,
+    });
+  }
+
+  /** 关闭时间轴上下文菜单，避免菜单残留遮挡后续操作。 */
+  function closeTimelineContextMenu() {
+    setTimelineContextMenu(null);
   }
 
   return (
@@ -366,7 +621,7 @@ export default function TimeCenterPage() {
             timezone={timezone}
             onSelectDate={setSelectedDate}
           />
-          <button type="button" className="btn-primary" onClick={() => setActiveComposer("event")}>
+          <button type="button" className="btn-primary" onClick={() => openEventComposer({})}>
             新建
           </button>
         </div>
@@ -385,6 +640,28 @@ export default function TimeCenterPage() {
               timezone={timezone}
               selectedDate={selectedDate}
               todayDateKey={todayDateKey}
+              onCreateEvent={openEventComposer}
+              onOpenEntry={(entry) => {
+                console.info("[日程规划] 打开时间轴条目详情", {
+                  kind: entry.kind,
+                  itemId: entry.itemId,
+                  title: entry.title,
+                });
+                setSelectedTimelineEntry(entry);
+                closeTimelineContextMenu();
+              }}
+              onContextMenu={handleTimelineContextMenu}
+              onDragSelectStart={(anchorInput, clientY) => {
+                setTimelineInteraction({
+                  startY: clientY,
+                  currentY: clientY,
+                  startInput: anchorInput,
+                  currentInput: anchorInput,
+                });
+              }}
+              onDragSelectMove={(anchorInput, clientY) => {
+                setTimelineInteraction((current) => (current ? { ...current, currentY: clientY, currentInput: anchorInput } : current));
+              }}
             />
           </section>
         ) : null}
@@ -426,36 +703,93 @@ export default function TimeCenterPage() {
         </aside>
       </section>
 
+      {timelineContextMenu ? (
+        <div
+          className="timeline-context-menu"
+          style={{ left: timelineContextMenu.x, top: timelineContextMenu.y }}
+          onMouseLeave={closeTimelineContextMenu}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              openEventComposer({
+                initialStartsAt: timelineContextMenu.anchorInput,
+                initialEndsAt: timelineContextMenu.anchorInput,
+              });
+              closeTimelineContextMenu();
+            }}
+          >
+            新建日程
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              openEventComposer({
+                initialStartsAt: timelineContextMenu.anchorInput,
+                initialEndsAt: timelineContextMenu.anchorInput,
+              });
+              closeTimelineContextMenu();
+            }}
+          >
+            用此时间新建
+          </button>
+          <button type="button" onClick={closeTimelineContextMenu}>
+            关闭
+          </button>
+        </div>
+      ) : null}
+
       {activeComposer ? (
         <ComposerModal
           activeComposer={activeComposer}
           onSelectComposer={(composer) => {
             setActiveComposer(composer);
-            // 切到非定时任务 tab 时清掉 type/edit 状态，避免误带到下次。
+            // 切到非定时任务 tab 时清空 type/edit 状态，避免误带到下次。
             if (composer !== "job") {
               setChosenJobType(null);
               setEditingJob(null);
+            } else if (!editingJob && chosenJobType === null) {
+              setChosenJobType("assistant_prompt");
             }
+            if (composer !== "event") setEditingEvent(null);
+            if (composer !== "reminder") setEditingReminder(null);
+            if (composer !== "task") setEditingTask(null);
           }}
           timezone={timezone}
           availabilityPolicy={time.availabilityPolicy}
+          timelineDefaults={timelineDefaults}
           onClose={() => {
             setActiveComposer(null);
-            setChosenJobType(null);
-            setEditingJob(null);
+            clearEditingState();
+            setTimelineDefaults({});
+            closeTimelineContextMenu();
           }}
-          onSaveEvent={handleCreateCalendarEvent}
-          onSaveTask={handleCreateTaskCommitment}
-          onSaveReminder={handleCreateReminder}
+          onSaveEvent={handleSaveCalendarEvent}
+          onSaveTask={handleSaveTaskCommitment}
+          onSaveReminder={handleSaveReminder}
           onSaveJob={handleSaveScheduleJob}
           onSaveAvailabilityPolicy={handleSaveAvailabilityPolicy}
           chosenJobType={chosenJobType}
           editingJob={editingJob}
+          editingEvent={editingEvent}
+          editingReminder={editingReminder}
+          editingTask={editingTask}
           onChooseJobType={setChosenJobType}
           onClearJobType={() => setChosenJobType(null)}
           workflowOptions={workflowOptions}
           siliconPersonOptions={siliconPersonOptions}
           modelOptions={modelOptions}
+        />
+      ) : null}
+
+      {selectedTimelineEntry && selectedTimelineItem ? (
+        <TimelineEntryDetailModal
+          entry={selectedTimelineEntry}
+          item={selectedTimelineItem}
+          timezone={timezone}
+          onClose={() => setSelectedTimelineEntry(null)}
+          onEdit={handleEditSelectedTimelineItem}
+          onDelete={handleDeleteSelectedTimelineItem}
         />
       ) : null}
 
@@ -529,6 +863,20 @@ function IconEdit(): React.JSX.Element {
       />
     </svg>
   );
+}
+
+/** 根据定时任务执行器推导存储归属，确保员工任务进入员工分区而不是主日程 personal。 */
+function resolveScheduleJobOwnerDraft(
+  input: ScheduleJobEditorSubmitInput,
+  fallback?: ScheduleJob | null,
+): ScheduleJobOwnerDraft {
+  if (input.executor === "silicon_person" && input.executorTargetId) {
+    return { ownerScope: "silicon_person", ownerId: input.executorTargetId };
+  }
+  if (fallback?.ownerScope === "silicon_person") {
+    return { ownerScope: "silicon_person", ownerId: fallback.ownerId };
+  }
+  return { ownerScope: "personal" };
 }
 
 function formatExecutorLabel(executor: ScheduleJobExecutor): string {
@@ -656,7 +1004,7 @@ function DateNavigator({
   return (
     <div className="date-navigator" aria-label="日期切换">
       <button type="button" className="icon-btn" aria-label="前一天" onClick={() => onSelectDate(addDaysToDateKey(selectedDate, -1))}>
-        ‹
+        ←
       </button>
       <button type="button" className="btn-toolbar" onClick={() => onSelectDate(todayDateKey)}>
         今天
@@ -669,7 +1017,7 @@ function DateNavigator({
       </button>
       <span className="date-navigator__label">{formatDateTitle(selectedDate, timezone)}</span>
       <button type="button" className="icon-btn" aria-label="后一天" onClick={() => onSelectDate(addDaysToDateKey(selectedDate, 1))}>
-        ›
+        →
       </button>
     </div>
   );
@@ -696,19 +1044,28 @@ function TimelineHeader({
   );
 }
 
-/** 渲染统一时间轴，把不同来源的条目按真实触发时间排序。 */
+/** 渲染统一时间轴，保留按小时阅读，同时让空白时间块能直接操作。*/
 function ScheduleTimeline({
   entries,
   timezone,
   selectedDate,
   todayDateKey,
+  onCreateEvent,
+  onOpenEntry,
+  onContextMenu,
+  onDragSelectStart,
+  onDragSelectMove,
 }: {
   entries: TimelineEntry[];
   timezone: string;
   selectedDate: string;
   todayDateKey: string;
+  onCreateEvent: (defaults: TimelineComposerDefaults["event"]) => void;
+  onOpenEntry: (entry: TimelineEntry) => void;
+  onContextMenu: (event: React.MouseEvent, anchorInput: string, entry?: TimelineEntry | null) => void;
+  onDragSelectStart: (anchorInput: string, clientY: number) => void;
+  onDragSelectMove: (anchorInput: string, clientY: number) => void;
 }) {
-  // useMemo 缓存 25×N 的分桶计算 —— 之前每次渲染都重建，定时任务很多时是渲染热点。
   const entriesByHour = useMemo(() => {
     const result = new Map<number, TimelineEntry[]>();
     DAY_HOURS.forEach((hour) => result.set(hour, []));
@@ -719,7 +1076,6 @@ function ScheduleTimeline({
     return result;
   }, [entries, timezone]);
 
-  // 仅在「选中的就是今天」时启用 now-line：每分钟刷一次时间，切走时立即清掉避免误导。
   const isToday = selectedDate === todayDateKey;
   const [now, setNow] = useState<Date | null>(() => (isToday ? new Date() : null));
   useEffect(() => {
@@ -732,7 +1088,6 @@ function ScheduleTimeline({
     return () => window.clearInterval(handle);
   }, [isToday]);
 
-  // 行高随当天事件多少而变，用真实 DOM 量出当前小时行的 offsetTop 和 offsetHeight，再按分钟比例插值。
   const boardRef = useRef<HTMLDivElement | null>(null);
   const [nowTop, setNowTop] = useState<number | null>(null);
   const didScrollRef = useRef(false);
@@ -758,26 +1113,82 @@ function ScheduleTimeline({
     }
   }, [isToday, now, timezone, entries.length]);
 
+  function buildLocalInput(hour: number, minute = 0) {
+    return `${selectedDate}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+
+  function addHoursToLocalInput(localValue: string, hours: number) {
+    const [datePart, timePart] = localValue.split("T");
+    const [year, month, day] = datePart.split("-").map((value) => Number(value));
+    const [hour, minute = 0] = timePart.split(":").map((value) => Number(value));
+    const next = new Date(Date.UTC(year, month - 1, day, hour + hours, minute, 0));
+    return next.toISOString().slice(0, 16);
+  }
+
+  function openHourEvent(hour: number) {
+    const start = buildLocalInput(Math.min(23, hour), 0);
+    const end = hour >= 23 ? addHoursToLocalInput(start, 1) : buildLocalInput(hour + 1, 0);
+    onCreateEvent({ initialStartsAt: start, initialEndsAt: end });
+  }
+
   return (
     <div className="timeline-board" ref={boardRef}>
       {DAY_HOURS.map((hour) => {
         const hourEntries = entriesByHour.get(hour) ?? [];
+        const hourStartInput = buildLocalInput(Math.min(23, hour), 0);
+        const hourEndInput = hour >= 23 ? addHoursToLocalInput(hourStartInput, 1) : buildLocalInput(hour + 1, 0);
         return (
           <section key={hour} className="timeline-hour-row" data-testid={`timeline-hour-${hour}`}>
             <span className="timeline-hour-row__label">{hour === 24 ? "24:00" : `${String(hour).padStart(2, "0")}:00`}</span>
-            <ol className="timeline-hour-row__items">
+            <ol
+              className="timeline-hour-row__items"
+              onMouseDown={(event) => {
+                if (event.button !== 0) return;
+                if (event.target instanceof HTMLElement && event.target.closest(".timeline-entry")) return;
+                onDragSelectStart(hourStartInput, event.clientY);
+              }}
+              onMouseMove={(event) => {
+                if ((event.buttons & 1) !== 1) return;
+                if (event.target instanceof HTMLElement && event.target.closest(".timeline-entry")) return;
+                onDragSelectMove(hourEndInput, event.clientY);
+              }}
+              onClick={(event) => {
+                if (event.target !== event.currentTarget) return;
+                openHourEvent(hour);
+              }}
+              onContextMenu={(event) => {
+                if (event.target instanceof HTMLElement && event.target.closest(".timeline-entry")) return;
+                event.preventDefault();
+                onContextMenu(event, hourStartInput, null);
+              }}
+            >
               {hourEntries.map((entry) => (
-                <li key={entry.id} className={`timeline-entry timeline-entry--${entry.tone}`}>
-                  <div className="timeline-entry__dot" />
-                  <span className="timeline-entry__time">{formatTimeRange(entry.startsAt, entry.endsAt, timezone)}</span>
-                  <div className="timeline-entry__body">
-                    <div className="timeline-entry__title-row">
-                      <strong>{entry.displayTitle}</strong>
-                      <span className="tag">{entry.sourceLabel}</span>
+                <li
+                  key={entry.id}
+                  className="timeline-entry-item"
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onContextMenu(event, utcIsoToLocalDateTimeInput(entry.startsAt, timezone), entry);
+                  }}
+                >
+                  <button
+                    type="button"
+                    className={`timeline-entry timeline-entry--${entry.tone}`}
+                    aria-label={`查看${entry.displayTitle}`}
+                    onClick={() => onOpenEntry(entry)}
+                  >
+                    <div className="timeline-entry__dot" />
+                    <span className="timeline-entry__time">{formatTimeRange(entry.startsAt, entry.endsAt, timezone)}</span>
+                    <div className="timeline-entry__body">
+                      <div className="timeline-entry__title-row">
+                        <strong>{entry.displayTitle}</strong>
+                        <span className="tag">{entry.sourceLabel}</span>
+                      </div>
+                      <p>{entry.meta}</p>
+                      {entry.lastRunLabel ? <span className="timeline-entry__run">{entry.lastRunLabel}</span> : null}
                     </div>
-                    <p>{entry.meta}</p>
-                    {entry.lastRunLabel ? <span className="timeline-entry__run">{entry.lastRunLabel}</span> : null}
-                  </div>
+                  </button>
                 </li>
               ))}
             </ol>
@@ -785,12 +1196,7 @@ function ScheduleTimeline({
         );
       })}
       {isToday && now && nowTop !== null ? (
-        <div
-          className="timeline-now-line"
-          style={{ top: nowTop }}
-          data-testid="timeline-now-line"
-          aria-hidden="true"
-        >
+        <div className="timeline-now-line" style={{ top: nowTop }} data-testid="timeline-now-line" aria-hidden="true">
           <span className="timeline-now-line__dot" />
           <span className="timeline-now-line__label">{formatNowLabel(now, timezone)}</span>
         </div>
@@ -805,7 +1211,68 @@ function ScheduleTimeline({
   );
 }
 
-/** 渲染独立日程列表页，避免所有管理项挤在右侧栏。 */
+/** 渲染时间轴条目的详情弹层，承载查看、编辑和删除三个基础动作。 */
+function TimelineEntryDetailModal({
+  entry,
+  item,
+  timezone,
+  onClose,
+  onEdit,
+  onDelete,
+}: {
+  entry: TimelineEntry;
+  item: TimelineEntryItem;
+  timezone: string;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => void | Promise<void>;
+}) {
+  const dialogTitle = getTimelineDetailDialogTitle(entry.kind);
+  const detailRows = buildTimelineDetailRows(entry, item, timezone);
+  return (
+    <div
+      className="timeline-detail-overlay"
+      role="presentation"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section className="timeline-detail-modal" role="dialog" aria-modal="true" aria-label={dialogTitle}>
+        <header className="timeline-detail-modal__header">
+          <div>
+            <span className="timeline-detail-modal__eyebrow">{entry.sourceLabel}</span>
+            <h3>{entry.displayTitle}</h3>
+          </div>
+          <button type="button" className="icon-btn" aria-label="关闭详情" onClick={onClose}>
+            ×
+          </button>
+        </header>
+
+        <dl className="timeline-detail-list">
+          {detailRows.map((row) => (
+            <div key={row.label} className="timeline-detail-row">
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <footer className="timeline-detail-actions">
+          <button type="button" className="btn-toolbar" onClick={onEdit}>
+            编辑
+          </button>
+          <button
+            type="button"
+            className="btn-toolbar timeline-detail-actions__danger"
+            onClick={() => void onDelete()}
+          >
+            删除
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
 function CalendarEventListPage({
   events,
   selectedDate,
@@ -953,9 +1420,9 @@ function ScheduleJobListPage({
         ))}
       </div>
       <div className="list-page-body">
-        {filteredJobs.length === 0 ? (
-          <p className="side-empty">{jobs.length === 0 ? "暂无定时任务。" : "当前筛选下没有任务。"}</p>
-        ) : null}
+          {filteredJobs.length === 0 ? (
+            <p className="side-empty">{jobs.length === 0 ? "暂无定时任务。" : "当前筛选下没有任务。"}</p>
+          ) : null}
         {filteredJobs.map((job) => {
           const latestRun = latestRunByJobId.get(job.id);
           const isRunPending = pendingRunIds.has(job.id);
@@ -985,17 +1452,19 @@ function ScheduleJobListPage({
                   <strong>{job.title}</strong>
                   <span className={`job-type-chip job-type-chip--${job.executor}`}>{formatExecutorLabel(job.executor)}</span>
                 </div>
-                <span>{buildJobOwnerLabel(job, siliconPersonNameById)} · {formatJobFrequency(job, (iso) => formatDateTime(iso, timezone))}</span>
+                  <span>
+                    {buildJobOwnerLabel(job, siliconPersonNameById)} · {formatJobFrequency(job, (iso) => formatDateTime(iso, timezone))}
+                  </span>
               </div>
               <div className="job-row__run-col">
                 {latestRun ? <span className={latestRun.status === "failed" ? "job-row__run is-warning" : "job-row__run"}>{formatLatestRunLabel(latestRun)}</span> : <span>—</span>}
               </div>
               <div className="job-row__actions" onClick={(event) => event.stopPropagation()}>
-                <ActionIconButton
-                  title={isRunPending ? "执行中…" : "立即执行"}
-                  loading={isRunPending}
-                  onClick={() => handleRunClick(job)}
-                >
+                  <ActionIconButton
+                    title={isRunPending ? "执行中" : "立即执行"}
+                    loading={isRunPending}
+                    onClick={() => handleRunClick(job)}
+                  >
                   <IconPlay />
                 </ActionIconButton>
                 <ActionIconButton title="编辑" onClick={() => onEdit(job)}>
@@ -1070,6 +1539,7 @@ function ComposerModal({
   onSelectComposer,
   timezone,
   availabilityPolicy,
+  timelineDefaults,
   onClose,
   onSaveEvent,
   onSaveTask,
@@ -1077,6 +1547,9 @@ function ComposerModal({
   onSaveJob,
   onSaveAvailabilityPolicy,
   chosenJobType,
+  editingEvent,
+  editingReminder,
+  editingTask,
   editingJob,
   onChooseJobType,
   onClearJobType,
@@ -1095,7 +1568,11 @@ function ComposerModal({
   onSaveJob: (input: ScheduleJobEditorSubmitInput, mode: "create" | "update") => void | Promise<void>;
   onSaveAvailabilityPolicy: (policy: AvailabilityPolicy) => void | Promise<void>;
   chosenJobType: ScheduleJobExecutor | null;
+  editingEvent: CalendarEvent | null;
+  editingReminder: Reminder | null;
+  editingTask: TaskCommitment | null;
   editingJob: ScheduleJob | null;
+  timelineDefaults: TimelineComposerDefaults;
   onChooseJobType: (type: ScheduleJobExecutor) => void;
   onClearJobType: () => void;
   workflowOptions: { id: string; name: string }[];
@@ -1103,10 +1580,10 @@ function ComposerModal({
   modelOptions: { id: string; name: string }[];
 }) {
   const title = {
-    event: "新建日程",
-    reminder: "新建提醒",
+    event: editingEvent ? "编辑日程" : "新建日程",
+    reminder: editingReminder ? "编辑提醒" : "新建提醒",
     job: editingJob ? "编辑定时任务" : "新建定时任务",
-    task: "安排任务",
+    task: editingTask ? "编辑任务" : "安排任务",
     rules: "时间规则",
   }[activeComposer];
   const composerTabMeta: Record<ComposerKind, { label: string; hint: string }> = {
@@ -1155,8 +1632,28 @@ function ComposerModal({
           })}
         </div>
         <div className="schedule-composer-modal__body">
-          {activeComposer === "event" ? <CalendarEventEditor timezone={timezone} onSave={onSaveEvent} /> : null}
-          {activeComposer === "reminder" ? <ReminderEditor timezone={timezone} onSave={onSaveReminder} /> : null}
+          {activeComposer === "event" ? (
+            <CalendarEventEditor
+              key={editingEvent?.id ?? "new-event"}
+              timezone={timezone}
+              initialTitle={editingEvent?.title ?? timelineDefaults.event?.initialTitle}
+              initialLocation={editingEvent?.location ?? timelineDefaults.event?.initialLocation}
+              initialDescription={editingEvent?.description ?? timelineDefaults.event?.initialDescription}
+              initialStartsAt={editingEvent ? utcIsoToLocalDateTimeInput(editingEvent.startsAt, editingEvent.timezone) : timelineDefaults.event?.initialStartsAt}
+              initialEndsAt={editingEvent ? utcIsoToLocalDateTimeInput(editingEvent.endsAt, editingEvent.timezone) : timelineDefaults.event?.initialEndsAt}
+              onSave={onSaveEvent}
+            />
+          ) : null}
+          {activeComposer === "reminder" ? (
+            <ReminderEditor
+              key={editingReminder?.id ?? "new-reminder"}
+              timezone={timezone}
+              initialTitle={editingReminder?.title ?? timelineDefaults.reminder?.initialTitle}
+              initialBody={editingReminder?.body ?? timelineDefaults.reminder?.initialBody}
+              initialTriggerAt={editingReminder ? utcIsoToLocalDateTimeInput(editingReminder.triggerAt, editingReminder.timezone) : timelineDefaults.reminder?.initialTriggerAt}
+              onSave={onSaveReminder}
+            />
+          ) : null}
           {activeComposer === "job" ? (
             chosenJobType === null && !editingJob ? (
               <ScheduleJobTypePicker onPick={onChooseJobType} />
@@ -1173,7 +1670,18 @@ function ComposerModal({
               />
             )
           ) : null}
-          {activeComposer === "task" ? <TaskCommitmentEditor timezone={timezone} onSave={onSaveTask} /> : null}
+          {activeComposer === "task" ? (
+            <TaskCommitmentEditor
+              key={editingTask?.id ?? "new-task"}
+              timezone={timezone}
+              initialTitle={editingTask?.title ?? timelineDefaults.task?.initialTitle}
+              initialDescription={editingTask?.description ?? timelineDefaults.task?.initialDescription}
+              initialDueAt={editingTask?.dueAt ? utcIsoToLocalDateTimeInput(editingTask.dueAt, editingTask.timezone) : timelineDefaults.task?.initialDueAt}
+              initialDurationMinutes={editingTask?.durationMinutes ? String(editingTask.durationMinutes) : timelineDefaults.task?.initialDurationMinutes}
+              initialPriority={editingTask?.priority}
+              onSave={onSaveTask}
+            />
+          ) : null}
           {activeComposer === "rules" ? (
             <AvailabilityPolicyForm policy={availabilityPolicy} timezone={timezone} onSave={onSaveAvailabilityPolicy} />
           ) : null}
@@ -1361,7 +1869,7 @@ function UnscheduledTaskCard({
             <article key={task.id} className="compact-row">
               <div>
                 <strong>{task.title}</strong>
-                <span>{formatPriority(task.priority)} · {task.durationMinutes ? `${task.durationMinutes} 分钟` : timezone}</span>
+                <span>{formatPriority(task.priority)} · {task.durationMinutes ? `${task.durationMinutes} 分钟` : "未设时长"}</span>
               </div>
               <button type="button" className="btn-toolbar" onClick={onArrange}>
                 安排时间
@@ -1372,6 +1880,70 @@ function UnscheduledTaskCard({
       )}
     </section>
   );
+}
+
+/** 根据时间轴条目反查真实实体，详情、编辑和删除都从实体本身读取最新数据。 */
+function resolveTimelineEntryItem(
+  entry: TimelineEntry | null,
+  time: {
+    calendarEvents: CalendarEvent[];
+    reminders: Reminder[];
+    taskCommitments: TaskCommitment[];
+    scheduleJobs: ScheduleJob[];
+  },
+): TimelineEntryItem | null {
+  if (!entry) return null;
+  if (entry.kind === "calendar_event") {
+    return time.calendarEvents.find((event) => event.id === entry.itemId) ?? null;
+  }
+  if (entry.kind === "reminder") {
+    return time.reminders.find((reminder) => reminder.id === entry.itemId) ?? null;
+  }
+  if (entry.kind === "task_commitment") {
+    return time.taskCommitments.find((task) => task.id === entry.itemId) ?? null;
+  }
+  return time.scheduleJobs.find((job) => job.id === entry.itemId) ?? null;
+}
+
+/** 将条目类型映射为详情弹层标题。 */
+function getTimelineDetailDialogTitle(kind: TimelineEntryKind): string {
+  return ({
+    calendar_event: "日程详情",
+    reminder: "提醒详情",
+    task_commitment: "任务详情",
+    schedule_job: "定时任务详情",
+  } satisfies Record<TimelineEntryKind, string>)[kind];
+}
+
+/** 生成详情弹层的描述行，保持日历式查看面板的信息密度。 */
+function buildTimelineDetailRows(entry: TimelineEntry, item: TimelineEntryItem, timezone: string): Array<{ label: string; value: string }> {
+  const rows: Array<{ label: string; value: string }> = [
+    { label: "时间", value: formatTimeRange(entry.startsAt, entry.endsAt, timezone) },
+    { label: "归属", value: entry.ownerLabel },
+    { label: "类型", value: entry.sourceLabel },
+  ];
+
+  if (item.kind === "calendar_event") {
+    if (item.location) rows.push({ label: "地点", value: item.location });
+    if (item.description) rows.push({ label: "说明", value: item.description });
+    rows.push({ label: "状态", value: item.status });
+  } else if (item.kind === "reminder") {
+    if (item.body) rows.push({ label: "备注", value: item.body });
+    rows.push({ label: "状态", value: item.status });
+  } else if (item.kind === "task_commitment") {
+    rows.push({ label: "优先级", value: formatPriority(item.priority) });
+    if (item.durationMinutes) rows.push({ label: "预计时长", value: `${item.durationMinutes} 分钟` });
+    if (item.description) rows.push({ label: "说明", value: item.description });
+    rows.push({ label: "状态", value: item.status });
+  } else {
+    rows.push({ label: "频率", value: formatScheduleKind(item.scheduleKind) });
+    rows.push({ label: "执行器", value: formatExecutorLabel(item.executor) });
+    if (item.description) rows.push({ label: "说明", value: item.description });
+    rows.push({ label: "状态", value: formatScheduleJobStatus(item.status) });
+    if (entry.lastRunLabel) rows.push({ label: "最近运行", value: entry.lastRunLabel });
+  }
+
+  return rows;
 }
 
 /** 构建当日个人/硅基人日程的时间轴条目，仅依赖 events/dateKey。 */
@@ -1387,6 +1959,7 @@ function buildEventEntries(
       const ownerLabel = resolveOwnerLabel(event.ownerScope, event.ownerId, siliconPersonNameById);
       return {
         id: `event:${event.id}`,
+        itemId: event.id,
         kind: "calendar_event",
         title: event.title,
         displayTitle: buildDisplayTitle(ownerLabel, event.title, event.ownerScope),
@@ -1413,6 +1986,7 @@ function buildReminderEntries(
     .filter((reminder) => reminder.status === "scheduled" && isoToDateKey(reminder.triggerAt, timezone) === dateKey)
     .map((reminder): TimelineEntry => ({
       id: `reminder:${reminder.id}`,
+      itemId: reminder.id,
       kind: "reminder",
       title: reminder.title,
       displayTitle: `提醒：${reminder.title}`,
@@ -1444,6 +2018,7 @@ function buildTaskEntries(
       const ownerLabel = resolveOwnerLabel(task.ownerScope, task.ownerId, siliconPersonNameById);
       return {
         id: `task:${task.id}`,
+        itemId: task.id,
         kind: "task_commitment",
         title: task.title,
         displayTitle: buildDisplayTitle(ownerLabel, task.title, task.ownerScope),
@@ -1484,6 +2059,7 @@ function buildScheduleJobTimelineEntries(
   const ownerLabel = resolveOwnerLabel(job.ownerScope, job.ownerId, siliconPersonNameById);
   return candidateTimes.map((startsAt, index) => ({
     id: `job:${job.id}:${startsAt}:${index}`,
+    itemId: job.id,
     kind: "schedule_job",
     title: job.title,
     displayTitle: buildDisplayTitle(ownerLabel, job.title, job.ownerScope),
@@ -1770,8 +2346,7 @@ const styles = `
     font-size: 12px;
   }
 
-  /* 红色文字走 var(--status-red) token；border/background 沿用 rgba 等价表达，
-     待全局 alpha token 落地后再统一。 */
+  /* 红色文字走 var(--status-red) token；border/background 沿用 rgba 等价表达，待全局 alpha token 落地后再统一。 */
   .summary-chip.is-warning {
     color: var(--status-red);
     border-color: rgba(239, 68, 68, 0.28);
@@ -1918,11 +2493,15 @@ const styles = `
     display: grid;
     grid-template-columns: 80px minmax(0, 1fr);
     gap: 16px;
+    width: 100%;
     min-height: 64px;
     padding: 16px;
     border: 1px solid var(--glass-border);
     border-radius: var(--radius-lg);
     background: linear-gradient(145deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.01) 100%);
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   }
 
@@ -1930,6 +2509,16 @@ const styles = `
     transform: translateY(-2px);
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
     border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .timeline-entry:focus-visible {
+    outline: 2px solid var(--accent-cyan);
+    outline-offset: 2px;
+  }
+
+  .timeline-entry-item {
+    margin: 0;
+    padding: 0;
   }
 
   .timeline-entry__dot {
@@ -2039,6 +2628,92 @@ const styles = `
     font-size: 11px;
     font-weight: 600;
     color: #ef4444;
+  }
+
+  .timeline-detail-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1650;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(4, 8, 15, 0.54);
+    backdrop-filter: blur(12px);
+    animation: modal-fade-in 0.2s ease-out;
+  }
+
+  .timeline-detail-modal {
+    width: min(480px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--radius-xl);
+    background: rgba(18, 22, 29, 0.92);
+    box-shadow: 0 28px 60px rgba(0, 0, 0, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+    padding: 20px;
+  }
+
+  .timeline-detail-modal__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+  }
+
+  .timeline-detail-modal__eyebrow {
+    display: inline-flex;
+    margin-bottom: 6px;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .timeline-detail-modal__header h3 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 18px;
+    line-height: 1.35;
+  }
+
+  .timeline-detail-list {
+    display: grid;
+    margin: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .timeline-detail-row {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  }
+
+  .timeline-detail-row dt {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .timeline-detail-row dd {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.55;
+    word-break: break-word;
+  }
+
+  .timeline-detail-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .timeline-detail-actions__danger {
+    color: #fca5a5;
+    border-color: rgba(239, 68, 68, 0.28);
+    background: rgba(239, 68, 68, 0.08);
   }
 
   .schedule-resource-rail {

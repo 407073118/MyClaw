@@ -5,6 +5,7 @@ import { marked } from "marked";
 import { PlanStatePanel } from "../components/plan-state-panel";
 import { PlanSidePanel } from "../components/PlanSidePanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
+import InlineFileReferenceContent from "../components/InlineFileReferenceContent";
 import { useDialogA11y } from "../hooks/useDialogA11y";
 import { useWorkspaceStore } from "../stores/workspace";
 import type {
@@ -388,6 +389,10 @@ export default function ChatPage() {
     if (!session?.id) return null;
     return { scopeKind: "session", scopeId: session.id };
   }, [session?.id]);
+  const inlineFileBaseDirectory = session?.attachedDirectory
+    ?? workspace.myClawRootPath
+    ?? workspace.workspaceRootPath
+    ?? null;
 
   /** 统一会话列表来源：主聊天看主 session，硅基员工聊天看该员工自己的私域 session。 */
   const displaySessions = useMemo(() => {
@@ -1727,9 +1732,10 @@ export default function ChatPage() {
                         )}
 
                         {message.content && (
-                          <div
+                          <InlineFileReferenceContent
                             className="message-content"
-                            dangerouslySetInnerHTML={{ __html: message.renderedHtml }}
+                            html={message.renderedHtml}
+                            baseDirectory={inlineFileBaseDirectory}
                           />
                         )}
 
@@ -2320,6 +2326,53 @@ export default function ChatPage() {
         .message-content code { background: var(--glass-reflection); padding: 3px 6px; border-radius: 4px; font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: 0.85em; color: var(--accent-cyan); }
         .message-content pre { background: var(--bg-sidebar); padding: 16px; border-radius: var(--radius-lg); overflow-x: auto; margin: 16px 0; border: 1px solid var(--glass-border); }
         .message-content pre code { background: transparent; padding: 0; color: inherit; }
+        .message-content code:has(.inline-file-ref) {
+          background: transparent;
+          padding: 0;
+        }
+        .message-content .inline-file-ref {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          min-height: 20px;
+          margin: 0 1px;
+          padding: 1px 6px;
+          border: 1px solid rgba(103, 232, 249, 0.18);
+          border-radius: 5px;
+          background: rgba(103, 232, 249, 0.07);
+          color: var(--accent-cyan);
+          font: inherit;
+          font-size: 0.92em;
+          cursor: pointer;
+          vertical-align: baseline;
+          white-space: nowrap;
+          transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+        }
+        .message-content .inline-file-ref::before {
+          content: "";
+          width: 7px;
+          height: 9px;
+          border: 1px solid currentColor;
+          border-radius: 2px;
+          opacity: 0.82;
+          flex-shrink: 0;
+        }
+        .message-content .inline-file-ref:hover,
+        .message-content .inline-file-ref:focus-visible {
+          border-color: rgba(103, 232, 249, 0.5);
+          background: rgba(103, 232, 249, 0.14);
+          color: var(--text-primary);
+          outline: none;
+        }
+        .message-content .inline-file-ref[data-state="loading"] {
+          cursor: progress;
+          opacity: 0.78;
+        }
+        .message-content .inline-file-ref[data-state="missing"] {
+          border-color: rgba(248, 113, 113, 0.35);
+          background: rgba(248, 113, 113, 0.08);
+          color: #fca5a5;
+        }
         .message-content h1, .message-content h2, .message-content h3 { margin: 24px 0 12px; color: var(--text-primary); font-weight: 600; }
         .message-content blockquote { border-left: 4px solid var(--accent-cyan); margin: 16px 0; padding: 8px 0 8px 16px; color: var(--text-secondary); background: var(--glass-reflection); border-radius: 0 var(--radius-md) var(--radius-md) 0; }
         .message-details { background: rgba(255,255,255,0.02); border: 1px solid transparent; border-radius: var(--radius-md); overflow: hidden; margin-bottom: 12px; transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }

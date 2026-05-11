@@ -180,6 +180,22 @@ export function compileChannels(
     }
   }
 
+  if (!channels.has("inputs")) {
+    channels.set("inputs", new LastValueChannel("inputs", {}));
+  }
+  if (!channels.has("sys")) {
+    channels.set("sys", new LastValueChannel("sys", {}));
+  }
+  if (!channels.has("vars")) {
+    channels.set("vars", new ReducerChannel("vars", objectMergeReducer as any, {}));
+  }
+  if (!channels.has("nodes")) {
+    channels.set("nodes", new ReducerChannel("nodes", objectMergeReducer as any, {}));
+  }
+  if (!channels.has("outputs")) {
+    channels.set("outputs", new ReducerChannel("outputs", objectMergeReducer as any, {}));
+  }
+
   channels.set("__route__", new EphemeralChannel("__route__"));
   channels.set("__interrupt__", new EphemeralChannel("__interrupt__"));
   channels.set("__resume__", new EphemeralChannel("__resume__"));

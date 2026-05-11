@@ -30,6 +30,17 @@ const RESOLVED_BUILTIN_TOOLS: ResolvedBuiltinTool[] = [
     effectiveApprovalMode: "inherit",
   },
   {
+    id: "file.view",
+    name: "查看文件",
+    description: "在右侧面板中预览本地文件，或调用系统默认应用打开文件；默认不把正文注入模型上下文。",
+    group: "fs",
+    risk: ToolRiskCategory.Read,
+    requiresAttachedDirectory: true,
+    enabled: true,
+    exposedToModel: true,
+    effectiveApprovalMode: "inherit",
+  },
+  {
     id: "fs.search",
     name: "搜索文件",
     description: "在当前附加工作目录下搜索文本内容。",

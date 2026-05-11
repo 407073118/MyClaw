@@ -34,6 +34,7 @@ import {
   ConditionNodeExecutor,
   LlmNodeExecutor,
   ToolNodeExecutor,
+  HttpRequestNodeExecutor,
   HumanInputNodeExecutor,
   JoinNodeExecutor,
 } from "../services/workflow-engine";
@@ -430,6 +431,7 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
     : null;
 
   registry.register(new ToolNodeExecutor(toolExecFn, mcpCallerFn));
+  registry.register(new HttpRequestNodeExecutor());
 
   // ── Human Input ──
   registry.register(new HumanInputNodeExecutor());
@@ -755,6 +757,11 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         const completedRun: WorkflowRunSummary = {
           ...latestRunSummary,
           status: result.status,
+          totalSteps: result.totalSteps,
+          state: result.finalState,
+          outputs: (result.finalState.outputs && typeof result.finalState.outputs === "object")
+            ? result.finalState.outputs as Record<string, unknown>
+            : undefined,
           updatedAt: new Date().toISOString(),
         };
         upsertWorkflowRun(ctx, completedRun);
@@ -771,7 +778,7 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
               type: "run-complete",
               runId,
               status: result.status,
-              finalState: {},
+              finalState: result.finalState,
               totalSteps: result.totalSteps,
               durationMs: result.durationMs,
             },
@@ -954,11 +961,12 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       runId: string,
     ): Promise<{ run: WorkflowRunSummary; checkpoints: WorkflowCheckpointSummary[] } | null> => {
       let resolvedRun: WorkflowRunSummary | null = null;
+      const memoryRun = ctx.state.workflowRuns.find((r) => r.id === runId) ?? null;
 
       // 优先查看活跃运行
       const runner = ctx.state.activeWorkflowRuns.get(runId) as PregelRunner | undefined;
       if (runner) {
-        const existing = ctx.state.workflowRuns.find((r) => r.id === runId);
+        const existing = memoryRun;
         if (existing) {
           resolvedRun = {
             ...existing,
@@ -976,9 +984,10 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
           const persisted = checkpointer.getRun(runId);
           if (persisted) {
             const latest = checkpointer.getLatestCheckpoint(runId);
+            const fullRun = memoryRun ? { ...persisted, ...memoryRun } : persisted;
             resolvedRun = latest
-              ? { ...persisted, currentNodeIds: latest.triggeredNodes, totalSteps: latest.step }
-              : persisted;
+              ? { ...fullRun, currentNodeIds: latest.triggeredNodes, totalSteps: latest.step }
+              : fullRun;
           }
         }
         checkpoints = checkpointer.listCheckpoints(runId);
@@ -988,10 +997,20 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
 
       // 回退到内存数据
       if (!resolvedRun) {
-        resolvedRun = ctx.state.workflowRuns.find((r) => r.id === runId) ?? null;
+        resolvedRun = memoryRun;
       }
 
       if (!resolvedRun) return null;
+      if (memoryRun) {
+        resolvedRun = {
+          ...resolvedRun,
+          ...(memoryRun.state ? { state: memoryRun.state } : {}),
+          ...(memoryRun.outputs ? { outputs: memoryRun.outputs } : {}),
+          ...(memoryRun.error ? { error: memoryRun.error } : {}),
+          status: memoryRun.status ?? resolvedRun.status,
+          updatedAt: memoryRun.updatedAt ?? resolvedRun.updatedAt,
+        };
+      }
       return { run: resolvedRun, checkpoints };
     },
   );

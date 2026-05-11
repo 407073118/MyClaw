@@ -11,14 +11,23 @@ export type ReminderEditorSubmitInput = {
 
 type ReminderEditorProps = {
   timezone: string;
+  initialTitle?: string;
+  initialBody?: string;
+  initialTriggerAt?: string;
   onSave: (input: ReminderEditorSubmitInput) => void | Promise<void>;
 };
 
 /** 渲染提醒编辑器，并把本地时间标准化为 UTC 时间戳。 */
-export default function ReminderEditor({ timezone, onSave }: ReminderEditorProps) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [triggerValue, setTriggerValue] = useState("");
+export default function ReminderEditor({
+  timezone,
+  initialTitle = "",
+  initialBody = "",
+  initialTriggerAt = "",
+  onSave,
+}: ReminderEditorProps) {
+  const [title, setTitle] = useState(initialTitle);
+  const [body, setBody] = useState(initialBody);
+  const [triggerValue, setTriggerValue] = useState(initialTriggerAt);
   const [saving, setSaving] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -52,11 +61,7 @@ export default function ReminderEditor({ timezone, onSave }: ReminderEditorProps
 
       <label className="time-editor-field">
         <span>提醒时间</span>
-        <input
-          type="datetime-local"
-          value={triggerValue}
-          onChange={(event) => setTriggerValue(event.target.value)}
-        />
+        <input type="datetime-local" value={triggerValue} onChange={(event) => setTriggerValue(event.target.value)} />
       </label>
 
       <label className="time-editor-field">

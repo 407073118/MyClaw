@@ -21,6 +21,7 @@ export const WorkflowNodeKind = {
   Start: "start",
   Llm: "llm",
   Tool: "tool",
+  HttpRequest: "http-request",
   HumanInput: "human-input",
   Condition: "condition",
   Subgraph: "subgraph",
@@ -113,6 +114,40 @@ export type WorkflowStateValueType =
   | "null"
   | "unknown";
 
+export type WorkflowVariableScope =
+  | "input"
+  | "system"
+  | "node"
+  | "run"
+  | "output"
+  | "secret";
+
+export type WorkflowVariableRef = {
+  scope: WorkflowVariableScope;
+  nodeId?: string;
+  path: string;
+  valueType: WorkflowStateValueType | "file";
+};
+
+export type WorkflowNodeInputSource =
+  | { mode: "static"; value: unknown }
+  | { mode: "variable"; ref: WorkflowVariableRef }
+  | { mode: "expression"; expression: string };
+
+export type WorkflowVariableDefinition = {
+  id: string;
+  key: string;
+  label: string;
+  description?: string;
+  scope: WorkflowVariableScope;
+  valueType: WorkflowStateValueType | "file";
+  required?: boolean;
+  defaultValue?: unknown;
+  sensitive?: boolean;
+  nodeId?: string;
+  path?: string;
+};
+
 export type WorkflowStateSchemaField = {
   key: string;
   label: string;
@@ -184,6 +219,8 @@ type WorkflowNodeBase = {
   inputBindings?: Record<string, string>;
   /** Declare which channels this node writes to */
   outputBindings?: Record<string, string>;
+  /** Declare typed input sources, compatible with mature workflow variable pickers. */
+  inputSources?: Record<string, WorkflowNodeInputSource>;
 };
 
 export type WorkflowStartNode = WorkflowNodeBase & {
@@ -193,6 +230,7 @@ export type WorkflowStartNode = WorkflowNodeBase & {
 export type WorkflowLlmNode = WorkflowNodeBase & {
   kind: "llm";
   llm: WorkflowNodeOutputBinding & {
+    systemPrompt?: string;
     prompt: string;
     model?: string;
     experienceProfileId?: ExperienceProfileId;
@@ -205,6 +243,16 @@ export type WorkflowToolNode = WorkflowNodeBase & {
   kind: "tool";
   tool: WorkflowNodeOutputBinding & {
     toolId: string;
+  };
+};
+
+export type WorkflowHttpRequestNode = WorkflowNodeBase & {
+  kind: "http-request";
+  httpRequest: WorkflowNodeOutputBinding & {
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+    url: string;
+    headers?: Record<string, string>;
+    body?: string;
   };
 };
 
@@ -240,12 +288,14 @@ export type WorkflowJoinNode = WorkflowNodeBase & {
 
 export type WorkflowEndNode = WorkflowNodeBase & {
   kind: "end";
+  outputSources?: Record<string, WorkflowNodeInputSource>;
 };
 
 export type WorkflowNode =
   | WorkflowStartNode
   | WorkflowLlmNode
   | WorkflowToolNode
+  | WorkflowHttpRequestNode
   | WorkflowHumanInputNode
   | WorkflowConditionNode
   | WorkflowSubgraphNode
@@ -257,6 +307,8 @@ export type WorkflowDefinition = WorkflowSummary & {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
   stateSchema: WorkflowStateSchemaField[];
+  variables?: WorkflowVariableDefinition[];
+  outputs?: WorkflowVariableDefinition[];
   editor?: WorkflowEditorMetadata;
   defaults?: {
     run?: {

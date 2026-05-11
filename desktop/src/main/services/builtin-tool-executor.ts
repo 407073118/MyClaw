@@ -8,13 +8,18 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 
 import type { SkillDefinition } from "@shared/contracts";
 import { BrowserService } from "./browser-service";
 import { PptEngine } from "./ppt/index";
 import { createDocCache, type DocCache } from "./document/doc-cache";
 import { executeDocumentRead, type DocumentReadArgs } from "./document/document-read-facade";
+import {
+  buildFileViewerPayload,
+  FILE_VIEWER_PANEL_PATH,
+  parseFileViewArgs,
+} from "./file-viewer";
 import { getParser, registerParser } from "./document/parser-registry";
 import { xlsParser, xlsmParser, xlsxParser } from "./document/parsers/xlsx-parser";
 import { docxParser } from "./document/parsers/docx-parser";
@@ -31,6 +36,7 @@ import {
 import { normalizeToolPath } from "./path-normalizer";
 import { extractPaths as extractShellPaths } from "@shared/utils/path-extractor";
 import { PathAccessAudit } from "./path-access-audit";
+import type { FileViewerPayload } from "@shared/contracts";
 
 export type ToolExecutionResult = {
   success: boolean;
@@ -92,9 +98,15 @@ type ToolExecutionOptions = {
   sessionId?: string;
 };
 
+type FileActionHandlers = {
+  openPath: (path: string) => Promise<string> | string | void;
+  revealPath: (path: string) => Promise<void> | void;
+};
+
 /** 从工具 ID 推断操作类型（读 / 写 / 删 / 执行）。 */
 function inferOperation(toolId: string): PathOperation {
   if (toolId === "fs.read" || toolId === "fs.list" || toolId === "fs.search" || toolId === "fs.find") return "read";
+  if (toolId === "file.view") return "read";
   if (toolId === "fs.write") return "write";
   if (toolId === "exec.command") return "exec";
   if (toolId === "xlsx.extract") return "read";
@@ -771,6 +783,7 @@ export class BuiltinToolExecutor {
   private _docCacheRoot: string | null = null;
   private _docCache: DocCache | null = null;
   private parsersRegistered = false;
+  private fileActionHandlers: FileActionHandlers | null = null;
 
   /** 更新技能列表。 */
   setSkills(skills: SkillDefinition[]): void {
@@ -820,6 +833,11 @@ export class BuiltinToolExecutor {
    * - 主进程启动不会强制加载 xlsx 等解析依赖
    * - 但 document.read / xlsx.extract 第一次执行前一定完成注册
    */
+  /** 注入本地文件动作处理器，避免服务层直接依赖 Electron shell。 */
+  setFileActionHandlers(handlers: FileActionHandlers | null): void {
+    this.fileActionHandlers = handlers;
+  }
+
   private ensureParsersRegistered(): void {
     if (this.parsersRegistered) return;
     if (!getParser("xlsx")) registerParser(xlsxParser);
@@ -1140,6 +1158,10 @@ export class BuiltinToolExecutor {
 
     // xlsx.extract：用 ExcelJS 读表，返回 Markdown / CSV。外部路径会走 policy。
     // 向后兼容：保留 alias 过渡期；Phase 8 后续迁移到 document.read。
+    if (toolId === "file.view") {
+      return this.executeFileView(label, cwd, ctx);
+    }
+
     if (toolId === "xlsx.extract") {
       return this.executeXlsxExtract(label, cwd, ctx);
     }
@@ -1661,6 +1683,128 @@ export class BuiltinToolExecutor {
     } finally {
       scope.dispose();
     }
+  }
+
+  /** 根据文件路径打开右侧阅览面板，或交给系统本地应用处理。 */
+  private async executeFileView(label: string, cwd: string, ctx?: ExecutionContext): Promise<ToolExecutionResult> {
+    const args = parseFileViewArgs(label);
+    if (!args.path.trim()) {
+      return {
+        success: false,
+        output: "",
+        error: "[E_FILE_VIEW_INVALID_ARGS] file_view 需要 path 参数，例如 {\"path\":\"README.md\",\"mode\":\"auto\"}。",
+      };
+    }
+
+    const resolved = this.resolvePathSafe(cwd, args.path, ctx);
+    if (!existsSync(resolved)) {
+      return {
+        success: false,
+        output: "",
+        error: `[E_FILE_VIEW_NOT_FOUND] 文件不存在：${args.path}`,
+      };
+    }
+
+    if (args.mode === "external") {
+      return this.openFileWithNativeApp(resolved);
+    }
+    if (args.mode === "reveal") {
+      return this.revealFileInNativeManager(resolved);
+    }
+
+    let payload = await buildFileViewerPayload(resolved);
+    payload = await this.enrichFileViewerDocumentPayload(payload, resolved, ctx);
+    console.info("[file-view] 打开右侧文件阅览面板", {
+      path: resolved,
+      viewerKind: payload.viewerKind,
+      sizeBytes: payload.sizeBytes,
+      hasContent: typeof payload.content === "string",
+    });
+
+    return {
+      success: true,
+      output: `已在右侧打开：${payload.fileName}。文件内容未注入模型上下文。`,
+      viewMeta: {
+        viewPath: FILE_VIEWER_PANEL_PATH,
+        title: payload.fileName,
+        data: payload,
+      },
+    };
+  }
+
+  /** 对 Office 类文档补充语义预览；失败时保留右侧面板并展示错误。 */
+  private async enrichFileViewerDocumentPayload(
+    payload: FileViewerPayload,
+    resolvedPath: string,
+    ctx?: ExecutionContext,
+  ): Promise<FileViewerPayload> {
+    if (payload.viewerKind !== "document" && payload.viewerKind !== "spreadsheet" && payload.viewerKind !== "slides") {
+      return payload;
+    }
+
+    try {
+      this.ensureParsersRegistered();
+      const cache = this.resolveDocCache();
+      const result = await executeDocumentRead(
+        {
+          path: resolvedPath,
+          mode: "read",
+          maxChars: 32000,
+          includeImages: "refs",
+        },
+        {
+          cache,
+          resolvedPath,
+          sessionId: ctx?.sessionId ?? null,
+        },
+      );
+      if (result.success) {
+        return { ...payload, content: result.output, truncated: result.output.includes("已截断") };
+      }
+      return { ...payload, documentError: result.error };
+    } catch (err) {
+      return {
+        ...payload,
+        documentError: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /** 调用系统默认应用打开文件，供用户明确要求本地打开时使用。 */
+  private async openFileWithNativeApp(resolvedPath: string): Promise<ToolExecutionResult> {
+    if (!this.fileActionHandlers) {
+      return {
+        success: false,
+        output: "",
+        error: "[E_FILE_VIEW_NATIVE_UNAVAILABLE] 当前运行环境未注入本地打开处理器。",
+      };
+    }
+    const result = await this.fileActionHandlers.openPath(resolvedPath);
+    if (typeof result === "string" && result.trim()) {
+      return { success: false, output: "", error: result };
+    }
+    console.info("[file-view] 使用系统默认应用打开文件", { path: resolvedPath });
+    return {
+      success: true,
+      output: `已用本地应用打开：${basename(resolvedPath)}。`,
+    };
+  }
+
+  /** 在系统文件管理器中定位文件，避免不支持格式时卡在聊天里。 */
+  private async revealFileInNativeManager(resolvedPath: string): Promise<ToolExecutionResult> {
+    if (!this.fileActionHandlers) {
+      return {
+        success: false,
+        output: "",
+        error: "[E_FILE_VIEW_NATIVE_UNAVAILABLE] 当前运行环境未注入文件定位处理器。",
+      };
+    }
+    await this.fileActionHandlers.revealPath(resolvedPath);
+    console.info("[file-view] 在系统文件管理器中定位文件", { path: resolvedPath });
+    return {
+      success: true,
+      output: `已定位文件：${basename(resolvedPath)}。`,
+    };
   }
 
   /** 根据技能数据打开 HTML 面板。 */

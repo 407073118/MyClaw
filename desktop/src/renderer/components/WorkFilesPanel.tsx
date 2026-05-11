@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   Code,
@@ -107,8 +107,58 @@ function ArtifactItem({
 }: {
   artifact: ArtifactRecord;
 }) {
-  const openArtifact = useWorkspaceStore((state) => state.openArtifact ?? (async () => undefined));
   const revealArtifact = useWorkspaceStore((state) => state.revealArtifact ?? (async () => undefined));
+  const openWebPanel = useWorkspaceStore((state) => state.openWebPanel);
+  const applyArtifactEvent = useWorkspaceStore((state) => state.applyArtifactEvent ?? (() => undefined));
+  const myClawRootPath = useWorkspaceStore((state) => state.myClawRootPath);
+  const [previewState, setPreviewState] = useState<"idle" | "loading" | "error">("idle");
+
+  /** 点击工作文件时打开右侧预览面板，避免把 md/doc 等文件直接丢给系统外部应用。 */
+  async function handlePreviewArtifact(): Promise<void> {
+    console.info("[work-files-panel] 用户请求预览工作文件", {
+      artifactId: artifact.id,
+      relativePath: artifact.relativePath,
+      baseDirectory: myClawRootPath ?? null,
+    });
+    setPreviewState("loading");
+    try {
+      const result = await window.myClawAPI.fileViewerPreview({
+        path: artifact.relativePath,
+        baseDirectory: myClawRootPath ?? null,
+      });
+      if (!result.success || !result.viewMeta) {
+        console.warn("[work-files-panel] 工作文件预览失败", {
+          artifactId: artifact.id,
+          relativePath: artifact.relativePath,
+          error: result.error ?? "主进程未返回预览面板数据",
+        });
+        setPreviewState("error");
+        return;
+      }
+
+      openWebPanel(result.viewMeta.viewPath, result.viewMeta.title, result.viewMeta.data);
+      applyArtifactEvent({
+        type: "artifact.updated",
+        artifact: {
+          ...artifact,
+          lastOpenedAt: new Date().toISOString(),
+          openCount: (artifact.openCount ?? 0) + 1,
+        },
+      });
+      console.info("[work-files-panel] 已打开右侧工作文件预览", {
+        artifactId: artifact.id,
+        title: result.viewMeta.title,
+      });
+      setPreviewState("idle");
+    } catch (error) {
+      console.error("[work-files-panel] 工作文件预览异常", {
+        artifactId: artifact.id,
+        relativePath: artifact.relativePath,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      setPreviewState("error");
+    }
+  }
 
   return (
     <article className="wf-item">
@@ -116,7 +166,15 @@ function ArtifactItem({
         <KindIcon kind={artifact.kind} size={18} />
       </div>
       <div className="wf-item__body">
-        <div className="wf-item__name">{artifact.title}</div>
+        <button
+          type="button"
+          className="wf-item__name wf-item__name-button"
+          onClick={() => void handlePreviewArtifact()}
+          title={`打开右侧预览：${artifact.title}`}
+          disabled={previewState === "loading"}
+        >
+          {artifact.title}
+        </button>
         <div className="wf-item__meta">
           <span>{kindLabel(artifact.kind)}</span>
           <span>·</span>
@@ -126,8 +184,14 @@ function ArtifactItem({
         </div>
       </div>
       <div className="wf-item__actions">
-        <button type="button" className="btn-toolbar wf-btn-compact" onClick={() => void openArtifact(artifact.id)} title="打开文件">
-          打开
+        <button
+          type="button"
+          className="btn-toolbar wf-btn-compact"
+          onClick={() => void handlePreviewArtifact()}
+          title={previewState === "error" ? "预览失败，请检查文件是否还存在" : "打开右侧预览"}
+          disabled={previewState === "loading"}
+        >
+          {previewState === "loading" ? "打开中" : "打开"}
         </button>
         <button type="button" className="btn-toolbar wf-btn-compact" onClick={() => void revealArtifact(artifact.id)} title="在文件管理器中定位">
           定位
@@ -153,7 +217,13 @@ export default function WorkFilesPanel({
     (state) => state.applyArtifactEvent ?? (() => undefined),
   );
 
-  const scopeKey = scope ? `${scope.scopeKind}:${scope.scopeId}` : null;
+  const scopeKind = scope?.scopeKind ?? null;
+  const scopeId = scope?.scopeId ?? null;
+  const stableScope = useMemo<ArtifactScopeRef | null>(
+    () => (scopeKind && scopeId ? { scopeKind, scopeId } : null),
+    [scopeId, scopeKind],
+  );
+  const scopeKey = stableScope ? `${stableScope.scopeKind}:${stableScope.scopeId}` : null;
   const scopedArtifacts = useMemo(
     () => (scopeKey ? artifactsByScope[scopeKey] ?? [] : []),
     [artifactsByScope, scopeKey],
@@ -166,17 +236,17 @@ export default function WorkFilesPanel({
   );
 
   useEffect(() => {
-    if (!scope) return;
-    void loadArtifactsByScope(scope);
-  }, [loadArtifactsByScope, scope?.scopeId, scope?.scopeKind]);
+    if (!stableScope) return;
+    void loadArtifactsByScope(stableScope);
+  }, [loadArtifactsByScope, stableScope]);
 
   useEffect(() => {
-    if (!scope) return;
+    if (!stableScope) return;
     const unsubscribeSession = window.myClawAPI.onSessionStream((event) => {
       const type = typeof event.type === "string" ? event.type : "";
       if (type.startsWith("artifact.")) {
         applyArtifactEvent(event);
-        void loadArtifactsByScope(scope);
+        void loadArtifactsByScope(stableScope);
         return;
       }
       if (
@@ -185,23 +255,23 @@ export default function WorkFilesPanel({
         type === "approval.requested" ||
         type === "approval.resolved"
       ) {
-        if (!shouldReloadArtifactsForSessionEvent(scope, event)) {
+        if (!shouldReloadArtifactsForSessionEvent(stableScope, event)) {
           return;
         }
-        void loadArtifactsByScope(scope);
+        void loadArtifactsByScope(stableScope);
       }
     });
     const unsubscribeWorkflow = window.myClawAPI.onWorkflowStream?.((event: unknown) => {
       const payload = event && typeof event === "object" ? (event as Record<string, unknown>) : {};
-      if (scope.scopeKind === "workflowRun" && payload.runId === scope.scopeId) {
-        void loadArtifactsByScope(scope);
+      if (stableScope.scopeKind === "workflowRun" && payload.runId === stableScope.scopeId) {
+        void loadArtifactsByScope(stableScope);
       }
     });
     return () => {
       unsubscribeSession();
       unsubscribeWorkflow?.();
     };
-  }, [applyArtifactEvent, loadArtifactsByScope, scope?.scopeId, scope?.scopeKind]);
+  }, [applyArtifactEvent, loadArtifactsByScope, stableScope]);
 
   return (
     <aside className={`wf-panel wf-panel--${mode}`} data-testid="work-files-panel">
@@ -245,6 +315,10 @@ export default function WorkFilesPanel({
         .wf-item__meta { display: flex; flex-wrap: wrap; gap: 4px; color: var(--text-muted); font-size: 11px; }
         .wf-item__actions { display: flex; gap: 6px; flex-shrink: 0; margin-top: 2px; }
         .wf-btn-compact { height: 26px; padding: 0 10px; font-size: 11px; }
+        .wf-item__name-button { width: fit-content; max-width: 100%; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; }
+        .wf-item__name-button:hover,
+        .wf-item__name-button:focus-visible { color: var(--accent-cyan); text-decoration: underline; text-underline-offset: 2px; outline: none; }
+        .wf-item__name-button:disabled { cursor: progress; opacity: 0.7; text-decoration: none; }
         @media (max-width: 1200px) {
           .wf-panel--sidebar { max-width: 320px; }
         }

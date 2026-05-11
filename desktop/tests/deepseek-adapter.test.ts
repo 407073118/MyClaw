@@ -7,7 +7,7 @@ function makeDeepSeekProfile(overrides: Partial<ModelProfile> = {}): ModelProfil
   return {
     id: "profile-deepseek",
     name: "DeepSeek",
-    provider: "deepseek",
+    provider: "openai-compatible",
     providerFlavor: "deepseek",
     baseUrl: "https://api.deepseek.com/v1",
     apiKey: "test-key",
@@ -128,5 +128,60 @@ describe("deepseek adapter materializeReplayMessages", () => {
     const assistant = replayMessages[1] as Record<string, unknown>;
     expect("reasoning_content" in assistant).toBe(false);
     expect("reasoning" in assistant).toBe(false);
+  });
+});
+
+describe("deepseek adapter V4 thinking request", () => {
+  it("deepseek-v4-pro: enables thinking and maps xhigh effort to max", () => {
+    const adapter = getProviderAdapter("deepseek");
+    const profile = makeDeepSeekProfile({ model: "deepseek-v4-pro" });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEnabled: true, reasoningEffort: "xhigh" },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+
+    expect(variants).toHaveLength(1);
+    expect(variants[0]?.body).toMatchObject({
+      model: "deepseek-v4-pro",
+      thinking: { type: "enabled" },
+      reasoning_effort: "max",
+    });
+  });
+
+  it("deepseek-v4-flash: disables thinking when the execution plan turns reasoning off", () => {
+    const adapter = getProviderAdapter("deepseek");
+    const profile = makeDeepSeekProfile({ model: "deepseek-v4-flash" });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEnabled: false, reasoningEffort: "high" },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+
+    expect(variants[0]?.body).toMatchObject({
+      model: "deepseek-v4-flash",
+      thinking: { type: "disabled" },
+    });
+    expect(variants[0]?.body).not.toHaveProperty("reasoning_effort");
+  });
+
+  it("deepseek-v4-pro: keeps explicit requestBody thinking overrides authoritative", () => {
+    const adapter = getProviderAdapter("deepseek");
+    const profile = makeDeepSeekProfile({
+      model: "deepseek-v4-pro",
+      requestBody: {
+        thinking: { type: "disabled" },
+      },
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEnabled: true, reasoningEffort: "xhigh" },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+
+    expect(variants[0]?.body).toMatchObject({
+      thinking: { type: "disabled" },
+    });
+    expect(variants[0]?.body).not.toHaveProperty("reasoning_effort");
   });
 });

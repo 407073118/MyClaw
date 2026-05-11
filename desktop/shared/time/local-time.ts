@@ -74,3 +74,30 @@ function resolveOffsetMinutes(date: Date, timeZone: string): number {
   const minutes = Number(match[3] ?? 0);
   return sign * (hours * 60 + minutes);
 }
+
+/** 将 UTC ISO 转成 `YYYY-MM-DDTHH:mm` 本地输入值，供时间轴预填使用。 */
+export function utcIsoToLocalDateTimeInput(iso: string, timeZone: string): string {
+  if (!iso) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date(iso));
+    const map: Record<string, string> = {};
+    for (const part of parts) {
+      if (part.type !== "literal") {
+        map[part.type] = part.value;
+      }
+    }
+    if (!map.year || !map.month || !map.day || !map.hour || !map.minute) return "";
+    const hour = map.hour === "24" ? "00" : map.hour;
+    return `${map.year}-${map.month}-${map.day}T${hour}:${map.minute}`;
+  } catch {
+    return "";
+  }
+}

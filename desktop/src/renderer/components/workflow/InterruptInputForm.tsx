@@ -7,7 +7,7 @@ interface InterruptInputFormProps {
   isSubmitting?: boolean;
 }
 
-/** 工作流中断输入表单 -- 在 waiting-input 状态下渲染，供用户提供输入或审批。 */
+/** 工作流中断输入表单，用于 waiting-input 状态下收集用户输入。*/
 export function InterruptInputForm({ payload, onSubmit, isSubmitting }: InterruptInputFormProps) {
   const [input, setInput] = useState("");
 
@@ -19,17 +19,14 @@ export function InterruptInputForm({ payload, onSubmit, isSubmitting }: Interrup
       borderRadius: "8px",
       marginTop: "8px",
     }}>
-      {/* Header */}
       <div style={{ fontWeight: 600, marginBottom: "8px", color: "var(--color-warning, #f59e0b)" }}>
         需要您的输入
       </div>
 
-      {/* Prompt */}
       <div style={{ marginBottom: "12px", fontSize: "13px", color: "var(--color-text-secondary, #a0a0a0)" }}>
         {payload.prompt}
       </div>
 
-      {/* Input type: approval vs free input */}
       {payload.type === "approval" ? (
         <div style={{ display: "flex", gap: "8px" }}>
           <button
@@ -82,7 +79,6 @@ export function InterruptInputForm({ payload, onSubmit, isSubmitting }: Interrup
         </>
       )}
 
-      {/* Current state preview (collapsible) */}
       {payload.currentState && Object.keys(payload.currentState).length > 0 && (
         <details style={{ marginTop: "12px", fontSize: "12px" }}>
           <summary style={{ cursor: "pointer", color: "var(--color-text-secondary, #888)" }}>
