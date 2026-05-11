@@ -211,7 +211,9 @@ export default function AppShell() {
   const loading = useWorkspaceStore((state) => state.loading);
   const error = useWorkspaceStore((state) => state.error);
   const requiresInitialSetup = useWorkspaceStore((state) => state.requiresInitialSetup);
-  const time = useWorkspaceStore((state) => state.time);
+  const calendarEvents = useWorkspaceStore((state) => state.time.calendarEvents);
+  const reminders = useWorkspaceStore((state) => state.time.reminders);
+  const availabilityPolicy = useWorkspaceStore((state) => state.time.availabilityPolicy);
   const defaultModelName = useWorkspaceStore(
     (state) => state.models.find((m) => m.id === state.defaultModelProfileId)?.name ?? "Offline",
   );
@@ -233,14 +235,15 @@ export default function AppShell() {
   const runtimeStatusLabel = !ready ? (error ? "异常" : loading ? "连接中" : "未就绪") : "";
   const [timeAssistantExpanded, setTimeAssistantExpanded] = useState(false);
   const [timeAssistantNowIso, setTimeAssistantNowIso] = useState(() => new Date().toISOString());
+  const fallbackTimezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone, []);
   const timeAssistantSnapshot = useMemo(() =>
     buildTimeAssistantSnapshot({
       nowIso: timeAssistantNowIso,
-      fallbackTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      calendarEvents: time.calendarEvents,
-      reminders: time.reminders,
-      availabilityPolicy: time.availabilityPolicy,
-    }), [timeAssistantNowIso, time.calendarEvents, time.reminders, time.availabilityPolicy]);
+      fallbackTimezone,
+      calendarEvents,
+      reminders,
+      availabilityPolicy,
+    }), [timeAssistantNowIso, fallbackTimezone, calendarEvents, reminders, availabilityPolicy]);
 
   // 已登录但工作区尚未就绪时，主动拉起 bootstrap。
   useEffect(() => {
@@ -250,9 +253,12 @@ export default function AppShell() {
     if (ready || loading) {
       return;
     }
+    if (error) {
+      return;
+    }
     console.info("[app-shell] 开始加载桌面端启动引导数据", { routePath: location.pathname });
     void loadBootstrap();
-  }, [isAuthenticated, ready, loading, location.pathname, loadBootstrap]);
+  }, [isAuthenticated, ready, loading, error, location.pathname, loadBootstrap]);
 
   // bootstrap 完成后，如果首次启动且没有模型配置，则跳到初始化页。
   useEffect(() => {

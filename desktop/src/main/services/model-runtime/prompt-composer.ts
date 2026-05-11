@@ -258,10 +258,11 @@ function buildToolUsageContent(
     "- Available layouts: cover(封面), section(章节过渡), key_points(要点列表), metrics(数据大字报), comparison(左右对比), closing(结束页).",
     "- If a `ppt-designer` skill is available, invoke it first for design methodology guidance.",
     "## Time",
+    "- `calendar_event_create` / `calendar_event_list` — Manage meetings, reviews, appointments, and fixed time blocks. Use it for user phrases like \"I have a meeting/review at 4 PM\"; it creates a calendar event and can create a pre-event reminder.",
     "- `reminder_create` / `reminder_list` — Manage user-facing reminders in the local desktop time center.",
     "- `schedule_job_create` / `schedule_job_list` — Manage autonomous scheduled jobs for workflows, silicon persons, or assistant prompts.",
     "- `today_brief_get` — Read the current local today brief without mutating state.",
-    "- Use `reminder_create` for user attention and `schedule_job_create` for autonomous time-based execution.",
+    "- Use `calendar_event_create` for meetings/reviews/appointments; use `reminder_create` for standalone reminders; use `schedule_job_create` only for autonomous time-based execution.",
   ];
   if (mcpTools && mcpTools.length > 0) {
     lines.push(

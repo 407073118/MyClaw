@@ -214,6 +214,50 @@ describe("TimeCenterPage", () => {
     expect(screen.getByRole("button", { name: "安排时间" })).toBeTruthy();
   });
 
+  it("limits initial timeline and side rail rendering for large schedule datasets", () => {
+    const reminders = Array.from({ length: 360 }, (_, index) => ({
+      id: `perf-rem-${index}`,
+      kind: "reminder" as const,
+      title: `Perf reminder ${index}`,
+      triggerAt: new Date(Date.UTC(2026, 4, 7, 2, index % 60, 0)).toISOString(),
+      timezone: "Asia/Shanghai",
+      ownerScope: "personal" as const,
+      status: "scheduled" as const,
+      source: "manual" as const,
+      createdAt: "2026-05-07T00:00:00.000Z",
+      updatedAt: "2026-05-07T00:00:00.000Z",
+    }));
+    const taskCommitments = Array.from({ length: 80 }, (_, index) => ({
+      id: `perf-task-${index}`,
+      kind: "task_commitment" as const,
+      title: `Perf task ${index}`,
+      timezone: "Asia/Shanghai",
+      ownerScope: "personal" as const,
+      priority: "medium" as const,
+      status: "pending" as const,
+      source: "manual" as const,
+      createdAt: "2026-05-07T00:00:00.000Z",
+      updatedAt: "2026-05-07T00:00:00.000Z",
+    }));
+    useWorkspaceStore.setState((state) => ({
+      time: {
+        ...state.time,
+        reminders,
+        taskCommitments,
+        calendarEvents: [],
+        scheduleJobs: [],
+        executionRuns: [],
+      },
+    }) as any);
+
+    const { container } = renderPage();
+
+    expect(container.querySelectorAll(".timeline-entry-item")).toHaveLength(200);
+    expect(screen.getByTestId("timeline-overflow-notice")).toBeTruthy();
+    expect(container.querySelectorAll('[data-testid="schedule-resource-rail"] .compact-row')).toHaveLength(8);
+    expect(screen.getByTestId("unscheduled-task-overflow")).toBeTruthy();
+  });
+
   it("opens timeline event details and supports edit and delete actions", async () => {
     renderPage();
 

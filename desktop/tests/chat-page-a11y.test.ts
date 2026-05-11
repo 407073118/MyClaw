@@ -114,6 +114,45 @@ describe("ChatPage", () => {
     expect(document.activeElement).toBe(deleteButton);
   });
 
+  it("shows a dismissible top reminder banner when a reminder is delivered", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+    const reminderUnsubscribe = vi.fn();
+    let reminderCallback: ((payload: { title: string; body?: string; deliveredAt: string }) => void) | null = null;
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => sessionStreamUnsubscribe),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+        onTimeReminderDelivered: vi.fn((callback) => {
+          reminderCallback = callback;
+          return reminderUnsubscribe;
+        }),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    act(() => {
+      reminderCallback?.({
+        title: "需求评审",
+        body: "15 分钟后开始",
+        deliveredAt: "2026-05-11T07:45:00.000Z",
+      });
+    });
+
+    const banner = await screen.findByTestId("chat-reminder-banner");
+    expect(banner.textContent).toContain("需求评审");
+    expect(banner.textContent).toContain("15 分钟后开始");
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭提醒提示" }));
+
+    await waitFor(() => expect(screen.queryByTestId("chat-reminder-banner")).toBeNull());
+    expect(reminderUnsubscribe).not.toHaveBeenCalled();
+  });
+
   it("calls deleteSession after confirming deletion", async () => {
     const sessionStreamUnsubscribe = vi.fn();
     const webPanelUnsubscribe = vi.fn();

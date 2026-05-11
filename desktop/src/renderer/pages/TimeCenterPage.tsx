@@ -110,6 +110,8 @@ type SchedulePlanningModel = {
 };
 
 const DAY_HOURS = Array.from({ length: 25 }, (_, index) => index);
+const MAX_INITIAL_TIMELINE_ENTRIES = 200;
+const MAX_SIDE_RAIL_TASKS = 8;
 
 /** 渲染日程规划页：以时间轴为主体，统一呈现我、硅基人和自动任务。 */
 export default function TimeCenterPage() {
@@ -215,6 +217,11 @@ export default function TimeCenterPage() {
     () => time.taskCommitments.filter((task) => task.status === "pending" && !task.dueAt),
     [time.taskCommitments],
   );
+  const visibleTimelineEntries = useMemo(
+    () => planningModel.entries.slice(0, MAX_INITIAL_TIMELINE_ENTRIES),
+    [planningModel.entries],
+  );
+  const hiddenTimelineEntryCount = Math.max(0, planningModel.entries.length - visibleTimelineEntries.length);
   const selectedTimelineItem = useMemo(
     () => resolveTimelineEntryItem(selectedTimelineEntry, time),
     [selectedTimelineEntry, time],
@@ -636,7 +643,8 @@ export default function TimeCenterPage() {
           <section className="schedule-timeline-panel" data-testid="schedule-timeline">
             <TimelineHeader selectedDate={selectedDate} timezone={timezone} entryCount={planningModel.entries.length} />
             <ScheduleTimeline
-              entries={planningModel.entries}
+              entries={visibleTimelineEntries}
+              hiddenEntryCount={hiddenTimelineEntryCount}
               timezone={timezone}
               selectedDate={selectedDate}
               todayDateKey={todayDateKey}
@@ -1047,6 +1055,7 @@ function TimelineHeader({
 /** 渲染统一时间轴，保留按小时阅读，同时让空白时间块能直接操作。*/
 function ScheduleTimeline({
   entries,
+  hiddenEntryCount,
   timezone,
   selectedDate,
   todayDateKey,
@@ -1057,6 +1066,7 @@ function ScheduleTimeline({
   onDragSelectMove,
 }: {
   entries: TimelineEntry[];
+  hiddenEntryCount: number;
   timezone: string;
   selectedDate: string;
   todayDateKey: string;
@@ -1083,7 +1093,7 @@ function ScheduleTimeline({
       setNow(null);
       return;
     }
-    setNow(new Date());
+    setNow((current) => current ?? new Date());
     const handle = window.setInterval(() => setNow(new Date()), 60_000);
     return () => window.clearInterval(handle);
   }, [isToday]);
@@ -1205,6 +1215,12 @@ function ScheduleTimeline({
         <section className="timeline-empty">
           <h3>这一天还没有排定事项</h3>
           <p>可以新建日程、提醒或定时任务，把需要发生的事放进时间轴。</p>
+        </section>
+      ) : null}
+      {hiddenEntryCount > 0 ? (
+        <section className="timeline-overflow-notice" data-testid="timeline-overflow-notice">
+          <strong>已折叠 {hiddenEntryCount} 个条目</strong>
+          <span>切换到列表视图可以查看完整日程。</span>
         </section>
       ) : null}
     </div>
@@ -1703,7 +1719,33 @@ function ResourceStatusCard({
   jobs: ScheduleJob[];
   latestRunByJobId: ReadonlyMap<string, ExecutionRun>;
 }) {
-  const personalEntryCount = entries.filter((entry) => entry.ownerScope === "personal").length;
+  const resourceStats = useMemo(() => {
+    const personEntryCounts = new Map<string, number>();
+    const personJobStates = new Map<string, { hasFailedRun: boolean; hasRunningJob: boolean }>();
+    let personalEntryCount = 0;
+
+    for (const entry of entries) {
+      if (entry.ownerScope === "personal") {
+        personalEntryCount += 1;
+        continue;
+      }
+      if (entry.ownerId) {
+        personEntryCounts.set(entry.ownerId, (personEntryCounts.get(entry.ownerId) ?? 0) + 1);
+      }
+    }
+
+    for (const job of jobs) {
+      if (job.ownerScope !== "silicon_person" || !job.ownerId) {
+        continue;
+      }
+      const current = personJobStates.get(job.ownerId) ?? { hasFailedRun: false, hasRunningJob: false };
+      current.hasFailedRun = current.hasFailedRun || latestRunByJobId.get(job.id)?.status === "failed" || job.status === "failed";
+      current.hasRunningJob = current.hasRunningJob || job.status === "running";
+      personJobStates.set(job.ownerId, current);
+    }
+
+    return { personalEntryCount, personEntryCounts, personJobStates };
+  }, [entries, jobs, latestRunByJobId]);
 
   return (
     <section className="side-card">
@@ -1712,10 +1754,10 @@ function ResourceStatusCard({
       </header>
       <div className="resource-list">
         <article className="resource-row">
-          <span className={personalEntryCount > 0 ? "status-dot status-dot--accent" : "status-dot status-dot--muted"} />
+          <span className={resourceStats.personalEntryCount > 0 ? "status-dot status-dot--accent" : "status-dot status-dot--muted"} />
           <div>
             <strong>我</strong>
-            <span>{personalEntryCount > 0 ? `已排 ${personalEntryCount} 项` : "空闲"}</span>
+            <span>{resourceStats.personalEntryCount > 0 ? `已排 ${resourceStats.personalEntryCount} 项` : "空闲"}</span>
           </div>
         </article>
 
@@ -1723,16 +1765,16 @@ function ResourceStatusCard({
           <p className="side-empty">暂无硅基人，后续创建后会在这里显示资源占用。</p>
         ) : (
           siliconPersons.map((person) => {
-            const personEntries = entries.filter((entry) => entry.ownerScope === "silicon_person" && entry.ownerId === person.id);
-            const personJobs = jobs.filter((job) => job.ownerScope === "silicon_person" && job.ownerId === person.id);
-            const hasFailedRun = personJobs.some((job) => latestRunByJobId.get(job.id)?.status === "failed" || job.status === "failed");
-            const hasRunningJob = personJobs.some((job) => job.status === "running");
+            const personEntryCount = resourceStats.personEntryCounts.get(person.id) ?? 0;
+            const personJobState = resourceStats.personJobStates.get(person.id);
+            const hasFailedRun = Boolean(personJobState?.hasFailedRun);
+            const hasRunningJob = Boolean(personJobState?.hasRunningJob);
             const statusText = hasRunningJob
               ? "运行中"
               : hasFailedRun
               ? "有异常"
-              : personEntries.length > 0
-              ? `已排 ${personEntries.length} 项`
+              : personEntryCount > 0
+              ? `已排 ${personEntryCount} 项`
               : "空闲";
             return (
               <article key={person.id} className="resource-row">
@@ -1855,6 +1897,9 @@ function UnscheduledTaskCard({
   timezone: string;
   onArrange: () => void;
 }) {
+  const visibleTasks = tasks.slice(0, MAX_SIDE_RAIL_TASKS);
+  const hiddenTaskCount = Math.max(0, tasks.length - visibleTasks.length);
+
   return (
     <section className="side-card">
       <header className="side-card__header">
@@ -1865,7 +1910,7 @@ function UnscheduledTaskCard({
         <p className="side-empty">没有未安排时间的任务。</p>
       ) : (
         <div className="compact-list">
-          {tasks.map((task) => (
+          {visibleTasks.map((task) => (
             <article key={task.id} className="compact-row">
               <div>
                 <strong>{task.title}</strong>
@@ -1876,6 +1921,11 @@ function UnscheduledTaskCard({
               </button>
             </article>
           ))}
+          {hiddenTaskCount > 0 ? (
+            <p className="compact-overflow" data-testid="unscheduled-task-overflow">
+              还有 {hiddenTaskCount} 项待安排任务未显示。
+            </p>
+          ) : null}
         </div>
       )}
     </section>
@@ -2452,6 +2502,27 @@ const styles = `
     color: var(--text-muted);
     font-size: 12px;
     font-weight: 600;
+  }
+
+  .timeline-overflow-notice,
+  .compact-overflow {
+    margin: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(96, 165, 250, 0.22);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
+    background: rgba(96, 165, 250, 0.08);
+    font-size: 12px;
+  }
+
+  .timeline-overflow-notice {
+    display: grid;
+    gap: 4px;
+  }
+
+  .timeline-overflow-notice strong {
+    color: var(--text-primary);
+    font-size: 13px;
   }
 
   .timeline-board {

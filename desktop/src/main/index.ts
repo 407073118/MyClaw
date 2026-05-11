@@ -189,7 +189,15 @@ async function buildRuntimeContext(
   const migrationResult = await timeStore.migrateAssistantPromptSessionMode();
   log.info("assistant_prompt sessionMode migrated", migrationResult);
   const timeApplication = createTimeApplicationService({ store: timeStore });
-  const timeNotificationService = createTimeNotificationService();
+  const timeNotificationService = createTimeNotificationService({
+    onDelivered: (payload) => {
+      console.info("[time-notification] 广播提醒到渲染进程", {
+        id: payload.id,
+        title: payload.title,
+      });
+      mainWindow?.webContents.send("time:reminder-delivered", payload);
+    },
+  });
   let runtimeCtxRef: RuntimeContext | null = null;
   const timeJobExecutor = createTimeJobExecutor({
     startWorkflowRun: async ({ workflowId, siliconPersonId }) => {

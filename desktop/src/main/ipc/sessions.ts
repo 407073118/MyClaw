@@ -85,7 +85,7 @@ const PARALLEL_LIMIT = 10;
 const READ_ONLY_TOOLS = new Set([
   "fs.read", "fs.list", "fs.search", "fs.find", "file.view",
   "git.status", "git.diff", "git.log", "task.list", "task.get",
-  "reminder.list", "schedule_job.list", "today_brief.get",
+  "calendar_event.list", "reminder.list", "schedule_job.list", "today_brief.get",
   "web.search", "http.fetch",  // 网络只读操作，可安全并行
 ]);
 
@@ -207,6 +207,8 @@ const TOOL_RISK_MAP: Record<string, ToolRiskCategory> = {
   "task.list": ToolRiskCategory.Read,
   "task.get": ToolRiskCategory.Read,
   "task.update": ToolRiskCategory.Read,
+  "calendar_event.create": ToolRiskCategory.Write,
+  "calendar_event.list": ToolRiskCategory.Read,
   "reminder.create": ToolRiskCategory.Write,
   "reminder.list": ToolRiskCategory.Read,
   "schedule_job.create": ToolRiskCategory.Write,
@@ -1159,10 +1161,11 @@ function buildSystemPrompt(
   parts.push(`- Available layouts: cover(封面), section(章节过渡), key_points(要点列表), metrics(数据大字报), comparison(左右对比), closing(结束页).`);
   parts.push(`- If a \`ppt-designer\` skill is available, invoke it first for design methodology guidance.`);
   parts.push(`## Time`);
+  parts.push(`- \`calendar_event_create\` / \`calendar_event_list\` — Manage meetings, reviews, appointments, and fixed time blocks. Use it for user phrases like "I have a meeting/review at 4 PM"; it creates a calendar event and can create a pre-event reminder.`);
   parts.push(`- \`reminder_create\` / \`reminder_list\` — Manage user-facing reminders in the local desktop time center.`);
   parts.push(`- \`schedule_job_create\` / \`schedule_job_list\` — Manage autonomous scheduled jobs for workflows, silicon persons, or assistant prompts.`);
   parts.push(`- \`today_brief_get\` — Read the current local today brief without mutating state.`);
-  parts.push(`- Use \`reminder_create\` for user attention and \`schedule_job_create\` for autonomous time-based execution.`);
+  parts.push(`- Use \`calendar_event_create\` for meetings/reviews/appointments; use \`reminder_create\` for standalone reminders; use \`schedule_job_create\` only for autonomous time-based execution.`);
 
   // ── MCP 工具分组说明（企业内部系统连接）───────────────────
   if (mcpTools && mcpTools.length > 0) {
@@ -1384,7 +1387,8 @@ type TimeToolResult = {
 
 /** 判断是否属于时间工具家族，避免在 tool loop 中散落字符串判断。 */
 function isTimeToolId(toolId: string): boolean {
-  return toolId.startsWith("reminder.")
+  return toolId.startsWith("calendar_event.")
+    || toolId.startsWith("reminder.")
     || toolId.startsWith("schedule_job.")
     || toolId.startsWith("today_brief.");
 }
@@ -1405,6 +1409,33 @@ async function resolveTimeToolTimezone(
 /** 归一化时间工具中的 owner scope，避免模型传入非法值污染存储。 */
 function resolveTimeToolOwnerScope(args: Record<string, unknown>): "personal" | "silicon_person" {
   return args.ownerScope === "silicon_person" ? "silicon_person" : "personal";
+}
+
+/** 解析日程结束时间；模型未给结束时间时按 durationMinutes 或默认 60 分钟补齐。 */
+function resolveCalendarEventEndsAt(startsAt: string, args: Record<string, unknown>): string {
+  const explicitEndsAt = typeof args.endsAt === "string" ? args.endsAt.trim() : "";
+  if (explicitEndsAt) {
+    return explicitEndsAt;
+  }
+  const durationMinutes = args.durationMinutes !== undefined ? Number(args.durationMinutes) : 60;
+  const safeDurationMinutes = Number.isFinite(durationMinutes) && durationMinutes > 0 ? durationMinutes : 60;
+  return new Date(new Date(startsAt).getTime() + (safeDurationMinutes * 60_000)).toISOString();
+}
+
+/** 解析会前提醒时间；默认提前 15 分钟，允许 createReminder=false 或 0 分钟关闭。 */
+function resolveCalendarEventReminderAt(startsAt: string, args: Record<string, unknown>): string | null {
+  if (args.createReminder === false) {
+    return null;
+  }
+  const explicitReminderAt = typeof args.reminderAt === "string" ? args.reminderAt.trim() : "";
+  if (explicitReminderAt) {
+    return explicitReminderAt;
+  }
+  const rawMinutes = args.reminderMinutesBefore !== undefined ? Number(args.reminderMinutesBefore) : 15;
+  if (!Number.isFinite(rawMinutes) || rawMinutes <= 0) {
+    return null;
+  }
+  return new Date(new Date(startsAt).getTime() - (rawMinutes * 60_000)).toISOString();
 }
 
 /**
@@ -1428,6 +1459,68 @@ export async function executeTimeTool(
 
   try {
     switch (toolId) {
+      case "calendar_event.create": {
+        const title = String(args.title ?? "").trim();
+        const startsAt = String(args.startsAt ?? "").trim();
+        if (!title) {
+          return { success: false, output: "", error: "title is required", mutated: false };
+        }
+        if (!startsAt) {
+          return { success: false, output: "", error: "startsAt is required", mutated: false };
+        }
+
+        const timezone = await resolveTimeToolTimezone(ctx, args);
+        const ownerScope = resolveTimeToolOwnerScope(args);
+        const ownerId = typeof args.ownerId === "string" ? args.ownerId : undefined;
+        const endsAt = resolveCalendarEventEndsAt(startsAt, args);
+        console.info("[time-tool] 创建日程事件", {
+          title,
+          startsAt,
+          endsAt,
+          timezone,
+        });
+
+        const calendarEvent = await timeApplication.saveCalendarEvent({
+          title,
+          description: typeof args.description === "string" ? args.description : undefined,
+          startsAt,
+          endsAt,
+          timezone,
+          ownerScope,
+          ownerId,
+          status: "confirmed",
+          source: "agent",
+          location: typeof args.location === "string" ? args.location : undefined,
+        });
+
+        const reminderAt = resolveCalendarEventReminderAt(startsAt, args);
+        if (!reminderAt) {
+          return { success: true, output: JSON.stringify({ calendarEvent, reminder: null }), mutated: true };
+        }
+
+        console.info("[time-tool] 为日程创建会前提醒", {
+          title,
+          reminderAt,
+          calendarEventId: calendarEvent.id,
+        });
+        const reminder = await timeApplication.saveReminder({
+          title: `${title}会前提醒`,
+          body: typeof args.reminderBody === "string" ? args.reminderBody : `日程「${title}」即将开始`,
+          triggerAt: reminderAt,
+          timezone,
+          ownerScope,
+          ownerId,
+          source: "agent",
+          status: "scheduled",
+        });
+        return { success: true, output: JSON.stringify({ calendarEvent, reminder }), mutated: true };
+      }
+
+      case "calendar_event.list": {
+        const events = await timeApplication.listCalendarEvents();
+        return { success: true, output: JSON.stringify(events), mutated: false };
+      }
+
       case "reminder.create": {
         const title = String(args.title ?? "").trim();
         const triggerAt = String(args.triggerAt ?? "").trim();

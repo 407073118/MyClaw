@@ -111,6 +111,10 @@ vi.mock("../src/renderer/stores/workflow-runs", () => ({
 describe("AppShell time assistant presence", () => {
   afterEach(() => {
     cleanup();
+    mocks.workspace.ready = true;
+    mocks.workspace.loading = false;
+    mocks.workspace.error = null;
+    mocks.workspace.requiresInitialSetup = false;
     mocks.workspace.loadBootstrap.mockReset();
     mocks.workspace.setActiveSiliconPersonId.mockReset();
     mocks.auth.logout.mockReset();
@@ -160,5 +164,40 @@ describe("AppShell time assistant presence", () => {
     expect(screen.queryByTestId("floating-time-capsule")).toBeNull();
 
     vi.useRealTimers();
+  });
+
+  it("does not retry bootstrap automatically while an error is visible", async () => {
+    mocks.workspace.ready = false;
+    mocks.workspace.loading = false;
+    mocks.workspace.error = "time db unavailable";
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        platform: "win32",
+        onWorkflowStream: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: AppShell } = await import("../src/renderer/layouts/AppShell");
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ["/time"] },
+        React.createElement(
+          Routes,
+          null,
+          React.createElement(
+            Route,
+            { element: React.createElement(AppShell) },
+            React.createElement(Route, { path: "/time", element: React.createElement("div", null, "time body") }),
+          ),
+        ),
+      ),
+    );
+
+    expect(screen.getByText("Workspace startup failed")).toBeTruthy();
+    expect(mocks.workspace.loadBootstrap).not.toHaveBeenCalled();
   });
 });

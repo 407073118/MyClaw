@@ -75,6 +75,8 @@ const myClawAPI = {
   openAppUpdateDownloadPage: () => ipcRenderer.invoke("update:open-download-page"),
   onAppUpdateStateChanged: (callback: (payload: Record<string, unknown>) => void): UnsubscribeFn =>
     onChannel("update:state-changed", callback),
+  onTimeReminderDelivered: (callback: (payload: { id?: string; title: string; body?: string; deliveredAt: string }) => void): UnsubscribeFn =>
+    onChannel("time:reminder-delivered", callback),
 
   // ---- 时间编排 ------------------------------------------------------------
   time: {

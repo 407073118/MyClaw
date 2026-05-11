@@ -2,6 +2,12 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUp, Square } from "lucide-react";
 import { marked } from "marked";
+type ChatReminderBannerPayload = {
+  id?: string;
+  title: string;
+  body?: string;
+  deliveredAt: string;
+};
 import { PlanStatePanel } from "../components/plan-state-panel";
 import { PlanSidePanel } from "../components/PlanSidePanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
@@ -343,6 +349,7 @@ export default function ChatPage() {
   const [dispatchTraces, setDispatchTraces] = useState<Array<{ id: string; personName: string; personId: string; content: string; timestamp: string }>>([]);
   const [autoExpandedReasoningMessageId, setAutoExpandedReasoningMessageId] = useState<string | null>(null);
   const [reasoningPanelOverrides, setReasoningPanelOverrides] = useState<Record<string, boolean>>({});
+  const [activeReminderBanner, setActiveReminderBanner] = useState<ChatReminderBannerPayload | null>(null);
 
   const siliconPersons = workspace.siliconPersons ?? [];
   const activeSiliconPersonId = workspace.activeSiliconPersonId;
@@ -486,6 +493,20 @@ export default function ChatPage() {
   }, []);
 
   /** 路由参数 ?sessionId= 一次性命中 → 切到该 session 并清掉 query，避免回退/刷新时反复触发。 */
+  /** 监听主进程提醒投递事件，在聊天顶部提供应用内兜底提示。 */
+  useEffect(() => {
+    const unsubscribe = window.myClawAPI?.onTimeReminderDelivered?.((payload) => {
+      console.info("[chat-page] 收到应用内提醒事件", {
+        id: payload.id,
+        title: payload.title,
+      });
+      setActiveReminderBanner(payload);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
   useEffect(() => {
     const queryId = searchParams.get("sessionId");
     if (!queryId) return;
@@ -1586,6 +1607,24 @@ export default function ChatPage() {
         </header>
 
         {/* 时间线区域 */}
+        {activeReminderBanner && (
+          <div className="chat-reminder-banner" data-testid="chat-reminder-banner" role="status">
+            <div className="chat-reminder-banner__main">
+              <span className="chat-reminder-banner__label">提醒</span>
+              <strong>{activeReminderBanner.title}</strong>
+              {activeReminderBanner.body ? <span>{activeReminderBanner.body}</span> : null}
+            </div>
+            <button
+              type="button"
+              className="chat-reminder-banner__close"
+              aria-label="关闭提醒提示"
+              onClick={() => setActiveReminderBanner(null)}
+            >
+              ×
+            </button>
+          </div>
+        )}
+
         <div className={`chat-timeline-container${showWorkFiles ? " chat-timeline-container--with-sidebar" : ""}`}>
           <section
             className="timeline-panel"
@@ -2280,6 +2319,13 @@ export default function ChatPage() {
         .chat-header-action-btn--active { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.3); color: #60a5fa; }
 
         /* ── 时间线容器 (支持文件侧边栏) ── */
+        .chat-reminder-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 32px; border-bottom: 1px solid rgba(245,158,11,0.22); background: rgba(245,158,11,0.10); color: var(--text-primary); }
+        .chat-reminder-banner__main { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; }
+        .chat-reminder-banner__main strong { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
+        .chat-reminder-banner__main span:last-child { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .chat-reminder-banner__label { padding: 2px 7px; border-radius: 999px; background: rgba(245,158,11,0.16); color: #fbbf24; font-size: 11px; font-weight: 700; }
+        .chat-reminder-banner__close { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 18px; line-height: 1; }
+        .chat-reminder-banner__close:hover { border-color: rgba(245,158,11,0.25); color: var(--text-primary); background: rgba(255,255,255,0.05); }
         .chat-timeline-container { display: flex; flex: 1; overflow: hidden; min-height: 0; }
         .chat-timeline-container--with-sidebar .timeline-panel { border-right: 1px solid var(--glass-border); }
         .chat-work-files-drawer { width: 340px; min-width: 320px; background: color-mix(in srgb, var(--bg-card) 94%, transparent); display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; position: relative; z-index: 5; overflow-y: auto; }

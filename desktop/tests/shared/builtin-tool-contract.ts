@@ -1,6 +1,9 @@
 /** 共享 desktop builtin tool 名单，避免多份测试基线漂移。 */
 export const EXPECTED_BUILTIN_TOOL_NAMES = [
   "fs_read",
+  "file_view",
+  "xlsx_extract",
+  "document_read",
   "fs_write",
   "fs_list",
   "fs_search",
@@ -19,6 +22,8 @@ export const EXPECTED_BUILTIN_TOOL_NAMES = [
   "task_list",
   "task_get",
   "task_update",
+  "calendar_event_create",
+  "calendar_event_list",
   "reminder_create",
   "reminder_list",
   "schedule_job_create",

@@ -195,6 +195,7 @@ declare global {
       quitAndInstallAppUpdate: () => Promise<{ accepted: boolean }>;
       openAppUpdateDownloadPage: () => Promise<{ opened: boolean }>;
       onAppUpdateStateChanged: (callback: (payload: AppUpdateState) => void) => () => void;
+      onTimeReminderDelivered: (callback: (payload: { id?: string; title: string; body?: string; deliveredAt: string }) => void) => () => void;
 
       // --- Time orchestration ---
       time: {
