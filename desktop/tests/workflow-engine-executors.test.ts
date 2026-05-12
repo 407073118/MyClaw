@@ -30,7 +30,10 @@ describe("EndNodeExecutor", () => {
   it("writes __done__ signal", async () => {
     const exec = new EndNodeExecutor();
     const result = await exec.execute(makeCtx({ id: "e1", kind: "end", label: "End" }));
-    expect(result.writes).toEqual([{ channelName: "__done__", value: true }]);
+    expect(result.writes).toEqual([
+      { channelName: "outputs", value: {} },
+      { channelName: "__done__", value: true },
+    ]);
   });
 
   it("maps configured final outputs from workflow variables", async () => {
@@ -138,6 +141,21 @@ describe("LlmNodeExecutor", () => {
 
     expect(result.writes).toEqual([{ channelName: "lastLlmOutput", value: "final reply" }]);
     expect(result.outputs).toEqual({ content: "final reply" });
+  });
+
+  it("rejects incomplete streamed model results instead of writing partial output", async () => {
+    const modelCaller = vi.fn(async () => ({ content: "partial reply", streamCompleted: false }));
+    const exec = new LlmNodeExecutor(modelCaller, () => ({ id: "profile-1" }));
+    const node: WorkflowLlmNode = {
+      id: "llm-stream",
+      kind: "llm",
+      label: "Summarize",
+      llm: {
+        prompt: "summarize {{topic}}",
+      },
+    };
+
+    await expect(exec.execute(makeCtx(node, { topic: "status" }))).rejects.toThrow("模型响应流异常截断");
   });
 
   it("renders dotted workflow variable references in prompts", async () => {

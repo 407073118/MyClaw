@@ -112,6 +112,7 @@ type SchedulePlanningModel = {
 const DAY_HOURS = Array.from({ length: 25 }, (_, index) => index);
 const MAX_INITIAL_TIMELINE_ENTRIES = 200;
 const MAX_SIDE_RAIL_TASKS = 8;
+const MAX_INITIAL_JOB_LIST_ROWS = 100;
 
 /** 渲染日程规划页：以时间轴为主体，统一呈现我、硅基人和自动任务。 */
 export default function TimeCenterPage() {
@@ -197,8 +198,10 @@ export default function TimeCenterPage() {
     [time.taskCommitments, selectedDate, timezone, siliconPersonNameById],
   );
   const jobEntries = useMemo(
-    () => buildJobEntries(time.scheduleJobs, selectedDate, timezone, latestRunByJobId, siliconPersonNameById),
-    [time.scheduleJobs, selectedDate, timezone, latestRunByJobId, siliconPersonNameById],
+    () => activeView === "timeline"
+      ? buildJobEntries(time.scheduleJobs, selectedDate, timezone, latestRunByJobId, siliconPersonNameById)
+      : [],
+    [activeView, time.scheduleJobs, selectedDate, timezone, latestRunByJobId, siliconPersonNameById],
   );
   const planningModel = useMemo<SchedulePlanningModel>(() => {
     const entries = [...eventEntries, ...reminderEntries, ...taskEntries, ...jobEntries]
@@ -207,7 +210,7 @@ export default function TimeCenterPage() {
       entries,
       personalCount: entries.filter((entry) => entry.ownerScope === "personal" && entry.kind !== "schedule_job").length,
       siliconCount: entries.filter((entry) => entry.ownerScope === "silicon_person").length,
-      scheduleJobCount: jobEntries.length,
+      scheduleJobCount: time.scheduleJobs.length,
       failedJobCount: time.scheduleJobs.filter(
         (job) => job.status === "failed" || latestRunByJobId.get(job.id)?.status === "failed",
       ).length,
@@ -1397,6 +1400,11 @@ function ScheduleJobListPage({
     () => (typeFilter === "all" ? jobs : jobs.filter((job) => job.executor === typeFilter)),
     [jobs, typeFilter],
   );
+  const visibleJobs = useMemo(
+    () => filteredJobs.slice(0, MAX_INITIAL_JOB_LIST_ROWS),
+    [filteredJobs],
+  );
+  const hiddenJobCount = Math.max(0, filteredJobs.length - visibleJobs.length);
 
   /** 包一层 onRunNow：本地标记 pending → await → 清理。失败也兜底清理。 */
   async function handleRunClick(job: ScheduleJob) {
@@ -1439,7 +1447,7 @@ function ScheduleJobListPage({
           {filteredJobs.length === 0 ? (
             <p className="side-empty">{jobs.length === 0 ? "暂无定时任务。" : "当前筛选下没有任务。"}</p>
           ) : null}
-        {filteredJobs.map((job) => {
+        {visibleJobs.map((job) => {
           const latestRun = latestRunByJobId.get(job.id);
           const isRunPending = pendingRunIds.has(job.id);
           return (
@@ -1496,6 +1504,11 @@ function ScheduleJobListPage({
             </article>
           );
         })}
+        {hiddenJobCount > 0 ? (
+          <p className="compact-overflow" data-testid="schedule-job-overflow">
+            还有 {hiddenJobCount} 个定时任务未显示，请使用类型筛选缩小范围。
+          </p>
+        ) : null}
       </div>
     </section>
   );
@@ -2131,7 +2144,7 @@ function resolveScheduleJobTimes(job: ScheduleJob, dateKey: string, timezone: st
     return [primaryTime];
   }
   if (job.scheduleKind === "cron" && job.cronExpression) {
-    return enumerateCronRunsOnDate(job.cronExpression, dateKey, timezone).slice(0, 6);
+    return enumerateCronRunsOnDate(job.cronExpression, dateKey, timezone, { limit: 6 });
   }
   return [];
 }

@@ -244,6 +244,21 @@ function finaliseSseState(state: SseState): {
   };
 }
 
+/** 兼容部分 OpenAI-Compatible 网关用干净 EOF 代替 `[DONE]` / `finish_reason` 的文本流。 */
+function markCleanTextEofAsCompleted(state: SseState): void {
+  if (state.streamCompleted || state.finishReason) {
+    return;
+  }
+  if (state.toolCallsByIndex.size > 0) {
+    return;
+  }
+  if (state.contentParts.length === 0 && state.reasoningParts.length === 0) {
+    return;
+  }
+  console.info("[model-sse-parser] 已兼容文本流干净 EOF 结束，未收到 [DONE] 或 finish_reason");
+  state.streamCompleted = true;
+}
+
 /** 消费 SSE 响应体，并累计 content、reasoning、tool calls 与 usage。 */
 export async function consumeSseStream(
   response: Response,
@@ -280,6 +295,7 @@ export async function consumeSseStream(
     }
     // finish_reason 存在也视为正常完成（部分 provider 不发 [DONE]）
     if (state.finishReason) state.streamCompleted = true;
+    markCleanTextEofAsCompleted(state);
     return finaliseSseState(state);
   }
 
@@ -319,6 +335,7 @@ export async function consumeSseStream(
 
   // finish_reason 存在也视为正常完成（部分 provider 不发 [DONE]）
   if (state.finishReason) state.streamCompleted = true;
+  markCleanTextEofAsCompleted(state);
 
   return finaliseSseState(state);
 }

@@ -215,8 +215,57 @@ describe("anthropic messages driver", () => {
     expect(result.fallbackReason).toBeNull();
     expect(result.fallbackEvents).toEqual([]);
     expect(result.content).toBe("hello");
+    expect(result.streamCompleted).toBe(true);
     expect(result.capabilityEvents).toEqual([]);
     expect(result.citations).toEqual([]);
+  });
+
+  it("marks messages streams incomplete when EOF arrives before message_stop", async () => {
+    executeRequestVariantsMock.mockResolvedValueOnce({
+      response: new Response(
+        [
+          "event: message_start",
+          "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_interrupted\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null}}",
+          "",
+          "event: content_block_delta",
+          "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}",
+          "",
+          "event: message_delta",
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":8,\"output_tokens\":3}}",
+          "",
+        ].join("\n"),
+        {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      ),
+      variant: { id: "anthropic-messages", body: {} },
+      variantIndex: 0,
+      attempt: 0,
+      retryCount: 0,
+      fallbackEvents: [],
+    });
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+    });
+
+    const result = await anthropicMessagesDriver.execute({
+      profile,
+      plan: buildTurnExecutionPlan({
+        profile,
+        legacyExecutionPlan: makeLegacyExecutionPlan(),
+      }),
+      content,
+      toolBundle: new ToolMiddleware().compile([], "anthropic-native"),
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    });
+
+    expect(result.content).toBe("partial");
+    expect(result.streamCompleted).toBe(false);
   });
 
   it("preserves Qwen vendor identity in the anthropic-compatible canonical route", async () => {

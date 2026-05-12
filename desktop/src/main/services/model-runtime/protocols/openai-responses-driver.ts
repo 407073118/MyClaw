@@ -36,6 +36,7 @@ type ResponsesStreamState = {
   latestWebSearchTraceId: string | null;
   activeToolCallId: string | null;
   finishReason: string | null;
+  streamCompleted: boolean;
   usage: ProtocolExecutionOutput["usage"];
 };
 
@@ -502,6 +503,7 @@ export function parseOpenAiResponsesJsonPayload(
     latestWebSearchTraceId: null,
     activeToolCallId: null,
     finishReason: null,
+    streamCompleted: true,
     usage: undefined,
   };
 
@@ -563,6 +565,7 @@ export function parseOpenAiResponsesJsonPayload(
     reasoning: state.reasoningParts.length > 0 ? state.reasoningParts.join("") : undefined,
     toolCalls: materializeToolCalls(state.toolCalls),
     finishReason,
+    streamCompleted: true,
     usage: undefined,
     responseId: state.responseId,
     requestVariantId: null,
@@ -824,6 +827,7 @@ function applyResponsesEvent(
   }
 
   if (event === "response.completed") {
+    state.streamCompleted = true;
     const usage = payload.usage && typeof payload.usage === "object"
       ? payload.usage as Record<string, unknown>
       : payload.response && typeof payload.response === "object"
@@ -889,6 +893,7 @@ async function consumeResponsesStream(
     latestWebSearchTraceId: null,
     activeToolCallId: null,
     finishReason: null,
+    streamCompleted: false,
     usage: undefined,
   };
 
@@ -898,6 +903,7 @@ async function consumeResponsesStream(
       content: "",
       toolCalls: [],
       finishReason: "stop",
+      streamCompleted: false,
       retryCount: 0,
       fallbackEvents: [],
       computerCalls: [],
@@ -966,6 +972,7 @@ async function consumeResponsesStream(
     ...(state.reasoningParts.length > 0 ? { reasoning: state.reasoningParts.join("") } : {}),
     toolCalls: materializeToolCalls(state.toolCalls),
     finishReason: state.finishReason ?? "stop",
+    streamCompleted: state.streamCompleted,
     usage: state.usage,
     responseId: state.responseId,
     requestVariantId: null,
@@ -1101,6 +1108,7 @@ export const openAiResponsesDriver: ProtocolDriver = {
       reasoning: parsed.reasoning,
       toolCalls: parsed.toolCalls,
       finishReason: parsed.finishReason,
+      streamCompleted: parsed.streamCompleted,
       usage: parsed.usage,
       responseId: parsed.responseId,
       requestVariantId: transportResult.variant.id,

@@ -531,4 +531,131 @@ describe("phase1 model client transport", () => {
       totalTokens: 10,
     });
   });
+
+  it("accepts text-only EOF completion from generic compatible streams", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(buildSseResponse([
+        'data: {"choices":[{"delta":{"content":"pong"},"finish_reason":null}]}',
+        "",
+      ].join("\n")));
+    vi.stubGlobal("fetch", fetchMock);
+    const streamed: string[] = [];
+
+    const result = await callModel({
+      profile: {
+        id: "eof-completion-profile",
+        name: "EOF Completion",
+        provider: "openai-compatible",
+        providerFlavor: "generic-openai-compatible",
+        baseUrl: "https://api.example.com/v1",
+        apiKey: "eof-test-key",
+        model: "eof-model",
+      },
+      messages: [{ role: "user", content: "hello" }],
+      executionPlan: {
+        adapterId: "openai-compatible",
+        replayPolicy: "content-only",
+      },
+      onDelta: (delta) => {
+        if (delta.content) streamed.push(delta.content);
+      },
+    });
+
+    expect(result.content).toBe("pong");
+    expect(result.streamCompleted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(streamed).toEqual(["pong"]);
+  });
+
+  it("does not replay a streamed request after visible partial tool content", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(buildSseResponse([
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"search","arguments":"{\\"q\\""}}]},"finish_reason":null}]}',
+          "",
+        ].join("\n")))
+        .mockResolvedValueOnce(buildSseResponse([
+          'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}',
+          "data: [DONE]",
+          "",
+        ].join("\n")));
+      vi.stubGlobal("fetch", fetchMock);
+      const streamed: string[] = [];
+
+      const outcome = callModel({
+        profile: {
+          id: "partial-stream-profile",
+          name: "Partial Stream",
+          provider: "openai-compatible",
+          providerFlavor: "generic-openai-compatible",
+          baseUrl: "https://api.example.com/v1",
+          apiKey: "partial-test-key",
+          model: "partial-model",
+        },
+        messages: [{ role: "user", content: "hello" }],
+        executionPlan: {
+          adapterId: "openai-compatible",
+          replayPolicy: "content-only",
+        },
+        onToolCallDelta: (delta) => {
+          if (delta.argumentsDelta) streamed.push(delta.argumentsDelta);
+        },
+      }).then(
+        () => ({ ok: true as const }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await outcome;
+
+      expect(result.ok).toBe(false);
+      expect(result.ok ? "" : String(result.error)).toContain("stream interrupted");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(streamed).toEqual(['{"q"']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries an interrupted stream that produced no visible output", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce(buildSseResponse(""))
+        .mockResolvedValueOnce(buildSseResponse([
+          'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}',
+          "data: [DONE]",
+          "",
+        ].join("\n")));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const resultPromise = callModel({
+        profile: {
+          id: "empty-retry-profile",
+          name: "Empty Retry",
+          provider: "openai-compatible",
+          providerFlavor: "generic-openai-compatible",
+          baseUrl: "https://api.example.com/v1",
+          apiKey: "retry-test-key",
+          model: "retry-model",
+        },
+        messages: [{ role: "user", content: "hello" }],
+        executionPlan: {
+          adapterId: "openai-compatible",
+          replayPolicy: "content-only",
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await resultPromise;
+
+      expect(result.content).toBe("done");
+      expect(result.streamCompleted).toBe(true);
+      expect(result.transport?.streamRetryCount).toBe(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

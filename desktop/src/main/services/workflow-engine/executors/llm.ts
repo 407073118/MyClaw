@@ -12,7 +12,7 @@ export type ModelCaller = (options: {
   onDelta?: (delta: { content?: string; reasoning?: string }) => void;
   signal?: AbortSignal;
   workflowRunId?: string;
-}) => Promise<{ content: string; usage?: unknown }>;
+}) => Promise<{ content: string; usage?: unknown; streamCompleted?: boolean }>;
 
 export type ModelProfileResolver = (id?: string) => unknown;
 
@@ -60,6 +60,15 @@ export class LlmNodeExecutor implements NodeExecutor {
       signal: ctx.signal,
       workflowRunId: ctx.runId,
     });
+    if (result.streamCompleted === false) {
+      // 流式模型未完整结束时，禁止把 partial 内容写入工作流状态。
+      console.error("[workflow:llm] 模型响应流异常截断，终止 LLM 节点写入", {
+        runId: ctx.runId,
+        nodeId: node.id,
+        partialLength: content.length || result.content.length,
+      });
+      throw new Error("模型响应流异常截断，未写入工作流节点输出。请重试该工作流。");
+    }
     const resolvedContent = content.length > 0 ? content : result.content;
     const outputKey = node.llm.outputKey
       ?? (node.outputBindings ? Object.values(node.outputBindings)[0] : null)

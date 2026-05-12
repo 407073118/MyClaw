@@ -406,6 +406,7 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
     return {
       content: result.content,
       usage: result.usage,
+      streamCompleted: result.streamCompleted,
     };
   };
   registry.register(new LlmNodeExecutor(modelCaller, profileResolver));

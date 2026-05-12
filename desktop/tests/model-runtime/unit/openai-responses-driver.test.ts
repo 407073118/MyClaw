@@ -107,6 +107,7 @@ describe("openai responses driver", () => {
     expect(result.fallbackEvents).toEqual([]);
     expect(result.content).toBe("hello");
     expect(result.responseId).toBe("resp_123");
+    expect(result.streamCompleted).toBe(true);
     expect(result.usage).toMatchObject({
       promptTokens: 12,
       completionTokens: 4,
@@ -114,6 +115,60 @@ describe("openai responses driver", () => {
       reasoningTokens: 3,
       cachedInputTokens: 5,
     });
+  });
+
+  it("marks responses streams incomplete when EOF arrives before response.completed", async () => {
+    executeRequestVariantsMock.mockResolvedValueOnce({
+      response: new Response(
+        [
+          "event: response.created",
+          "data: {\"id\":\"resp_interrupted\"}",
+          "",
+          "event: response.output_text.delta",
+          "data: {\"delta\":\"partial\"}",
+          "",
+        ].join("\n"),
+        {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      ),
+      variant: { id: "openai-responses", body: {} },
+      variantIndex: 0,
+      attempt: 0,
+      retryCount: 0,
+      fallbackEvents: [],
+    });
+    const profile = makeProfile({
+      providerFlavor: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      model: "gpt-4.1",
+    });
+
+    const result = await openAiResponsesDriver.execute({
+      profile,
+      plan: buildTurnExecutionPlan({
+        profile,
+        legacyExecutionPlan: makeLegacyExecutionPlan(),
+      }),
+      content: {
+        systemSections: [],
+        userSections: [],
+        taskState: null,
+        messages: [{ role: "user", content: [{ type: "text", text: "hello" }] }],
+        toolCalls: [],
+        toolResults: [],
+        approvalEvents: [],
+        replayHints: { preserveReasoning: true, preserveToolLedger: true, preserveCachePrefix: true },
+      },
+      toolBundle: new ToolMiddleware().compile([], "openai-native"),
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    });
+
+    expect(result.content).toBe("partial");
+    expect(result.responseId).toBe("resp_interrupted");
+    expect(result.streamCompleted).toBe(false);
   });
 
   it("parses reasoning and tool calls from structured responses events", async () => {

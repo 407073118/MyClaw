@@ -258,6 +258,50 @@ describe("TimeCenterPage", () => {
     expect(screen.getByTestId("unscheduled-task-overflow")).toBeTruthy();
   });
 
+  it("limits schedule job list rendering for large datasets", () => {
+    const scheduleJobs = Array.from({ length: 360 }, (_, index) => ({
+      id: `perf-job-${index}`,
+      kind: "schedule_job" as const,
+      title: `Perf job ${index}`,
+      scheduleKind: "interval" as const,
+      timezone: "Asia/Shanghai",
+      ownerScope: "personal" as const,
+      status: "scheduled" as const,
+      source: "manual" as const,
+      intervalMinutes: 30,
+      executor: "assistant_prompt" as const,
+      nextRunAt: new Date(Date.UTC(2026, 4, 7, 2, index % 60, 0)).toISOString(),
+      createdAt: "2026-05-07T00:00:00.000Z",
+      updatedAt: "2026-05-07T00:00:00.000Z",
+    }));
+    useWorkspaceStore.setState((state) => ({
+      time: {
+        ...state.time,
+        calendarEvents: [],
+        reminders: [],
+        taskCommitments: [],
+        scheduleJobs,
+        executionRuns: [],
+      },
+    }) as any);
+
+    const { container } = renderPage([{ pathname: "/time", state: { activeView: "jobs" } }]);
+
+    expect(screen.getByRole("heading", { name: "定时任务" })).toBeTruthy();
+    expect(container.querySelectorAll(".list-page-row--job")).toHaveLength(100);
+    expect(screen.getByTestId("schedule-job-overflow")).toBeTruthy();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    expect(screen.getByRole("dialog", { name: "编辑定时任务" })).toBeTruthy();
+    expect(container.querySelectorAll(".list-page-row--job")).toHaveLength(100);
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭编辑" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建" }));
+    fireEvent.click(within(screen.getByTestId("schedule-composer-modal")).getByRole("button", { name: "定时任务" }));
+    expect(screen.getByRole("dialog", { name: "新建定时任务" })).toBeTruthy();
+    expect(container.querySelectorAll(".list-page-row--job")).toHaveLength(100);
+  });
+
   it("opens timeline event details and supports edit and delete actions", async () => {
     renderPage();
 

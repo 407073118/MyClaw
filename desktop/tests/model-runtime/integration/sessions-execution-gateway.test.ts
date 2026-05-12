@@ -61,6 +61,8 @@ vi.mock("../../../src/main/services/builtin-tool-executor", () => ({ BuiltinTool
   setAllowExternalPaths() {}
   setPathPolicy() {}
   setPathAudit() {}
+  setFileActionHandlers() {}
+  setDocCacheRoot() {}
   getBrowserService() {
     return {};
   }
@@ -608,6 +610,52 @@ describe("sessions execution gateway", () => {
     await expect(sendPromise).resolves.toEqual(expect.objectContaining({
       session: expect.objectContaining({ id: "session-1" }),
     }));
+  });
+
+  it("does not execute tool calls from an incomplete stream result", async () => {
+    let approvalRequests: Array<Record<string, unknown>> = [];
+
+    gatewayExecuteMock.mockResolvedValueOnce({
+      content: "",
+      reasoning: "need to inspect tasks",
+      toolCalls: [
+        { id: "tool-1", name: "task.list", argumentsJson: "{}", input: {} },
+      ],
+      finishReason: "tool_calls",
+      streamCompleted: false,
+      plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+      outcome: { id: "outcome-incomplete" },
+    });
+
+    const ctx: any = {
+      runtime: { myClawRootPath: "/tmp", skillsRootPath: "/tmp/skills", sessionsRootPath: "/tmp/sessions", paths: { myClawDir: "/tmp" } },
+      state: {
+        models: [makeProfile()],
+        sessions: [{ id: "session-1", title: "Test", modelProfileId: "profile-1", attachedDirectory: null, createdAt: "2026-04-10T00:00:00.000Z", messages: [] }],
+        siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
+        getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
+        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovalRequests: () => approvalRequests,
+        setApprovalRequests: (next: Array<Record<string, unknown>>) => { approvalRequests = next; },
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
+      },
+      services: { refreshSkills: async () => [], listMcpServers: () => [], mcpManager: null, appUpdater: { getSnapshot: () => ({ status: "idle" }) } },
+      tools: { resolveBuiltinTools: () => [], resolveMcpTools: () => [] },
+    };
+
+    registerSessionHandlers(ctx);
+    const sendMessageHandler = ipcHandleRegistry.get("session:send-message");
+    const result = await sendMessageHandler?.({}, "session-1", { content: "inspect tasks", attachedDirectory: null }) as {
+      session: { messages: Array<{ role: string; content: unknown }> };
+    };
+
+    expect(gatewayExecuteMock).toHaveBeenCalledTimes(1);
+    expect(approvalRequests).toEqual([]);
+    expect(result.session.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      content: expect.stringContaining("模型响应中断"),
+    });
+    expect(result.session.messages.some((message) => message.role === "tool")).toBe(false);
   });
 
   it("replays completed background output back into the session transcript", async () => {

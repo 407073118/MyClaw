@@ -51,6 +51,10 @@ type CronParts = {
   dateKey: string;
 };
 
+export type CronEnumerationOptions = {
+  limit?: number;
+};
+
 /**
  * 按时区缓存 Intl.DateTimeFormat 实例 —— enumerateCronRunsOnDate 一次会调
  * readCronCandidateParts 上千次（24h × 60min × 36h × N 个 cron 任务），频繁
@@ -130,18 +134,26 @@ export function findNextCronRunAt(
  * @param expression cron 表达式
  * @param dateKey   `YYYY-MM-DD` 本地日期键
  * @param timeZone  IANA 时区
+ * @param options   可选枚举上限，给时间轴预览避免先生成全天高频触发点
  * @returns 该日触发的 UTC ISO 时间列表，按时间升序
  */
 export function enumerateCronRunsOnDate(
   expression: string,
   dateKey: string,
   timeZone: string,
+  options: CronEnumerationOptions = {},
 ): string[] {
   const fields = parseCronExpression(expression);
   if (!fields) {
     return [];
   }
   const [minuteField, hourField, dayField, monthField, weekdayField] = fields;
+  const limit = Number.isFinite(options.limit)
+    ? Math.max(0, Math.floor(options.limit as number))
+    : Number.POSITIVE_INFINITY;
+  if (limit === 0) {
+    return [];
+  }
 
   // 从该日期键 00:00（本地时区）开始扫，逐分钟最多 24*60 个候选；
   // 用 findNextCronRunAt 从 dateKey 前一天 23:59 起步反复推进，直到跨日为止。
@@ -152,7 +164,7 @@ export function enumerateCronRunsOnDate(
   let cursor = new Date(startProbe.getTime() - 60_000);
 
   const results: string[] = [];
-  for (let safety = 0; safety < 24 * 60 + 60; safety += 1) {
+  for (let safety = 0; safety < 24 * 60 + 60 && results.length < limit; safety += 1) {
     const next = findNextCronRunAtBounded(fields as [string, string, string, string, string], cursor, timeZone, dateKey);
     if (!next) break;
     results.push(next);

@@ -372,6 +372,24 @@ const STREAM_RETRY_MAX = 3;
 /** 流式重试退避时长（毫秒）：2s → 4s → 8s，比连接重试更宽松。 */
 const STREAM_RETRY_DELAYS = [2000, 4000, 8000];
 
+/** 标记已经向上层暴露过 partial 输出的流异常，避免整请求重发造成重复内容。 */
+export class ModelStreamInterruptedError extends Error {
+  contentLength: number;
+  reasoningLength: number;
+  toolCallCount: number;
+
+  /** 构造可诊断的流中断错误，日志保留已暴露的 partial 规模。 */
+  constructor(input: { contentLength: number; reasoningLength: number; toolCallCount: number }) {
+    super(
+      `stream interrupted after partial output (content=${input.contentLength} chars, reasoning=${input.reasoningLength} chars, toolCalls=${input.toolCallCount})`,
+    );
+    this.name = "ModelStreamInterruptedError";
+    this.contentLength = input.contentLength;
+    this.reasoningLength = input.reasoningLength;
+    this.toolCallCount = input.toolCallCount;
+  }
+}
+
 /**
  * 判断某个错误或 HTTP 状态码是否适合重试。
  *
@@ -567,9 +585,40 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     const isEventStream = contentType.includes("text/event-stream");
 
     if (isEventStream) {
-      const result = await consumeSseStream(response, onDelta, onToolCallDelta);
+      let attemptEmittedOutput = false;
+      const result = await consumeSseStream(
+        response,
+        (delta) => {
+          if (delta.content || delta.reasoning) {
+            attemptEmittedOutput = true;
+          }
+          onDelta?.(delta);
+        },
+        (delta) => {
+          if (delta.argumentsDelta || delta.name || delta.toolCallId) {
+            attemptEmittedOutput = true;
+          }
+          onToolCallDelta?.(delta);
+        },
+      );
 
       // 流异常截断检测：未收到 [DONE] 且没有 finish_reason
+      const hasVisiblePartialOutput =
+        attemptEmittedOutput ||
+        result.content.length > 0 ||
+        result.reasoning.length > 0 ||
+        result.toolCalls.length > 0;
+      if (!result.streamCompleted && hasVisiblePartialOutput) {
+        console.warn(
+          `[model-client] Stream interrupted after partial output (finishReason=${result.finishReason}, content=${result.content.length} chars, reasoning=${result.reasoning.length} chars, toolCalls=${result.toolCalls.length}). Not replaying request.`,
+        );
+        throw new ModelStreamInterruptedError({
+          contentLength: result.content.length,
+          reasoningLength: result.reasoning.length,
+          toolCallCount: result.toolCalls.length,
+        });
+      }
+
       if (!result.streamCompleted && streamAttempt < STREAM_RETRY_MAX) {
         const delay = STREAM_RETRY_DELAYS[Math.min(streamAttempt, STREAM_RETRY_DELAYS.length - 1)] ?? 4000;
         console.warn(

@@ -23,6 +23,7 @@ type AnthropicStreamState = {
   reasoningParts: string[];
   toolCallsByIndex: Map<number, AnthropicToolCallAccumulator>;
   finishReason: string | null;
+  streamCompleted: boolean;
   usage: ProtocolExecutionOutput["usage"];
 };
 
@@ -220,6 +221,10 @@ function applyAnthropicEvent(
       };
     }
   }
+
+  if (event === "message_stop") {
+    state.streamCompleted = true;
+  }
 }
 
 /** 逐条读取 Anthropic SSE 事件，兼容标准 `event:` / `data:` 帧。 */
@@ -233,6 +238,7 @@ async function consumeAnthropicStream(
     reasoningParts: [],
     toolCallsByIndex: new Map(),
     finishReason: null,
+    streamCompleted: false,
     usage: undefined,
   };
 
@@ -242,6 +248,7 @@ async function consumeAnthropicStream(
       content: "",
       toolCalls: [],
       finishReason: "stop",
+      streamCompleted: false,
       retryCount: 0,
       fallbackEvents: [],
       citations: [],
@@ -311,6 +318,7 @@ async function consumeAnthropicStream(
     ...(state.reasoningParts.length > 0 ? { reasoning: state.reasoningParts.join("") } : {}),
     toolCalls: materializeToolCalls(state.toolCallsByIndex),
     finishReason: state.finishReason ?? (state.toolCallsByIndex.size > 0 ? "tool_calls" : "stop"),
+    streamCompleted: state.streamCompleted,
     usage: state.usage,
     requestVariantId: null,
     fallbackReason: null,
@@ -377,6 +385,7 @@ export const anthropicMessagesDriver: ProtocolDriver = {
       reasoning: parsed.reasoning,
       toolCalls: parsed.toolCalls,
       finishReason: parsed.finishReason,
+      streamCompleted: parsed.streamCompleted,
       usage: parsed.usage,
       requestVariantId: requestVariantId,
       fallbackReason: transportResult.variant.fallbackReason ?? null,

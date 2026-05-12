@@ -3193,6 +3193,29 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           });
 
           // 检查模型是否发起了工具调用
+          const isStreamIncomplete = result.streamCompleted === false;
+          if (isStreamIncomplete) {
+            // 流未收到完成事件时，禁止继续执行已解析出的工具调用，避免半截响应触发副作用。
+            console.error("[session:stream-integrity] 模型响应流异常截断，终止本轮执行", {
+              sessionId,
+              round,
+              finishReason: result.finishReason,
+              streamCompleted: result.streamCompleted,
+              contentLength: result.content?.length ?? 0,
+              reasoningLength: result.reasoning?.length ?? 0,
+              toolCallCount: result.toolCalls.length,
+            });
+            session.messages.push({
+              id: currentMessageId,
+              role: "assistant",
+              content: "[模型响应中断] 与模型的连接意外断开，未收到完整回复。请重新发送消息重试。",
+              createdAt: new Date().toISOString(),
+            });
+            terminalStatus = "failed";
+            terminalReason = "stream_interrupted";
+            break;
+          }
+
           const hasToolCalls = result.toolCalls.length > 0;
           const existingTaskCountBeforeRound = session.tasks?.length ?? 0;
 
@@ -3800,30 +3823,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               round,
             });
           } else {
-            // 没有工具调用——检查是否是异常截断而非真正的最终回复
-            const isStreamIncomplete = result.streamCompleted === false;
+            // 没有工具调用——检查是否是异常空回复而非真正的最终回复
             const hasNoContent = !result.content?.trim() && !result.reasoning?.trim();
             const isAbnormalFinish = !result.finishReason || result.finishReason === "length";
-
-            if (isStreamIncomplete && hasNoContent) {
-              // 流异常截断且没有任何有效内容——记录错误并作为失败处理
-              console.error("[session:stream-integrity] 模型响应流异常截断，无有效内容", {
-                sessionId,
-                round,
-                finishReason: result.finishReason,
-                streamCompleted: result.streamCompleted,
-                contentLength: result.content?.length ?? 0,
-              });
-              session.messages.push({
-                id: currentMessageId,
-                role: "assistant",
-                content: "[模型响应中断] 与模型的连接意外断开，未收到有效回复。请重新发送消息重试。",
-                createdAt: new Date().toISOString(),
-              });
-              terminalStatus = "failed";
-              terminalReason = "stream_interrupted";
-              break;
-            }
 
             if (isAbnormalFinish && hasNoContent && round > 1) {
               // finishReason 异常（null 或 length）且无内容——可能是上下文超限
