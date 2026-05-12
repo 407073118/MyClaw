@@ -3,6 +3,7 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 
 const mockNavigate = vi.hoisted(() => vi.fn());
 const mockWorkspace = vi.hoisted(() => ({
@@ -44,21 +45,16 @@ afterEach(() => {
 });
 
 describe("WorkflowsPage", () => {
-  it("lets keyboard users open a workflow card", () => {
-    render(React.createElement(WorkflowsPage));
+  it("renders a keyboard-accessible workflow detail link", () => {
+    render(React.createElement(MemoryRouter, undefined, React.createElement(WorkflowsPage)));
 
-    const card = screen.getByText("Accessible Workflow").closest(".workflow-card") as HTMLElement;
-    expect(card).toBeTruthy();
-    expect(card.getAttribute("role")).toBe("button");
-    expect(card.getAttribute("tabindex")).toBe("0");
+    const detailLink = screen.getByRole("link", { name: "Accessible Workflow" });
 
-    fireEvent.keyDown(card, { key: "Enter", code: "Enter" });
-
-    expect(mockNavigate).toHaveBeenCalledWith("/workflows/workflow-1");
+    expect(detailLink.getAttribute("href")).toBe("/workflows/workflow-1");
   });
 
   it("moves focus into the create dialog and restores it after escape close", async () => {
-    render(React.createElement(WorkflowsPage));
+    render(React.createElement(MemoryRouter, undefined, React.createElement(WorkflowsPage)));
 
     const trigger = screen.getByRole("button", { name: /新建工作流/i });
     trigger.focus();

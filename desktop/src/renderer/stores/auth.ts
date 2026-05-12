@@ -41,6 +41,8 @@ const AUTH_STORAGE_KEY = "myclaw-desktop-auth-session";
 
 const DEV_BYPASS_TOKEN_PREFIX = "dev-bypass-";
 const DEV_BYPASS_EXPIRES_IN_SECONDS = 24 * 60 * 60;
+const GUEST_TOKEN_PREFIX = "guest-";
+const GUEST_EXPIRES_IN_SECONDS = 30 * 24 * 60 * 60;
 
 /** dev 模式是否启用 cloud-api 校验跳过（仅 Vite MODE === "development" 生效）。 */
 export function isDevAuthBypassEnabled(): boolean {
@@ -50,6 +52,16 @@ export function isDevAuthBypassEnabled(): boolean {
 /** 判断给定 token 是否为 dev bypass mock token（前缀匹配）。 */
 function isDevBypassToken(token: string | undefined | null): boolean {
   return Boolean(token && token.startsWith(DEV_BYPASS_TOKEN_PREFIX));
+}
+
+/** 判断给定 token 是否为游客本地 token，游客会话不访问 cloud-api。 */
+function isGuestToken(token: string | undefined | null): boolean {
+  return Boolean(token && token.startsWith(GUEST_TOKEN_PREFIX));
+}
+
+/** 判断给定 token 是否为桌面端纯本地 token，用于统一跳过 cloud-api 校验。 */
+function isLocalAuthToken(token: string | undefined | null): boolean {
+  return isDevBypassToken(token) || isGuestToken(token);
 }
 
 /** 构造 dev mock 登录响应；不调用 IPC，纯本地生成。 */
@@ -64,6 +76,22 @@ function buildDevBypassSession(account: string): AuthLoginResponse {
       account: safeAccount,
       displayName: safeAccount,
       roles: ["dev-bypass"],
+    },
+  };
+}
+
+/** 构造游客登录响应；不调用 IPC，纯本地生成可持久化的游客会话。 */
+function buildGuestSession(): AuthLoginResponse {
+  const stamp = Date.now().toString(36);
+  console.info("[desktop-auth] 构造游客本地会话", { account: "guest" });
+  return {
+    accessToken: `${GUEST_TOKEN_PREFIX}access-${stamp}`,
+    refreshToken: `${GUEST_TOKEN_PREFIX}refresh-${stamp}`,
+    expiresIn: GUEST_EXPIRES_IN_SECONDS,
+    user: {
+      account: "guest",
+      displayName: "游客",
+      roles: ["guest"],
     },
   };
 }
@@ -121,6 +149,7 @@ type AuthState = {
   applyRefreshSession: (payload: AuthRefreshResponse) => void;
   clearSession: () => void;
   login: (payload: AuthLoginRequest) => Promise<AuthLoginResponse>;
+  loginAsGuest: () => Promise<AuthLoginResponse>;
   refreshSession: () => Promise<boolean>;
   introspectSession: () => Promise<boolean>;
   applyIntrospectResult: (payload: AuthIntrospectResponse) => boolean;
@@ -251,6 +280,16 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
     return response;
   },
 
+  async loginAsGuest() {
+    console.info("[desktop-auth] 开始创建游客登录会话");
+    const response = buildGuestSession();
+    get().applyLoginSession(response);
+    console.info("[desktop-auth] 游客登录成功，已进入本地桌面会话", {
+      account: response.user.account,
+    });
+    return response;
+  },
+
   async refreshSession() {
     const { session } = get();
     if (!session.refreshToken) {
@@ -267,6 +306,18 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
       get().applyRefreshSession({
         accessToken: `${DEV_BYPASS_TOKEN_PREFIX}access-${stamp}`,
         expiresIn: DEV_BYPASS_EXPIRES_IN_SECONDS,
+      });
+      return true;
+    }
+
+    if (isGuestToken(session.refreshToken)) {
+      console.info("[desktop-auth] 游客会话跳过 cloud-api refresh，刷新本地 access token", {
+        account: session.user?.account ?? null,
+      });
+      const stamp = Date.now().toString(36);
+      get().applyRefreshSession({
+        accessToken: `${GUEST_TOKEN_PREFIX}access-${stamp}`,
+        expiresIn: GUEST_EXPIRES_IN_SECONDS,
       });
       return true;
     }
@@ -297,6 +348,14 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
 
     if (isDevBypassToken(session.accessToken)) {
       console.info("[desktop-auth] DEV 模式 mock 会话，跳过 cloud-api introspect", {
+        account: session.user?.account ?? null,
+      });
+      set({ validationChecked: true });
+      return true;
+    }
+
+    if (isGuestToken(session.accessToken)) {
+      console.info("[desktop-auth] 游客会话跳过 cloud-api introspect", {
         account: session.user?.account ?? null,
       });
       set({ validationChecked: true });
@@ -366,7 +425,7 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
     console.info("[desktop-auth] 开始执行退出登录", {
       account: session.user?.account ?? null,
     });
-    if (session.refreshToken && !isDevBypassToken(session.refreshToken)) {
+    if (session.refreshToken && !isLocalAuthToken(session.refreshToken)) {
       try {
         await window.myClawAPI.auth.logout(session.refreshToken);
       } catch (error) {

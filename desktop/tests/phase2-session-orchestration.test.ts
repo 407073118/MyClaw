@@ -75,6 +75,8 @@ vi.mock("../src/main/services/tool-schemas", () => ({
 
 vi.mock("../src/main/services/builtin-tool-executor", () => ({
   BuiltinToolExecutor: class {
+    setFileActionHandlers(): void {}
+    setDocCacheRoot(): void {}
     setSkills(): void {}
     setAllowExternalPaths(): void {}
     setPathPolicy(): void {}

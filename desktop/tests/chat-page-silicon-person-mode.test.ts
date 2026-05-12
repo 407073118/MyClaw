@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
   const workspace = {
     currentSession: mainSession,
     sessions: [mainSession, siliconSession],
+    agentTasks: [],
     models: [],
     defaultModelProfileId: null,
     approvalRequests: [],
@@ -82,6 +83,20 @@ const mocks = vi.hoisted(() => {
     switchSiliconPersonSession: vi.fn().mockResolvedValue(undefined),
     sendMessage: vi.fn(),
     sendSiliconPersonMessage: vi.fn().mockResolvedValue(undefined),
+    createAgentTask: vi.fn().mockResolvedValue({
+      task: {
+        id: "task-1",
+        sourceSessionId: "main-session-1",
+        title: "dispatch this task",
+        instruction: "dispatch this task",
+        mode: "delegate",
+        status: "queued",
+        assigneeIds: ["sp-1"],
+        childSessionIds: {},
+        createdAt: "2026-04-15T00:06:00.000Z",
+        updatedAt: "2026-04-15T00:06:00.000Z",
+      },
+    }),
     cancelSessionRun: vi.fn().mockResolvedValue(undefined),
     pollBackgroundTask: vi.fn().mockResolvedValue(null),
     cancelBackgroundTask: vi.fn().mockResolvedValue(null),
@@ -126,6 +141,7 @@ describe("ChatPage silicon person mode", () => {
     mocks.workspace.switchSiliconPersonSession.mockReset();
     mocks.workspace.sendMessage.mockReset();
     mocks.workspace.sendSiliconPersonMessage.mockReset();
+    mocks.workspace.createAgentTask.mockReset();
     mocks.workspace.cancelSessionRun.mockReset();
     mocks.workspace.pollBackgroundTask.mockReset();
     mocks.workspace.cancelBackgroundTask.mockReset();
@@ -283,9 +299,11 @@ describe("ChatPage silicon person mode", () => {
     }
   });
 
-  it("keeps @ dispatch as a local composer action instead of reusing the selected chat object state", async () => {
+  it("turns @ dispatch from the main chat into a persistent agent task", async () => {
     const originalActiveSiliconPersonId = mocks.workspace.activeSiliconPersonId;
+    const originalAgentTasks = mocks.workspace.agentTasks;
     mocks.workspace.activeSiliconPersonId = null;
+    mocks.workspace.agentTasks = [];
 
     Object.defineProperty(window, "myClawAPI", {
       configurable: true,
@@ -313,13 +331,58 @@ describe("ChatPage silicon person mode", () => {
     fireEvent.keyDown(composer, { key: "Enter", code: "Enter" });
 
     await waitFor(() => {
-      expect(mocks.workspace.sendSiliconPersonMessage).toHaveBeenCalledWith("sp-1", "dispatch this task");
+      expect(mocks.workspace.createAgentTask).toHaveBeenCalledWith(expect.objectContaining({
+        assigneeIds: ["sp-1"],
+        instruction: "dispatch this task",
+        mode: "delegate",
+        sourceSessionId: "main-session-1",
+      }));
     });
+    expect(mocks.workspace.sendSiliconPersonMessage).not.toHaveBeenCalled();
     expect(mocks.workspace.sendMessage).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(screen.queryByTestId("mention-target-indicator")).toBeNull();
     });
 
     mocks.workspace.activeSiliconPersonId = originalActiveSiliconPersonId;
+    mocks.workspace.agentTasks = originalAgentTasks;
+  });
+
+  it("renders existing agent task cards inside the source main chat", async () => {
+    const originalActiveSiliconPersonId = mocks.workspace.activeSiliconPersonId;
+    const originalAgentTasks = mocks.workspace.agentTasks;
+    mocks.workspace.activeSiliconPersonId = null;
+    mocks.workspace.agentTasks = [
+      {
+        id: "task-visible-1",
+        sourceSessionId: "main-session-1",
+        title: "整理客户需求风险",
+        instruction: "整理客户需求风险",
+        mode: "delegate",
+        status: "running",
+        assigneeIds: ["sp-1"],
+        childSessionIds: { "sp-1": "silicon-session-1" },
+        createdAt: "2026-04-15T00:06:00.000Z",
+        updatedAt: "2026-04-15T00:07:00.000Z",
+      },
+    ];
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    expect(screen.getByTestId("agent-task-card-task-visible-1")).toBeTruthy();
+    expect(screen.getByText("整理客户需求风险")).toBeTruthy();
+    expect(screen.getByText("Ada")).toBeTruthy();
+
+    mocks.workspace.activeSiliconPersonId = originalActiveSiliconPersonId;
+    mocks.workspace.agentTasks = originalAgentTasks;
   });
 });

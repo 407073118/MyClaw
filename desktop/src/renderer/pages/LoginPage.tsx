@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { AlertCircle, ArrowRight, Eye, EyeOff, Info } from "lucide-react";
+import { AlertCircle, ArrowRight, Eye, EyeOff, Info, UserRound } from "lucide-react";
 import { useShellStore } from "@/stores/shell";
 import { isDevAuthBypassEnabled, useAuthStore } from "@/stores/auth";
 import TitleBar from "../components/TitleBar";
@@ -77,6 +77,30 @@ export default function LoginPage() {
     }
   }
 
+  /** 处理游客登录入口，创建本地会话后直接进入桌面主界面。 */
+  async function handleGuestLogin() {
+    setPending(true);
+    setErrorMessage("");
+    console.info("[desktop-login] 开始游客登录", {
+      redirect: redirectTarget,
+    });
+
+    try {
+      await auth.loginAsGuest();
+      console.info("[desktop-login] 游客登录成功，准备跳转", {
+        redirect: redirectTarget,
+      });
+      navigate(redirectTarget, { replace: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "游客登录失败，请稍后重试。";
+      setErrorMessage("游客登录失败，请稍后重试。");
+      setShakeNonce((n) => n + 1);
+      console.warn("[desktop-login] 游客登录失败", { error: message });
+    } finally {
+      setPending(false);
+    }
+  }
+
   return (
     <div className="app-root-wrapper">
       <TitleBar />
@@ -103,7 +127,7 @@ export default function LoginPage() {
           <div className="login-copy">
             <span className="login-eyebrow">MYCLAW DESKTOP</span>
             <h1 className="login-title">登录你的企业工作空间</h1>
-            <p className="login-subtitle">使用与 Cloud 一致的企业账号密码</p>
+            <p className="login-subtitle">使用企业账号登录，或以游客身份先进入本地工作区</p>
           </div>
 
           {/* 3a. dev 模式提示（仅 development 构建显示） */}
@@ -178,6 +202,17 @@ export default function LoginPage() {
                   <ArrowRight size={16} aria-hidden="true" />
                 </>
               )}
+            </button>
+
+            <button
+              data-testid="desktop-login-guest"
+              type="button"
+              className="guest-button"
+              disabled={pending}
+              onClick={handleGuestLogin}
+            >
+              <UserRound size={16} aria-hidden="true" />
+              <span>{pending ? "正在进入..." : "游客登录"}</span>
             </button>
           </form>
         </section>
@@ -456,6 +491,42 @@ export default function LoginPage() {
             border: 2px solid rgba(255, 255, 255, 0.3);
             border-top-color: #ffffff;
             animation: login-spin 0.8s linear infinite;
+          }
+
+          .guest-button {
+            height: 42px;
+            width: 100%;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: var(--radius-md);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, transform 0.1s ease;
+          }
+
+          .guest-button svg {
+            flex-shrink: 0;
+          }
+
+          .guest-button:hover:not(:disabled) {
+            border-color: rgba(16, 163, 127, 0.45);
+            background: rgba(16, 163, 127, 0.08);
+            color: var(--text-primary);
+          }
+
+          .guest-button:active:not(:disabled) {
+            transform: translateY(1px);
+          }
+
+          .guest-button:disabled {
+            opacity: 0.6;
+            cursor: wait;
           }
 
           @keyframes login-spin {

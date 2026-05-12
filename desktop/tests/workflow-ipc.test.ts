@@ -67,6 +67,8 @@ vi.mock("../src/main/services/workflow-engine", () => ({
 
 vi.mock("../src/main/services/builtin-tool-executor", () => ({
   BuiltinToolExecutor: class {
+    setFileActionHandlers() {}
+    setDocCacheRoot() {}
     setSkills() {}
     setAllowExternalPaths() {}
   setPathPolicy() {}

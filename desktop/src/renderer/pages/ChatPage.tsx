@@ -19,6 +19,7 @@ import type {
   A2UiPayload,
   A2UiFormField,
   ApprovalDecision,
+  AgentTask,
   ArtifactScopeRef,
   ChatMessage,
   ChatRunPhase,
@@ -29,6 +30,15 @@ import type {
 } from "@shared/contracts";
 import { ToolRiskCategory, resolveSiliconPersonCurrentSessionId } from "@shared/contracts";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
+
+const AGENT_TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
+  queued: "排队中",
+  running: "执行中",
+  waiting_user: "待处理",
+  succeeded: "已完成",
+  failed: "异常",
+  cancelled: "已取消",
+};
 
 // 配置 `marked`，统一启用 GFM 和换行转 `<br>`。
 marked.setOptions({ gfm: true, breaks: true });
@@ -359,6 +369,14 @@ export default function ChatPage() {
   const mentionTargetSiliconPerson = mentionTargetSiliconPersonId
     ? siliconPersons.find((sp) => sp.id === mentionTargetSiliconPersonId) ?? null
     : null;
+  const agentTasks = ((workspace as unknown as { agentTasks?: AgentTask[] }).agentTasks ?? []);
+  const siliconPersonNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const person of siliconPersons) {
+      map.set(person.id, person.name);
+    }
+    return map;
+  }, [siliconPersons]);
 
   const filteredMentions = useMemo(() => {
     if (!mentionMenuOpen) return [];
@@ -386,6 +404,10 @@ export default function ChatPage() {
 
   const isSiliconPersonView = Boolean(selectedSiliconPerson);
   const session = isSiliconPersonView ? selectedSiliconSession : workspace.currentSession;
+  const visibleAgentTasks = useMemo(() => {
+    if (!session?.id || isSiliconPersonView) return [];
+    return agentTasks.filter((task) => task.sourceSessionId === session.id);
+  }, [agentTasks, isSiliconPersonView, session?.id]);
 
   const selectedSiliconSessionSummary = useMemo(() => {
     if (!selectedSiliconPerson || !session?.id) return null;
@@ -1143,7 +1165,14 @@ export default function ChatPage() {
     if (mentionTargetSiliconPersonId) {
       try {
         const person = siliconPersons.find((sp) => sp.id === mentionTargetSiliconPersonId);
-        await workspace.sendSiliconPersonMessage(mentionTargetSiliconPersonId, draft);
+        const sourceSessionId = workspace.currentSession?.id ?? session?.id;
+        if (!sourceSessionId) return false;
+        await workspace.createAgentTask({
+          sourceSessionId,
+          instruction: draft,
+          mode: "delegate",
+          assigneeIds: [mentionTargetSiliconPersonId],
+        });
         if (person) {
           const newTraceId = `${Date.now()}-${mentionTargetSiliconPersonId}`;
           setDispatchTraces((prev) => [
@@ -2017,6 +2046,34 @@ export default function ChatPage() {
               })}
 
               {/* @ 投递痕迹（轻量系统提示，跟随消息流滚动，5s 后自动消失） */}
+              {visibleAgentTasks.length > 0 && (
+                <div className="agent-task-thread" data-testid="agent-task-thread">
+                  {visibleAgentTasks.map((task) => {
+                    const assigneeNames = task.assigneeIds
+                      .map((id) => siliconPersonNameById.get(id) ?? id)
+                      .join(" / ");
+                    const statusLabel = AGENT_TASK_STATUS_LABEL[task.status] ?? task.status;
+                    return (
+                      <article
+                        key={task.id}
+                        className={`agent-task-card agent-task-card--${task.status}`}
+                        data-testid={`agent-task-card-${task.id}`}
+                      >
+                        <div className="agent-task-card-top">
+                          <span className="agent-task-kicker">Agent Task</span>
+                          <span className="agent-task-status">{statusLabel}</span>
+                        </div>
+                        <div className="agent-task-title">{task.title}</div>
+                        <div className="agent-task-meta">
+                          <span>{assigneeNames}</span>
+                          <span>{new Date(task.createdAt).toLocaleTimeString()}</span>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+
               {dispatchTraces.length > 0 && (
                 <div className="dispatch-traces">
                   {dispatchTraces.map((trace) => (
@@ -2586,6 +2643,16 @@ export default function ChatPage() {
         .mention-status-needs_approval { color: var(--status-yellow); border-color: rgba(245,158,11,0.3); }
         .mention-status-done { color: var(--status-green); border-color: rgba(34,197,94,0.3); }
         .mention-status-error { color: var(--status-red); border-color: rgba(239,68,68,0.3); }
+        .agent-task-thread { display: grid; gap: 8px; max-width: 1200px; margin: 0 auto; padding: 8px 48px; }
+        .agent-task-card { width: min(620px, 100%); padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.22); background: color-mix(in srgb, var(--bg-card) 82%, transparent); box-shadow: 0 8px 22px rgba(0,0,0,0.12); }
+        .agent-task-card--running { border-color: rgba(16,163,127,0.35); }
+        .agent-task-card--failed { border-color: rgba(239,68,68,0.36); }
+        .agent-task-card--succeeded { border-color: rgba(34,197,94,0.34); }
+        .agent-task-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; margin-bottom: 6px; }
+        .agent-task-kicker { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
+        .agent-task-status { flex-shrink: 0; color: var(--accent-cyan); font-size: 11px; font-weight: 600; }
+        .agent-task-title { color: var(--text-primary); font-size: 13px; font-weight: 600; line-height: 1.45; word-break: break-word; }
+        .agent-task-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 6px; color: var(--text-muted); font-size: 11px; line-height: 1.4; }
         .dispatch-traces { display: flex; flex-direction: column; gap: 4px; max-width: 1200px; margin: 0 auto; padding: 4px 48px; }
         .dispatch-trace-card { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: transparent; border: none; border-radius: 0; font-size: 12px; line-height: 1.4; color: var(--text-muted); opacity: 0.85; }
         .dispatch-trace-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-cyan); flex-shrink: 0; }

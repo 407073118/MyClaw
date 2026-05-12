@@ -8,6 +8,8 @@ import type {
   ApprovalMode,
   ApprovalPolicy,
   ApprovalRequest,
+  AgentTask,
+  AgentTaskCreateInput,
   BackgroundTaskHandle,
   BuiltinToolApprovalMode,
   CalendarEvent,
@@ -188,6 +190,7 @@ type WorkspaceState = {
   skills: SkillDefinition[];
   skillDetails: Record<string, unknown>;
   siliconPersons: SiliconPerson[];
+  agentTasks: AgentTask[];
   /** 当前被选中的硅基员工聊天对象 ID；为空时表示主聊天对象。 */
   activeSiliconPersonId: string | null;
   workflows: WorkflowDefinitionSummary[];
@@ -325,6 +328,7 @@ type WorkspaceState = {
   switchSiliconPersonSession: (siliconPersonId: string, sessionId: string) => Promise<ChatSession>;
   /** fire-and-forget：入队后立即返回，不阻塞 UI。 */
   sendSiliconPersonMessage: (siliconPersonId: string, content: string) => Promise<void>;
+  createAgentTask: (input: AgentTaskCreateInput) => Promise<AgentTask>;
   /** 将指定硅基员工会话标记为已读，只同步未读状态，不改变 currentSession。 */
   markSiliconPersonSessionRead: (siliconPersonId: string, sessionId: string) => Promise<ChatSession>;
   startSiliconPersonWorkflowRun: (siliconPersonId: string, workflowId: string) => Promise<{
@@ -507,6 +511,7 @@ let pendingTodayBriefRequest: Promise<TodayBrief> | null = null;
 
 export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   let hasSubscribedToAppUpdates = false;
+  let hasSubscribedToAgentTasks = false;
 
   // Wrap set() so currentSession is recomputed after every state change.
   const set = (
@@ -543,6 +548,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   skills: [],
   skillDetails: {},
   siliconPersons: [],
+  agentTasks: [],
   activeSiliconPersonId: null,
   workflows: [],
   workflowSummaries: {},
@@ -590,7 +596,13 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
 
     set({ error: null, loading: true });
     try {
-      const payload = await window.myClawAPI.bootstrap();
+      const agentTaskRequest = window.myClawAPI.listAgentTasks
+        ? window.myClawAPI.listAgentTasks().catch(() => ({ items: [] as AgentTask[] }))
+        : Promise.resolve({ items: [] as AgentTask[] });
+      const [payload, agentTaskPayload] = await Promise.all([
+        window.myClawAPI.bootstrap(),
+        agentTaskRequest,
+      ]);
 
       set({
         sessions: payload.sessions,
@@ -616,6 +628,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         skills: payload.skills?.items ?? [],
         skillDetails: {},
         siliconPersons: payload.siliconPersons ?? [],
+        agentTasks: agentTaskPayload.items ?? [],
         workflows: payload.workflows ?? [],
         workflowSummaries: buildWorkflowSummaryMap(payload.workflows ?? []),
         workflowRuns: Object.fromEntries((payload.workflowRuns ?? []).map((r: unknown) => [(r as { id: string }).id, r])),
@@ -640,6 +653,19 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         hasSubscribedToAppUpdates = true;
         window.myClawAPI.onAppUpdateStateChanged((updates) => {
           set({ appUpdate: updates as AppUpdateState });
+        });
+      }
+
+      if (!hasSubscribedToAgentTasks && window.myClawAPI.onAgentTaskChanged) {
+        hasSubscribedToAgentTasks = true;
+        window.myClawAPI.onAgentTaskChanged((payload) => {
+          if (!payload.task) return;
+          set((current) => ({
+            agentTasks: [
+              payload.task,
+              ...current.agentTasks.filter((item) => item.id !== payload.task.id),
+            ],
+          }));
         });
       }
 
@@ -1523,6 +1549,23 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       contentLength: content.trim().length,
     });
     await window.myClawAPI.sendSiliconPersonMessage(siliconPersonId, content);
+  },
+
+  /** 创建 Agent Task，并把任务卡同步到当前工作区状态。 */
+  async createAgentTask(input) {
+    console.info("[workspace] 创建硅基员工 Agent Task", {
+      sourceSessionId: input.sourceSessionId,
+      assigneeIds: input.assigneeIds,
+      instructionLength: input.instruction.trim().length,
+    });
+    const payload = await window.myClawAPI.createAgentTask(input);
+    set((state) => ({
+      agentTasks: [
+        payload.task,
+        ...state.agentTasks.filter((item) => item.id !== payload.task.id),
+      ],
+    }));
+    return payload.task;
   },
 
   /** 将指定硅基员工会话标记为已读，只同步当前会话未读状态，不改变 currentSession。 */

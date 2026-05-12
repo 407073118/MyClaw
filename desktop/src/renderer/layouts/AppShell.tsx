@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import TitleBar from "../components/TitleBar";
 import WebPanel from "../components/WebPanel";
-import SiliconRail from "../components/SiliconRail";
+import AgentTeamDock from "../components/AgentTeamDock";
 import TimeAssistantCapsule from "../components/time/TimeAssistantCapsule";
 
 import { useAuthStore } from "../stores/auth";
@@ -422,7 +422,7 @@ export default function AppShell() {
         <Outlet />
       </section>
 
-      <SiliconRail />
+      <AgentTeamDock />
       <WebPanel />
       <TimeAssistantCapsule
         open={timeAssistantExpanded}

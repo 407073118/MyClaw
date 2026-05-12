@@ -2,6 +2,7 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 
 import type { SkillDefinition, FileTreeNode } from "@shared/contracts";
 
@@ -139,12 +140,16 @@ describe("skills rendering accessibility and preview safety", () => {
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });
 
-  it("exposes the skill card header as a real button", async () => {
-    const { default: SkillsPage } = await import("../src/renderer/pages/SkillsPage");
-    render(React.createElement(SkillsPage));
+  function renderWithRouter(element: React.ReactElement) {
+    return render(React.createElement(MemoryRouter, undefined, element));
+  }
 
-    const skillCardButton = screen.getByRole("button", { name: "打开 Alpha Skill 详情" });
-    fireEvent.click(skillCardButton);
+  it("exposes the skill preview action as a real button", async () => {
+    const { default: SkillsPage } = await import("../src/renderer/pages/SkillsPage");
+    renderWithRouter(React.createElement(SkillsPage));
+
+    const skillPreviewButton = screen.getByRole("button", { name: /Alpha Skill.*SKILL\.md/i });
+    fireEvent.click(skillPreviewButton);
 
     await waitFor(() => expect(mocks.workspaceState.loadSkillDetail).toHaveBeenCalledWith("skill-alpha"));
     expect(screen.getByTestId("skill-detail-title").textContent).toContain("Alpha Skill");
@@ -152,11 +157,11 @@ describe("skills rendering accessibility and preview safety", () => {
 
   it("supports escape close and focus restore for the skill detail dialog", async () => {
     const { default: SkillsPage } = await import("../src/renderer/pages/SkillsPage");
-    render(React.createElement(SkillsPage));
+    renderWithRouter(React.createElement(SkillsPage));
 
-    const skillCardButton = screen.getByRole("button", { name: "打开 Alpha Skill 详情" });
-    skillCardButton.focus();
-    fireEvent.click(skillCardButton);
+    const skillPreviewButton = screen.getByRole("button", { name: /Alpha Skill.*SKILL\.md/i });
+    skillPreviewButton.focus();
+    fireEvent.click(skillPreviewButton);
 
     const dialog = await screen.findByRole("dialog", { name: "Alpha Skill" });
     await waitFor(() => expect(document.activeElement).toBe(dialog));
@@ -164,20 +169,20 @@ describe("skills rendering accessibility and preview safety", () => {
     fireEvent.keyDown(document, { key: "Escape", code: "Escape" });
 
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Alpha Skill" })).toBeNull());
-    expect(document.activeElement).toBe(skillCardButton);
+    expect(document.activeElement).toBe(skillPreviewButton);
   });
 
-  it("removes list-level preview actions from the skill list", async () => {
+  it("exposes list preview and detail navigation actions", async () => {
     const { default: SkillsPage } = await import("../src/renderer/pages/SkillsPage");
-    render(React.createElement(SkillsPage));
+    renderWithRouter(React.createElement(SkillsPage));
 
-    expect(screen.queryByRole("button", { name: /棰勮|预览/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /鏌ョ湅璇︽儏|查看详情/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Alpha Skill.*SKILL\.md/i })).toBeTruthy();
+    expect(screen.getByRole("link", { name: /璇︽儏|详情/i })).toBeTruthy();
   });
 
   it("hides package chips from the skill list cards", async () => {
     const { default: SkillsPage } = await import("../src/renderer/pages/SkillsPage");
-    render(React.createElement(SkillsPage));
+    renderWithRouter(React.createElement(SkillsPage));
 
     expect(screen.queryByText("SKILL.md")).toBeNull();
     expect(screen.queryByText("view.html")).toBeNull();
@@ -191,7 +196,7 @@ describe("skills rendering accessibility and preview safety", () => {
     await waitFor(() => expect(mocks.apiMock.skillReadTree).toHaveBeenCalledWith("skill-alpha"));
     await waitFor(() => expect(mocks.apiMock.skillReadFile).toHaveBeenCalledWith("skill-alpha", "SKILL.md"));
 
-    const markdownContent = screen.getByTestId("skill-detail-content");
+    const markdownContent = await screen.findByTestId("skill-detail-content");
     expect(markdownContent.className).toContain("markdown-preview__surface");
     expect(markdownContent.closest(".markdown-preview")).not.toBeNull();
     expect(markdownContent.innerHTML).toContain("<h1>Alpha</h1>");

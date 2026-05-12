@@ -11,6 +11,7 @@ export function useAuth() {
   const isAccessTokenExpired = useAuthStore((s) => s.isAccessTokenExpired);
 
   const login = useAuthStore((s) => s.login);
+  const loginAsGuest = useAuthStore((s) => s.loginAsGuest);
   const logout = useAuthStore((s) => s.logout);
   const refreshSession = useAuthStore((s) => s.refreshSession);
   const introspectSession = useAuthStore((s) => s.introspectSession);
@@ -38,6 +39,7 @@ export function useAuth() {
 
     // 动作
     login,
+    loginAsGuest,
     logout,
     refreshSession,
     introspectSession,

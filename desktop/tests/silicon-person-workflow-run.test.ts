@@ -115,6 +115,8 @@ vi.mock("../src/main/services/model-client", () => ({
 
 vi.mock("../src/main/services/builtin-tool-executor", () => ({
   BuiltinToolExecutor: class {
+    setFileActionHandlers(): void {}
+    setDocCacheRoot(): void {}
     /** 测试里不需要真实 skills。 */
     setSkills(): void {}
     setAllowExternalPaths(): void {}

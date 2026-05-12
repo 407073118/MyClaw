@@ -1,4 +1,5 @@
 export * from "./approval";
+export * from "./agent-task";
 export * from "./artifact";
 export * from "./auth";
 export * from "./builtin-tool";

@@ -97,6 +97,9 @@ const mocks = vi.hoisted(() => {
       },
     ],
     defaultModelProfileId: "model-1",
+    time: {
+      scheduleJobs: [],
+    },
     loadSiliconPersonById: vi.fn().mockResolvedValue(null),
     loadWorkflows: vi.fn().mockResolvedValue([]),
     updateSiliconPerson: vi.fn((siliconPersonId: string, input: Record<string, unknown>) => {

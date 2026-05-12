@@ -5,6 +5,8 @@ import type {
   ApprovalMode,
   ApprovalPolicy,
   ApprovalRequest,
+  AgentTask,
+  AgentTaskCreateInput,
   AsrConfig,
   AvailabilityPolicy,
   BuiltinToolApprovalMode,
@@ -146,6 +148,8 @@ type McpToolPayload = { tool: ResolvedMcpTool };
 type BuiltinToolsPayload = { items: ResolvedBuiltinTool[] };
 type McpToolsPayload = { items: ResolvedMcpTool[] };
 type ApprovalsPayload = { approvals: ApprovalPolicy };
+type AgentTaskPayload = { task: AgentTask };
+type AgentTasksPayload = { items: AgentTask[] };
 
 type CancelSessionRunInput = {
   runId?: string;
@@ -196,6 +200,9 @@ declare global {
       openAppUpdateDownloadPage: () => Promise<{ opened: boolean }>;
       onAppUpdateStateChanged: (callback: (payload: AppUpdateState) => void) => () => void;
       onTimeReminderDelivered: (callback: (payload: { id?: string; title: string; body?: string; deliveredAt: string }) => void) => () => void;
+      listAgentTasks: () => Promise<AgentTasksPayload>;
+      createAgentTask: (input: AgentTaskCreateInput) => Promise<AgentTaskPayload>;
+      onAgentTaskChanged: (callback: (payload: AgentTaskPayload) => void) => () => void;
 
       // --- Time orchestration ---
       time: {

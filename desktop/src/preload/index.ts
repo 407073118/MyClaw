@@ -6,6 +6,7 @@ webFrame.setZoomFactor(0.85);
 import type {
   ApprovalDecision,
   ApprovalPolicy,
+  AgentTaskCreateInput,
   ArtifactRecord,
   ArtifactScopeRef,
   AsrConfig,
@@ -416,6 +417,17 @@ const myClawAPI = {
     ipcRenderer.invoke("cloud:import-workflow-package", input),
 
   // ---- 员工 ----------------------------------------------------------------
+  listAgentTasks: () =>
+    ipcRenderer.invoke("agent-task:list")
+      .then((items: unknown[]) => ({ items }))
+      .catch(() => ({ items: [] })),
+
+  createAgentTask: (input: AgentTaskCreateInput) =>
+    ipcRenderer.invoke("agent-task:create", input),
+
+  onAgentTaskChanged: (callback: (payload: Record<string, unknown>) => void): UnsubscribeFn =>
+    onChannel("agent-task:changed", callback),
+
   listSiliconPersons: () =>
     ipcRenderer.invoke("silicon-person:list")
       .then((items: unknown[]) => ({ items }))
