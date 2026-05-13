@@ -72,4 +72,35 @@ describe("probeBrMiniMaxRuntime", () => {
     expect(result.diagnostics.thinkingPath).toBe("reasoning_content");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("uses the selected BR MiniMax model when probing runtime support", async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({
+        choices: [{
+          message: {
+            content: "pong",
+            reasoning_details: [{ type: "text", text: "thinking" }],
+          },
+        }],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    ));
+
+    await probeBrMiniMaxRuntime(
+      {
+        ...createBrMiniMaxProfile({
+          id: "br-minimax-profile",
+          apiKey: "br-test-key",
+        }),
+        model: "minimax-m2-7",
+      },
+      fetchMock,
+    );
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(body.model).toBe("minimax-m2-7");
+  });
 });

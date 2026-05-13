@@ -78,6 +78,62 @@ describe("MeetingsPage follow-up import", () => {
     expect(screen.getByText("已导入 2 个跟进事项到日程规划。")).toBeTruthy();
   });
 
+  it("renders meeting summary markdown as structured document content", async () => {
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        meetings: {
+          list: vi.fn(async () => ({ items: [] })),
+          get: vi.fn(async () => ({
+            meeting: {
+              id: "meeting-1",
+              title: "周会复盘",
+              createdAt: "2026-04-18T08:00:00.000Z",
+              durationMs: 1_200_000,
+              status: "done",
+            },
+            transcript: null,
+            summary: "# 本周会议纪要\n\n## 决议\n\n- **Alice** Friday前交付方案\n\n[不安全链接](javascript:alert(1))",
+          })),
+          buildFollowUps: vi.fn(async () => ({
+            commitments: [],
+            reminders: [],
+            suggestedEvents: [],
+          })),
+          delete: vi.fn(async () => ({ ok: true })),
+          updateSpeaker: vi.fn(async () => ({ ok: true })),
+          updateTitle: vi.fn(async () => ({ ok: true })),
+          readAudio: vi.fn(async () => ({ buffer: null })),
+          onEvent: vi.fn(() => () => undefined),
+        },
+      },
+    });
+
+    const { default: MeetingsPage } = await import("../src/renderer/pages/MeetingsPage");
+    render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ["/meetings/meeting-1"] },
+        React.createElement(
+          Routes,
+          null,
+          React.createElement(Route, {
+            path: "/meetings/:id",
+            element: React.createElement(MeetingsPage),
+          }),
+        ),
+      ),
+    );
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "会议纪要" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "会议纪要" }));
+
+    await waitFor(() => expect(screen.getByRole("heading", { level: 1, name: "本周会议纪要" })).toBeTruthy());
+    expect(screen.getByRole("heading", { level: 2, name: "决议" })).toBeTruthy();
+    expect(screen.getByText("Alice").tagName).toBe("STRONG");
+    expect(screen.getByText("不安全链接").closest("a")?.getAttribute("href")).not.toContain("javascript:");
+  });
+
   it("uses meeting layout classes for list title and detail tabs", async () => {
     Object.defineProperty(window, "myClawAPI", {
       configurable: true,

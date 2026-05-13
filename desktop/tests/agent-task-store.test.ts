@@ -30,4 +30,51 @@ describe("agent task store", () => {
       updatedAt: "2026-04-15T00:06:00.000Z",
     });
   });
+
+  it("keeps team task metadata needed by the main chat report card", () => {
+    const task = createAgentTaskRecord(
+      {
+        sourceSessionId: "main-session-1",
+        sourceMessageId: "main-message-1",
+        instruction: "请评估这次发布风险",
+        title: "发布风险评估",
+        mode: "ask",
+        assigneeIds: ["sp-1", "sp-1", "sp-2"],
+        parentTaskId: "parent-task-1",
+        contextPolicy: {
+          includeLastMessages: 8,
+          includeArtifacts: true,
+          includeSelectedFiles: false,
+        },
+      },
+      {
+        now: "2026-05-12T00:06:00.000Z",
+        id: "task-2",
+      }
+    );
+
+    expect(task).toMatchObject({
+      id: "task-2",
+      sourceSessionId: "main-session-1",
+      sourceMessageId: "main-message-1",
+      parentTaskId: "parent-task-1",
+      title: "发布风险评估",
+      instruction: "请评估这次发布风险",
+      mode: "ask",
+      status: "queued",
+      assigneeIds: ["sp-1", "sp-2"],
+      leadAssigneeId: "sp-1",
+      childSessionIds: {},
+      approvalIds: [],
+      contextPolicy: {
+        includeLastMessages: 8,
+        includeArtifacts: true,
+        includeSelectedFiles: false,
+      },
+      assigneeStatuses: {
+        "sp-1": "queued",
+        "sp-2": "queued",
+      },
+    });
+  });
 });

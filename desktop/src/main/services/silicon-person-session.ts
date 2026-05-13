@@ -249,6 +249,7 @@ export async function createSiliconPersonSession(
   input: {
     siliconPersonId: string;
     title?: string;
+    preserveCurrentSession?: boolean;
   },
 ): Promise<{ siliconPerson: SiliconPerson; session: ChatSession }> {
   const siliconPerson = requireSiliconPerson(ctx, input.siliconPersonId);
@@ -274,7 +275,7 @@ export async function createSiliconPersonSession(
     unreadCount: 0,
     hasUnread: false,
     needsApproval: false,
-    forceCurrentSession: true,
+    forceCurrentSession: input.preserveCurrentSession ? false : true,
   });
 
   // 会话已由 saveSession() 统一写入 sessions.db，无需再双写 runtime.db

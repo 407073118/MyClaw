@@ -171,4 +171,24 @@ describe("br-minimax request body variants", () => {
       },
     });
   });
+
+  it("uses the selected BR MiniMax model in request bodies", () => {
+    const profile = {
+      ...createBrMiniMaxProfile({
+        id: "br-minimax-profile",
+        apiKey: "br-test-key",
+      }),
+      model: "minimax-m2-7",
+    };
+
+    const variants = buildRequestBodyVariants({
+      profile,
+      messages: [{ role: "user", content: "hello" }],
+      adapterId: "br-minimax",
+    });
+
+    expect(variants[0]).toMatchObject({
+      model: "minimax-m2-7",
+    });
+  });
 });

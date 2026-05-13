@@ -98,6 +98,14 @@ type ToolExecutionOptions = {
   sessionId?: string;
 };
 
+type SkillViewArgs = {
+  skill_id?: string;
+  page?: string;
+  data?: unknown;
+  dataRef?: unknown;
+  data_ref?: unknown;
+};
+
 type FileActionHandlers = {
   openPath: (path: string) => Promise<string> | string | void;
   revealPath: (path: string) => Promise<void> | void;
@@ -558,7 +566,20 @@ function decodeExecText(value: unknown): string {
     return value;
   }
   if (value instanceof Uint8Array) {
-    return new TextDecoder("utf-8").decode(value);
+    const utf8 = new TextDecoder("utf-8").decode(value);
+    if (process.platform === "win32" && utf8.includes("\uFFFD")) {
+      try {
+        const gb18030 = new TextDecoder("gb18030").decode(value);
+        const utf8BrokenCount = (utf8.match(/\uFFFD/g) ?? []).length;
+        const gbBrokenCount = (gb18030.match(/\uFFFD/g) ?? []).length;
+        if (gbBrokenCount < utf8BrokenCount) {
+          return gb18030;
+        }
+      } catch {
+        // 当前 Node 构建若不支持 gb18030，则保留 UTF-8 解码结果。
+      }
+    }
+    return utf8;
   }
   if (value == null) {
     return "";
@@ -625,6 +646,112 @@ function buildExecCommand(command: string): string {
     return command;
   }
   return `chcp 65001>nul && ${command}`;
+}
+
+/** 规范化 skill_view 的本地引用路径，兼容 local:/C:/... 与普通绝对/相对路径。 */
+function normalizeSkillDataRefPath(rawPath: string): string {
+  let normalized = rawPath.trim();
+  if (normalized.startsWith("local:")) {
+    normalized = normalized.slice("local:".length);
+    if (/^\/[A-Za-z]:[\\/]/.test(normalized)) {
+      normalized = normalized.slice(1);
+    }
+  }
+  return normalized;
+}
+
+/** 从 dataRef 支持的几种写法中提取本地文件路径。 */
+function extractSkillDataRefPath(dataRef: unknown): string | null {
+  if (typeof dataRef === "string" && dataRef.trim()) {
+    return dataRef.trim();
+  }
+  if (!dataRef || typeof dataRef !== "object" || Array.isArray(dataRef)) {
+    return null;
+  }
+  const record = dataRef as Record<string, unknown>;
+  for (const key of ["path", "file", "dataFile", "payloadFile"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+/** 校验 skill_view 的本地 dataRef，并生成传给 HTML 面板的轻量引用。 */
+function buildSkillDataRefPayload(
+  skill: SkillDefinition,
+  page: string,
+  dataRef: unknown,
+): { data?: unknown; error?: string; resolvedPath?: string } {
+  const refPath = extractSkillDataRefPath(dataRef);
+  if (!refPath) {
+    return { error: "dataRef 需要是本地文件路径，或包含 path/file/dataFile/payloadFile 字段的对象。" };
+  }
+
+  const resolvedPath = resolve(skill.path, normalizeSkillDataRefPath(refPath));
+  if (!isInsideBase(skill.path, resolvedPath)) {
+    return { error: "dataRef 只能指向当前 Skill 目录内的文件。", resolvedPath };
+  }
+  if (!existsSync(resolvedPath)) {
+    return { error: "dataRef 文件不存在：" + resolvedPath, resolvedPath };
+  }
+
+  return {
+    data: {
+      type: "skill-data-ref",
+      skillId: skill.id,
+      page,
+      dataRef: normalizeSep(relative(skill.path, resolvedPath)),
+    },
+    resolvedPath,
+  };
+}
+
+type NormalizedExecCommand = {
+  command: string;
+  cwd: string;
+  changed: boolean;
+};
+
+/** 去掉模型在 Windows 命令里常重复添加的 chcp 前缀，实际 UTF-8 切换由 executor 统一处理。 */
+function stripWindowsChcpPrefix(command: string): { command: string; changed: boolean } {
+  let current = command.trim();
+  let changed = false;
+
+  while (true) {
+    const match = current.match(/^chcp(?:\.com|\.exe)?\s+65001\s*(?:1?>\s*nul)?\s*&&\s*([\s\S]*)$/i);
+    if (!match) {
+      return { command: current, changed };
+    }
+    current = match[1].trim();
+    changed = true;
+  }
+}
+
+/** 将 Windows 的 `cd /d <dir> && command` 规范化为 cwd，降低 cmd.exe 对中文路径和引号的解析风险。 */
+function normalizeWindowsExecCommand(command: string, cwd: string): NormalizedExecCommand {
+  if (process.platform !== "win32") {
+    return { command, cwd, changed: false };
+  }
+
+  const stripped = stripWindowsChcpPrefix(command);
+  const cdMatch = stripped.command.match(/^cd\s+\/d\s+(?:"([^"]+)"|([^\s&]+))\s*&&\s*([\s\S]+)$/i);
+  if (!cdMatch) {
+    return { command: stripped.command, cwd, changed: stripped.changed };
+  }
+
+  const cdTarget = (cdMatch[1] ?? cdMatch[2] ?? "").trim();
+  const nextCommand = cdMatch[3].trim();
+  if (!cdTarget || !nextCommand) {
+    return { command: stripped.command, cwd, changed: stripped.changed };
+  }
+
+  return {
+    command: nextCommand,
+    cwd: resolve(cwd, cdTarget),
+    changed: true,
+  };
 }
 
 /** 判断失败是否属于命令本身不存在。 */
@@ -1286,9 +1413,19 @@ export class BuiltinToolExecutor {
   /** 按梯度超时策略执行命令（异步，不阻塞主进程事件循环）。 */
   private async executeShellCommand(request: ExecCommandRequest, cwd: string, signal?: AbortSignal): Promise<ToolExecutionResult> {
     const attemptedTimeouts = buildExecAttemptTimeouts(request);
-    const execCwd = request.cwd ? resolve(cwd, request.cwd) : cwd;
-    let activeCommand = request.command;
+    const requestedCwd = request.cwd ? resolve(cwd, request.cwd) : cwd;
+    const normalizedRequest = normalizeWindowsExecCommand(request.command, requestedCwd);
+    const execCwd = normalizedRequest.cwd;
+    let activeCommand = normalizedRequest.command;
     let pythonFallbackUsed = false;
+
+    if (normalizedRequest.changed) {
+      console.info("[exec.command] 已规范化 Windows 命令前缀", {
+        originalCommand: request.command,
+        normalizedCommand: activeCommand,
+        cwd: execCwd,
+      });
+    }
 
     for (let index = 0; index < attemptedTimeouts.length; index++) {
       const timeoutMs = attemptedTimeouts[index];
@@ -1809,14 +1946,14 @@ export class BuiltinToolExecutor {
 
   /** 根据技能数据打开 HTML 面板。 */
   private executeSkillView(label: string): ToolExecutionResult {
-    let args: { skill_id?: string; page?: string; data?: unknown };
+    let args: SkillViewArgs;
     try {
       args = JSON.parse(label);
     } catch {
       return { success: false, output: "", error: "skill.view 参数解析失败，需要 JSON 格式。" };
     }
 
-    const { skill_id, page, data } = args;
+    const { skill_id, page } = args;
     if (!skill_id || !page) {
       return { success: false, output: "", error: "缺少 skill_id 或 page 参数。" };
     }
@@ -1834,13 +1971,34 @@ export class BuiltinToolExecutor {
       return { success: false, output: "", error: "页面不存在：" + page + "（路径：" + viewPath + "）" };
     }
 
+    let viewData = args.data ?? {};
+    const dataRef = args.dataRef ?? args.data_ref;
+    if (dataRef != null) {
+      const refResult = buildSkillDataRefPayload(skill, page, dataRef);
+      if (refResult.error) {
+        console.warn("[skill.view] 本地 dataRef 校验失败", {
+          skillId: skill.id,
+          page,
+          resolvedPath: refResult.resolvedPath,
+          error: refResult.error,
+        });
+        return { success: false, output: "", error: refResult.error };
+      }
+      viewData = refResult.data ?? {};
+      console.info("[skill.view] 已向面板传递本地 dataRef 引用", {
+        skillId: skill.id,
+        page,
+        resolvedPath: refResult.resolvedPath,
+      });
+    }
+
     return {
       success: true,
       output: "已打开 " + skill.name + " 的 " + page + " 面板",
       viewMeta: {
         viewPath,
         title: skill.name,
-        data: data ?? {},
+        data: viewData,
       },
     };
   }

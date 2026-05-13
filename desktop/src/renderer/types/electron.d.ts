@@ -202,6 +202,10 @@ declare global {
       onTimeReminderDelivered: (callback: (payload: { id?: string; title: string; body?: string; deliveredAt: string }) => void) => () => void;
       listAgentTasks: () => Promise<AgentTasksPayload>;
       createAgentTask: (input: AgentTaskCreateInput) => Promise<AgentTaskPayload>;
+      cancelAgentTask: (taskId: string) => Promise<AgentTaskPayload>;
+      retryAgentTask: (taskId: string) => Promise<AgentTaskPayload>;
+      followUpAgentTask: (taskId: string, instruction: string) => Promise<AgentTaskPayload>;
+      appendAgentTaskResultToSource: (taskId: string) => Promise<AgentTaskPayload>;
       onAgentTaskChanged: (callback: (payload: AgentTaskPayload) => void) => () => void;
 
       // --- Time orchestration ---
@@ -354,7 +358,7 @@ declare global {
       resolveApproval: (
         approvalId: string,
         decision: ApprovalDecision,
-      ) => Promise<SessionPayload & { approvals: ApprovalPolicy; approvalRequests: ApprovalRequest[] }>;
+      ) => Promise<{ success: boolean; approvals?: ApprovalPolicy; approvalRequests?: ApprovalRequest[] }>;
       updateApprovalPolicy: (input: Partial<ApprovalPolicy>) => Promise<ApprovalsPayload>;
 
       // --- 个人长期 Prompt ---
@@ -486,6 +490,11 @@ declare global {
 
       // --- Web Panels ---
       webPanelResolvePage: (skillId: string, relativePath: string) => Promise<string | null>;
+      webPanelReadSkillDataRef: (skillId: string, dataRef: string) => Promise<{
+        success: boolean;
+        data?: unknown;
+        error?: string;
+      }>;
       onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void) => () => void;
       fileViewerOpenExternal: (path: string) => Promise<{ success: boolean }>;
       fileViewerReveal: (path: string) => Promise<{ success: boolean }>;

@@ -9,7 +9,7 @@ import { buildTaskDisplayItems } from "@shared/task-logical";
 
 import type { ActiveSessionRun, RuntimeContext } from "../services/runtime-context";
 import type { ChatMessage as ModelChatMessage, ChatMessageContent, ResolvedToolCall } from "../services/model-client";
-import { saveSession, saveSiliconPerson, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles } from "../services/state-persistence";
+import { saveSession, saveSiliconPerson, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles, saveSettings } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
 import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../services/tool-schemas";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
@@ -43,6 +43,12 @@ import type { TaskCreateInput, TaskUpdateInput } from "../services/task-store";
 import type { TimeSnapshot } from "../services/time-application-service";
 
 type ComputerHarnessBrowser = Parameters<typeof createComputerActionHarness>[0]["browser"];
+type RuntimeResolvedMcpTool = McpTool & {
+  serverId: string;
+  enabled?: boolean;
+  exposedToModel?: boolean;
+  effectiveApprovalMode?: unknown;
+};
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -518,7 +524,7 @@ function syncChatRunState(
 /**
  * 释放指定 run 仍在等待的审批，避免 stop 后卡住 Promise。
  */
-function releasePendingApprovalsForRun(
+export function releasePendingApprovalsForRun(
   ctx: RuntimeContext,
   run: ActiveSessionRun,
   decision: "canceled" = "canceled",
@@ -538,6 +544,22 @@ function releasePendingApprovalsForRun(
     ctx.state.getApprovalRequests().filter((request) => !pendingIds.includes(request.id)),
   );
   run.pendingApprovalIds = [];
+}
+
+/** 持久化当前审批策略，确保路径授权设置重启后仍然可见。 */
+function persistApprovalPolicy(ctx: RuntimeContext, source: string): void {
+  trackSave(
+    saveSettings(ctx.runtime.paths, {
+      defaultModelProfileId: ctx.state.getDefaultModelProfileId(),
+      approvalPolicy: ctx.state.getApprovals(),
+      personalPrompt: ctx.state.getPersonalPromptProfile(),
+      asrConfig: ctx.state.getAsrConfig(),
+    }).catch((error) => {
+      console.error(`[${source}] 保存审批策略失败`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }),
+  );
 }
 
 /**
@@ -2605,7 +2627,23 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       const activeMcpManager = personWorkspace ? personWorkspace.mcpManager : ctx.services.mcpManager;
 
       // 汇总已连接 MCP 服务提供的工具
-      const mcpTools = activeMcpManager?.getAllTools() ?? [];
+      const builtinTools = ctx.tools.resolveBuiltinTools();
+      const builtinToolIds = new Set(builtinTools.map((tool) => tool.id));
+      const exposedBuiltinToolIds = new Set(
+        builtinTools
+          .filter((tool) => tool.enabled && tool.exposedToModel)
+          .map((tool) => tool.id),
+      );
+
+      const resolvedMcpTools: RuntimeResolvedMcpTool[] = personWorkspace
+        ? (activeMcpManager?.getAllTools() ?? []).map((tool) => ({
+            ...tool,
+            enabled: true,
+            exposedToModel: true,
+            effectiveApprovalMode: "inherit",
+          }))
+        : ctx.tools.resolveMcpTools();
+      const mcpTools = resolvedMcpTools.filter((tool) => tool.enabled !== false && tool.exposedToModel !== false);
       // 用当前技能与路径权限刷新工具执行器（硅基员工使用自己的技能）
       toolExecutor.setSkills(allSkills);
       toolExecutor.setAllowExternalPaths(allowsExternalPaths(ctx.state.getApprovals().mode));
@@ -2743,6 +2781,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         enabledSkills,
         mcpTools,
         initialTurnExecutionPlan.toolPolicyId,
+        { builtinTools },
       );
 
       console.info("[session:send-message] tools summary", {
@@ -3136,6 +3175,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             enabledSkills,
             mcpTools,
             turnExecutionPlan.toolPolicyId,
+            { builtinTools },
           );
           const canonicalContent = buildCanonicalTurnContent({
             systemSections: canonicalSections,
@@ -3523,6 +3563,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               let toolSucceeded = true;
               let failureReason: string | undefined;
               try {
+                if (builtinToolIds.has(toolId) && !exposedBuiltinToolIds.has(toolId)) {
+                  throw new Error(`Builtin tool is disabled or hidden from model: ${toolId}`);
+                }
                 if (toolId.startsWith("task.")) {
                   // Task V2 工具直接操作 session 状态，不走 toolExecutor
                   const taskResult = executeTaskTool(session, toolId, toolCall.input);
@@ -4236,13 +4279,18 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
   // 按完整 ApprovalDecision 语义处理待审批请求
   ipcMain.handle(
     "session:resolve-approval",
-    async (_event, approvalId: string, decision: ApprovalDecision): Promise<{ success: boolean }> => {
+    async (
+      _event,
+      approvalId: string,
+      decision: ApprovalDecision,
+    ): Promise<{ success: boolean; approvals?: ApprovalPolicy; approvalRequests?: ApprovalRequest[] }> => {
       const pending = pendingApprovals.get(approvalId);
       if (!pending) {
         return { success: false };
       }
 
       const request = ctx.state.getApprovalRequests().find((r) => r.id === approvalId);
+      let policyChanged = false;
 
       // "always-allow-tool" / "allow-session" for 普通工具：将 toolId 加入 alwaysAllowedTools
       if (
@@ -4253,6 +4301,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           const policy = ctx.state.getApprovals();
           if (!policy.alwaysAllowedTools.includes(request.toolId)) {
             policy.alwaysAllowedTools.push(request.toolId);
+            policyChanged = true;
             console.info(`[approval] Added ${request.toolId} to alwaysAllowedTools (${decision})`);
           }
         }
@@ -4270,19 +4319,45 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           if (!grants.allowedDirs.includes(dir)) {
             grants.allowedDirs.push(dir);
             policy.pathGrants = grants;
+            policyChanged = true;
             console.info(`[approval:external-path] 持久化目录授权 ${dir}`);
           }
         }
       }
 
+      // external-path: "deny-persistent" 持久化：将路径写进 pathGrants.deniedPaths
+      if (request?.source === "external-path" && decision === "deny-persistent" && request.pathMeta) {
+        const policy = ctx.state.getApprovals();
+        const grants = policy.pathGrants ?? { allowedDirs: [], deniedPaths: [] };
+        const deniedPath = request.pathMeta.path;
+        if (!grants.deniedPaths.includes(deniedPath)) {
+          grants.deniedPaths.push(deniedPath);
+          policy.pathGrants = grants;
+          policyChanged = true;
+          console.info(`[approval:external-path] 持久化路径拒绝 ${deniedPath}`);
+        }
+      }
+
+      if (policyChanged) {
+        persistApprovalPolicy(ctx, "session:resolve-approval");
+      }
+
       // 用户已响应，清理自动拒绝超时定时器
       clearTimeout(pending.timeout);
+      const approvalRequestsAfterResolve = ctx.state.getApprovalRequests().filter((r) => r.id !== approvalId);
 
       // external-path: 原样传递决策 kind；其它：映射为 approve/deny
       if (request?.source === "external-path") {
         pending.resolve(decision as PendingApprovalDecision);
       } else {
         pending.resolve(decision === "deny" ? "deny" : "approve");
+      }
+      if (request?.source === "external-path" || policyChanged) {
+        return {
+          success: true,
+          approvals: ctx.state.getApprovals(),
+          approvalRequests: approvalRequestsAfterResolve,
+        };
       }
       return { success: true };
     },

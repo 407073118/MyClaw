@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     skills: [],
     siliconPersons: [],
     activeSiliconPersonId: null,
+    modelSwitchNotice: null as { fromName: string; toName: string } | null,
     selectSession: vi.fn(),
     deleteSession: vi.fn().mockResolvedValue(undefined),
     pushAssistantMessage: vi.fn(),
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => {
     cancelBackgroundTask: vi.fn().mockResolvedValue(null),
     updateSessionRuntimeIntent: vi.fn().mockResolvedValue(undefined),
     setActiveSiliconPersonId: vi.fn(),
+    dismissModelSwitchNotice: vi.fn(),
     resolveApproval: vi.fn(),
   };
 
@@ -76,10 +78,14 @@ describe("ChatPage", () => {
     mocks.workspace.cancelBackgroundTask.mockReset();
     mocks.workspace.updateSessionRuntimeIntent.mockReset();
     mocks.workspace.setActiveSiliconPersonId.mockReset();
+    mocks.workspace.dismissModelSwitchNotice.mockReset();
     mocks.workspace.resolveApproval.mockReset();
+    mocks.workspace.modelSwitchNotice = null;
     mocks.workspace.approvalRequests.splice(0, mocks.workspace.approvalRequests.length);
+    window.sessionStorage.clear();
     delete (mocks.workspace.currentSession as Record<string, unknown>).lastComputerCalls;
     delete (mocks.workspace.currentSession as Record<string, unknown>).backgroundTask;
+    delete (mocks.workspace.currentSession as Record<string, unknown>).tasks;
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });
 
@@ -151,6 +157,43 @@ describe("ChatPage", () => {
 
     await waitFor(() => expect(screen.queryByTestId("chat-reminder-banner")).toBeNull());
     expect(reminderUnsubscribe).not.toHaveBeenCalled();
+  });
+
+  it("keeps the task progress panel dismissed after returning to the chat page", async () => {
+    Object.assign(mocks.workspace.currentSession, {
+      tasks: [
+        {
+          id: "task-keep-dismissed",
+          subject: "整理发布计划",
+          description: "生成发布计划",
+          status: "in_progress",
+          blocks: [],
+          blockedBy: [],
+          createdAt: "2026-05-12T00:00:00.000Z",
+          updatedAt: "2026-05-12T00:00:00.000Z",
+        },
+      ],
+    });
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    const firstRender = render(React.createElement(ChatPage));
+
+    expect(screen.getByTestId("task-v2-panel")).toBeTruthy();
+    fireEvent.click(screen.getByTitle("关闭任务面板"));
+    await waitFor(() => expect(screen.queryByTestId("task-v2-panel")).toBeNull());
+
+    firstRender.unmount();
+    render(React.createElement(ChatPage));
+
+    expect(screen.queryByTestId("task-v2-panel")).toBeNull();
   });
 
   it("calls deleteSession after confirming deletion", async () => {
@@ -555,6 +598,35 @@ describe("ChatPage", () => {
 
     await waitFor(() => expect(screen.queryByTestId("work-files-panel")).toBeNull());
     expect(screen.getByTestId("work-files-toggle").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("places the model switch new-chat prompt beside the work files toggle", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+    mocks.workspace.modelSwitchNotice = { fromName: "Model A", toName: "Model B" };
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => sessionStreamUnsubscribe),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    const notice = screen.getByTestId("model-switch-inline-notice");
+    const workFilesToggle = screen.getByTestId("work-files-toggle");
+
+    expect(notice.compareDocumentPosition(workFilesToggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByTestId("model-switch-timeline-notice")).toBeNull();
+
+    fireEvent.click(within(notice).getByTestId("model-switch-inline-new-chat"));
+    await waitFor(() => expect(mocks.workspace.createSession).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(within(notice).getByTestId("model-switch-inline-dismiss"));
+    expect(mocks.workspace.dismissModelSwitchNotice).toHaveBeenCalledTimes(2);
   });
 
   it("shows a background research panel and lets the user refresh or cancel it", async () => {

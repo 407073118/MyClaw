@@ -72,9 +72,10 @@ function buildMiniMaxBody(
   const profileRequestBody = sanitizeMiniMaxRequestBody((profile.requestBody ?? {}) as Record<string, unknown>);
   const effort = reasoningEffort ?? "medium";
   const thinkingBudget = THINKING_BUDGET_MAP[effort] ?? THINKING_BUDGET_MAP.medium;
+  const selectedModel = profile.model.trim() || BR_MINIMAX_MODEL;
 
   const body = {
-    model: BR_MINIMAX_MODEL,
+    model: selectedModel,
     messages: input.messages,
     stream: true,
     ...(hasTools ? { tools: input.tools, tool_choice: "auto" } : {}),

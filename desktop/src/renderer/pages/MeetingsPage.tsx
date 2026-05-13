@@ -8,6 +8,7 @@ import { useMeetingRecorder } from "../hooks/useMeetingRecorder";
 import AudioWaveform from "../components/meeting/AudioWaveform";
 import AudioPlayer from "../components/meeting/AudioPlayer";
 import TranscriptView from "../components/meeting/TranscriptView";
+import MarkdownView from "../components/MarkdownView";
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -472,9 +473,7 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
             </div>
           )
         ) : summary ? (
-          <article className="meeting-summary">
-            {summary}
-          </article>
+          <MarkdownView source={summary} className="meeting-summary" />
         ) : (
           <div className="meeting-state-placeholder">
             {processing ? "会议纪要正在生成..." : "没有可用的会议纪要"}

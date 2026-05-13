@@ -4,7 +4,7 @@ import type {
   SkillDefinition,
 } from "@shared/contracts";
 
-import { type OpenAIFunctionTool, buildToolSchemas } from "../tool-schemas";
+import { type BuildToolSchemaOptions, type OpenAIFunctionTool, buildToolSchemas } from "../tool-schemas";
 
 function inferToolSource(name: string): CanonicalToolSpec["source"] {
   if (name.startsWith("skill_invoke__") || name === "skill_view") return "skill";
@@ -36,8 +36,9 @@ export function buildCanonicalToolRegistry(
   skills?: SkillDefinition[],
   mcpTools?: Array<McpTool & { serverId: string }>,
   toolPolicyId?: string,
+  options?: BuildToolSchemaOptions,
 ): CanonicalToolSpec[] {
-  return buildToolSchemas(cwd, skills, mcpTools, toolPolicyId).map((tool) => canonicalToolSpecFromFunctionTool(tool, {
+  return buildToolSchemas(cwd, skills, mcpTools, toolPolicyId, options).map((tool) => canonicalToolSpecFromFunctionTool(tool, {
     cwd,
     serverId: mcpTools?.find((candidate) => candidate.name === tool.function.name || candidate.id === tool.function.name)?.serverId ?? null,
   }));

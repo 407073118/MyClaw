@@ -19,7 +19,7 @@ export type BrMiniMaxProbeResult = {
 /** 为 BR MiniMax 运行时探测构建请求体。 */
 function buildProbeBody(profile: ModelProfile, reasoningSplit: boolean): Record<string, unknown> {
   return {
-    model: BR_MINIMAX_MODEL,
+    model: profile.model.trim() || BR_MINIMAX_MODEL,
     messages: [{ role: "user", content: "ping" }],
     stream: false,
     max_tokens: 1,

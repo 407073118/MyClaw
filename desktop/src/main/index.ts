@@ -20,6 +20,7 @@ import type {
   ChatSession,
   ModelProfile,
   PersonalPromptProfile,
+  ResolvedBuiltinTool,
   ResolvedMcpTool,
   ScheduleJobSessionMode,
   SkillDefinition,
@@ -50,6 +51,38 @@ import { createTimeScheduler } from "./services/time-scheduler";
 import { TimeOrchestrationStore } from "./services/time-orchestration-store";
 
 const log = createLogger("main");
+
+type ToolPreferenceSnapshot = Record<string, {
+  enabled?: boolean;
+  exposedToModel?: boolean;
+  approvalModeOverride?: unknown;
+}>;
+
+/** 读取工具中心偏好文件，供列表展示与模型暴露快照共用。 */
+function loadToolPreferenceSnapshot(prefsPath: string): ToolPreferenceSnapshot {
+  try {
+    if (existsSync(prefsPath)) {
+      return JSON.parse(readFileSync(prefsPath, "utf8")) as ToolPreferenceSnapshot;
+    }
+  } catch (error) {
+    console.warn("[main] 读取工具偏好失败，将使用默认工具配置", { prefsPath, error: String(error) });
+  }
+  return {};
+}
+
+/** 合并内置工具默认定义与用户偏好，保证工具中心状态可被运行时读取。 */
+function resolveBuiltinToolsWithPreferences(prefsPath: string): ResolvedBuiltinTool[] {
+  const prefs = loadToolPreferenceSnapshot(prefsPath);
+  return listBuiltinToolDefinitions().map((tool) => {
+    const pref = prefs[tool.id];
+    return {
+      ...tool,
+      enabled: pref?.enabled ?? tool.enabled,
+      exposedToModel: pref?.exposedToModel ?? tool.exposedToModel,
+      effectiveApprovalMode: (pref?.approvalModeOverride as ResolvedBuiltinTool["effectiveApprovalMode"] | undefined) ?? tool.effectiveApprovalMode,
+    };
+  });
+}
 
 import { trackSave, waitForPendingSaves, getPendingSavesCount } from "./services/pending-saves";
 export { trackSave };
@@ -454,8 +487,9 @@ async function buildRuntimeContext(
     tools: {
       resolveBuiltinTools: () => {
         try {
-          return listBuiltinToolDefinitions();
-        } catch {
+          return resolveBuiltinToolsWithPreferences(join(paths.myClawDir, "tool-preferences.json"));
+        } catch (error) {
+          console.warn("[main] 解析内置工具列表失败，将返回空列表", { error: String(error) });
           return [];
         }
       },
@@ -463,12 +497,7 @@ async function buildRuntimeContext(
         const rawTools = mcpManager.getAllTools();
         // 读取用户偏好设置，与原始工具列表合并
         const prefsPath = join(paths.myClawDir, "mcp-tool-preferences.json");
-        let prefs: Record<string, { enabled?: boolean; exposedToModel?: boolean; approvalModeOverride?: unknown }> = {};
-        try {
-          if (existsSync(prefsPath)) {
-            prefs = JSON.parse(readFileSync(prefsPath, "utf8"));
-          }
-        } catch { /* ignore */ }
+        const prefs = loadToolPreferenceSnapshot(prefsPath);
         return rawTools.map((tool) => {
           const pref = prefs[tool.id];
           return {

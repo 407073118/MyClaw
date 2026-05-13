@@ -24,7 +24,7 @@ import { BuiltinToolExecutor } from "../src/main/services/builtin-tool-executor"
  */
 function createMockChild(
   behavior: "success" | "timeout" | "error",
-  output?: string,
+  output?: string | Buffer,
 ): EventEmitter & { stdout: EventEmitter; stderr: EventEmitter; kill: ReturnType<typeof vi.fn>; pid: number } {
   const child = new EventEmitter() as any;
   child.stdout = new EventEmitter();
@@ -34,7 +34,7 @@ function createMockChild(
 
   process.nextTick(() => {
     if (behavior === "success") {
-      if (output) child.stdout.emit("data", Buffer.from(output));
+      if (output) child.stdout.emit("data", Buffer.isBuffer(output) ? output : Buffer.from(output));
       child.emit("close", 0, null);
     } else if (behavior === "timeout") {
       const err = Object.assign(new Error("Command timed out"), {
@@ -43,8 +43,8 @@ function createMockChild(
       });
       child.emit("error", err);
     } else if (behavior === "error") {
-      if (output) child.stderr.emit("data", Buffer.from(output));
-      const err = Object.assign(new Error(output || "Command error"), {
+      if (output) child.stderr.emit("data", Buffer.isBuffer(output) ? output : Buffer.from(output));
+      const err = Object.assign(new Error(typeof output === "string" ? output : "Command error"), {
         code: "ENOENT",
       });
       child.emit("error", err);
@@ -203,6 +203,52 @@ describe("exec.command timeout policy", () => {
       expect(args[1]).toContain("python demo.py");
       expect(options.env.PYTHONIOENCODING).toBe("utf-8");
       expect(options.env.PYTHONUTF8).toBe("1");
+    } finally {
+      restorePlatform();
+    }
+  });
+
+  it("normalizes Windows chcp and cd /d prefixes into cwd before execution", async () => {
+    const restorePlatform = setProcessPlatform("win32");
+    spawnMock.mockImplementation(() => createMockChild("success", "analysis ok\n"));
+
+    try {
+      const executor = new BuiltinToolExecutor();
+      const skillDir = "C:\\Users\\jianing.zhang1\\AppData\\Roaming\\Electron\\myClaw\\skills\\br-interview";
+      const command = `chcp 65001 && cd /d "${skillDir}" && python scripts/analyze_candidate.py --job-name "测试开发工程师" --candidate-name "张建宏" --resume-file "简历/张建宏.pdf"`;
+
+      const result = await executor.execute("exec.command", command, "C:/temp");
+
+      expect(result.success).toBe(true);
+      expect(result.output.trim()).toBe("analysis ok");
+      const [, args, options] = spawnMock.mock.calls[0];
+      expect(options.cwd).toBe(skillDir);
+      expect(args[1]).toContain("chcp 65001>nul");
+      expect(args[1]).toContain("python scripts/analyze_candidate.py");
+      expect(args[1]).not.toContain("cd /d");
+      expect(args[1]).not.toContain("Active code page");
+    } finally {
+      restorePlatform();
+    }
+  });
+
+  it("falls back to GBK decoding for Windows system error output", async () => {
+    const restorePlatform = setProcessPlatform("win32");
+    const gbkError = Buffer.from([
+      0xce, 0xc4, 0xbc, 0xfe, 0xc3, 0xfb, 0xa1, 0xa2,
+      0xc4, 0xbf, 0xc2, 0xbc, 0xc3, 0xfb, 0xbb, 0xf2,
+      0xbe, 0xed, 0xb1, 0xea, 0xd3, 0xef, 0xb7, 0xa8,
+      0xb2, 0xbb, 0xd5, 0xfd, 0xc8, 0xb7, 0xa1, 0xa3,
+    ]);
+    spawnMock.mockImplementation(() => createMockChild("error", gbkError));
+
+    try {
+      const executor = new BuiltinToolExecutor();
+      const result = await executor.execute("exec.command", "python bad.py", "C:/temp");
+
+      expect(result.success).toBe(false);
+      expect(result.output).toContain("文件名、目录名或卷标语法不正确。");
+      expect(result.output).not.toContain(String.fromCharCode(0xfffd));
     } finally {
       restorePlatform();
     }

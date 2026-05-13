@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from "vitest";
 import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../src/main/services/tool-schemas";
+import { ToolRiskCategory, type ResolvedBuiltinTool } from "../shared/contracts";
 import type { SkillDefinition } from "../shared/contracts/skill";
 import { EXPECTED_BUILTIN_TOOL_NAMES } from "./shared/builtin-tool-contract";
 
@@ -67,6 +68,40 @@ describe("Phase 1: SkillTool schemas", () => {
     expect(names).toContain("exec_command");
   });
 
+  it("should not expose disabled or hidden builtin tools to the model", () => {
+    const builtinTools: ResolvedBuiltinTool[] = [
+      {
+        id: "fs.read",
+        name: "Read file",
+        description: "Read file",
+        group: "fs",
+        risk: ToolRiskCategory.Read,
+        requiresAttachedDirectory: true,
+        enabled: false,
+        exposedToModel: true,
+        effectiveApprovalMode: "inherit",
+      },
+      {
+        id: "exec.command",
+        name: "Execute command",
+        description: "Execute command",
+        group: "exec",
+        risk: ToolRiskCategory.Exec,
+        requiresAttachedDirectory: true,
+        enabled: true,
+        exposedToModel: false,
+        effectiveApprovalMode: "inherit",
+      },
+    ];
+
+    const tools = buildToolSchemas("/test/cwd", undefined, undefined, "generic.tools.default", { builtinTools });
+    const names = tools.map((tool) => tool.function.name);
+
+    expect(names).not.toContain("fs_read");
+    expect(names).not.toContain("exec_command");
+    expect(names).toContain("git_status");
+  });
+
   it("should append skill_invoke__ tools for enabled skills", () => {
     const skills = [makeSkill()];
     const tools = buildToolSchemas("/test/cwd", skills);
@@ -114,6 +149,25 @@ describe("Phase 1: SkillTool schemas", () => {
     const tools = buildToolSchemas("/test/cwd", skills);
     const skillTool = tools.find((t) => t.function.name.startsWith("skill_invoke__"));
     expect(skillTool!.function.name).toBe("skill_invoke__my_special_skill_v1");
+  });
+
+  it("should allow skill_view to reference local data without embedding the payload", () => {
+    const skills = [
+      makeSkill({
+        hasViewFile: true,
+        viewFiles: ["resume-diagnosis.html"],
+      }),
+    ];
+    const tools = buildToolSchemas("/test/cwd", skills);
+    const skillViewTool = tools.find((t) => t.function.name === "skill_view");
+    const parameters = skillViewTool!.function.parameters as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+
+    expect(skillViewTool).toBeDefined();
+    expect(parameters.properties).toHaveProperty("dataRef");
+    expect(parameters.required).toEqual(["skill_id", "page"]);
   });
 });
 

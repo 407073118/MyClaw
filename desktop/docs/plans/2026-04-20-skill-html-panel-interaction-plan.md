@@ -117,6 +117,5 @@ Expected: PASS
 
 **Step 3: Run workspace encoding check on modified files**
 
-Run: `rg -n "�|锟|Ã|Ð" desktop/src/renderer/pages/SkillsPage.tsx desktop/src/renderer/pages/SkillDetailPage.tsx desktop/src/main/ipc/web-panel.ts desktop/src/preload/index.ts desktop/src/renderer/types/electron.d.ts desktop/tests/skill-pages-a11y.test.ts`
+Run: `rg -n "\\uFFFD|\\u951F|\\u00C3|\\u00D0" desktop/src/renderer/pages/SkillsPage.tsx desktop/src/renderer/pages/SkillDetailPage.tsx desktop/src/main/ipc/web-panel.ts desktop/src/preload/index.ts desktop/src/renderer/types/electron.d.ts desktop/tests/skill-pages-a11y.test.ts`
 Expected: no matches
-

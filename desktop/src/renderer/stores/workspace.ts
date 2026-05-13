@@ -329,6 +329,10 @@ type WorkspaceState = {
   /** fire-and-forget：入队后立即返回，不阻塞 UI。 */
   sendSiliconPersonMessage: (siliconPersonId: string, content: string) => Promise<void>;
   createAgentTask: (input: AgentTaskCreateInput) => Promise<AgentTask>;
+  cancelAgentTask: (taskId: string) => Promise<AgentTask>;
+  retryAgentTask: (taskId: string) => Promise<AgentTask>;
+  followUpAgentTask: (taskId: string, instruction: string) => Promise<AgentTask>;
+  appendAgentTaskResultToSource: (taskId: string) => Promise<AgentTask>;
   /** 将指定硅基员工会话标记为已读，只同步未读状态，不改变 currentSession。 */
   markSiliconPersonSessionRead: (siliconPersonId: string, sessionId: string) => Promise<ChatSession>;
   startSiliconPersonWorkflowRun: (siliconPersonId: string, workflowId: string) => Promise<{
@@ -1363,9 +1367,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
 
   async resolveApproval(approvalId, decision) {
     const payload = await window.myClawAPI.resolveApproval(approvalId, decision);
-    // Remove the resolved approval from local state
     set((s) => ({
-      approvalRequests: s.approvalRequests.filter((r) => r.id !== approvalId),
+      approvals: payload.approvals ?? s.approvals,
+      approvalRequests: payload.approvalRequests ?? s.approvalRequests.filter((r) => r.id !== approvalId),
     }));
     return payload;
   },
@@ -1559,6 +1563,61 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       instructionLength: input.instruction.trim().length,
     });
     const payload = await window.myClawAPI.createAgentTask(input);
+    set((state) => ({
+      agentTasks: [
+        payload.task,
+        ...state.agentTasks.filter((item) => item.id !== payload.task.id),
+      ],
+    }));
+    return payload.task;
+  },
+
+  /** 取消 Agent Task，并同步任务卡状态。 */
+  async cancelAgentTask(taskId) {
+    console.info("[workspace] 取消硅基员工 Agent Task", { taskId });
+    const payload = await window.myClawAPI.cancelAgentTask(taskId);
+    set((state) => ({
+      agentTasks: [
+        payload.task,
+        ...state.agentTasks.filter((item) => item.id !== payload.task.id),
+      ],
+    }));
+    return payload.task;
+  },
+
+  /** 重试 Agent Task，并同步新的子会话与执行状态。 */
+  async retryAgentTask(taskId) {
+    console.info("[workspace] 重试硅基员工 Agent Task", { taskId });
+    const payload = await window.myClawAPI.retryAgentTask(taskId);
+    set((state) => ({
+      agentTasks: [
+        payload.task,
+        ...state.agentTasks.filter((item) => item.id !== payload.task.id),
+      ],
+    }));
+    return payload.task;
+  },
+
+  /** 创建 Agent Task 追问，并把追问任务加入任务流。 */
+  async followUpAgentTask(taskId, instruction) {
+    console.info("[workspace] 创建硅基员工 Agent Task 追问", {
+      taskId,
+      instructionLength: instruction.trim().length,
+    });
+    const payload = await window.myClawAPI.followUpAgentTask(taskId, instruction);
+    set((state) => ({
+      agentTasks: [
+        payload.task,
+        ...state.agentTasks.filter((item) => item.id !== payload.task.id),
+      ],
+    }));
+    return payload.task;
+  },
+
+  /** 把已完成 Agent Task 的结果追加到来源主会话，后台负责持久化与去重。 */
+  async appendAgentTaskResultToSource(taskId) {
+    console.info("[workspace] 追加硅基员工 Agent Task 结果到主会话", { taskId });
+    const payload = await window.myClawAPI.appendAgentTaskResultToSource(taskId);
     set((state) => ({
       agentTasks: [
         payload.task,

@@ -325,6 +325,53 @@ describe("skill_invoke dispatch", () => {
 });
 
 // ---------------------------------------------------------------------------
+// skill.view dispatch
+// ---------------------------------------------------------------------------
+
+describe("skill.view dispatch", () => {
+  it("passes local JSON dataRef to the panel without reading the payload into tool output", async () => {
+    const skillDir = join(testDir, "view-skill");
+    mkdirSync(skillDir);
+    writeFileSync(join(skillDir, "resume-diagnosis.html"), "<html></html>", "utf8");
+    writeFileSync(join(skillDir, "payload.json"), "{not parsed by executor", "utf8");
+
+    executor.setSkills([{
+      id: "skill-br-interview",
+      name: "BR Interview",
+      description: "Interview panel",
+      path: skillDir,
+      enabled: true,
+      disableModelInvocation: false,
+      hasScriptsDirectory: false,
+      hasReferencesDirectory: false,
+      hasAssetsDirectory: false,
+      hasTestsDirectory: false,
+      hasAgentsDirectory: false,
+      hasViewFile: true,
+      viewFiles: ["resume-diagnosis.html"],
+    }]);
+
+    const result = await executor.execute(
+      "skill.view",
+      JSON.stringify({
+        skill_id: "skill-br-interview",
+        page: "resume-diagnosis.html",
+        dataRef: "payload.json",
+      }),
+      testDir,
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.viewMeta?.data).toEqual({
+      type: "skill-data-ref",
+      skillId: "skill-br-interview",
+      page: "resume-diagnosis.html",
+      dataRef: "payload.json",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Unknown tool
 // ---------------------------------------------------------------------------
 

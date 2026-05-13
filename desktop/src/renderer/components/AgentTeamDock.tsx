@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { Activity, AlertCircle, CheckCircle2, PanelRightClose, PanelRightOpen, Users } from "lucide-react";
+import { CheckCircle2, PanelRightClose, PanelRightOpen, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import type { AgentTask, SiliconPerson, SiliconPersonStatus } from "@shared/contracts";
@@ -22,6 +22,15 @@ const TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
   succeeded: "完成",
   failed: "异常",
   cancelled: "取消",
+};
+
+const TASK_STATUS_PRIORITY: Record<AgentTask["status"], number> = {
+  waiting_user: 0,
+  failed: 1,
+  running: 2,
+  queued: 3,
+  succeeded: 4,
+  cancelled: 5,
 };
 
 /** 展示员工头像，点击后进入共享主聊天容器中的员工会话视图。 */
@@ -64,24 +73,53 @@ export default function AgentTeamDock() {
   const agentTasks = useWorkspaceStore((state) => state.agentTasks ?? []);
   const webPanelOpen = useWorkspaceStore((state) => Boolean(state.webPanel?.isOpen));
   const setActiveSiliconPersonId = useWorkspaceStore((state) => state.setActiveSiliconPersonId);
+  const switchSiliconPersonSession = useWorkspaceStore((state) => state.switchSiliconPersonSession);
   const [collapsed, setCollapsed] = useState(false);
   const [panelWidth, setPanelWidth] = useState(292);
 
   const effectiveCollapsed = collapsed || webPanelOpen;
+  const personNameById = useMemo(() => {
+    return new Map(siliconPersons.map((person) => [person.id, person.name || person.title || person.id]));
+  }, [siliconPersons]);
+  const attentionTasks = useMemo(
+    () => agentTasks.filter((task) => task.status === "waiting_user" || task.status === "failed"),
+    [agentTasks],
+  );
   const runningTasks = useMemo(
     () => agentTasks.filter((task) => task.status === "queued" || task.status === "running"),
     [agentTasks],
   );
-  const waitingTasks = useMemo(
-    () => agentTasks.filter((task) => task.status === "waiting_user" || task.status === "failed"),
+  const doneTasks = useMemo(
+    () => agentTasks.filter((task) => task.status === "succeeded" || task.status === "cancelled"),
     [agentTasks],
   );
+  const activeTaskCount = attentionTasks.length + runningTasks.length;
+  const visibleTaskQueue = useMemo(() => {
+    return [...agentTasks]
+      .sort((left, right) => {
+        const priorityDelta = TASK_STATUS_PRIORITY[left.status] - TASK_STATUS_PRIORITY[right.status];
+        if (priorityDelta !== 0) return priorityDelta;
+        return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+      })
+      .slice(0, 8);
+  }, [agentTasks]);
   const loadByPerson = useMemo(() => {
     return siliconPersons.map((person) => ({
       person,
       activeCount: runningTasks.filter((task) => task.assigneeIds.includes(person.id)).length,
     }));
   }, [runningTasks, siliconPersons]);
+
+  /** 汇总任务负责人名称，保持任务行在窄面板中仍可快速扫描。 */
+  function getTaskAssigneeNames(task: AgentTask): string {
+    const names = task.assigneeIds.map((id) => personNameById.get(id) ?? id);
+    return names.length > 0 ? names.join(" / ") : "未分配";
+  }
+
+  /** 选取任务预览文本，优先暴露需要用户处理的结果和错误。 */
+  function getTaskPreview(task: AgentTask): string {
+    return task.error ?? task.resultSummary ?? task.instruction;
+  }
 
   /** 点击员工时切回主聊天容器，并把员工设为当前查看对象。 */
   function handleOpenPerson(person: SiliconPerson) {
@@ -90,6 +128,32 @@ export default function AgentTeamDock() {
       route: "/",
     });
     setActiveSiliconPersonId(person.id);
+    navigate("/");
+  }
+
+  /** 点击任务时进入它的员工子会话，优先使用负责人子会话。 */
+  function handleOpenTask(task: AgentTask) {
+    const assigneeId = task.leadAssigneeId && task.childSessionIds[task.leadAssigneeId]
+      ? task.leadAssigneeId
+      : task.assigneeIds.find((id) => Boolean(task.childSessionIds[id]));
+    if (!assigneeId) {
+      console.warn("[agent-team-dock] 任务没有可打开的员工子会话", { taskId: task.id });
+      return;
+    }
+    const sessionId = task.childSessionIds[assigneeId];
+    console.info("[agent-team-dock] 打开任务员工子会话", {
+      taskId: task.id,
+      siliconPersonId: assigneeId,
+      sessionId,
+    });
+    setActiveSiliconPersonId(assigneeId);
+    void switchSiliconPersonSession(assigneeId, sessionId).catch((error) => {
+      console.error("[agent-team-dock] 切换任务员工子会话失败", {
+        taskId: task.id,
+        siliconPersonId: assigneeId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
     navigate("/");
   }
 
@@ -144,7 +208,7 @@ export default function AgentTeamDock() {
         {!effectiveCollapsed && (
           <div className="agent-team-title">
             <span>Agent Team</span>
-            <strong>{runningTasks.length}</strong>
+            <strong>{activeTaskCount}</strong>
           </div>
         )}
       </header>
@@ -162,39 +226,58 @@ export default function AgentTeamDock() {
         </div>
       ) : (
         <div className="agent-team-body">
-          <section className="agent-team-section">
-            <div className="agent-team-section-title">
-              <AlertCircle size={14} />
-              <span>待我处理</span>
-              <strong>{waitingTasks.length}</strong>
+          <section className="agent-team-section agent-team-task-board" data-testid="agent-team-task-board">
+            <div className="agent-team-section-title agent-team-task-board-title">
+              <span>任务队列</span>
+              <strong>{agentTasks.length}</strong>
             </div>
-            <div className="agent-task-mini-list">
-              {waitingTasks.length === 0 ? (
-                <span className="agent-team-empty">暂无阻塞</span>
-              ) : waitingTasks.slice(0, 3).map((task) => (
-                <div key={task.id} className="agent-task-mini">
-                  <span>{task.title}</span>
-                  <em>{TASK_STATUS_LABEL[task.status]}</em>
-                </div>
-              ))}
+            <div className="agent-team-task-metrics" aria-label="Agent Task 状态概览">
+              <span>
+                待处理
+                <strong data-testid="agent-team-task-count-attention">{attentionTasks.length}</strong>
+              </span>
+              <span>
+                运行
+                <strong data-testid="agent-team-task-count-running">{runningTasks.length}</strong>
+              </span>
+              <span>
+                完成
+                <strong data-testid="agent-team-task-count-done">{doneTasks.length}</strong>
+              </span>
             </div>
-          </section>
-
-          <section className="agent-team-section">
-            <div className="agent-team-section-title">
-              <Activity size={14} />
-              <span>运行中</span>
-              <strong>{runningTasks.length}</strong>
-            </div>
-            <div className="agent-task-mini-list">
-              {runningTasks.length === 0 ? (
-                <span className="agent-team-empty">当前空闲</span>
-              ) : runningTasks.slice(0, 4).map((task) => (
-                <div key={task.id} className="agent-task-mini">
-                  <span>{task.title}</span>
-                  <em>{TASK_STATUS_LABEL[task.status]}</em>
-                </div>
-              ))}
+            <div className="agent-task-queue-list">
+              {visibleTaskQueue.length === 0 ? (
+                <span className="agent-team-empty">暂无任务</span>
+              ) : (
+                <>
+                  {visibleTaskQueue.map((task) => (
+                    <button
+                      key={task.id}
+                      type="button"
+                      className={`agent-task-queue-row agent-task-queue-row--${task.status}`}
+                      data-testid={`agent-team-task-row-${task.id}`}
+                      onClick={() => handleOpenTask(task)}
+                    >
+                      <span className={`agent-task-queue-dot agent-task-queue-dot--${task.status}`} aria-hidden="true" />
+                      <span className="agent-task-queue-main">
+                        <span className="agent-task-queue-top">
+                          <strong>{task.title}</strong>
+                          <em data-testid={`agent-team-task-status-${task.id}`}>{TASK_STATUS_LABEL[task.status]}</em>
+                        </span>
+                        <span className="agent-task-queue-meta" data-testid={`agent-team-task-assignees-${task.id}`}>
+                          {getTaskAssigneeNames(task)}
+                        </span>
+                        <span className="agent-task-queue-preview" data-testid={`agent-team-task-summary-${task.id}`}>
+                          {getTaskPreview(task)}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                  {agentTasks.length > visibleTaskQueue.length && (
+                    <span className="agent-team-more">还有 {agentTasks.length - visibleTaskQueue.length} 个任务</span>
+                  )}
+                </>
+              )}
             </div>
           </section>
 
@@ -347,23 +430,95 @@ export default function AgentTeamDock() {
           min-width: 0;
           flex: 1;
         }
-        .agent-task-mini-list,
+        .agent-task-queue-list,
         .agent-person-list {
           display: grid;
           gap: 6px;
         }
-        .agent-task-mini,
+        .agent-task-queue-row,
         .agent-person-row {
           min-width: 0;
           display: flex;
           align-items: center;
           gap: 8px;
-          padding: 7px 8px;
+          padding: 8px;
           border-radius: 7px;
           border: 1px solid rgba(148,163,184,0.12);
           background: rgba(0,0,0,0.12);
         }
-        .agent-task-mini span {
+        .agent-team-task-board {
+          background: rgba(255,255,255,0.032);
+        }
+        .agent-team-task-metrics {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 6px;
+        }
+        .agent-team-task-metrics span {
+          min-width: 0;
+          display: grid;
+          gap: 3px;
+          padding: 7px;
+          border: 1px solid rgba(148,163,184,0.12);
+          border-radius: 7px;
+          background: rgba(0,0,0,0.12);
+          color: var(--text-muted);
+          font-size: 10px;
+          line-height: 1.2;
+        }
+        .agent-team-task-metrics strong {
+          color: var(--text-primary);
+          font-size: 15px;
+          line-height: 1;
+        }
+        .agent-task-queue-row {
+          width: 100%;
+          text-align: left;
+          color: inherit;
+          cursor: pointer;
+          font-family: inherit;
+        }
+        .agent-task-queue-row:hover {
+          border-color: rgba(148,163,184,0.28);
+          background: rgba(255,255,255,0.04);
+        }
+        .agent-task-queue-row--waiting_user,
+        .agent-task-queue-row--failed {
+          border-color: rgba(245,158,11,0.24);
+        }
+        .agent-task-queue-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 999px;
+          background: var(--text-muted);
+          flex-shrink: 0;
+          align-self: flex-start;
+          margin-top: 7px;
+        }
+        .agent-task-queue-dot--queued,
+        .agent-task-queue-dot--running {
+          background: var(--accent-cyan);
+        }
+        .agent-task-queue-dot--waiting_user,
+        .agent-task-queue-dot--failed {
+          background: var(--status-yellow);
+        }
+        .agent-task-queue-dot--succeeded {
+          background: var(--status-green);
+        }
+        .agent-task-queue-main {
+          min-width: 0;
+          flex: 1;
+          display: grid;
+          gap: 3px;
+        }
+        .agent-task-queue-top {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .agent-task-queue-top strong {
           min-width: 0;
           flex: 1;
           overflow: hidden;
@@ -372,12 +527,30 @@ export default function AgentTeamDock() {
           color: var(--text-primary);
           font-size: 12px;
         }
-        .agent-task-mini em,
+        .agent-task-queue-top em,
         .agent-person-main em {
           flex-shrink: 0;
           color: var(--text-muted);
           font-size: 11px;
           font-style: normal;
+        }
+        .agent-task-queue-meta,
+        .agent-task-queue-preview {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: var(--text-muted);
+          font-size: 11px;
+          line-height: 1.3;
+        }
+        .agent-task-queue-preview {
+          color: var(--text-secondary);
+        }
+        .agent-team-more {
+          color: var(--text-muted);
+          font-size: 11px;
+          line-height: 1.4;
         }
         .agent-person-row {
           width: 100%;

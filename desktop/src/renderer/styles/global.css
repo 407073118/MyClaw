@@ -1146,10 +1146,128 @@ a.list-row__title:hover {
   background: var(--bg-card);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-xl);
-  white-space: pre-wrap;
   font-size: 14px;
-  line-height: 1.8;
+  line-height: 1.75;
   color: var(--text-primary);
+  overflow-x: auto;
+}
+
+.meeting-summary > :first-child {
+  margin-top: 0;
+}
+
+.meeting-summary > :last-child {
+  margin-bottom: 0;
+}
+
+.meeting-summary h1,
+.meeting-summary h2,
+.meeting-summary h3 {
+  color: var(--text-primary);
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.meeting-summary h1 {
+  margin: 0 0 18px;
+  font-size: 22px;
+}
+
+.meeting-summary h2 {
+  margin: 26px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--glass-border);
+  font-size: 18px;
+}
+
+.meeting-summary h3 {
+  margin: 22px 0 10px;
+  font-size: 16px;
+}
+
+.meeting-summary p,
+.meeting-summary ul,
+.meeting-summary ol,
+.meeting-summary blockquote,
+.meeting-summary pre,
+.meeting-summary table {
+  margin: 0 0 16px;
+}
+
+.meeting-summary p,
+.meeting-summary li,
+.meeting-summary td,
+.meeting-summary th {
+  color: var(--text-secondary);
+}
+
+.meeting-summary ul,
+.meeting-summary ol {
+  padding-left: 22px;
+}
+
+.meeting-summary li {
+  margin: 6px 0;
+}
+
+.meeting-summary strong {
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.meeting-summary a {
+  color: var(--accent-cyan);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.meeting-summary blockquote {
+  border-left: 3px solid var(--accent-cyan);
+  padding: 8px 0 8px 14px;
+  color: var(--text-secondary);
+  background: var(--glass-reflection);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.meeting-summary code {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--glass-reflection);
+  color: var(--accent-cyan);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+}
+
+.meeting-summary pre {
+  padding: 14px 16px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-sidebar);
+  overflow-x: auto;
+}
+
+.meeting-summary pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.meeting-summary table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.meeting-summary th,
+.meeting-summary td {
+  padding: 8px 10px;
+  border: 1px solid var(--glass-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.meeting-summary th {
+  background: var(--glass-reflection);
 }
 
 .meeting-audio-player {

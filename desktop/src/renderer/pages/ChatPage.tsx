@@ -40,6 +40,9 @@ const AGENT_TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
   cancelled: "已取消",
 };
 
+const TASK_PANEL_DISMISS_PREFIX = "myclaw:task-panel-dismissed:";
+const AGENT_TASK_CARD_DISMISS_PREFIX = "myclaw:agent-task-card-dismissed:";
+
 // 配置 `marked`，统一启用 GFM 和换行转 `<br>`。
 marked.setOptions({ gfm: true, breaks: true });
 
@@ -50,6 +53,64 @@ function renderMarkdown(content: string): string {
     return marked.parse(content) as string;
   } catch {
     return content;
+  }
+}
+
+/** 生成任务面板关闭状态的任务签名，新任务加入时签名变化会重新展示面板。 */
+function buildTaskPanelSignature(tasks: ChatSession["tasks"] | undefined): string {
+  return (tasks ?? [])
+    .map((task) => task.id)
+    .join("|");
+}
+
+/** 生成任务面板关闭状态的会话级缓存键。 */
+function buildTaskPanelDismissKey(sessionId: string | undefined, signature: string): string | null {
+  if (!sessionId || !signature) return null;
+  return `${TASK_PANEL_DISMISS_PREFIX}${sessionId}:${signature}`;
+}
+
+/** 生成 AgentTask 轻提示关闭状态的本地缓存键。 */
+function buildAgentTaskCardDismissKey(task: AgentTask): string {
+  return `${AGENT_TASK_CARD_DISMISS_PREFIX}${task.sourceSessionId}:${task.id}`;
+}
+
+/** 读取任务面板关闭状态，避免切换页面回来后重复弹出。 */
+function readTaskPanelDismissed(key: string | null): boolean {
+  if (!key || typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 读取 AgentTask 轻提示是否已被用户本地关闭。 */
+function readAgentTaskCardDismissed(key: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 保存任务面板关闭状态，只影响当前浏览器会话。 */
+function writeTaskPanelDismissed(key: string | null): void {
+  if (!key || typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, "1");
+  } catch {
+    // 忽略无痕模式或存储不可用场景，组件内状态仍会立即生效。
+  }
+}
+
+/** 保存 AgentTask 轻提示关闭状态，只隐藏当前客户端里的提示，不取消任务。 */
+function writeAgentTaskCardDismissed(key: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(key, "1");
+  } catch {
+    // 存储不可用时仍依赖组件内状态立即隐藏。
   }
 }
 
@@ -347,7 +408,7 @@ export default function ChatPage() {
   const [activeTools, setActiveTools] = useState<Map<string, { toolId: string; toolName: string; startTime: number; args?: Record<string, unknown> }>>(new Map());
   const [toolTimings, setToolTimings] = useState<Map<string, number>>(new Map());
   const [currentRound, setCurrentRound] = useState(0);
-  const [taskPanelDismissed, setTaskPanelDismissed] = useState(false);
+  const [dismissedTaskPanelKey, setDismissedTaskPanelKey] = useState<string | null>(null);
   const [showWorkFiles, setShowWorkFiles] = useState(false);
   const [showContextWarning, setShowContextWarning] = useState(false);
   const prevTaskCountRef = React.useRef(0);
@@ -356,6 +417,10 @@ export default function ChatPage() {
   const [mentionFilter, setMentionFilter] = useState("");
   const [mentionMenuIndex, setMentionMenuIndex] = useState(0);
   const [mentionTargetSiliconPersonId, setMentionTargetSiliconPersonId] = useState<string | null>(null);
+  const [dismissedAgentTaskCardKeys, setDismissedAgentTaskCardKeys] = useState<Set<string>>(new Set());
+  const [activeAgentTaskFollowUpId, setActiveAgentTaskFollowUpId] = useState<string | null>(null);
+  const [agentTaskFollowUpDrafts, setAgentTaskFollowUpDrafts] = useState<Record<string, string>>({});
+  const [appendingAgentTaskIds, setAppendingAgentTaskIds] = useState<Set<string>>(new Set());
   const [dispatchTraces, setDispatchTraces] = useState<Array<{ id: string; personName: string; personId: string; content: string; timestamp: string }>>([]);
   const [autoExpandedReasoningMessageId, setAutoExpandedReasoningMessageId] = useState<string | null>(null);
   const [reasoningPanelOverrides, setReasoningPanelOverrides] = useState<Record<string, boolean>>({});
@@ -404,15 +469,33 @@ export default function ChatPage() {
 
   const isSiliconPersonView = Boolean(selectedSiliconPerson);
   const session = isSiliconPersonView ? selectedSiliconSession : workspace.currentSession;
+  const taskPanelSignature = useMemo(() => buildTaskPanelSignature(session?.tasks), [session?.tasks]);
+  const taskPanelDismissKey = useMemo(
+    () => buildTaskPanelDismissKey(session?.id, taskPanelSignature),
+    [session?.id, taskPanelSignature],
+  );
+  const taskPanelDismissed = Boolean(
+    taskPanelDismissKey
+    && (dismissedTaskPanelKey === taskPanelDismissKey || readTaskPanelDismissed(taskPanelDismissKey)),
+  );
   const visibleAgentTasks = useMemo(() => {
     if (!session?.id || isSiliconPersonView) return [];
-    return agentTasks.filter((task) => task.sourceSessionId === session.id);
-  }, [agentTasks, isSiliconPersonView, session?.id]);
+    return agentTasks.filter((task) => {
+      if (task.sourceSessionId !== session.id) return false;
+      const dismissKey = buildAgentTaskCardDismissKey(task);
+      return !dismissedAgentTaskCardKeys.has(dismissKey) && !readAgentTaskCardDismissed(dismissKey);
+    });
+  }, [agentTasks, dismissedAgentTaskCardKeys, isSiliconPersonView, session?.id]);
 
   const selectedSiliconSessionSummary = useMemo(() => {
     if (!selectedSiliconPerson || !session?.id) return null;
     return selectedSiliconPerson.sessions.find((item) => item.id === session.id) ?? null;
   }, [selectedSiliconPerson, session?.id]);
+
+  const currentChildAgentTask = useMemo(() => {
+    if (!isSiliconPersonView || !session?.id) return null;
+    return agentTasks.find((task) => Object.values(task.childSessionIds ?? {}).includes(session.id)) ?? null;
+  }, [agentTasks, isSiliconPersonView, session?.id]);
 
   const workFilesScope = useMemo<ArtifactScopeRef | null>(() => {
     if (!session?.id) return null;
@@ -637,7 +720,7 @@ export default function ChatPage() {
   useEffect(() => {
     const count = session?.tasks?.length ?? 0;
     if (count > prevTaskCountRef.current) {
-      setTaskPanelDismissed(false);
+      setDismissedTaskPanelKey(null);
     }
     prevTaskCountRef.current = count;
   }, [session?.tasks?.length]);
@@ -1159,12 +1242,146 @@ export default function ChatPage() {
     });
   }
 
+  /** 找到任务中可进入的第一个员工子会话。 */
+  function resolveAgentTaskEntry(task: AgentTask): { siliconPersonId: string; sessionId: string } | null {
+    for (const siliconPersonId of task.assigneeIds) {
+      const sessionId = task.childSessionIds[siliconPersonId];
+      if (sessionId) return { siliconPersonId, sessionId };
+    }
+    return null;
+  }
+
+  /** 打开 Agent Task 对应的员工子会话，便于继续查看执行细节。 */
+  async function handleOpenAgentTask(task: AgentTask) {
+    const entry = resolveAgentTaskEntry(task);
+    if (!entry) return;
+    try {
+      console.info("[chat-page] 打开 Agent Task 子会话", {
+        taskId: task.id,
+        siliconPersonId: entry.siliconPersonId,
+        sessionId: entry.sessionId,
+      });
+      workspace.setActiveSiliconPersonId(entry.siliconPersonId);
+      await workspace.switchSiliconPersonSession(entry.siliconPersonId, entry.sessionId);
+    } catch (error) {
+      reportChatError(error);
+    }
+  }
+
+  /** 取消正在排队或执行中的 Agent Task。 */
+  async function handleCancelAgentTask(taskId: string) {
+    try {
+      console.info("[chat-page] 取消 Agent Task", { taskId });
+      await workspace.cancelAgentTask(taskId);
+    } catch (error) {
+      reportChatError(error);
+    }
+  }
+
+  /** 重新执行 Agent Task，并生成新的员工子会话。 */
+  async function handleRetryAgentTask(taskId: string) {
+    try {
+      console.info("[chat-page] 重试 Agent Task", { taskId });
+      await workspace.retryAgentTask(taskId);
+    } catch (error) {
+      reportChatError(error);
+    }
+  }
+
+  /** 打开 AgentTask 的内联追问输入框。 */
+  function handleStartAgentTaskFollowUp(taskId: string) {
+    console.info("[chat-page] 打开 Agent Task 追问输入", { taskId });
+    setActiveAgentTaskFollowUpId(taskId);
+  }
+
+  /** 记录 AgentTask 追问草稿。 */
+  function handleChangeAgentTaskFollowUp(taskId: string, value: string) {
+    setAgentTaskFollowUpDrafts((current) => ({
+      ...current,
+      [taskId]: value,
+    }));
+  }
+
+  /** 基于已有 Agent Task 创建追问任务。 */
+  async function handleSubmitAgentTaskFollowUp(taskId: string) {
+    const trimmedInstruction = agentTaskFollowUpDrafts[taskId]?.trim();
+    if (!trimmedInstruction) return;
+    try {
+      console.info("[chat-page] 创建 Agent Task 追问", {
+        taskId,
+        instructionLength: trimmedInstruction.length,
+      });
+      await workspace.followUpAgentTask(taskId, trimmedInstruction);
+      setActiveAgentTaskFollowUpId(null);
+      setAgentTaskFollowUpDrafts((current) => {
+        const next = { ...current };
+        delete next[taskId];
+        return next;
+      });
+    } catch (error) {
+      reportChatError(error);
+    }
+  }
+
+  /** 关闭 AgentTask 追问输入框。 */
+  function handleCancelAgentTaskFollowUp(taskId: string) {
+    console.info("[chat-page] 关闭 Agent Task 追问输入", { taskId });
+    setActiveAgentTaskFollowUpId((current) => (current === taskId ? null : current));
+  }
+
+  /** 判断 AgentTask 是否具备追加到来源主会话的结果。 */
+  function canAppendAgentTaskResult(task: AgentTask): boolean {
+    return Boolean(task.resultSummary?.trim() && task.status === "succeeded" && !task.appendedMessageId);
+  }
+
+  /** 将 AgentTask 结果追加到来源主会话，并按需切回来源主聊天。 */
+  async function handleAppendAgentTaskResult(task: AgentTask, options: { returnToSource: boolean }) {
+    if (!canAppendAgentTaskResult(task) || appendingAgentTaskIds.has(task.id)) return;
+    setAppendingAgentTaskIds((current) => new Set([...current, task.id]));
+    try {
+      console.info("[chat-page] 追加 Agent Task 结果到主会话", {
+        taskId: task.id,
+        sourceSessionId: task.sourceSessionId,
+        returnToSource: options.returnToSource,
+      });
+      await workspace.appendAgentTaskResultToSource(task.id);
+      if (options.returnToSource) {
+        workspace.selectSession(task.sourceSessionId);
+        workspace.setActiveSiliconPersonId(null);
+      }
+    } catch (error) {
+      reportChatError(error);
+    } finally {
+      setAppendingAgentTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
+      });
+    }
+  }
+
+  /** 关闭 AgentTask 轻提示，只隐藏当前客户端提示，不影响任务记录和后台执行。 */
+  function handleDismissAgentTaskCard(task: AgentTask) {
+    const dismissKey = buildAgentTaskCardDismissKey(task);
+    writeAgentTaskCardDismissed(dismissKey);
+    setDismissedAgentTaskCardKeys((current) => new Set([...current, dismissKey]));
+    console.info("[chat-page] 已隐藏 Agent Task 轻提示", {
+      taskId: task.id,
+      sourceSessionId: task.sourceSessionId,
+    });
+  }
+
+  /** 关闭会话任务面板，并记住当前任务集合的关闭状态。 */
+  function handleDismissTaskPanel() {
+    writeTaskPanelDismissed(taskPanelDismissKey);
+    setDismissedTaskPanelKey(taskPanelDismissKey);
+  }
+
   /** 把输入内容发送给运行时，统一处理发送态和异常展示。 */
   async function sendMessageToRuntime(draft: string): Promise<boolean> {
     // 显式 @ 目标始终代表“指令下发”，和当前正在查看哪个聊天对象无关。
     if (mentionTargetSiliconPersonId) {
       try {
-        const person = siliconPersons.find((sp) => sp.id === mentionTargetSiliconPersonId);
         const sourceSessionId = workspace.currentSession?.id ?? session?.id;
         if (!sourceSessionId) return false;
         await workspace.createAgentTask({
@@ -1173,24 +1390,6 @@ export default function ChatPage() {
           mode: "delegate",
           assigneeIds: [mentionTargetSiliconPersonId],
         });
-        if (person) {
-          const newTraceId = `${Date.now()}-${mentionTargetSiliconPersonId}`;
-          setDispatchTraces((prev) => [
-            ...prev,
-            {
-              id: newTraceId,
-              personName: person.name,
-              personId: person.id,
-              content: draft,
-              timestamp: new Date().toLocaleTimeString(),
-            },
-          ]);
-          const timer = setTimeout(() => {
-            setDispatchTraces((prev) => prev.filter((t) => t.id !== newTraceId));
-            dispatchTraceTimersRef.current.delete(timer);
-          }, 5000);
-          dispatchTraceTimersRef.current.add(timer);
-        }
         setMentionTargetSiliconPersonId(null);
         return true;
       } catch (error) {
@@ -1243,7 +1442,11 @@ export default function ChatPage() {
     console.info("[chat-page] 从硅基员工聊天返回主聊天", {
       siliconPersonId: selectedSiliconPerson.id,
       sessionId: session?.id ?? null,
+      sourceSessionId: currentChildAgentTask?.sourceSessionId ?? null,
     });
+    if (currentChildAgentTask?.sourceSessionId) {
+      workspace.selectSession(currentChildAgentTask.sourceSessionId);
+    }
     workspace.setActiveSiliconPersonId(null);
   }
 
@@ -1592,18 +1795,70 @@ export default function ChatPage() {
           </div>
           <div className="header-right">
             {isSiliconPersonView && (
-              <button
-                type="button"
-                data-testid="return-main-chat-button"
-                className="chat-header-action-btn"
-                onClick={handleReturnToMainChat}
-                title="返回主聊天"
+              <>
+                {currentChildAgentTask && (
+                  currentChildAgentTask.appendedMessageId ? (
+                    <span className="agent-task-append-state" data-testid={`agent-task-appended-${currentChildAgentTask.id}`}>
+                      已追加
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      data-testid={`agent-task-append-and-return-${currentChildAgentTask.id}`}
+                      className="chat-header-action-btn chat-header-action-btn--primary"
+                      onClick={() => void handleAppendAgentTaskResult(currentChildAgentTask, { returnToSource: true })}
+                      disabled={!canAppendAgentTaskResult(currentChildAgentTask) || appendingAgentTaskIds.has(currentChildAgentTask.id)}
+                      title={canAppendAgentTaskResult(currentChildAgentTask) ? "追加到主聊天并返回" : "无可追加内容"}
+                    >
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14m7-7H5" />
+                      </svg>
+                      <span>{appendingAgentTaskIds.has(currentChildAgentTask.id) ? "追加中..." : "追加到主聊天并返回"}</span>
+                    </button>
+                  )
+                )}
+                <button
+                  type="button"
+                  data-testid="return-main-chat-button"
+                  className="chat-header-action-btn"
+                  onClick={handleReturnToMainChat}
+                  title="返回主聊天"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+                  </svg>
+                  <span>返回主聊天</span>
+                </button>
+              </>
+            )}
+            {workspace.modelSwitchNotice && (
+              <div
+                className="model-switch-inline-notice"
+                data-testid="model-switch-inline-notice"
+                title={`默认模型已从 ${workspace.modelSwitchNotice.fromName} 切换为 ${workspace.modelSwitchNotice.toName}`}
               >
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                 </svg>
-                <span>返回主聊天</span>
-              </button>
+                <span className="model-switch-inline-text">模型已切换，建议新对话</span>
+                <button
+                  type="button"
+                  className="model-switch-inline-action"
+                  data-testid="model-switch-inline-new-chat"
+                  onClick={() => void createSession()}
+                >
+                  新建
+                </button>
+                <button
+                  type="button"
+                  className="model-switch-inline-dismiss"
+                  data-testid="model-switch-inline-dismiss"
+                  aria-label="继续当前对话"
+                  onClick={() => workspace.dismissModelSwitchNotice()}
+                >
+                  继续
+                </button>
+              </div>
             )}
             <button
               type="button"
@@ -1683,31 +1938,6 @@ export default function ChatPage() {
                         新建对话
                       </button>
                       <button className="btn-dismiss" onClick={() => setShowContextWarning(false)}>
-                        继续当前对话
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* 模型切换提示 */}
-              {workspace.modelSwitchNotice && (
-                <div className="context-limit-warning">
-                  <div className="context-limit-warning-content model-switch-notice">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
-                    <span>默认模型已从 <strong>{workspace.modelSwitchNotice.fromName}</strong> 切换为 <strong>{workspace.modelSwitchNotice.toName}</strong>，建议新建对话以获得最佳体验。</span>
-                    <div className="context-limit-warning-actions">
-                      <button
-                        className="btn-new-chat"
-                        onClick={async () => {
-                          await createSession();
-                        }}
-                      >
-                        新建对话
-                      </button>
-                      <button className="btn-dismiss" onClick={() => workspace.dismissModelSwitchNotice()}>
                         继续当前对话
                       </button>
                     </div>
@@ -2053,21 +2283,127 @@ export default function ChatPage() {
                       .map((id) => siliconPersonNameById.get(id) ?? id)
                       .join(" / ");
                     const statusLabel = AGENT_TASK_STATUS_LABEL[task.status] ?? task.status;
+                    const canCancelTask = task.status === "queued" || task.status === "running" || task.status === "waiting_user";
+                    const taskEntry = resolveAgentTaskEntry(task);
+                    const isFollowUpOpen = activeAgentTaskFollowUpId === task.id;
+                    const followUpDraft = agentTaskFollowUpDrafts[task.id] ?? "";
                     return (
                       <article
                         key={task.id}
-                        className={`agent-task-card agent-task-card--${task.status}`}
-                        data-testid={`agent-task-card-${task.id}`}
+                        className={`agent-task-activity agent-task-activity--${task.status}`}
+                        data-testid={`agent-task-activity-${task.id}`}
                       >
-                        <div className="agent-task-card-top">
-                          <span className="agent-task-kicker">Agent Task</span>
-                          <span className="agent-task-status">{statusLabel}</span>
+                        <div className="agent-task-activity-main">
+                          <span className={`agent-task-activity-dot agent-task-activity-dot--${task.status}`} />
+                          <div className="agent-task-activity-copy">
+                            <div className="agent-task-activity-title-row">
+                              <span className="agent-task-kicker">Agent Task</span>
+                              <span className="agent-task-title">{task.title}</span>
+                            </div>
+                            <div className="agent-task-meta">
+                              <span>{assigneeNames}</span>
+                              <span>{new Date(task.createdAt).toLocaleTimeString()}</span>
+                              <span className="agent-task-status">{statusLabel}</span>
+                            </div>
+                            {task.resultSummary && (
+                              <div className="agent-task-result">{task.resultSummary}</div>
+                            )}
+                            {task.error && (
+                              <div className="agent-task-error">{task.error}</div>
+                            )}
+                          </div>
                         </div>
-                        <div className="agent-task-title">{task.title}</div>
-                        <div className="agent-task-meta">
-                          <span>{assigneeNames}</span>
-                          <span>{new Date(task.createdAt).toLocaleTimeString()}</span>
+                        <div className="agent-task-actions">
+                          <button
+                            type="button"
+                            className="agent-task-action"
+                            data-testid={`agent-task-open-${task.id}`}
+                            disabled={!taskEntry}
+                            onClick={() => void handleOpenAgentTask(task)}
+                          >
+                            进入
+                          </button>
+                          {canCancelTask && (
+                            <button
+                              type="button"
+                              className="agent-task-action"
+                              data-testid={`agent-task-cancel-${task.id}`}
+                              onClick={() => void handleCancelAgentTask(task.id)}
+                            >
+                              取消
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="agent-task-action"
+                            data-testid={`agent-task-retry-${task.id}`}
+                            onClick={() => void handleRetryAgentTask(task.id)}
+                          >
+                            重试
+                          </button>
+                          <button
+                            type="button"
+                            className="agent-task-action"
+                            data-testid={`agent-task-follow-${task.id}`}
+                            onClick={() => handleStartAgentTaskFollowUp(task.id)}
+                          >
+                            追问
+                          </button>
+                          {task.appendedMessageId ? (
+                            <span className="agent-task-action-state" data-testid={`agent-task-appended-${task.id}`}>已追加</span>
+                          ) : task.resultSummary && (
+                            <button
+                              type="button"
+                              className="agent-task-action agent-task-action--primary"
+                              data-testid={`agent-task-append-${task.id}`}
+                              disabled={!canAppendAgentTaskResult(task) || appendingAgentTaskIds.has(task.id)}
+                              onClick={() => void handleAppendAgentTaskResult(task, { returnToSource: false })}
+                            >
+                              {appendingAgentTaskIds.has(task.id) ? "追加中..." : "追加到主聊天"}
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="agent-task-dismiss"
+                            title="隐藏任务提示"
+                            aria-label="隐藏任务提示"
+                            data-testid={`agent-task-dismiss-${task.id}`}
+                            onClick={() => handleDismissAgentTaskCard(task)}
+                          >
+                            x
+                          </button>
                         </div>
+                        {isFollowUpOpen && (
+                          <div className="agent-task-follow-up" data-testid={`agent-task-follow-panel-${task.id}`}>
+                            <textarea
+                              className="agent-task-follow-input"
+                              data-testid={`agent-task-follow-input-${task.id}`}
+                              value={followUpDraft}
+                              onChange={(event) => handleChangeAgentTaskFollowUp(task.id, event.target.value)}
+                              placeholder="补充追问内容"
+                              rows={2}
+                            />
+                            <div className="agent-task-follow-actions">
+                              <button
+                                type="button"
+                                className="agent-task-action"
+                                data-testid={`agent-task-follow-cancel-${task.id}`}
+                                onClick={() => handleCancelAgentTaskFollowUp(task.id)}
+                              >
+                                收起
+                              </button>
+                              <button
+                                type="button"
+                                className="agent-task-action agent-task-action--primary"
+                                data-testid={`agent-task-follow-submit-${task.id}`}
+                                disabled={!followUpDraft.trim()}
+                                onClick={() => void handleSubmitAgentTaskFollowUp(task.id)}
+                              >
+                                发送
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </article>
                     );
                   })}
@@ -2107,7 +2443,7 @@ export default function ChatPage() {
 
         {/* 计划面板 - Codex 风格，紧贴输入框上方 */}
         {!taskPanelDismissed && (
-          <PlanStatePanel tasks={session?.tasks ?? []} onDismiss={() => setTaskPanelDismissed(true)} />
+          <PlanStatePanel tasks={session?.tasks ?? []} onDismiss={handleDismissTaskPanel} />
         )}
 
         {/* ── 后台研究面板 ── */}
@@ -2367,13 +2703,22 @@ export default function ChatPage() {
         .dropdown-header { padding: 16px; border-bottom: 1px solid var(--glass-border); font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
 
         /* ── 头部操作按钮 ── */
-        .header-right { display: flex; align-items: center; gap: 6px; }
+        .header-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
         .chat-header-action-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; height: 28px; box-sizing: border-box; border: 1px solid var(--glass-border); border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; text-decoration: none; white-space: nowrap; line-height: 1; }
         .chat-header-action-btn:hover:not(:disabled) { border-color: var(--glass-border-hover); color: var(--text-primary); background: rgba(255,255,255,0.04); }
         .chat-header-action-btn:disabled { opacity: 0.45; cursor: not-allowed; }
         .chat-header-action-btn--primary { border-color: var(--accent-cyan); color: var(--accent-cyan); background: rgba(16,163,127,0.06); }
         .chat-header-action-btn--primary:hover:not(:disabled) { background: rgba(16,163,127,0.12); border-color: var(--accent-cyan); color: var(--accent-cyan); }
         .chat-header-action-btn--active { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.3); color: #60a5fa; }
+        .agent-task-append-state { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(34,197,94,0.24); background: rgba(34,197,94,0.08); color: var(--status-green); font-size: 12px; font-weight: 600; }
+        .model-switch-inline-notice { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 360px; height: 28px; padding: 0 8px; border: 1px solid rgba(16,163,127,0.28); border-radius: 8px; background: rgba(16,163,127,0.08); color: var(--text-secondary); font-size: 12px; line-height: 1; box-sizing: border-box; }
+        .model-switch-inline-notice > svg { flex-shrink: 0; color: var(--accent-cyan); }
+        .model-switch-inline-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .model-switch-inline-action, .model-switch-inline-dismiss { flex-shrink: 0; height: 20px; padding: 0 8px; border-radius: 6px; border: 1px solid transparent; font-size: 12px; font-family: inherit; line-height: 1; cursor: pointer; }
+        .model-switch-inline-action { background: var(--accent-cyan); color: #000; font-weight: 600; }
+        .model-switch-inline-dismiss { background: transparent; border-color: rgba(148,163,184,0.22); color: var(--text-muted); }
+        .model-switch-inline-action:hover { opacity: 0.86; }
+        .model-switch-inline-dismiss:hover { color: var(--text-primary); border-color: var(--glass-border-hover); background: rgba(255,255,255,0.04); }
 
         /* ── 时间线容器 (支持文件侧边栏) ── */
         .chat-reminder-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 32px; border-bottom: 1px solid rgba(245,158,11,0.22); background: rgba(245,158,11,0.10); color: var(--text-primary); }
@@ -2643,16 +2988,34 @@ export default function ChatPage() {
         .mention-status-needs_approval { color: var(--status-yellow); border-color: rgba(245,158,11,0.3); }
         .mention-status-done { color: var(--status-green); border-color: rgba(34,197,94,0.3); }
         .mention-status-error { color: var(--status-red); border-color: rgba(239,68,68,0.3); }
-        .agent-task-thread { display: grid; gap: 8px; max-width: 1200px; margin: 0 auto; padding: 8px 48px; }
-        .agent-task-card { width: min(620px, 100%); padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.22); background: color-mix(in srgb, var(--bg-card) 82%, transparent); box-shadow: 0 8px 22px rgba(0,0,0,0.12); }
-        .agent-task-card--running { border-color: rgba(16,163,127,0.35); }
-        .agent-task-card--failed { border-color: rgba(239,68,68,0.36); }
-        .agent-task-card--succeeded { border-color: rgba(34,197,94,0.34); }
-        .agent-task-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; margin-bottom: 6px; }
-        .agent-task-kicker { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
+        .agent-task-thread { display: grid; gap: 6px; max-width: 1200px; margin: 0 auto; padding: 6px 48px; }
+        .agent-task-activity { width: min(780px, 100%); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 7px 8px; border-radius: 8px; border: 1px solid rgba(148,163,184,0.16); background: rgba(255,255,255,0.025); }
+        .agent-task-activity--waiting_user, .agent-task-activity--failed { border-color: rgba(245,158,11,0.28); }
+        .agent-task-activity-main { min-width: 0; display: flex; align-items: flex-start; gap: 8px; }
+        .agent-task-activity-copy { min-width: 0; display: grid; gap: 3px; }
+        .agent-task-activity-title-row { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+        .agent-task-activity-dot { width: 7px; height: 7px; margin-top: 7px; border-radius: 999px; background: var(--text-muted); flex-shrink: 0; }
+        .agent-task-activity-dot--queued, .agent-task-activity-dot--running { background: var(--accent-cyan); }
+        .agent-task-activity-dot--waiting_user, .agent-task-activity-dot--failed { background: var(--status-yellow); }
+        .agent-task-activity-dot--succeeded { background: var(--status-green); }
+        .agent-task-kicker { flex-shrink: 0; color: var(--text-muted); font-size: 10px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
         .agent-task-status { flex-shrink: 0; color: var(--accent-cyan); font-size: 11px; font-weight: 600; }
-        .agent-task-title { color: var(--text-primary); font-size: 13px; font-weight: 600; line-height: 1.45; word-break: break-word; }
-        .agent-task-meta { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 6px; color: var(--text-muted); font-size: 11px; line-height: 1.4; }
+        .agent-task-dismiss { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); font-family: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
+        .agent-task-dismiss:hover { background: rgba(148,163,184,0.14); color: var(--text-primary); }
+        .agent-task-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); font-size: 12px; font-weight: 650; line-height: 1.35; }
+        .agent-task-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; color: var(--text-muted); font-size: 11px; line-height: 1.35; }
+        .agent-task-result, .agent-task-error { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 11px; line-height: 1.35; }
+        .agent-task-error { color: #fca5a5; }
+        .agent-task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+        .agent-task-action { min-height: 24px; padding: 3px 8px; border-radius: 6px; border: 1px solid rgba(148,163,184,0.22); background: rgba(148,163,184,0.06); color: var(--text-primary); font-size: 11px; font-family: inherit; cursor: pointer; }
+        .agent-task-action:hover:not(:disabled) { border-color: rgba(16,163,127,0.38); background: rgba(16,163,127,0.1); }
+        .agent-task-action:disabled { cursor: not-allowed; opacity: 0.45; }
+        .agent-task-action--primary { border-color: rgba(16,163,127,0.35); color: var(--accent-cyan); }
+        .agent-task-action-state { min-height: 24px; display: inline-flex; align-items: center; padding: 3px 8px; border-radius: 6px; border: 1px solid rgba(34,197,94,0.22); background: rgba(34,197,94,0.08); color: var(--status-green); font-size: 11px; font-weight: 600; }
+        .agent-task-follow-up { display: grid; gap: 8px; margin-top: 10px; }
+        .agent-task-follow-input { width: 100%; min-height: 56px; resize: vertical; padding: 8px 9px; border-radius: 6px; border: 1px solid rgba(148,163,184,0.22); background: rgba(0,0,0,0.14); color: var(--text-primary); font-family: inherit; font-size: 12px; line-height: 1.45; outline: none; }
+        .agent-task-follow-input:focus { border-color: rgba(16,163,127,0.42); box-shadow: 0 0 0 2px rgba(16,163,127,0.08); }
+        .agent-task-follow-actions { display: flex; justify-content: flex-end; gap: 6px; }
         .dispatch-traces { display: flex; flex-direction: column; gap: 4px; max-width: 1200px; margin: 0 auto; padding: 4px 48px; }
         .dispatch-trace-card { display: flex; align-items: center; gap: 8px; padding: 4px 8px; background: transparent; border: none; border-radius: 0; font-size: 12px; line-height: 1.4; color: var(--text-muted); opacity: 0.85; }
         .dispatch-trace-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent-cyan); flex-shrink: 0; }

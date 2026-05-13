@@ -12,7 +12,7 @@ type AgentTaskRecordOptions = {
 };
 
 const AGENT_TASKS_FILE = "agent-tasks.json";
-const VALID_MODES = new Set<AgentTaskMode>(["speak", "delegate", "review", "broadcast"]);
+const VALID_MODES = new Set<AgentTaskMode>(["ask", "speak", "delegate", "review", "broadcast"]);
 
 /** 生成硅基员工任务标题，避免任务卡被超长指令撑开。 */
 function buildAgentTaskTitle(input: AgentTaskCreateInput): string {
@@ -32,6 +32,15 @@ function normalizeAssigneeIds(input: AgentTaskCreateInput): string[] {
     throw new Error("Agent task assigneeIds is required");
   }
   return ids;
+}
+
+/** 规范化主聊天传给员工任务的上下文策略，避免默认把整段主聊天灌入员工私有会话。 */
+function normalizeContextPolicy(input: AgentTaskCreateInput): AgentTask["contextPolicy"] {
+  return {
+    includeLastMessages: Math.max(0, Math.min(20, input.contextPolicy?.includeLastMessages ?? 6)),
+    includeArtifacts: input.contextPolicy?.includeArtifacts ?? false,
+    includeSelectedFiles: input.contextPolicy?.includeSelectedFiles ?? false,
+  };
 }
 
 /** 创建可持久化的硅基员工任务记录，供 IPC 与测试共享同一套默认值。 */
@@ -56,13 +65,22 @@ export function createAgentTaskRecord(
   return {
     id: options.id ?? `task-${randomUUID()}`,
     sourceSessionId: input.sourceSessionId.trim(),
+    ...(input.sourceMessageId?.trim() ? { sourceMessageId: input.sourceMessageId.trim() } : {}),
+    ...(input.parentTaskId?.trim() ? { parentTaskId: input.parentTaskId.trim() } : {}),
     title: buildAgentTaskTitle(input),
     instruction,
     mode,
     status: "queued",
     assigneeIds,
+    leadAssigneeId: assigneeIds[0],
     assigneeStatuses,
+    assigneeResultSummaries: {},
     childSessionIds: {},
+    appendStatus: "not_appended",
+    appendedToSourceSessionAt: null,
+    appendedMessageId: null,
+    approvalIds: [],
+    contextPolicy: normalizeContextPolicy(input),
     createdAt: now,
     updatedAt: now,
   };

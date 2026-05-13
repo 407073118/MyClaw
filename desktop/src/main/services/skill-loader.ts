@@ -74,6 +74,15 @@ function extractSkillMeta(dirName: string, markdown: string): { name: string; de
   return { name, description, workspaceDir };
 }
 
+/** 判断子路径是否为目录，避免同名文件被误识别为技能能力目录。 */
+function hasChildDirectory(parent: string, childName: string): boolean {
+  try {
+    return statSync(join(parent, childName)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 导出接口
 // ---------------------------------------------------------------------------
@@ -114,8 +123,9 @@ export function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
         if (parsed && typeof parsed === "object" && typeof parsed.id === "string" && typeof parsed.name === "string") {
           const skillDir = parsed.path ?? fullPath;
           let jsonViewFiles: string[] = [];
+          let dirPath = dirname(fullPath);
           try {
-            const dirPath = statSync(skillDir).isDirectory() ? skillDir : dirname(skillDir);
+            dirPath = statSync(skillDir).isDirectory() ? skillDir : dirname(skillDir);
             jsonViewFiles = readdirSync(dirPath).filter((f) => f.endsWith(".html"));
           } catch { /* ignore */ }
           skills.push({
@@ -128,11 +138,11 @@ export function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
             disableModelInvocation: parsed.disableModelInvocation ?? false,
             workingDirectory: parsed.workingDirectory ?? null,
             entrypoint: parsed.entrypoint ?? null,
-            hasScriptsDirectory: parsed.hasScriptsDirectory ?? false,
-            hasReferencesDirectory: parsed.hasReferencesDirectory ?? false,
-            hasAssetsDirectory: parsed.hasAssetsDirectory ?? false,
-            hasTestsDirectory: parsed.hasTestsDirectory ?? false,
-            hasAgentsDirectory: parsed.hasAgentsDirectory ?? false,
+            hasScriptsDirectory: parsed.hasScriptsDirectory ?? hasChildDirectory(dirPath, "scripts"),
+            hasReferencesDirectory: parsed.hasReferencesDirectory ?? hasChildDirectory(dirPath, "references"),
+            hasAssetsDirectory: parsed.hasAssetsDirectory ?? hasChildDirectory(dirPath, "assets"),
+            hasTestsDirectory: parsed.hasTestsDirectory ?? hasChildDirectory(dirPath, "tests"),
+            hasAgentsDirectory: parsed.hasAgentsDirectory ?? hasChildDirectory(dirPath, "agents"),
             hasViewFile: jsonViewFiles.length > 0,
             viewFiles: parsed.viewFiles ?? jsonViewFiles,
           });
@@ -155,8 +165,6 @@ export function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
 
       let subEntries: string[] = [];
       try { subEntries = readdirSync(fullPath); } catch { /* ignore */ }
-      const subDirs = new Set(subEntries.map((e) => e.toLowerCase()));
-
       const skillId = `skill-${name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")}`;
       const viewFiles = subEntries.filter((f) => f.endsWith(".html"));
 
@@ -170,11 +178,11 @@ export function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
         disableModelInvocation: false,
         workingDirectory: workspaceDir,
         entrypoint: null,
-        hasScriptsDirectory: subDirs.has("scripts"),
-        hasReferencesDirectory: subDirs.has("references"),
-        hasAssetsDirectory: subDirs.has("assets"),
-        hasTestsDirectory: subDirs.has("tests"),
-        hasAgentsDirectory: subDirs.has("agents"),
+        hasScriptsDirectory: hasChildDirectory(fullPath, "scripts"),
+        hasReferencesDirectory: hasChildDirectory(fullPath, "references"),
+        hasAssetsDirectory: hasChildDirectory(fullPath, "assets"),
+        hasTestsDirectory: hasChildDirectory(fullPath, "tests"),
+        hasAgentsDirectory: hasChildDirectory(fullPath, "agents"),
         hasViewFile: viewFiles.length > 0,
         viewFiles,
       });

@@ -425,6 +425,18 @@ const myClawAPI = {
   createAgentTask: (input: AgentTaskCreateInput) =>
     ipcRenderer.invoke("agent-task:create", input),
 
+  cancelAgentTask: (taskId: string) =>
+    ipcRenderer.invoke("agent-task:cancel", taskId),
+
+  retryAgentTask: (taskId: string) =>
+    ipcRenderer.invoke("agent-task:retry", taskId),
+
+  followUpAgentTask: (taskId: string, instruction: string) =>
+    ipcRenderer.invoke("agent-task:follow-up", { taskId, instruction }),
+
+  appendAgentTaskResultToSource: (taskId: string) =>
+    ipcRenderer.invoke("agent-task:append-result-to-source", taskId),
+
   onAgentTaskChanged: (callback: (payload: Record<string, unknown>) => void): UnsubscribeFn =>
     onChannel("agent-task:changed", callback),
 
@@ -502,6 +514,8 @@ const myClawAPI = {
   // ---- Web 面板 ------------------------------------------------------------
   webPanelResolvePage: (skillId: string, relativePath: string): Promise<string | null> =>
     ipcRenderer.invoke("web-panel:resolve-page", skillId, relativePath),
+  webPanelReadSkillDataRef: (skillId: string, dataRef: string): Promise<{ success: boolean; data?: unknown; error?: string }> =>
+    ipcRenderer.invoke("web-panel:read-skill-data-ref", skillId, dataRef),
 
   onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void): UnsubscribeFn =>
     onChannel("web-panel:open", callback),

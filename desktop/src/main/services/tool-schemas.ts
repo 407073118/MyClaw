@@ -6,7 +6,7 @@
  * 因此模型返回的是结构化参数，而不是自由文本。
  */
 
-import type { McpTool, SkillDefinition } from "@shared/contracts";
+import type { McpTool, ResolvedBuiltinTool, SkillDefinition } from "@shared/contracts";
 import {
   resolveAllowedBuiltinToolGroups,
   resolveBlockedBuiltinToolNames,
@@ -20,6 +20,29 @@ export type OpenAIFunctionTool = {
     parameters: Record<string, unknown>;
   };
 };
+
+export type BuildToolSchemaOptions = {
+  builtinTools?: ResolvedBuiltinTool[];
+};
+
+/** 根据工具中心偏好判断内置工具是否应该暴露给模型。 */
+function shouldExposeBuiltinFunctionTool(functionName: string, options?: BuildToolSchemaOptions): boolean {
+  if (!options?.builtinTools) {
+    return true;
+  }
+  const toolId = functionNameToToolId(functionName);
+  const configuredTool = options.builtinTools.find((tool) => tool.id === toolId);
+  if (!configuredTool) {
+    return true;
+  }
+  return configuredTool.enabled && configuredTool.exposedToModel;
+}
+
+/** 根据工具中心偏好判断 MCP 工具是否应该暴露给模型。 */
+function shouldExposeMcpTool(tool: McpTool & { serverId: string }): boolean {
+  const preference = tool as McpTool & { serverId: string; enabled?: boolean; exposedToModel?: boolean };
+  return preference.enabled !== false && preference.exposedToModel !== false;
+}
 
 function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git" | "http" | "web" | "ppt" | "task" | "time" | "browser" | null {
   if (functionName.startsWith("fs_")) return "fs";
@@ -53,6 +76,7 @@ export function buildToolSchemas(
   skills?: SkillDefinition[],
   mcpTools?: Array<McpTool & { serverId: string }>,
   toolPolicyId?: string,
+  options?: BuildToolSchemaOptions,
 ): OpenAIFunctionTool[] {
   const staticTools: OpenAIFunctionTool[] = [
     {
@@ -923,13 +947,14 @@ export function buildToolSchemas(
     if (!allowedBuiltinGroups.has(toolGroup)) {
       return false;
     }
-    return !blockedBuiltinNames.has(toolName);
+    return !blockedBuiltinNames.has(toolName) && shouldExposeBuiltinFunctionTool(toolName, options);
   });
 
   // 生成 MCP 工具 schema
   if (mcpTools && mcpTools.length > 0) {
     const usedMcpNames = new Set<string>();
     for (const tool of mcpTools) {
+      if (!shouldExposeMcpTool(tool)) continue;
       // 函数名格式：mcp__<serverId_short>__<toolName>
       let safeName = tool.id.replace(/[^a-zA-Z0-9_-]/g, "_");
       // 去重：如果净化后名称冲突，追加数字后缀
@@ -989,7 +1014,7 @@ export function buildToolSchemas(
       });
     }
 
-    // skill_view：模型应在完成工作后调用它，并携带数据打开 HTML 面板
+    // skill_view：模型应在完成工作后调用它，并携带数据或本地 dataRef 打开 HTML 面板
     const viewSkills = skills.filter((s) => s.enabled && s.hasViewFile && s.viewFiles && s.viewFiles.length > 0);
     if (viewSkills.length > 0) {
       const allPages = viewSkills.flatMap((s) => (s.viewFiles || []).map((f: string) => `${s.id}:${f}`));
@@ -997,7 +1022,7 @@ export function buildToolSchemas(
         type: "function",
         function: {
           name: "skill_view",
-          description: `Open an HTML panel to display results visually. Call this AFTER completing analysis/report work and generating the data. Available pages: ${allPages.join(", ")}`,
+          description: `Open an HTML panel to display results visually. Call this AFTER completing analysis/report work and generating the data. Pass either data or dataRef; prefer dataRef for large local JSON payloads already saved under the skill directory so the payload is not embedded in model context. Available pages: ${allPages.join(", ")}`,
           parameters: {
             type: "object",
             properties: {
@@ -1013,8 +1038,12 @@ export function buildToolSchemas(
                 type: "object",
                 description: "The JSON data to display in the panel. Must match the page's expected data structure (defined in the skill's SKILL.md).",
               },
+              dataRef: {
+                type: "string",
+                description: "Optional local JSON payload file path under the skill directory. Use this instead of data for large local payloads, for example \".myclaw-payloads/resume-diagnosis.json\".",
+              },
             },
-            required: ["skill_id", "page", "data"],
+            required: ["skill_id", "page"],
           },
         },
       });
@@ -1170,7 +1199,7 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
       return JSON.stringify(args);
 
     case "skill.view":
-      // 把完整参数作为 JSON 传递，便于执行器解析 skill_id、page 和 data
+      // 把完整参数作为 JSON 传递，便于执行器解析 skill_id、page、data 和 dataRef
       return JSON.stringify(args);
 
     case "ppt.themes":

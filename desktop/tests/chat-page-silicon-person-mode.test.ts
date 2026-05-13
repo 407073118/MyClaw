@@ -97,6 +97,25 @@ const mocks = vi.hoisted(() => {
         updatedAt: "2026-04-15T00:06:00.000Z",
       },
     }),
+    cancelAgentTask: vi.fn().mockResolvedValue(undefined),
+    retryAgentTask: vi.fn().mockResolvedValue(undefined),
+    followUpAgentTask: vi.fn().mockResolvedValue(undefined),
+    appendAgentTaskResultToSource: vi.fn().mockResolvedValue({
+      id: "task-append-1",
+      sourceSessionId: "main-session-1",
+      title: "发布风险评估",
+      instruction: "发布风险评估",
+      mode: "delegate",
+      status: "succeeded",
+      assigneeIds: ["sp-1"],
+      childSessionIds: { "sp-1": "silicon-session-1" },
+      resultSummary: "风险较低，可以灰度发布。",
+      appendedMessageId: "msg-appended-1",
+      appendedToSourceSessionAt: "2026-04-15T00:08:00.000Z",
+      appendStatus: "appended",
+      createdAt: "2026-04-15T00:06:00.000Z",
+      updatedAt: "2026-04-15T00:08:00.000Z",
+    }),
     cancelSessionRun: vi.fn().mockResolvedValue(undefined),
     pollBackgroundTask: vi.fn().mockResolvedValue(null),
     cancelBackgroundTask: vi.fn().mockResolvedValue(null),
@@ -142,6 +161,10 @@ describe("ChatPage silicon person mode", () => {
     mocks.workspace.sendMessage.mockReset();
     mocks.workspace.sendSiliconPersonMessage.mockReset();
     mocks.workspace.createAgentTask.mockReset();
+    mocks.workspace.cancelAgentTask.mockReset();
+    mocks.workspace.retryAgentTask.mockReset();
+    mocks.workspace.followUpAgentTask.mockReset();
+    mocks.workspace.appendAgentTaskResultToSource.mockReset();
     mocks.workspace.cancelSessionRun.mockReset();
     mocks.workspace.pollBackgroundTask.mockReset();
     mocks.workspace.cancelBackgroundTask.mockReset();
@@ -151,6 +174,7 @@ describe("ChatPage silicon person mode", () => {
     mocks.workspace.loadSiliconPersonById.mockReset();
     mocks.workspace.applySessionUpdate.mockReset();
     mocks.workspace.resolveApproval.mockReset();
+    window.sessionStorage.clear();
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });
 
@@ -348,7 +372,7 @@ describe("ChatPage silicon person mode", () => {
     mocks.workspace.agentTasks = originalAgentTasks;
   });
 
-  it("renders existing agent task cards inside the source main chat", async () => {
+  it("renders existing agent task activity rows inside the source main chat", async () => {
     const originalActiveSiliconPersonId = mocks.workspace.activeSiliconPersonId;
     const originalAgentTasks = mocks.workspace.agentTasks;
     mocks.workspace.activeSiliconPersonId = null;
@@ -378,9 +402,122 @@ describe("ChatPage silicon person mode", () => {
     const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
     render(React.createElement(ChatPage));
 
-    expect(screen.getByTestId("agent-task-card-task-visible-1")).toBeTruthy();
+    expect(screen.getByTestId("agent-task-activity-task-visible-1")).toBeTruthy();
+    expect(screen.queryByTestId("agent-task-card-task-visible-1")).toBeNull();
     expect(screen.getByText("整理客户需求风险")).toBeTruthy();
     expect(screen.getByText("Ada")).toBeTruthy();
+
+    mocks.workspace.activeSiliconPersonId = originalActiveSiliconPersonId;
+    mocks.workspace.agentTasks = originalAgentTasks;
+  });
+
+  it("keeps task results and actions in compact task activity rows", async () => {
+    const originalActiveSiliconPersonId = mocks.workspace.activeSiliconPersonId;
+    const originalAgentTasks = mocks.workspace.agentTasks;
+    mocks.workspace.activeSiliconPersonId = null;
+    mocks.workspace.agentTasks = [
+      {
+        id: "task-action-1",
+        sourceSessionId: "main-session-1",
+        title: "发布风险评估",
+        instruction: "发布风险评估",
+        mode: "delegate",
+        status: "succeeded",
+        assigneeIds: ["sp-1"],
+        childSessionIds: { "sp-1": "silicon-session-1" },
+        resultSummary: "风险较低，可以灰度发布。",
+        createdAt: "2026-04-15T00:06:00.000Z",
+        updatedAt: "2026-04-15T00:07:00.000Z",
+      },
+    ];
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    expect(screen.getByText("风险较低，可以灰度发布。")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("agent-task-open-task-action-1"));
+    expect(mocks.workspace.setActiveSiliconPersonId).toHaveBeenCalledWith("sp-1");
+    expect(mocks.workspace.switchSiliconPersonSession).toHaveBeenCalledWith("sp-1", "silicon-session-1");
+
+    fireEvent.click(screen.getByTestId("agent-task-retry-task-action-1"));
+    await waitFor(() => expect(mocks.workspace.retryAgentTask).toHaveBeenCalledWith("task-action-1"));
+
+    fireEvent.click(screen.getByTestId("agent-task-follow-task-action-1"));
+    const followInput = screen.getByTestId("agent-task-follow-input-task-action-1") as HTMLTextAreaElement;
+    fireEvent.change(followInput, { target: { value: "请补充风险优先级" } });
+    fireEvent.click(screen.getByTestId("agent-task-follow-submit-task-action-1"));
+    await waitFor(() => expect(mocks.workspace.followUpAgentTask).toHaveBeenCalledWith("task-action-1", "请补充风险优先级"));
+
+    fireEvent.click(screen.getByTestId("agent-task-dismiss-task-action-1"));
+    await waitFor(() => expect(screen.queryByTestId("agent-task-activity-task-action-1")).toBeNull());
+
+    mocks.workspace.activeSiliconPersonId = originalActiveSiliconPersonId;
+    mocks.workspace.agentTasks = originalAgentTasks;
+  });
+
+  it("appends a completed child task result to the source main chat and returns", async () => {
+    const originalActiveSiliconPersonId = mocks.workspace.activeSiliconPersonId;
+    const originalAgentTasks = mocks.workspace.agentTasks;
+    mocks.workspace.activeSiliconPersonId = "sp-1";
+    mocks.workspace.loadSiliconPersonById.mockResolvedValue(undefined);
+    mocks.workspace.markSiliconPersonSessionRead.mockResolvedValue(undefined);
+    mocks.workspace.appendAgentTaskResultToSource.mockResolvedValue({
+      id: "task-append-1",
+      sourceSessionId: "main-session-1",
+      title: "发布风险评估",
+      instruction: "发布风险评估",
+      mode: "delegate",
+      status: "succeeded",
+      assigneeIds: ["sp-1"],
+      childSessionIds: { "sp-1": "silicon-session-1" },
+      resultSummary: "风险较低，可以灰度发布。",
+      appendedMessageId: "msg-appended-1",
+      appendedToSourceSessionAt: "2026-04-15T00:08:00.000Z",
+      appendStatus: "appended",
+      createdAt: "2026-04-15T00:06:00.000Z",
+      updatedAt: "2026-04-15T00:08:00.000Z",
+    });
+    mocks.workspace.agentTasks = [
+      {
+        id: "task-append-1",
+        sourceSessionId: "main-session-1",
+        title: "发布风险评估",
+        instruction: "发布风险评估",
+        mode: "delegate",
+        status: "succeeded",
+        assigneeIds: ["sp-1"],
+        childSessionIds: { "sp-1": "silicon-session-1" },
+        resultSummary: "风险较低，可以灰度发布。",
+        createdAt: "2026-04-15T00:06:00.000Z",
+        updatedAt: "2026-04-15T00:07:00.000Z",
+      },
+    ];
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    fireEvent.click(screen.getByTestId("agent-task-append-and-return-task-append-1"));
+
+    await waitFor(() => expect(mocks.workspace.appendAgentTaskResultToSource).toHaveBeenCalledWith("task-append-1"));
+    expect(mocks.workspace.selectSession).toHaveBeenCalledWith("main-session-1");
+    expect(mocks.workspace.setActiveSiliconPersonId).toHaveBeenCalledWith(null);
 
     mocks.workspace.activeSiliconPersonId = originalActiveSiliconPersonId;
     mocks.workspace.agentTasks = originalAgentTasks;
