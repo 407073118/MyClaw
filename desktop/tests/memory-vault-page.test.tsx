@@ -27,6 +27,8 @@ const memoryApi = {
   removeRoot: vi.fn(),
   rescanRoot: vi.fn(),
   createMemo: vi.fn(),
+  createFile: vi.fn(),
+  createFolder: vi.fn(),
   listFiles: vi.fn(),
   readDocument: vi.fn(),
   updateDocument: vi.fn(),
@@ -152,6 +154,27 @@ describe("MemoryWorkspacePage", () => {
         updatedAt: "2026-05-14T08:31:00.000Z",
       },
     });
+    memoryApi.createFolder.mockResolvedValue({
+      item: {
+        rootId: "root-managed",
+        path: "F:\\Memory\\notes\\ideas",
+        relativePath: "notes/ideas",
+        name: "ideas",
+        createdAt: "2026-05-14T08:32:00.000Z",
+      },
+    });
+    memoryApi.createFile.mockResolvedValue({
+      item: {
+        rootId: "root-managed",
+        path: "F:\\Memory\\notes\\decision.md",
+        relativePath: "notes/decision.md",
+        title: "decision.md",
+        content: "# decision\n\n",
+        documentKind: "markdown",
+        editable: true,
+        updatedAt: "2026-05-14T08:33:00.000Z",
+      },
+    });
     memoryApi.search.mockResolvedValue({
       query: "roadmap",
       items: [
@@ -227,6 +250,39 @@ describe("MemoryWorkspacePage", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("creates folders and markdown files under the selected tree directory", async () => {
+    render(<MemoryWorkspacePage />);
+
+    fireEvent.click(await screen.findByTestId("memory-dir-notes"));
+    fireEvent.change(await screen.findByTestId("memory-create-name-input"), {
+      target: { value: "ideas" },
+    });
+    fireEvent.click(screen.getByTestId("memory-create-folder-button"));
+
+    await waitFor(() => {
+      expect(memoryApi.createFolder).toHaveBeenCalledWith({
+        rootId: "root-managed",
+        parentRelativePath: "notes",
+        name: "ideas",
+      });
+    });
+
+    fireEvent.change(screen.getByTestId("memory-create-name-input"), {
+      target: { value: "decision" },
+    });
+    fireEvent.click(screen.getByTestId("memory-create-file-button"));
+
+    await waitFor(() => {
+      expect(memoryApi.createFile).toHaveBeenCalledWith({
+        rootId: "root-managed",
+        parentRelativePath: "notes",
+        title: "decision",
+        content: "",
+      });
+    });
+    expect((await screen.findByTestId("memory-document-editor") as HTMLTextAreaElement).value).toContain("# decision");
   });
 
   it("searches memory and previews a context pack", async () => {

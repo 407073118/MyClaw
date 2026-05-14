@@ -46,6 +46,11 @@ type SelectedMemoryFile = {
 
 type SaveStatus = "idle" | "dirty" | "saving" | "saved" | "readonly" | "error";
 
+type CreateTarget = {
+  rootId: string;
+  parentRelativePath: string;
+};
+
 /** 将记忆根目录模式映射成 UI 标签，保持 managed/reference 的用户语义清晰。 */
 function rootModeLabel(mode: MemoryRootMode): string {
   return mode === "managed" ? "托管" : "引用";
@@ -79,6 +84,21 @@ function isSelectedFile(node: MemoryFileNode, selectedFile: SelectedMemoryFile |
   return selectedFile?.rootId === node.rootId && selectedFile.relativePath === node.relativePath;
 }
 
+/** 从文件相对路径中取出父目录，供新建文件默认落在当前文档旁边。 */
+function parentPathOf(relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/");
+  const index = normalized.lastIndexOf("/");
+  return index >= 0 ? normalized.slice(0, index) : "";
+}
+
+/** 把当前新建位置展示成短路径标签，降低误建到根目录的概率。 */
+function createTargetLabel(root: MemoryRoot | undefined, parentRelativePath: string): string {
+  if (!root) {
+    return "请选择托管根目录";
+  }
+  return parentRelativePath ? `${root.displayName}/${parentRelativePath}` : root.displayName;
+}
+
 /** 记忆库工作台页面：左侧文件树，右侧 Markdown 点开即编辑，检索作为辅助能力保留。 */
 export default function MemoryWorkspacePage() {
   const currentSession = useWorkspaceStore((state) => state.currentSession);
@@ -95,8 +115,8 @@ export default function MemoryWorkspacePage() {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [rootPath, setRootPath] = useState("");
   const [rootMode, setRootMode] = useState<MemoryRootMode>("managed");
-  const [memoRootId, setMemoRootId] = useState("");
-  const [memoTitle, setMemoTitle] = useState("");
+  const [createTarget, setCreateTarget] = useState<CreateTarget>({ rootId: "", parentRelativePath: "" });
+  const [createName, setCreateName] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -106,6 +126,10 @@ export default function MemoryWorkspacePage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   const managedRoots = useMemo(() => roots.filter((root) => root.mode === "managed"), [roots]);
+  const createTargetRoot = useMemo(
+    () => managedRoots.find((root) => root.id === createTarget.rootId),
+    [createTarget.rootId, managedRoots],
+  );
   const memoryContextEnabled = (currentSession?.runtimeIntent as MemoryRuntimeIntent | null | undefined)?.memoryContextEnabled === true;
   const totalFiles = useMemo(() => fileTrees.reduce((sum, tree) => sum + countTreeFiles(tree.children), 0), [fileTrees]);
   const totalChunks = useMemo(() => roots.reduce((sum, root) => sum + root.chunkCount, 0), [roots]);
@@ -129,7 +153,10 @@ export default function MemoryWorkspacePage() {
       setFileTrees(treeResponse.items);
       setCandidates(candidateResponse.items);
       const firstManagedRoot = rootResponse.items.find((root) => root.mode === "managed");
-      setMemoRootId((current) => current || firstManagedRoot?.id || "");
+      setCreateTarget((current) => {
+        const stillWritable = rootResponse.items.some((root) => root.id === current.rootId && root.mode === "managed");
+        return stillWritable ? current : { rootId: firstManagedRoot?.id || "", parentRelativePath: "" };
+      });
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : String(loadError);
       console.error("[memory-page] 加载记忆库文件工作台失败", { error: message });
@@ -211,6 +238,20 @@ export default function MemoryWorkspacePage() {
     }
   }, [loadMemoryState]);
 
+  /** 选择左侧树中的托管目录作为新建目标，引用根目录只读所以不允许作为目标。 */
+  const handleSelectCreateTarget = useCallback((rootId: string, parentRelativePath: string) => {
+    const root = roots.find((item) => item.id === rootId);
+    if (!root) return;
+    if (root.mode !== "managed") {
+      console.info("[memory-page] 尝试选择引用根目录作为新建目标，已拦截", { rootId, parentRelativePath });
+      setNotice("引用根目录只读，不能在里面新建文件或文件夹");
+      return;
+    }
+    console.info("[memory-page] 选择记忆库新建目标目录", { rootId, parentRelativePath });
+    setCreateTarget({ rootId, parentRelativePath });
+    setNotice(null);
+  }, [roots]);
+
   /** 打开左侧文件树中的文档；Markdown 会在右侧直接进入编辑面板。 */
   const handleOpenFile = useCallback(async (node: MemoryFileNode) => {
     if (node.kind !== "file") return;
@@ -228,6 +269,9 @@ export default function MemoryWorkspacePage() {
       setEditorContent(response.item.content);
       setLastSavedContent(response.item.content);
       setSaveStatus(response.item.editable ? "saved" : "readonly");
+      if (response.item.editable) {
+        setCreateTarget({ rootId: response.item.rootId, parentRelativePath: parentPathOf(response.item.relativePath) });
+      }
     } catch (openError) {
       const message = openError instanceof Error ? openError.message : String(openError);
       console.error("[memory-page] 打开记忆库文件失败", {
@@ -241,41 +285,71 @@ export default function MemoryWorkspacePage() {
     }
   }, []);
 
-  /** 在 managed 根目录下创建 Markdown 备忘录，创建后立刻在右侧打开可编辑文件。 */
-  const handleCreateMemo = useCallback(async () => {
-    const title = memoTitle.trim();
-    if (!memoRootId || !title) return;
-    console.info("[memory-page] 创建托管 Markdown 备忘录", { rootId: memoRootId, title });
-    setBusy("create-memo");
+  /** 在当前树目录中新建文件夹，并把新文件夹设为下一次新建目标。 */
+  const handleCreateFolder = useCallback(async () => {
+    const name = createName.trim();
+    if (!createTargetRoot || !name) return;
+    console.info("[memory-page] 创建记忆库文件夹", {
+      rootId: createTargetRoot.id,
+      parentRelativePath: createTarget.parentRelativePath,
+      name,
+    });
+    setBusy("create-folder");
     setError(null);
     setNotice(null);
     try {
-      const response = await window.myClawAPI.memory.createMemo({
-        rootId: memoRootId,
-        title,
-        content: "",
+      const response = await window.myClawAPI.memory.createFolder({
+        rootId: createTargetRoot.id,
+        parentRelativePath: createTarget.parentRelativePath,
+        name,
       });
-      await window.myClawAPI.memory.rescanRoot(memoRootId);
-      setMemoTitle("");
-      setNotice("备忘录已写入 notes/inbox，并已打开编辑器");
+      setCreateName("");
+      setNotice(`文件夹已创建：${response.item.relativePath}`);
       await loadMemoryState();
-      const documentResponse = await window.myClawAPI.memory.readDocument({
-        rootId: response.item.rootId,
-        relativePath: response.item.relativePath,
-      });
-      setSelectedFile({ rootId: response.item.rootId, relativePath: response.item.relativePath });
-      setActiveDocument(documentResponse.item);
-      setEditorContent(documentResponse.item.content);
-      setLastSavedContent(documentResponse.item.content);
-      setSaveStatus(documentResponse.item.editable ? "saved" : "readonly");
-    } catch (memoError) {
-      const message = memoError instanceof Error ? memoError.message : String(memoError);
-      console.error("[memory-page] 创建备忘录失败", { error: message });
+    } catch (folderError) {
+      const message = folderError instanceof Error ? folderError.message : String(folderError);
+      console.error("[memory-page] 创建记忆库文件夹失败", { error: message });
       setError(message);
     } finally {
       setBusy(null);
     }
-  }, [loadMemoryState, memoRootId, memoTitle]);
+  }, [createName, createTarget.parentRelativePath, createTargetRoot, loadMemoryState]);
+
+  /** 在当前树目录中新建 Markdown 文件，创建后直接在右侧打开编辑。 */
+  const handleCreateFile = useCallback(async () => {
+    const title = createName.trim();
+    if (!createTargetRoot || !title) return;
+    console.info("[memory-page] 创建记忆库 Markdown 文件", {
+      rootId: createTargetRoot.id,
+      parentRelativePath: createTarget.parentRelativePath,
+      title,
+    });
+    setBusy("create-file");
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await window.myClawAPI.memory.createFile({
+        rootId: createTargetRoot.id,
+        parentRelativePath: createTarget.parentRelativePath,
+        title,
+        content: "",
+      });
+      setCreateName("");
+      setSelectedFile({ rootId: response.item.rootId, relativePath: response.item.relativePath });
+      setActiveDocument(response.item);
+      setEditorContent(response.item.content);
+      setLastSavedContent(response.item.content);
+      setSaveStatus(response.item.editable ? "saved" : "readonly");
+      setNotice("Markdown 文件已创建并打开");
+      await loadMemoryState();
+    } catch (fileError) {
+      const message = fileError instanceof Error ? fileError.message : String(fileError);
+      console.error("[memory-page] 创建记忆库 Markdown 文件失败", { error: message });
+      setError(message);
+    } finally {
+      setBusy(null);
+    }
+  }, [createName, createTarget.parentRelativePath, createTargetRoot, loadMemoryState]);
 
   /** Markdown 内容变化后自动防抖保存，保持“点开就是编辑”的 Notion 式体验。 */
   useEffect(() => {
@@ -369,16 +443,20 @@ export default function MemoryWorkspacePage() {
   /** 渲染左侧文件树节点，文件点击后立即在右侧打开，目录只提供层级结构。 */
   const renderFileNode = (node: MemoryFileNode, depth = 0): JSX.Element => {
     if (node.kind === "directory") {
+      const targetSelected = createTarget.rootId === node.rootId && createTarget.parentRelativePath === node.relativePath;
       return (
         <div key={node.id} className="memory-tree-node">
-          <div
-            className="memory-tree-row memory-tree-row--directory"
+          <button
+            type="button"
+            className={`memory-tree-row memory-tree-row--directory${targetSelected ? " is-target" : ""}`}
             style={{ paddingLeft: 10 + depth * 14 }}
             data-testid={`memory-dir-${node.relativePath}`}
+            title={node.relativePath}
+            onClick={() => handleSelectCreateTarget(node.rootId, node.relativePath)}
           >
             <Folder size={15} />
             <span title={node.relativePath}>{node.name}</span>
-          </div>
+          </button>
           <div className="memory-tree-children">
             {(node.children ?? []).map((child) => renderFileNode(child, depth + 1))}
           </div>
@@ -470,30 +548,53 @@ export default function MemoryWorkspacePage() {
 
             <div className="memory-new-note">
               <div className="memory-sidebar-title">
-                <h3>新备忘录</h3>
-                <FilePlus2 size={15} />
+                <h3>新建</h3>
+                <div className="memory-create-icons">
+                  <FilePlus2 size={15} />
+                  <FolderPlus size={15} />
+                </div>
               </div>
-              <select value={memoRootId} onChange={(event) => setMemoRootId(event.target.value)}>
+              <select
+                value={createTarget.rootId}
+                onChange={(event) => setCreateTarget({ rootId: event.target.value, parentRelativePath: "" })}
+              >
                 <option value="">选择托管根目录</option>
                 {managedRoots.map((root) => (
                   <option key={root.id} value={root.id}>{root.displayName}</option>
                 ))}
               </select>
+              <div className="memory-location-label" title={createTarget.parentRelativePath}>
+                当前目录：{createTargetLabel(createTargetRoot, createTarget.parentRelativePath)}
+              </div>
               <div className="memory-add-root__row">
                 <input
-                  value={memoTitle}
-                  onChange={(event) => setMemoTitle(event.target.value)}
-                  placeholder="今天的工作备忘"
+                  data-testid="memory-create-name-input"
+                  value={createName}
+                  onChange={(event) => setCreateName(event.target.value)}
+                  placeholder="文件或文件夹名称"
                 />
-                <button
-                  type="button"
-                  className="memory-icon-button"
-                  title="创建 Markdown 备忘录"
-                  disabled={!memoRootId || !memoTitle.trim() || busy === "create-memo"}
-                  onClick={() => void handleCreateMemo()}
-                >
-                  <FilePlus2 size={16} />
-                </button>
+                <div className="memory-create-actions">
+                  <button
+                    data-testid="memory-create-file-button"
+                    type="button"
+                    className="memory-icon-button"
+                    title="新建 Markdown 文件"
+                    disabled={!createTargetRoot || !createName.trim() || busy === "create-file"}
+                    onClick={() => void handleCreateFile()}
+                  >
+                    <FilePlus2 size={16} />
+                  </button>
+                  <button
+                    data-testid="memory-create-folder-button"
+                    type="button"
+                    className="memory-icon-button"
+                    title="新建文件夹"
+                    disabled={!createTargetRoot || !createName.trim() || busy === "create-folder"}
+                    onClick={() => void handleCreateFolder()}
+                  >
+                    <FolderPlus size={16} />
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -510,11 +611,19 @@ export default function MemoryWorkspacePage() {
               ) : fileTrees.map((tree) => (
                 <div key={tree.root.id} className="memory-root-group">
                   <div className="memory-root-heading">
-                    <div className="memory-root-heading__main">
+                    <button
+                      type="button"
+                      className={`memory-root-heading__main memory-root-heading__button${
+                        createTarget.rootId === tree.root.id && createTarget.parentRelativePath === "" ? " is-target" : ""
+                      }`}
+                      data-testid={`memory-root-target-${tree.root.id}`}
+                      title={tree.root.path}
+                      onClick={() => handleSelectCreateTarget(tree.root.id, "")}
+                    >
                       <strong>{tree.root.displayName}</strong>
                       <span className={`memory-chip memory-chip--${tree.root.mode}`}>{rootModeLabel(tree.root.mode)}</span>
                       <span className={`memory-chip memory-chip--${tree.root.status}`}>{tree.root.status}</span>
-                    </div>
+                    </button>
                     <div className="memory-root-actions">
                       <button
                         type="button"
@@ -661,6 +770,7 @@ export default function MemoryWorkspacePage() {
         .memory-add-root, .memory-new-note { display: flex; flex-direction: column; gap: 9px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.07); }
         .memory-add-root label, .memory-new-note label { color: var(--text-secondary); font-size: 12px; font-weight: 800; }
         .memory-add-root__row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 8px; align-items: center; }
+        .memory-new-note .memory-add-root__row { grid-template-columns: minmax(0, 1fr) auto; }
         .memory-add-root input, .memory-new-note input, .memory-new-note select, .memory-search-box input { width: 100%; height: 34px; border: 1px solid var(--glass-border); border-radius: 8px; background: rgba(0,0,0,0.18); color: var(--text-primary); outline: none; padding: 0 10px; }
         .memory-add-root input:focus, .memory-new-note input:focus, .memory-new-note select:focus, .memory-search-box input:focus, .memory-editor-surface textarea:focus { border-color: rgba(125,211,252,0.45); box-shadow: 0 0 0 2px rgba(125,211,252,0.08); }
         .memory-segment { display: inline-flex; height: 34px; padding: 3px; border: 1px solid var(--glass-border); border-radius: 8px; background: rgba(0,0,0,0.16); }
@@ -668,11 +778,15 @@ export default function MemoryWorkspacePage() {
         .memory-segment button.is-active { background: rgba(125,211,252,0.12); color: #bae6fd; }
         .memory-sidebar-title, .memory-tree-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-secondary); }
         .memory-sidebar-title h3, .memory-tree-header h3 { margin: 0; color: var(--text-primary); font-size: 13px; font-weight: 900; }
+        .memory-create-icons, .memory-create-actions { display: inline-flex; align-items: center; gap: 6px; }
+        .memory-location-label { min-height: 24px; display: flex; align-items: center; padding: 0 9px; border-radius: 7px; background: rgba(125,211,252,0.07); color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .memory-tree-header { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.07); }
         .memory-tree { min-height: 0; flex: 1; overflow: auto; padding: 10px; }
         .memory-root-group { display: flex; flex-direction: column; gap: 6px; padding-bottom: 12px; margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.06); }
         .memory-root-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
         .memory-root-heading__main { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+        .memory-root-heading__button { border: 0; border-radius: 7px; background: transparent; color: inherit; cursor: pointer; text-align: left; padding: 3px 5px; }
+        .memory-root-heading__button:hover, .memory-root-heading__button.is-target { background: rgba(125,211,252,0.1); }
         .memory-root-heading__main strong { color: var(--text-primary); font-size: 13px; overflow-wrap: anywhere; }
         .memory-root-actions { display: inline-flex; gap: 5px; flex-shrink: 0; }
         .memory-root-path { color: var(--text-muted); font-size: 11px; line-height: 1.35; white-space: pre-wrap; word-break: break-all; }
@@ -680,9 +794,9 @@ export default function MemoryWorkspacePage() {
         .memory-tree-row { min-height: 30px; width: 100%; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 6px; border: 0; border-radius: 7px; background: transparent; color: var(--text-secondary); text-align: left; font-size: 13px; }
         .memory-tree-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .memory-tree-row small { color: var(--text-muted); font-size: 10px; }
-        .memory-tree-row--directory { font-weight: 800; color: var(--text-muted); }
+        .memory-tree-row--directory { font-weight: 800; color: var(--text-muted); cursor: pointer; }
         .memory-tree-row--file { cursor: pointer; }
-        .memory-tree-row--file:hover, .memory-tree-row--file.is-selected { color: var(--text-primary); background: rgba(125,211,252,0.1); }
+        .memory-tree-row--file:hover, .memory-tree-row--file.is-selected, .memory-tree-row--directory:hover, .memory-tree-row--directory.is-target { color: var(--text-primary); background: rgba(125,211,252,0.1); }
         .memory-editor-pane { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(360px, 1fr) auto auto; background: rgba(0,0,0,0.08); }
         .memory-editor-topbar { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.07); }
         .memory-document-title { min-width: 0; display: flex; align-items: center; gap: 10px; }

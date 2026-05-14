@@ -18,6 +18,8 @@ import type {
   MeetingEvent,
   MeetingRecord,
   AddMemoryRootInput,
+  CreateMemoryFileInput,
+  CreateMemoryFolderInput,
   CreateMemoryMemoInput,
   MemoryCandidate,
   MemoryContextPack,
@@ -25,6 +27,7 @@ import type {
   MemoryDocument,
   MemoryDocumentRequest,
   MemoryFileTree,
+  MemoryFolder,
   MemoryIndexStatus,
   MemoryMemo,
   MemoryRoot,
@@ -254,6 +257,8 @@ declare global {
         removeRoot: (rootId: string) => Promise<{ ok: boolean }>;
         rescanRoot: (rootId: string) => Promise<{ status: MemoryIndexStatus }>;
         createMemo: (input: CreateMemoryMemoInput) => Promise<{ item: MemoryMemo }>;
+        createFile: (input: CreateMemoryFileInput) => Promise<{ item: MemoryDocument }>;
+        createFolder: (input: CreateMemoryFolderInput) => Promise<{ item: MemoryFolder }>;
         listFiles: () => Promise<{ items: MemoryFileTree[] }>;
         readDocument: (input: MemoryDocumentRequest) => Promise<{ item: MemoryDocument }>;
         updateDocument: (input: UpdateMemoryDocumentInput) => Promise<{ item: MemoryDocument }>;

@@ -113,6 +113,32 @@ describe("memory vault service", () => {
     expect((await service.search({ query: "Updated note", limit: 3 })).items[0]?.relativePath).toBe(memo.relativePath);
   });
 
+  test("creates folders and markdown files inside managed tree locations", async () => {
+    const rootDir = makeTempDir();
+    const indexBaseDir = makeTempDir();
+    const service = await MemoryVaultService.create({ indexBaseDir });
+    services.push(service);
+    const root = await service.addRoot({ path: rootDir, mode: "managed", displayName: "Project Memory" });
+
+    const folder = await (service as any).createFolder({
+      rootId: root.id,
+      parentRelativePath: "",
+      name: "ideas",
+    });
+    const document = await (service as any).createFile({
+      rootId: root.id,
+      parentRelativePath: folder.relativePath,
+      title: "decision",
+      content: "",
+    });
+
+    expect(folder.relativePath).toBe("ideas");
+    expect(existsSync(join(rootDir, "ideas"))).toBe(true);
+    expect(document.relativePath).toBe("ideas/decision.md");
+    expect(readFileSync(join(rootDir, "ideas", "decision.md"), "utf-8")).toContain("# decision");
+    expect((await service.search({ query: "decision", limit: 3 })).items[0]?.relativePath).toBe("ideas/decision.md");
+  });
+
   test("builds context packs as cited evidence rather than instructions", async () => {
     const rootDir = makeTempDir();
     const indexBaseDir = makeTempDir();

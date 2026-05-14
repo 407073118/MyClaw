@@ -6,6 +6,8 @@ import { basename, dirname, extname, join, relative, resolve, sep } from "node:p
 
 import type {
   AddMemoryRootInput,
+  CreateMemoryFileInput,
+  CreateMemoryFolderInput,
   CreateMemoryMemoInput,
   MemoryCandidate,
   MemoryContextPack,
@@ -15,6 +17,7 @@ import type {
   MemoryFileNode,
   MemoryFileTree,
   MemoryIndexStatus,
+  MemoryFolder,
   MemoryMemo,
   MemoryRoot,
   MemoryRootMode,
@@ -103,6 +106,44 @@ function slugifyTitle(title: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 64);
   return asciiSlug || "memo";
+}
+
+/** 清理用户输入的单段文件名，保留中文并去掉 Windows 与跨平台非法字符。 */
+function sanitizePathLeaf(input: string, fallback: string): string {
+  const cleaned = input
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .slice(0, 100);
+  if (!cleaned || cleaned === "." || cleaned === "..") {
+    return fallback;
+  }
+  return cleaned;
+}
+
+/** 将用户输入的文件标题规范化为 Markdown 文件名，避免出现无扩展名文档。 */
+function normalizeMarkdownFileName(title: string): string {
+  const normalized = sanitizePathLeaf(title.replace(/\.markdown$/i, ".md"), "Untitled");
+  return /\.(md)$/i.test(normalized) ? normalized : `${normalized}.md`;
+}
+
+/** 去掉 Markdown 扩展名，生成文档内默认标题。 */
+function markdownTitleFromFileName(fileName: string): string {
+  return fileName.replace(/\.md$/i, "").trim() || "Untitled";
+}
+
+/** 在同级目录中生成不冲突的路径，避免新建文件或文件夹覆盖用户已有内容。 */
+function ensureUniqueChildPath(parentDir: string, leafName: string): string {
+  const ext = extname(leafName);
+  const stem = ext ? leafName.slice(0, -ext.length) : leafName;
+  let candidate = join(parentDir, leafName);
+  let index = 2;
+  while (existsSync(candidate)) {
+    candidate = join(parentDir, `${stem}-${index}${ext}`);
+    index += 1;
+  }
+  return candidate;
 }
 
 /** 统一把 Windows 路径分隔符转换成数据库和 UI 里更稳定的 `/`。 */
@@ -586,6 +627,59 @@ export class MemoryVaultService {
     };
   }
 
+  /** 在托管根目录的指定目录中新建文件夹，文件夹本身不写入索引数据库。 */
+  async createFolder(input: CreateMemoryFolderInput): Promise<MemoryFolder> {
+    const root = this.getRootOrThrow(input.rootId);
+    const parentDir = this.resolveWritableDirectory(root, input.parentRelativePath ?? "");
+    const createdAt = nowIso();
+    const folderName = sanitizePathLeaf(input.name, "New Folder");
+    const folderPath = ensureUniqueChildPath(parentDir, folderName);
+    mkdirSync(folderPath, { recursive: false });
+    this.db.run("UPDATE memory_roots SET updated_at = @updatedAt WHERE id = @rootId", {
+      rootId: root.id,
+      updatedAt: createdAt,
+    });
+    console.info("[memory-vault] 已创建记忆库文件夹", {
+      rootId: root.id,
+      parentRelativePath: input.parentRelativePath ?? "",
+      folderPath,
+    });
+    return {
+      rootId: root.id,
+      path: folderPath,
+      relativePath: toPortablePath(relative(root.path, folderPath)),
+      name: basename(folderPath),
+      createdAt,
+    };
+  }
+
+  /** 在托管根目录的指定目录中新建 Markdown 文件，并立即写入索引以便搜索。 */
+  async createFile(input: CreateMemoryFileInput): Promise<MemoryDocument> {
+    const root = this.getRootOrThrow(input.rootId);
+    const parentDir = this.resolveWritableDirectory(root, input.parentRelativePath ?? "");
+    const fileName = normalizeMarkdownFileName(input.title);
+    const filePath = ensureUniqueChildPath(parentDir, fileName);
+    const title = markdownTitleFromFileName(basename(filePath));
+    const content = input.content?.trimEnd() || [`# ${title}`, ""].join("\n");
+    writeFileSync(filePath, `${content}\n`, "utf-8");
+    const rootDb = this.getRootIndexDb(root.id);
+    const scanId = stableId(`${root.id}:${filePath}:${nowIso()}`);
+    rootDb.transaction(() => {
+      this.indexFile(rootDb, root, filePath, scanId);
+    });
+    this.refreshRootStats(rootDb, root.id, "ready", null);
+    console.info("[memory-vault] 已创建记忆库 Markdown 文件", {
+      rootId: root.id,
+      parentRelativePath: input.parentRelativePath ?? "",
+      filePath,
+      title,
+    });
+    return this.readDocument({
+      rootId: root.id,
+      relativePath: toPortablePath(relative(root.path, filePath)),
+    });
+  }
+
   /** 列出所有记忆根目录的文件树，左侧文档导航直接使用这个结构。 */
   async listFiles(): Promise<MemoryFileTree[]> {
     console.info("[memory-vault] 列出记忆库文件树");
@@ -787,6 +881,26 @@ export class MemoryVaultService {
       throw new Error(`Memory document not found: ${relativePath}`);
     }
     return targetPath;
+  }
+
+  /** 解析可写父目录，确保新建文件和文件夹只能落在 managed root 内部。 */
+  private resolveWritableDirectory(root: MemoryRoot, parentRelativePath: string): string {
+    if (root.mode !== "managed") {
+      throw new Error("Cannot write inside reference root");
+    }
+    const parentPath = parentRelativePath.trim()
+      ? this.resolveRootRelativePath(root, parentRelativePath)
+      : resolve(root.path);
+    const stat = statSync(parentPath);
+    if (!stat.isDirectory()) {
+      throw new Error(`Memory parent path is not a directory: ${parentRelativePath}`);
+    }
+    console.info("[memory-vault] 已解析记忆库可写父目录", {
+      rootId: root.id,
+      parentRelativePath,
+      parentPath,
+    });
+    return parentPath;
   }
 
   /** 解析单个文件并写入 fs_entries、file_versions、chunks 与可重建词项表。 */

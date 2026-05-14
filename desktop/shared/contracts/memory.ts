@@ -39,11 +39,32 @@ export type CreateMemoryMemoInput = {
   content: string;
 };
 
+export type CreateMemoryFileInput = {
+  rootId: string;
+  parentRelativePath?: string;
+  title: string;
+  content?: string;
+};
+
+export type CreateMemoryFolderInput = {
+  rootId: string;
+  parentRelativePath?: string;
+  name: string;
+};
+
 export type MemoryMemo = {
   rootId: string;
   path: string;
   relativePath: string;
   title: string;
+  createdAt: string;
+};
+
+export type MemoryFolder = {
+  rootId: string;
+  path: string;
+  relativePath: string;
+  name: string;
   createdAt: string;
 };
 

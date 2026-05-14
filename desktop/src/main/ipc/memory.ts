@@ -2,6 +2,8 @@ import { ipcMain } from "electron";
 
 import type {
   AddMemoryRootInput,
+  CreateMemoryFileInput,
+  CreateMemoryFolderInput,
   CreateMemoryMemoInput,
   MemoryContextPackRequest,
   MemoryDocumentRequest,
@@ -45,6 +47,26 @@ export function registerMemoryHandlers(ctx: RuntimeContext): void {
   ipcMain.handle("memory:create-memo", async (_event, input: CreateMemoryMemoInput) => {
     console.info("[memory-ipc] 创建记忆备忘录", { rootId: input.rootId, title: input.title });
     const item = await getMemoryVault(ctx).createMemo(input);
+    return { item };
+  });
+
+  ipcMain.handle("memory:create-folder", async (_event, input: CreateMemoryFolderInput) => {
+    console.info("[memory-ipc] 创建记忆库文件夹", {
+      rootId: input.rootId,
+      parentRelativePath: input.parentRelativePath ?? "",
+      name: input.name,
+    });
+    const item = await getMemoryVault(ctx).createFolder(input);
+    return { item };
+  });
+
+  ipcMain.handle("memory:create-file", async (_event, input: CreateMemoryFileInput) => {
+    console.info("[memory-ipc] 创建记忆库 Markdown 文件", {
+      rootId: input.rootId,
+      parentRelativePath: input.parentRelativePath ?? "",
+      title: input.title,
+    });
+    const item = await getMemoryVault(ctx).createFile(input);
     return { item };
   });
 

@@ -17,6 +17,8 @@ import type {
   MeetingEvent,
   MeetingRecord,
   AddMemoryRootInput,
+  CreateMemoryFileInput,
+  CreateMemoryFolderInput,
   CreateMemoryMemoInput,
   MemoryCandidate,
   MemoryContextPack,
@@ -24,6 +26,7 @@ import type {
   MemoryDocument,
   MemoryDocumentRequest,
   MemoryFileTree,
+  MemoryFolder,
   MemoryIndexStatus,
   MemoryMemo,
   MemoryRoot,
@@ -156,6 +159,12 @@ const myClawAPI = {
     // 在 managed root 下创建 Markdown 备忘录。
     createMemo: (input: CreateMemoryMemoInput) =>
       ipcRenderer.invoke("memory:create-memo", input) as Promise<{ item: MemoryMemo }>,
+    // 在托管文件树当前位置创建 Markdown 文件。
+    createFile: (input: CreateMemoryFileInput) =>
+      ipcRenderer.invoke("memory:create-file", input) as Promise<{ item: MemoryDocument }>,
+    // 在托管文件树当前位置创建文件夹。
+    createFolder: (input: CreateMemoryFolderInput) =>
+      ipcRenderer.invoke("memory:create-folder", input) as Promise<{ item: MemoryFolder }>,
     // 列出左侧文件树。
     listFiles: () =>
       ipcRenderer.invoke("memory:list-files") as Promise<{ items: MemoryFileTree[] }>,
