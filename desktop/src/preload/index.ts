@@ -21,11 +21,15 @@ import type {
   MemoryCandidate,
   MemoryContextPack,
   MemoryContextPackRequest,
+  MemoryDocument,
+  MemoryDocumentRequest,
+  MemoryFileTree,
   MemoryIndexStatus,
   MemoryMemo,
   MemoryRoot,
   MemorySearchRequest,
   MemorySearchResponse,
+  UpdateMemoryDocumentInput,
   ModelCatalogItem,
   McpServerConfig,
   ModelProfile,
@@ -152,6 +156,15 @@ const myClawAPI = {
     // 在 managed root 下创建 Markdown 备忘录。
     createMemo: (input: CreateMemoryMemoInput) =>
       ipcRenderer.invoke("memory:create-memo", input) as Promise<{ item: MemoryMemo }>,
+    // 列出左侧文件树。
+    listFiles: () =>
+      ipcRenderer.invoke("memory:list-files") as Promise<{ items: MemoryFileTree[] }>,
+    // 读取 Markdown 文档内容。
+    readDocument: (input: MemoryDocumentRequest) =>
+      ipcRenderer.invoke("memory:read-document", input) as Promise<{ item: MemoryDocument }>,
+    // 保存 Markdown 文档内容。
+    updateDocument: (input: UpdateMemoryDocumentInput) =>
+      ipcRenderer.invoke("memory:update-document", input) as Promise<{ item: MemoryDocument }>,
     // 检索记忆库并返回带引用的结果。
     search: (input: MemorySearchRequest) =>
       ipcRenderer.invoke("memory:search", input) as Promise<MemorySearchResponse>,

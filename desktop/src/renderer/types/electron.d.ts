@@ -22,11 +22,15 @@ import type {
   MemoryCandidate,
   MemoryContextPack,
   MemoryContextPackRequest,
+  MemoryDocument,
+  MemoryDocumentRequest,
+  MemoryFileTree,
   MemoryIndexStatus,
   MemoryMemo,
   MemoryRoot,
   MemorySearchRequest,
   MemorySearchResponse,
+  UpdateMemoryDocumentInput,
   ModelCatalogItem,
   ModelProfile,
   ModelRouteProbeResult,
@@ -250,6 +254,9 @@ declare global {
         removeRoot: (rootId: string) => Promise<{ ok: boolean }>;
         rescanRoot: (rootId: string) => Promise<{ status: MemoryIndexStatus }>;
         createMemo: (input: CreateMemoryMemoInput) => Promise<{ item: MemoryMemo }>;
+        listFiles: () => Promise<{ items: MemoryFileTree[] }>;
+        readDocument: (input: MemoryDocumentRequest) => Promise<{ item: MemoryDocument }>;
+        updateDocument: (input: UpdateMemoryDocumentInput) => Promise<{ item: MemoryDocument }>;
         search: (input: MemorySearchRequest) => Promise<MemorySearchResponse>;
         getContextPack: (input: MemoryContextPackRequest) => Promise<MemoryContextPack>;
         listCandidates: () => Promise<{ items: MemoryCandidate[] }>;

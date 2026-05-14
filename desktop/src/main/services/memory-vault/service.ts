@@ -10,6 +10,10 @@ import type {
   MemoryCandidate,
   MemoryContextPack,
   MemoryContextPackRequest,
+  MemoryDocument,
+  MemoryDocumentRequest,
+  MemoryFileNode,
+  MemoryFileTree,
   MemoryIndexStatus,
   MemoryMemo,
   MemoryRoot,
@@ -18,6 +22,7 @@ import type {
   MemorySearchRequest,
   MemorySearchResponse,
   MemorySearchResult,
+  UpdateMemoryDocumentInput,
 } from "@shared/contracts";
 
 type MemoryVaultServiceOptions = {
@@ -72,6 +77,7 @@ const TEXT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".csv"]);
 const SKIPPED_DIRS = new Set([".git", "node_modules", "dist", "build", ".cache", ".userdata"]);
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const CHUNK_CHAR_LIMIT = 2800;
+const MAX_TREE_NODES = 5000;
 
 /** 生成稳定 ID，避免同一个目录重复添加后出现多份根记录。 */
 function stableId(input: string): string {
@@ -102,6 +108,12 @@ function slugifyTitle(title: string): string {
 /** 统一把 Windows 路径分隔符转换成数据库和 UI 里更稳定的 `/`。 */
 function toPortablePath(path: string): string {
   return path.split(sep).join("/");
+}
+
+/** 判断文件是否为 V1 可直接编辑的 Markdown 文档。 */
+function isMarkdownPath(path: string): boolean {
+  const ext = extname(path).toLowerCase();
+  return ext === ".md" || ext === ".markdown";
 }
 
 /** 为中文短查询生成 unigram 与 bigram，补足 SQLite 默认 tokenizer 的中文弱点。 */
@@ -574,6 +586,63 @@ export class MemoryVaultService {
     };
   }
 
+  /** 列出所有记忆根目录的文件树，左侧文档导航直接使用这个结构。 */
+  async listFiles(): Promise<MemoryFileTree[]> {
+    console.info("[memory-vault] 列出记忆库文件树");
+    return this.listRoots().map((root) => ({
+      root,
+      children: this.buildFileTree(root),
+    }));
+  }
+
+  /** 读取单个 Markdown 文档；非 Markdown 只返回不可编辑占位内容。 */
+  async readDocument(input: MemoryDocumentRequest): Promise<MemoryDocument> {
+    const root = this.getRootOrThrow(input.rootId);
+    const filePath = this.resolveRootRelativePath(root, input.relativePath);
+    const stat = statSync(filePath);
+    if (!stat.isFile()) {
+      throw new Error(`Memory document is not a file: ${input.relativePath}`);
+    }
+    const markdown = isMarkdownPath(filePath);
+    console.info("[memory-vault] 读取记忆库文档", {
+      rootId: root.id,
+      relativePath: input.relativePath,
+      markdown,
+      editable: markdown && root.mode === "managed",
+    });
+    return {
+      rootId: root.id,
+      path: filePath,
+      relativePath: toPortablePath(input.relativePath),
+      title: basename(filePath),
+      content: markdown ? readFileSync(filePath, "utf-8") : "",
+      documentKind: markdown ? "markdown" : "unsupported",
+      editable: markdown && root.mode === "managed",
+      updatedAt: stat.mtime.toISOString(),
+    };
+  }
+
+  /** 保存托管根目录中的 Markdown 文档，保存后立即刷新该文件索引。 */
+  async updateDocument(input: UpdateMemoryDocumentInput): Promise<MemoryDocument> {
+    const root = this.getRootOrThrow(input.rootId);
+    if (root.mode !== "managed") {
+      throw new Error("Cannot edit document in reference root");
+    }
+    const filePath = this.resolveRootRelativePath(root, input.relativePath);
+    if (!isMarkdownPath(filePath)) {
+      throw new Error("Only Markdown memory documents are editable");
+    }
+    console.info("[memory-vault] 保存记忆库 Markdown 文档", { rootId: root.id, relativePath: input.relativePath });
+    writeFileSync(filePath, input.content, "utf-8");
+    const rootDb = this.getRootIndexDb(root.id);
+    const scanId = stableId(`${root.id}:${input.relativePath}:${nowIso()}`);
+    rootDb.transaction(() => {
+      this.indexFile(rootDb, root, filePath, scanId);
+    });
+    this.refreshRootStats(rootDb, root.id, "ready", null);
+    return this.readDocument({ rootId: root.id, relativePath: input.relativePath });
+  }
+
   /** 重新扫描根目录并重建该根目录的文本索引。 */
   async rescanRoot(rootId: string): Promise<MemoryIndexStatus> {
     const root = this.getRootOrThrow(rootId);
@@ -649,6 +718,75 @@ export class MemoryVaultService {
     };
     visit(rootPath);
     return files;
+  }
+
+  /** 构建单个根目录的文件树，跳过依赖和构建目录并限制节点数量。 */
+  private buildFileTree(root: MemoryRoot): MemoryFileNode[] {
+    let nodeCount = 0;
+    const visit = (dir: string, relativeDir: string): MemoryFileNode[] => {
+      const nodes: MemoryFileNode[] = [];
+      const entries = readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => !entry.name.startsWith(".") || entry.name === ".myclawignore")
+        .sort((left, right) => Number(right.isDirectory()) - Number(left.isDirectory()) || left.name.localeCompare(right.name));
+
+      for (const entry of entries) {
+        if (nodeCount >= MAX_TREE_NODES) {
+          console.warn("[memory-vault] 文件树节点数量达到上限，停止继续展开", { rootId: root.id, maxNodes: MAX_TREE_NODES });
+          break;
+        }
+        if (entry.isDirectory() && SKIPPED_DIRS.has(entry.name)) {
+          continue;
+        }
+        const absolutePath = join(dir, entry.name);
+        const relativePath = toPortablePath(relativeDir ? join(relativeDir, entry.name) : entry.name);
+        if (entry.isDirectory()) {
+          nodeCount += 1;
+          nodes.push({
+            id: `${root.id}:${relativePath}`,
+            rootId: root.id,
+            name: entry.name,
+            path: absolutePath,
+            relativePath,
+            kind: "directory",
+            documentKind: null,
+            editable: false,
+            children: visit(absolutePath, relativePath),
+          });
+          continue;
+        }
+        if (!entry.isFile()) {
+          continue;
+        }
+        const markdown = isMarkdownPath(entry.name);
+        nodeCount += 1;
+        nodes.push({
+          id: `${root.id}:${relativePath}`,
+          rootId: root.id,
+          name: entry.name,
+          path: absolutePath,
+          relativePath,
+          kind: "file",
+          documentKind: markdown ? "markdown" : "unsupported",
+          editable: markdown && root.mode === "managed",
+        });
+      }
+      return nodes;
+    };
+
+    return visit(root.path, "");
+  }
+
+  /** 将相对路径解析到根目录内，防止 renderer 传入越界路径。 */
+  private resolveRootRelativePath(root: MemoryRoot, relativePath: string): string {
+    const targetPath = resolve(root.path, relativePath);
+    const rootPath = resolve(root.path);
+    if (targetPath !== rootPath && !targetPath.startsWith(`${rootPath}${sep}`)) {
+      throw new Error(`Memory document path escapes root: ${relativePath}`);
+    }
+    if (!existsSync(targetPath)) {
+      throw new Error(`Memory document not found: ${relativePath}`);
+    }
+    return targetPath;
   }
 
   /** 解析单个文件并写入 fs_entries、file_versions、chunks 与可重建词项表。 */

@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import MemoryWorkspacePage from "../src/renderer/pages/MemoryWorkspacePage";
@@ -27,6 +27,9 @@ const memoryApi = {
   removeRoot: vi.fn(),
   rescanRoot: vi.fn(),
   createMemo: vi.fn(),
+  listFiles: vi.fn(),
+  readDocument: vi.fn(),
+  updateDocument: vi.fn(),
   search: vi.fn(),
   getContextPack: vi.fn(),
   listCandidates: vi.fn(),
@@ -82,6 +85,73 @@ describe("MemoryWorkspacePage", () => {
         },
       ],
     });
+    memoryApi.listFiles.mockResolvedValue({
+      items: [
+        {
+          root: {
+            id: "root-managed",
+            path: "F:\\Memory",
+            displayName: "Managed",
+            mode: "managed",
+            status: "ready",
+            fileCount: 2,
+            chunkCount: 5,
+            lastIndexedAt: "2026-05-14T08:00:00.000Z",
+            createdAt: "2026-05-14T07:00:00.000Z",
+            updatedAt: "2026-05-14T08:00:00.000Z",
+            errorMessage: null,
+          },
+          children: [
+            {
+              id: "root-managed:notes",
+              rootId: "root-managed",
+              name: "notes",
+              path: "F:\\Memory\\notes",
+              relativePath: "notes",
+              kind: "directory",
+              documentKind: null,
+              editable: false,
+              children: [
+                {
+                  id: "root-managed:notes/roadmap.md",
+                  rootId: "root-managed",
+                  name: "roadmap.md",
+                  path: "F:\\Memory\\notes\\roadmap.md",
+                  relativePath: "notes/roadmap.md",
+                  kind: "file",
+                  documentKind: "markdown",
+                  editable: true,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    memoryApi.readDocument.mockResolvedValue({
+      item: {
+        rootId: "root-managed",
+        path: "F:\\Memory\\notes\\roadmap.md",
+        relativePath: "notes/roadmap.md",
+        title: "roadmap.md",
+        content: "# Roadmap\n\nInitial note",
+        documentKind: "markdown",
+        editable: true,
+        updatedAt: "2026-05-14T08:30:00.000Z",
+      },
+    });
+    memoryApi.updateDocument.mockResolvedValue({
+      item: {
+        rootId: "root-managed",
+        path: "F:\\Memory\\notes\\roadmap.md",
+        relativePath: "notes/roadmap.md",
+        title: "roadmap.md",
+        content: "# Roadmap\n\nUpdated note",
+        documentKind: "markdown",
+        editable: true,
+        updatedAt: "2026-05-14T08:31:00.000Z",
+      },
+    });
     memoryApi.search.mockResolvedValue({
       query: "roadmap",
       items: [
@@ -128,8 +198,35 @@ describe("MemoryWorkspacePage", () => {
 
     expect(await screen.findByTestId("memory-workspace-view")).toBeTruthy();
     expect((await screen.findAllByText("Managed")).length).toBeGreaterThan(0);
-    expect(screen.getByText("Reference")).toBeTruthy();
-    expect(screen.getByText("Follow up roadmap")).toBeTruthy();
+    expect(await screen.findByText("roadmap.md")).toBeTruthy();
+  });
+
+  it("opens markdown files from the tree directly into an editor and autosaves changes", async () => {
+    render(<MemoryWorkspacePage />);
+
+    fireEvent.click(await screen.findByTestId("memory-file-notes/roadmap.md"));
+
+    const editor = await screen.findByTestId("memory-document-editor");
+    expect((editor as HTMLTextAreaElement).value).toContain("Initial note");
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.change(editor, { target: { value: "# Roadmap\n\nUpdated note" } });
+        await vi.advanceTimersByTimeAsync(900);
+      });
+      vi.useRealTimers();
+
+      await waitFor(() => {
+        expect(memoryApi.updateDocument).toHaveBeenCalledWith({
+          rootId: "root-managed",
+          relativePath: "notes/roadmap.md",
+          content: "# Roadmap\n\nUpdated note",
+        });
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("searches memory and previews a context pack", async () => {

@@ -47,6 +47,47 @@ export type MemoryMemo = {
   createdAt: string;
 };
 
+export type MemoryFileNodeKind = "directory" | "file";
+
+export type MemoryDocumentKind = "markdown" | "unsupported";
+
+export type MemoryFileNode = {
+  id: string;
+  rootId: string;
+  name: string;
+  path: string;
+  relativePath: string;
+  kind: MemoryFileNodeKind;
+  documentKind: MemoryDocumentKind | null;
+  editable: boolean;
+  children?: MemoryFileNode[];
+};
+
+export type MemoryFileTree = {
+  root: MemoryRoot;
+  children: MemoryFileNode[];
+};
+
+export type MemoryDocumentRequest = {
+  rootId: string;
+  relativePath: string;
+};
+
+export type MemoryDocument = {
+  rootId: string;
+  path: string;
+  relativePath: string;
+  title: string;
+  content: string;
+  documentKind: MemoryDocumentKind;
+  editable: boolean;
+  updatedAt: string;
+};
+
+export type UpdateMemoryDocumentInput = MemoryDocumentRequest & {
+  content: string;
+};
+
 export type MemorySearchRequest = {
   query: string;
   rootIds?: string[];

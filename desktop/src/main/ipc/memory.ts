@@ -4,7 +4,9 @@ import type {
   AddMemoryRootInput,
   CreateMemoryMemoInput,
   MemoryContextPackRequest,
+  MemoryDocumentRequest,
   MemorySearchRequest,
+  UpdateMemoryDocumentInput,
 } from "@shared/contracts";
 import type { RuntimeContext } from "../services/runtime-context";
 
@@ -44,6 +46,21 @@ export function registerMemoryHandlers(ctx: RuntimeContext): void {
     console.info("[memory-ipc] 创建记忆备忘录", { rootId: input.rootId, title: input.title });
     const item = await getMemoryVault(ctx).createMemo(input);
     return { item };
+  });
+
+  ipcMain.handle("memory:list-files", async () => {
+    console.info("[memory-ipc] 列出记忆库文件树");
+    return { items: await getMemoryVault(ctx).listFiles() };
+  });
+
+  ipcMain.handle("memory:read-document", async (_event, input: MemoryDocumentRequest) => {
+    console.info("[memory-ipc] 读取记忆库文档", { rootId: input.rootId, relativePath: input.relativePath });
+    return { item: await getMemoryVault(ctx).readDocument(input) };
+  });
+
+  ipcMain.handle("memory:update-document", async (_event, input: UpdateMemoryDocumentInput) => {
+    console.info("[memory-ipc] 保存记忆库文档", { rootId: input.rootId, relativePath: input.relativePath });
+    return { item: await getMemoryVault(ctx).updateDocument(input) };
   });
 
   ipcMain.handle("memory:search", async (_event, input: MemorySearchRequest) => {

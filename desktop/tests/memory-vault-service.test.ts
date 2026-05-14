@@ -78,6 +78,41 @@ describe("memory vault service", () => {
     expect(readFileSync(sourceFile, "utf-8")).toContain("外部资料只能索引");
   });
 
+  test("lists memory files and edits managed Markdown documents", async () => {
+    const rootDir = makeTempDir();
+    const indexBaseDir = makeTempDir();
+    const service = await MemoryVaultService.create({ indexBaseDir });
+    services.push(service);
+    const root = await service.addRoot({ path: rootDir, mode: "managed", displayName: "Project Memory" });
+    const memo = await service.createMemo({
+      rootId: root.id,
+      title: "Roadmap",
+      content: "Initial note",
+    });
+
+    const trees = await service.listFiles();
+    expect(JSON.stringify(trees)).toContain(memo.relativePath);
+
+    const document = await service.readDocument({ rootId: root.id, relativePath: memo.relativePath });
+    expect(document).toMatchObject({
+      rootId: root.id,
+      relativePath: memo.relativePath,
+      documentKind: "markdown",
+      editable: true,
+    });
+    expect(document.content).toContain("Initial note");
+
+    const updated = await service.updateDocument({
+      rootId: root.id,
+      relativePath: memo.relativePath,
+      content: "# Roadmap\n\nUpdated note",
+    });
+
+    expect(updated.content).toContain("Updated note");
+    expect(readFileSync(memo.path, "utf-8")).toContain("Updated note");
+    expect((await service.search({ query: "Updated note", limit: 3 })).items[0]?.relativePath).toBe(memo.relativePath);
+  });
+
   test("builds context packs as cited evidence rather than instructions", async () => {
     const rootDir = makeTempDir();
     const indexBaseDir = makeTempDir();

@@ -28,6 +28,9 @@ describe("memory vault IPC", () => {
       removeRoot: vi.fn(async () => ({ ok: true })),
       rescanRoot: vi.fn(async (rootId) => ({ rootId, status: "ready" })),
       createMemo: vi.fn(async (input) => ({ rootId: input.rootId, title: input.title })),
+      listFiles: vi.fn(async () => [{ root: { id: "root-1" }, children: [] }]),
+      readDocument: vi.fn(async (input) => ({ ...input, title: "roadmap.md", content: "# Roadmap", editable: true })),
+      updateDocument: vi.fn(async (input) => ({ ...input, title: "roadmap.md", content: input.content, editable: true })),
       search: vi.fn(async (input) => ({ query: input.query, items: [] })),
       getContextPack: vi.fn(async (input) => ({ enabled: false, query: input.query, evidence: [], promptBlock: "" })),
       listCandidates: vi.fn(async () => []),
@@ -45,6 +48,17 @@ describe("memory vault IPC", () => {
     expect(await findHandler("memory:create-memo")(null, { rootId: "root-1", title: "T", content: "C" })).toEqual({
       item: expect.objectContaining({ title: "T" }),
     });
+    expect(await findHandler("memory:list-files")(null)).toEqual({ items: [expect.objectContaining({ root: { id: "root-1" } })] });
+    expect(await findHandler("memory:read-document")(null, { rootId: "root-1", relativePath: "notes/roadmap.md" })).toEqual({
+      item: expect.objectContaining({ content: "# Roadmap" }),
+    });
+    expect(await findHandler("memory:update-document")(null, {
+      rootId: "root-1",
+      relativePath: "notes/roadmap.md",
+      content: "# Updated",
+    })).toEqual({
+      item: expect.objectContaining({ content: "# Updated" }),
+    });
     expect(await findHandler("memory:search")(null, { query: "审批" })).toEqual({ query: "审批", items: [] });
     expect(await findHandler("memory:get-context-pack")(null, { query: "审批" })).toEqual(expect.objectContaining({ enabled: false }));
     expect(await findHandler("memory:list-candidates")(null)).toEqual({ items: [] });
@@ -55,6 +69,12 @@ describe("memory vault IPC", () => {
 
     expect(memoryVault.removeRoot).toHaveBeenCalledWith("root-1");
     expect(memoryVault.rescanRoot).toHaveBeenCalledWith("root-1");
+    expect(memoryVault.readDocument).toHaveBeenCalledWith({ rootId: "root-1", relativePath: "notes/roadmap.md" });
+    expect(memoryVault.updateDocument).toHaveBeenCalledWith({
+      rootId: "root-1",
+      relativePath: "notes/roadmap.md",
+      content: "# Updated",
+    });
     expect(memoryVault.approveCandidate).toHaveBeenCalledWith("cand-1");
     expect(memoryVault.rejectCandidate).toHaveBeenCalledWith("cand-1");
   });
