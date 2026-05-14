@@ -89,6 +89,7 @@ type SessionRuntimeIntentPhase2 = {
   toolStrategy?: SessionRuntimeToolStrategy;
   workflowMode?: SessionWorkflowMode;
   planModeEnabled?: boolean;
+  memoryContextEnabled?: boolean;
 };
 
 export type Phase2SessionRuntimeIntent = SessionRuntimeIntentShell & SessionRuntimeIntentPhase2;

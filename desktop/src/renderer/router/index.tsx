@@ -13,6 +13,7 @@ import HubPage from "../pages/HubPage";
 import ToolsPage from "../pages/ToolsPage";
 import McpPage from "../pages/McpPage";
 import McpDetailPage from "../pages/McpDetailPage";
+import MemoryWorkspacePage from "../pages/MemoryWorkspacePage";
 import FilesWorkspacePage from "../pages/FilesWorkspacePage";
 import SkillsPage from "../pages/SkillsPage";
 import SkillDetailPage from "../pages/SkillDetailPage";
@@ -92,6 +93,7 @@ export function AppRoutes() {
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/hub" element={<HubPage />} />
         <Route path="/tools" element={<ToolsPage />} />
+        <Route path="/memory" element={<MemoryWorkspacePage />} />
         <Route path="/files" element={<FilesWorkspacePage />} />
         <Route path="/mcp" element={<McpPage />} />
         <Route path="/mcp/new" element={<McpDetailPage />} />
