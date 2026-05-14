@@ -24,6 +24,7 @@ import { buildArtifactContextBlock } from "../services/artifact-context-builder"
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
 import { extractEnrichedContext, buildEnrichedContextBlock } from "../services/context-enricher";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
+import { buildMemoryWorkingMemory } from "../services/memory-context-injection";
 import { buildCanonicalTurnContent } from "../services/model-runtime/canonical-turn-content";
 import { createBackgroundTaskManager } from "../services/model-runtime/background-task-manager";
 import type { BackgroundTaskSnapshot } from "../services/model-runtime/background-task-manager";
@@ -758,6 +759,7 @@ function buildSessionPromptSections(input: {
   enrichedContextBlock?: string | null;
   artifactContextBlock?: string | null;
   meetingContextBlock?: string | null;
+  memoryContextBlock?: string | null;
   mcpTools?: Array<McpTool & { serverId: string }>;
   providerFamily: ProviderFamily;
   protocolTarget?: ProtocolTarget | null;
@@ -788,6 +790,16 @@ function buildSessionPromptSections(input: {
     meetingContextBlock: input.meetingContextBlock,
     mcpTools: input.mcpTools,
   });
+
+  // 记忆库证据作为 context layer 注入，保持“证据不是指令”的边界。
+  if (input.memoryContextBlock?.trim()) {
+    sections.push({
+      id: "memory-evidence",
+      title: "Memory Evidence",
+      layer: "context",
+      content: input.memoryContextBlock.trim(),
+    });
+  }
 
   // 当会话中有 task 时，将当前状态摘要注入系统提示词，让模型每轮都能看到任务顺序和依赖
   const sessionTasks = input.session.tasks;
@@ -2800,6 +2812,15 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         ? ctx.state.siliconPersons.find((sp) => sp.id === session.siliconPersonId) ?? null
         : null;
 
+      // AI 记忆默认关闭；只有当前会话显式开启时才检索并注入 evidence pack。
+      const memoryWorkingMemory = await buildMemoryWorkingMemory({
+        memoryVault: ctx.services.memoryVault,
+        enabled: resolvedRunRuntimeIntent.memoryContextEnabled === true,
+        query: input.content,
+        limit: 8,
+        tokenBudget: 4096,
+      });
+
       const boundBuildSystemPrompt = (s: ChatSession, wd: string, sk?: SkillDefinition[]) => {
         const enriched = extractEnrichedContext(s);
         const enrichedBlock = buildEnrichedContextBlock(enriched);
@@ -2942,6 +2963,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           workingDir,
           skills: enabledSkills,
           systemPromptBuilder: boundBuildSystemPrompt,
+          workingMemory: memoryWorkingMemory ?? undefined,
           executionPlan,
         });
         const turnExecutionPlan = resolveTurnExecutionPlan({
@@ -2964,6 +2986,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             siliconPersonId: session.siliconPersonId ?? null,
           }),
           meetingContextBlock: buildMeetingContextBlock(ctx, session),
+          memoryContextBlock: memoryWorkingMemory,
           mcpTools,
           providerFamily: turnExecutionPlan.providerFamily,
           protocolTarget: turnExecutionPlan.protocolTarget,
@@ -3125,6 +3148,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             workingDir,
             skills: enabledSkills,
             systemPromptBuilder: boundBuildSystemPrompt,
+            workingMemory: memoryWorkingMemory ?? undefined,
             executionPlan,
             priorCompactionCount: compactionCount,
           });
@@ -3152,17 +3176,18 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             workingDir,
             skills: enabledSkills,
             gitBranch,
-          personalPromptProfile: ctx.state.getPersonalPromptProfile(),
-          reasoningEffort: runReasoningEffort,
-          enrichedContextBlock: buildEnrichedContextBlock(extractEnrichedContext(session)) || null,
-          artifactContextBlock: buildArtifactContextBlock({
-            artifactRegistry: ctx.services.artifactRegistry,
-            sessionId: session.id,
-            siliconPersonId: session.siliconPersonId ?? null,
-          }),
-          meetingContextBlock: buildMeetingContextBlock(ctx, session),
-          mcpTools,
-          providerFamily: turnExecutionPlan.providerFamily,
+            personalPromptProfile: ctx.state.getPersonalPromptProfile(),
+            reasoningEffort: runReasoningEffort,
+            enrichedContextBlock: buildEnrichedContextBlock(extractEnrichedContext(session)) || null,
+            artifactContextBlock: buildArtifactContextBlock({
+              artifactRegistry: ctx.services.artifactRegistry,
+              sessionId: session.id,
+              siliconPersonId: session.siliconPersonId ?? null,
+            }),
+            meetingContextBlock: buildMeetingContextBlock(ctx, session),
+            memoryContextBlock: memoryWorkingMemory,
+            mcpTools,
+            providerFamily: turnExecutionPlan.providerFamily,
             experienceProfileId: turnExecutionPlan.experienceProfileId,
             promptPolicyId: turnExecutionPlan.promptPolicyId,
             toolPolicyId: turnExecutionPlan.toolPolicyId,

@@ -7,6 +7,7 @@ import { registerCloudHandlers } from "./cloud";
 import { registerFileViewerHandlers } from "./file-viewer";
 import { registerMcpHandlers } from "./mcp";
 import { registerMeetingHandlers } from "./meetings";
+import { registerMemoryHandlers } from "./memory";
 import { registerModelHandlers } from "./models";
 import { registerPersonalPromptHandlers } from "./personal-prompt";
 import { registerSessionHandlers } from "./sessions";
@@ -40,5 +41,6 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerWebPanelHandlers(ctx);
   registerSkillFileHandlers(ctx);
   registerMeetingHandlers(ctx);
+  registerMemoryHandlers(ctx);
   registerTimeOrchestrationHandlers(ctx);
 }

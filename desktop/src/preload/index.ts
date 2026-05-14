@@ -16,6 +16,16 @@ import type {
   ExecutionRun,
   MeetingEvent,
   MeetingRecord,
+  AddMemoryRootInput,
+  CreateMemoryMemoInput,
+  MemoryCandidate,
+  MemoryContextPack,
+  MemoryContextPackRequest,
+  MemoryIndexStatus,
+  MemoryMemo,
+  MemoryRoot,
+  MemorySearchRequest,
+  MemorySearchResponse,
   ModelCatalogItem,
   McpServerConfig,
   ModelProfile,
@@ -123,6 +133,40 @@ const myClawAPI = {
       ipcRenderer.invoke("time:list-execution-runs") as Promise<{ items: ExecutionRun[] }>,
     generateTodayDigest: (input: Record<string, unknown>) =>
       ipcRenderer.invoke("time:generate-today-digest", input) as Promise<{ lines: string[] }>,
+  },
+
+  // ---- 记忆库 ----------------------------------------------------------------
+  memory: {
+    // 列出所有已授权的记忆根目录。
+    listRoots: () =>
+      ipcRenderer.invoke("memory:list-roots") as Promise<{ items: MemoryRoot[] }>,
+    // 添加 managed/reference 记忆根目录。
+    addRoot: (input: AddMemoryRootInput) =>
+      ipcRenderer.invoke("memory:add-root", input) as Promise<{ item: MemoryRoot }>,
+    // 移除根目录索引记录，不删除用户文件。
+    removeRoot: (rootId: string) =>
+      ipcRenderer.invoke("memory:remove-root", rootId) as Promise<{ ok: boolean }>,
+    // 手动重扫根目录并返回索引状态。
+    rescanRoot: (rootId: string) =>
+      ipcRenderer.invoke("memory:rescan-root", rootId) as Promise<{ status: MemoryIndexStatus }>,
+    // 在 managed root 下创建 Markdown 备忘录。
+    createMemo: (input: CreateMemoryMemoInput) =>
+      ipcRenderer.invoke("memory:create-memo", input) as Promise<{ item: MemoryMemo }>,
+    // 检索记忆库并返回带引用的结果。
+    search: (input: MemorySearchRequest) =>
+      ipcRenderer.invoke("memory:search", input) as Promise<MemorySearchResponse>,
+    // 获取可预览、可注入的 evidence pack。
+    getContextPack: (input: MemoryContextPackRequest) =>
+      ipcRenderer.invoke("memory:get-context-pack", input) as Promise<MemoryContextPack>,
+    // 列出待审批或已处理的候选记忆。
+    listCandidates: () =>
+      ipcRenderer.invoke("memory:list-candidates") as Promise<{ items: MemoryCandidate[] }>,
+    // 审批候选记忆。
+    approveCandidate: (candidateId: string) =>
+      ipcRenderer.invoke("memory:approve-candidate", candidateId) as Promise<{ item: MemoryCandidate }>,
+    // 拒绝候选记忆。
+    rejectCandidate: (candidateId: string) =>
+      ipcRenderer.invoke("memory:reject-candidate", candidateId) as Promise<{ item: MemoryCandidate }>,
   },
 
   // ---- 认证 ----------------------------------------------------------------

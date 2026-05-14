@@ -49,6 +49,8 @@ import { createTimeJobExecutor } from "./services/time-job-executor";
 import { createTimeNotificationService } from "./services/time-notification-service";
 import { createTimeScheduler } from "./services/time-scheduler";
 import { TimeOrchestrationStore } from "./services/time-orchestration-store";
+import { MemoryVaultService } from "./services/memory-vault/service";
+import { canonicalize, PathAccessPolicy } from "./services/path-access-policy";
 
 const log = createLogger("main");
 
@@ -221,6 +223,30 @@ async function buildRuntimeContext(
   const timeStore = await TimeOrchestrationStore.create(paths);
   const migrationResult = await timeStore.migrateAssistantPromptSessionMode();
   log.info("assistant_prompt sessionMode migrated", migrationResult);
+  const memoryVault = new MemoryVaultService({
+    indexBaseDir: join(paths.cacheDir, "memory-index"),
+    // 记忆库根目录复用 PathAccessPolicy 校验，managed 需要写权限，reference 只需要读权限。
+    authorizeRoot: async (rootPath, mode) => {
+      const canonicalPath = await canonicalize(rootPath);
+      const policy = new PathAccessPolicy(
+        paths.workspaceDir,
+        approvalPolicy.pathGrants ?? { allowedDirs: [], deniedPaths: [] },
+        null,
+      );
+      policy.setTurnUserReferencedPaths([canonicalPath]);
+      const decision = policy.checkSyncOnly(canonicalPath, mode === "managed" ? "write" : "read");
+      console.info("[memory-vault] 记忆库根目录权限校验完成", {
+        canonicalPath,
+        mode,
+        granted: decision.granted,
+        tier: decision.tier,
+        reason: decision.reason,
+      });
+      if (!decision.granted) {
+        throw new Error(`Memory root path is not allowed: ${decision.reason}`);
+      }
+    },
+  });
   const timeApplication = createTimeApplicationService({ store: timeStore });
   const timeNotificationService = createTimeNotificationService({
     onDelivered: (payload) => {
@@ -483,6 +509,7 @@ async function buildRuntimeContext(
       timeNotificationService,
       timeScheduler,
       timeStore,
+      memoryVault,
     },
     tools: {
       resolveBuiltinTools: () => {
@@ -614,6 +641,7 @@ app.on("before-quit", (event) => {
   });
   runtimeContext?.services.timeScheduler?.stop();
   runtimeContext?.services.timeStore?.close();
+  runtimeContext?.services.memoryVault?.close();
 
   const pendingCount = getPendingSavesCount();
   if (pendingCount > 0 && !isQuitting) {

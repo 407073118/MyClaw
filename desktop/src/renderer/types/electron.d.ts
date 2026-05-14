@@ -17,6 +17,16 @@ import type {
   McpServerConfig,
   MeetingEvent,
   MeetingRecord,
+  AddMemoryRootInput,
+  CreateMemoryMemoInput,
+  MemoryCandidate,
+  MemoryContextPack,
+  MemoryContextPackRequest,
+  MemoryIndexStatus,
+  MemoryMemo,
+  MemoryRoot,
+  MemorySearchRequest,
+  MemorySearchResponse,
   ModelCatalogItem,
   ModelProfile,
   ModelRouteProbeResult,
@@ -231,6 +241,20 @@ declare global {
         suggestTimeboxes: () => Promise<{ items: SuggestedTimebox[] }>;
         listExecutionRuns: () => Promise<{ items: ExecutionRun[] }>;
         generateTodayDigest: (input: Record<string, unknown>) => Promise<{ lines: string[] }>;
+      };
+
+      // --- 记忆库 ---
+      memory: {
+        listRoots: () => Promise<{ items: MemoryRoot[] }>;
+        addRoot: (input: AddMemoryRootInput) => Promise<{ item: MemoryRoot }>;
+        removeRoot: (rootId: string) => Promise<{ ok: boolean }>;
+        rescanRoot: (rootId: string) => Promise<{ status: MemoryIndexStatus }>;
+        createMemo: (input: CreateMemoryMemoInput) => Promise<{ item: MemoryMemo }>;
+        search: (input: MemorySearchRequest) => Promise<MemorySearchResponse>;
+        getContextPack: (input: MemoryContextPackRequest) => Promise<MemoryContextPack>;
+        listCandidates: () => Promise<{ items: MemoryCandidate[] }>;
+        approveCandidate: (candidateId: string) => Promise<{ item: MemoryCandidate }>;
+        rejectCandidate: (candidateId: string) => Promise<{ item: MemoryCandidate }>;
       };
 
       // --- Sessions ---

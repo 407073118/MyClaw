@@ -53,6 +53,15 @@ const IconFiles = () => (
   </svg>
 );
 
+const IconMemory = () => (
+  <svg viewBox="0 0 24 24" width="20" height="20">
+    <path
+      fill="currentColor"
+      d="M5 4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16.2a.8.8 0 0 1-1.22.68L12 17.3l-5.78 3.58A.8.8 0 0 1 5 20.2V4zm2 0v13.6l4.47-2.78a1 1 0 0 1 1.06 0L17 17.6V4H7zm2.5 3h5v2h-5V7zm0 4h5v2h-5v-2z"
+    />
+  </svg>
+);
+
 const IconEmployees = () => (
   <svg viewBox="0 0 24 24" width="20" height="20">
     <path
@@ -139,6 +148,7 @@ const navItems: NavItem[] = [
   { to: "/workflows", label: "Workflows", icon: IconWorkflows, testId: "nav-workflows" },
   { to: "/meetings", label: "会议录音", icon: IconMeetings, testId: "nav-meetings" },
   { to: "/time", label: "日程规划", icon: IconTime, testId: "nav-time" },
+  { to: "/memory", label: "记忆库", icon: IconMemory, testId: "nav-memory" },
   { to: "/files", label: "Files", icon: IconFiles, testId: "nav-files" },
 ];
 

@@ -15,6 +15,7 @@ const PAGE_LABELS: Record<string, string> = {
   "/workflows": "Workflows",
   "/meetings": "会议录音",
   "/time": "日程规划",
+  "/memory": "记忆库",
   "/publish-drafts": "Publish",
   "/me/prompt": "My Prompt",
   "/settings": "Settings",

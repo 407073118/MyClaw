@@ -28,6 +28,7 @@ import type { TimeJobExecutor } from "./time-job-executor";
 import type { TimeNotificationService } from "./time-notification-service";
 import type { TimeScheduler } from "./time-scheduler";
 import type { TimeOrchestrationStore } from "./time-orchestration-store";
+import type { MemoryVaultService } from "./memory-vault/service";
 
 export type ActiveSessionRun = {
   runId: string;
@@ -86,6 +87,7 @@ export type RuntimeContext = {
     timeNotificationService?: TimeNotificationService;
     timeScheduler?: TimeScheduler;
     timeStore?: TimeOrchestrationStore;
+    memoryVault?: MemoryVaultService;
   };
   tools: {
     resolveBuiltinTools: () => ResolvedBuiltinTool[];

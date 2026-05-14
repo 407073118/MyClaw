@@ -26,3 +26,4 @@ export * from "./workflow-stream";
 export * from "./file-tree";
 export * from "./file-viewer";
 export * from "./meeting";
+export * from "./memory";
