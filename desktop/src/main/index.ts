@@ -223,7 +223,7 @@ async function buildRuntimeContext(
   const timeStore = await TimeOrchestrationStore.create(paths);
   const migrationResult = await timeStore.migrateAssistantPromptSessionMode();
   log.info("assistant_prompt sessionMode migrated", migrationResult);
-  const memoryVault = new MemoryVaultService({
+  const memoryVault = await MemoryVaultService.create({
     indexBaseDir: join(paths.cacheDir, "memory-index"),
     // 记忆库根目录复用 PathAccessPolicy 校验，managed 需要写权限，reference 只需要读权限。
     authorizeRoot: async (rootPath, mode) => {

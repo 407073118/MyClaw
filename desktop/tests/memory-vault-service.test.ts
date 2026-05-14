@@ -24,10 +24,20 @@ afterEach(() => {
 });
 
 describe("memory vault service", () => {
+  test("does not depend on native better-sqlite3 bindings", () => {
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8")) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(packageJson.dependencies?.["better-sqlite3"]).toBeUndefined();
+    expect(packageJson.devDependencies?.["@types/better-sqlite3"]).toBeUndefined();
+  });
+
   test("creates managed memo files and indexes them for Chinese search", async () => {
     const rootDir = makeTempDir();
     const indexBaseDir = makeTempDir();
-    const service = new MemoryVaultService({ indexBaseDir });
+    const service = await MemoryVaultService.create({ indexBaseDir });
     services.push(service);
 
     const root = await service.addRoot({ path: rootDir, mode: "managed", displayName: "个人记忆" });
@@ -54,7 +64,7 @@ describe("memory vault service", () => {
   test("rejects memo creation in reference roots without deleting user files", async () => {
     const rootDir = makeTempDir();
     const indexBaseDir = makeTempDir();
-    const service = new MemoryVaultService({ indexBaseDir });
+    const service = await MemoryVaultService.create({ indexBaseDir });
     services.push(service);
     const sourceFile = join(rootDir, "work.md");
     writeFileSync(sourceFile, "# 工作文件\n\n外部资料只能索引。", "utf-8");
@@ -71,7 +81,7 @@ describe("memory vault service", () => {
   test("builds context packs as cited evidence rather than instructions", async () => {
     const rootDir = makeTempDir();
     const indexBaseDir = makeTempDir();
-    const service = new MemoryVaultService({ indexBaseDir });
+    const service = await MemoryVaultService.create({ indexBaseDir });
     services.push(service);
     const root = await service.addRoot({ path: rootDir, mode: "managed", displayName: "项目记忆" });
     await service.createMemo({
@@ -93,7 +103,7 @@ describe("memory vault service", () => {
   test("marks rescan jobs complete and removes stale chunks", async () => {
     const rootDir = makeTempDir();
     const indexBaseDir = makeTempDir();
-    const service = new MemoryVaultService({ indexBaseDir });
+    const service = await MemoryVaultService.create({ indexBaseDir });
     services.push(service);
     const sourceFile = join(rootDir, "roadmap.md");
     writeFileSync(sourceFile, "# Roadmap\n\nalpha beta memory search", "utf-8");
@@ -114,7 +124,7 @@ describe("memory vault service", () => {
   test("creates pending todo and summary candidates from managed memos", async () => {
     const rootDir = makeTempDir();
     const indexBaseDir = makeTempDir();
-    const service = new MemoryVaultService({ indexBaseDir });
+    const service = await MemoryVaultService.create({ indexBaseDir });
     services.push(service);
     const root = await service.addRoot({ path: rootDir, mode: "managed", displayName: "Project" });
 

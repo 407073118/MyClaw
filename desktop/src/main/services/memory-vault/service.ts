@@ -1,7 +1,8 @@
-import Database from "better-sqlite3";
+import initSqlJs from "sql.js";
+import type { Database as SqlJsDatabase, SqlJsStatic } from "sql.js";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 
 import type {
   AddMemoryRootInput,
@@ -18,8 +19,6 @@ import type {
   MemorySearchResponse,
   MemorySearchResult,
 } from "@shared/contracts";
-
-type SqliteDatabase = Database.Database;
 
 type MemoryVaultServiceOptions = {
   indexBaseDir: string;
@@ -50,6 +49,7 @@ type SearchRow = {
   heading_path: string | null;
   locator: string;
   text: string;
+  cjk_text: string;
   sha256: string;
   mtime: string;
   trust_level: "managed" | "reference";
@@ -117,7 +117,7 @@ function buildCjkTerms(text: string): string[] {
   return Array.from(terms);
 }
 
-/** 为普通英文、数字和中文查询生成 FTS token。 */
+/** 为普通英文、数字和中文查询生成可用于 LIKE 检索的 token。 */
 function buildSearchTerms(query: string): string[] {
   const asciiTerms = query
     .toLowerCase()
@@ -125,11 +125,6 @@ function buildSearchTerms(query: string): string[] {
     .map((term) => term.trim())
     .filter(Boolean);
   return Array.from(new Set([...asciiTerms, ...buildCjkTerms(query)]));
-}
-
-/** 转义 FTS5 查询 token，防止用户输入破坏 MATCH 表达式。 */
-function quoteFtsTerm(term: string): string {
-  return `"${term.replace(/"/g, '""')}"`;
 }
 
 /** 从正文中提取标题，Markdown 标题优先，文件名作为兜底。 */
@@ -193,6 +188,21 @@ function buildSummaryCandidateBody(title: string, content: string): string {
   return compact ? `${title.trim() || "Untitled Memo"}: ${compact.slice(0, 240)}` : title.trim() || "Untitled Memo";
 }
 
+/** 把 sql.js 查询对象安全转换成字符串。 */
+function asString(value: unknown): string {
+  return value == null ? "" : String(value);
+}
+
+/** 把 sql.js 查询对象安全转换成数字。 */
+function asNumber(value: unknown): number {
+  return typeof value === "number" ? value : Number(value ?? 0);
+}
+
+/** 把 sql.js 查询对象安全转换成可空字符串。 */
+function asNullableString(value: unknown): string | null {
+  return value == null ? null : String(value);
+}
+
 /** 把数据库 root 行转换成共享契约。 */
 function mapRoot(row: RootRow): MemoryRoot {
   return {
@@ -210,27 +220,145 @@ function mapRoot(row: RootRow): MemoryRoot {
   };
 }
 
+/** 将普通参数对象转换为 sql.js 支持的 `@name` 绑定对象。 */
+function bindParams(params?: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (!params) {
+    return undefined;
+  }
+  const bound: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(params)) {
+    bound[`@${key}`] = value === undefined ? null : value;
+  }
+  return bound;
+}
+
+/** sql.js sidecar 包装器，负责查询、写入和每次变更后的文件落盘。 */
+class MemorySqlJsDatabase {
+  private transactionDepth = 0;
+
+  private dirty = false;
+
+  private constructor(
+    private readonly db: SqlJsDatabase,
+    private readonly dbPath: string,
+  ) {}
+
+  /** 打开或创建一个 sql.js 数据库文件。 */
+  static open(SQL: SqlJsStatic, dbPath: string): MemorySqlJsDatabase {
+    const dir = dirname(dbPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    const db = existsSync(dbPath) ? new SQL.Database(readFileSync(dbPath)) : new SQL.Database();
+    return new MemorySqlJsDatabase(db, dbPath);
+  }
+
+  /** 执行 schema 或批量 SQL，并把变更写回磁盘。 */
+  exec(sql: string): void {
+    this.db.exec(sql);
+    this.markDirty();
+  }
+
+  /** 执行单条写入语句。 */
+  run(sql: string, params?: Record<string, unknown>): void {
+    const stmt = this.db.prepare(sql);
+    try {
+      const bound = bindParams(params);
+      if (bound) {
+        stmt.bind(bound as any);
+      }
+      stmt.step();
+      this.markDirty();
+    } finally {
+      stmt.free();
+    }
+  }
+
+  /** 查询多行记录。 */
+  all<T extends Record<string, unknown>>(sql: string, params?: Record<string, unknown>): T[] {
+    const stmt = this.db.prepare(sql);
+    const rows: T[] = [];
+    try {
+      const bound = bindParams(params);
+      if (bound) {
+        stmt.bind(bound as any);
+      }
+      while (stmt.step()) {
+        rows.push(stmt.getAsObject() as T);
+      }
+    } finally {
+      stmt.free();
+    }
+    return rows;
+  }
+
+  /** 查询单行记录，不存在时返回 undefined。 */
+  get<T extends Record<string, unknown>>(sql: string, params?: Record<string, unknown>): T | undefined {
+    return this.all<T>(sql, params)[0];
+  }
+
+  /** 在事务内执行多次写入，结束时只落盘一次。 */
+  transaction(callback: () => void): void {
+    this.db.run("BEGIN TRANSACTION");
+    this.transactionDepth += 1;
+    try {
+      callback();
+      this.transactionDepth -= 1;
+      this.db.run("COMMIT");
+      this.markDirty();
+    } catch (error) {
+      this.transactionDepth = Math.max(0, this.transactionDepth - 1);
+      this.db.run("ROLLBACK");
+      throw error;
+    }
+  }
+
+  /** 关闭数据库前确保最后一次变更已经落盘。 */
+  close(): void {
+    this.flush();
+    this.db.close();
+  }
+
+  /** 标记数据库变更，并在非事务场景立即落盘。 */
+  private markDirty(): void {
+    this.dirty = true;
+    if (this.transactionDepth === 0) {
+      this.flush();
+    }
+  }
+
+  /** 把 sql.js 内存数据库导出到 sidecar 文件。 */
+  private flush(): void {
+    if (!this.dirty) {
+      return;
+    }
+    writeFileSync(this.dbPath, Buffer.from(this.db.export()));
+    this.dirty = false;
+  }
+}
+
 /** 文件夹驱动的个人记忆库服务，负责 sidecar 索引、备忘录和检索。 */
 export class MemoryVaultService {
-  private readonly db: SqliteDatabase;
+  private readonly rootDbs = new Map<string, MemorySqlJsDatabase>();
 
-  private readonly rootDbs = new Map<string, SqliteDatabase>();
+  private constructor(
+    private readonly SQL: SqlJsStatic,
+    private readonly db: MemorySqlJsDatabase,
+    private readonly indexBaseDir: string,
+    private readonly authorizeRoot?: MemoryVaultServiceOptions["authorizeRoot"],
+  ) {}
 
-  private readonly indexBaseDir: string;
-
-  private readonly authorizeRoot?: MemoryVaultServiceOptions["authorizeRoot"];
-
-  /** 初始化记忆库服务并创建独立 SQLite sidecar。 */
-  constructor(options: MemoryVaultServiceOptions) {
-    this.indexBaseDir = options.indexBaseDir;
-    this.authorizeRoot = options.authorizeRoot;
-    mkdirSync(this.indexBaseDir, { recursive: true });
-    const dbPath = join(this.indexBaseDir, "index.sqlite");
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
-    this.migrate();
-    console.info("[memory-vault] 记忆库 sidecar 已初始化", { dbPath });
+  /** 初始化记忆库服务并创建纯 WASM SQLite sidecar，避免 native ABI 问题。 */
+  static async create(options: MemoryVaultServiceOptions): Promise<MemoryVaultService> {
+    console.info("[memory-vault] 初始化 sql.js 记忆库 sidecar", { indexBaseDir: options.indexBaseDir });
+    mkdirSync(options.indexBaseDir, { recursive: true });
+    const SQL = await initSqlJs();
+    const dbPath = join(options.indexBaseDir, "index.sqlite");
+    const registryDb = MemorySqlJsDatabase.open(SQL, dbPath);
+    const service = new MemoryVaultService(SQL, registryDb, options.indexBaseDir, options.authorizeRoot);
+    service.migrate();
+    console.info("[memory-vault] 记忆库 sidecar 已初始化", { dbPath, storage: "sql.js" });
+    return service;
   }
 
   /** 创建记忆库 registry 需要的 SQLite 表，用户文件索引会落到 root 级 sidecar。 */
@@ -248,60 +376,6 @@ export class MemoryVaultService {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         error_message TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS fs_entries (
-        id TEXT PRIMARY KEY,
-        root_id TEXT NOT NULL,
-        path TEXT NOT NULL,
-        relative_path TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        size INTEGER NOT NULL,
-        mtime TEXT NOT NULL,
-        sha256 TEXT,
-        status TEXT NOT NULL,
-        version INTEGER NOT NULL DEFAULT 1,
-        last_seen_scan_id TEXT NOT NULL,
-        FOREIGN KEY(root_id) REFERENCES memory_roots(id) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS file_versions (
-        id TEXT PRIMARY KEY,
-        entry_id TEXT NOT NULL,
-        root_id TEXT NOT NULL,
-        sha256 TEXT NOT NULL,
-        parser_version TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(entry_id) REFERENCES fs_entries(id) ON DELETE CASCADE
-      );
-
-      CREATE TABLE IF NOT EXISTS chunks (
-        id TEXT PRIMARY KEY,
-        root_id TEXT NOT NULL,
-        entry_id TEXT NOT NULL,
-        version_id TEXT NOT NULL,
-        path TEXT NOT NULL,
-        relative_path TEXT NOT NULL,
-        title TEXT NOT NULL,
-        heading_path TEXT,
-        locator TEXT NOT NULL,
-        text TEXT NOT NULL,
-        cjk_text TEXT NOT NULL,
-        sha256 TEXT NOT NULL,
-        mtime TEXT NOT NULL,
-        trust_level TEXT NOT NULL,
-        parser_version TEXT NOT NULL,
-        ordinal INTEGER NOT NULL,
-        FOREIGN KEY(root_id) REFERENCES memory_roots(id) ON DELETE CASCADE
-      );
-
-      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-        chunk_id UNINDEXED,
-        root_id UNINDEXED,
-        title,
-        path,
-        text,
-        cjk_text
       );
 
       CREATE TABLE IF NOT EXISTS index_jobs (
@@ -335,25 +409,21 @@ export class MemoryVaultService {
   }
 
   /** 获取单个根目录的 SQLite sidecar，路径为 memory-index/<rootId>/index.sqlite。 */
-  private getRootIndexDb(rootId: string): SqliteDatabase {
+  private getRootIndexDb(rootId: string): MemorySqlJsDatabase {
     const existing = this.rootDbs.get(rootId);
     if (existing) {
       return existing;
     }
-    const rootIndexDir = join(this.indexBaseDir, rootId);
-    mkdirSync(rootIndexDir, { recursive: true });
-    const dbPath = join(rootIndexDir, "index.sqlite");
-    const rootDb = new Database(dbPath);
-    rootDb.pragma("journal_mode = WAL");
-    rootDb.pragma("foreign_keys = ON");
+    const dbPath = join(this.indexBaseDir, rootId, "index.sqlite");
+    const rootDb = MemorySqlJsDatabase.open(this.SQL, dbPath);
     this.migrateRootIndex(rootDb);
     this.rootDbs.set(rootId, rootDb);
-    console.info("[memory-vault] 已打开根目录索引 sidecar", { rootId, dbPath });
+    console.info("[memory-vault] 已打开根目录索引 sidecar", { rootId, dbPath, storage: "sql.js" });
     return rootDb;
   }
 
-  /** 创建根目录级索引表，所有文件、版本、chunk 和 FTS 数据都可从文件夹重建。 */
-  private migrateRootIndex(rootDb: SqliteDatabase): void {
+  /** 创建根目录级索引表，所有文件、版本、chunk 和词项数据都可从文件夹重建。 */
+  private migrateRootIndex(rootDb: MemorySqlJsDatabase): void {
     rootDb.exec(`
       CREATE TABLE IF NOT EXISTS fs_entries (
         id TEXT PRIMARY KEY,
@@ -375,8 +445,7 @@ export class MemoryVaultService {
         root_id TEXT NOT NULL,
         sha256 TEXT NOT NULL,
         parser_version TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY(entry_id) REFERENCES fs_entries(id) ON DELETE CASCADE
+        created_at TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS chunks (
@@ -395,23 +464,22 @@ export class MemoryVaultService {
         mtime TEXT NOT NULL,
         trust_level TEXT NOT NULL,
         parser_version TEXT NOT NULL,
-        ordinal INTEGER NOT NULL,
-        FOREIGN KEY(entry_id) REFERENCES fs_entries(id) ON DELETE CASCADE
+        ordinal INTEGER NOT NULL
       );
 
-      CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-        chunk_id UNINDEXED,
-        root_id UNINDEXED,
-        title,
-        path,
-        text,
-        cjk_text,
-        tokenize = 'unicode61'
+      CREATE TABLE IF NOT EXISTS chunks_fts (
+        chunk_id TEXT PRIMARY KEY,
+        root_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        path TEXT NOT NULL,
+        text TEXT NOT NULL,
+        cjk_text TEXT NOT NULL
       );
 
       CREATE INDEX IF NOT EXISTS idx_chunks_root ON chunks(root_id);
       CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(root_id, relative_path);
       CREATE INDEX IF NOT EXISTS idx_fs_entries_root ON fs_entries(root_id);
+      CREATE INDEX IF NOT EXISTS idx_chunks_terms_root ON chunks_fts(root_id);
     `);
   }
 
@@ -430,9 +498,8 @@ export class MemoryVaultService {
   listRoots(): MemoryRoot[] {
     console.info("[memory-vault] 列出记忆根目录");
     return this.db
-      .prepare("SELECT * FROM memory_roots ORDER BY created_at ASC")
-      .all()
-      .map((row) => mapRoot(row as RootRow));
+      .all<Record<string, unknown>>("SELECT * FROM memory_roots ORDER BY created_at ASC")
+      .map((row) => mapRoot(this.mapRootRow(row)));
   }
 
   /** 添加 managed 或 reference 根目录，并记录到 sidecar。 */
@@ -446,14 +513,14 @@ export class MemoryVaultService {
     const timestamp = nowIso();
     const id = stableId(rootPath.toLowerCase());
     const displayName = input.displayName?.trim() || basename(rootPath) || "Memory Root";
-    this.db.prepare(`
+    this.db.run(`
       INSERT INTO memory_roots (id, path, display_name, mode, status, created_at, updated_at)
       VALUES (@id, @path, @displayName, @mode, 'idle', @timestamp, @timestamp)
       ON CONFLICT(path) DO UPDATE SET
         display_name = excluded.display_name,
         mode = excluded.mode,
         updated_at = excluded.updated_at
-    `).run({ id, path: rootPath, displayName, mode: input.mode, timestamp });
+    `, { id, path: rootPath, displayName, mode: input.mode, timestamp });
     this.getRootIndexDb(id);
     console.info("[memory-vault] 已添加记忆根目录", { id, rootPath, mode: input.mode, displayName });
     return this.getRootOrThrow(id);
@@ -462,7 +529,7 @@ export class MemoryVaultService {
   /** 删除 sidecar 中的根目录记录和派生索引，不删除用户文件。 */
   async removeRoot(rootId: string): Promise<{ ok: boolean }> {
     console.info("[memory-vault] 删除记忆根目录索引记录", { rootId });
-    this.db.prepare("DELETE FROM memory_roots WHERE id = @rootId").run({ rootId });
+    this.db.run("DELETE FROM memory_roots WHERE id = @rootId", { rootId });
     const rootDb = this.rootDbs.get(rootId);
     if (rootDb) {
       rootDb.close();
@@ -474,11 +541,11 @@ export class MemoryVaultService {
 
   /** 读取单个根目录，不存在时抛出清晰错误。 */
   private getRootOrThrow(rootId: string): MemoryRoot {
-    const row = this.db.prepare("SELECT * FROM memory_roots WHERE id = @rootId").get({ rootId }) as RootRow | undefined;
+    const row = this.db.get<Record<string, unknown>>("SELECT * FROM memory_roots WHERE id = @rootId", { rootId });
     if (!row) {
       throw new Error(`Memory root not found: ${rootId}`);
     }
-    return mapRoot(row);
+    return mapRoot(this.mapRootRow(row));
   }
 
   /** 在 managed 根目录中创建 Markdown 备忘录。 */
@@ -513,39 +580,42 @@ export class MemoryVaultService {
     const scanId = stableId(`${rootId}:${nowIso()}`);
     const timestamp = nowIso();
     const jobId = stableId(`job:${scanId}`);
+    const rootDb = this.getRootIndexDb(root.id);
     console.info("[memory-vault] 开始扫描记忆根目录", { rootId, path: root.path, scanId });
-    this.db.prepare("UPDATE memory_roots SET status = 'indexing', updated_at = @timestamp WHERE id = @rootId")
-      .run({ rootId, timestamp });
-    this.db.prepare(`
+    this.db.run("UPDATE memory_roots SET status = 'indexing', updated_at = @timestamp WHERE id = @rootId", {
+      rootId,
+      timestamp,
+    });
+    this.db.run(`
       INSERT INTO index_jobs (id, job_type, target_key, target_version, status, created_at, updated_at)
       VALUES (@id, 'rescan_root', @rootId, @scanId, 'running', @timestamp, @timestamp)
-    `).run({ id: jobId, rootId, scanId, timestamp });
-    const rootDb = this.getRootIndexDb(root.id);
+    `, { id: jobId, rootId, scanId, timestamp });
 
     try {
       const files = this.collectTextFiles(root.path);
-      const transaction = rootDb.transaction(() => {
+      rootDb.transaction(() => {
         for (const filePath of files) {
           this.indexFile(rootDb, root, filePath, scanId);
         }
         this.removeStaleEntries(rootDb, root.id, scanId);
-        this.refreshRootStats(rootDb, root.id, "ready", null);
-        this.db.prepare("UPDATE index_jobs SET status = 'completed', updated_at = @timestamp WHERE id = @jobId")
-          .run({ jobId, timestamp: nowIso() });
       });
-      transaction();
+      this.refreshRootStats(rootDb, root.id, "ready", null);
+      this.db.run("UPDATE index_jobs SET status = 'completed', updated_at = @timestamp WHERE id = @jobId", {
+        jobId,
+        timestamp: nowIso(),
+      });
       console.info("[memory-vault] 记忆根目录扫描完成", { rootId, fileCount: files.length, scanId });
       return this.getIndexStatus(rootId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.db.prepare(`
+      this.db.run(`
         UPDATE index_jobs
         SET status = 'failed',
             attempts = attempts + 1,
             last_error = @message,
             updated_at = @timestamp
         WHERE id = @jobId
-      `).run({ jobId, message, timestamp: nowIso() });
+      `, { jobId, message, timestamp: nowIso() });
       this.refreshRootStats(rootDb, root.id, "error", message);
       console.error("[memory-vault] 记忆根目录扫描失败", { rootId, scanId, error: message });
       throw error;
@@ -581,8 +651,8 @@ export class MemoryVaultService {
     return files;
   }
 
-  /** 解析单个文件并写入 fs_entries、file_versions、chunks 与 FTS。 */
-  private indexFile(rootDb: SqliteDatabase, root: MemoryRoot, filePath: string, scanId: string): void {
+  /** 解析单个文件并写入 fs_entries、file_versions、chunks 与可重建词项表。 */
+  private indexFile(rootDb: MemorySqlJsDatabase, root: MemoryRoot, filePath: string, scanId: string): void {
     const stat = statSync(filePath);
     const text = readFileSync(filePath, "utf-8");
     const fileSha = sha256(text);
@@ -594,7 +664,7 @@ export class MemoryVaultService {
     const title = resolveDocumentTitle(text, filePath);
     const headingPath = resolveHeadingPath(text);
 
-    rootDb.prepare(`
+    rootDb.run(`
       INSERT INTO fs_entries (id, root_id, path, relative_path, kind, size, mtime, sha256, status, last_seen_scan_id)
       VALUES (@entryId, @rootId, @path, @relativePath, 'file', @size, @mtime, @sha, 'ready', @scanId)
       ON CONFLICT(id) DO UPDATE SET
@@ -606,7 +676,7 @@ export class MemoryVaultService {
         status = 'ready',
         version = fs_entries.version + CASE WHEN fs_entries.sha256 = excluded.sha256 THEN 0 ELSE 1 END,
         last_seen_scan_id = excluded.last_seen_scan_id
-    `).run({
+    `, {
       entryId,
       rootId: root.id,
       path: filePath,
@@ -617,20 +687,19 @@ export class MemoryVaultService {
       scanId,
     });
 
-    rootDb.prepare(`
+    rootDb.run(`
       INSERT OR IGNORE INTO file_versions (id, entry_id, root_id, sha256, parser_version, created_at)
       VALUES (@versionId, @entryId, @rootId, @sha, 'memory-vault-v1', @timestamp)
-    `).run({ versionId, entryId, rootId: root.id, sha: fileSha, timestamp });
+    `, { versionId, entryId, rootId: root.id, sha: fileSha, timestamp });
 
-    rootDb.prepare("DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE entry_id = @entryId)")
-      .run({ entryId });
-    rootDb.prepare("DELETE FROM chunks WHERE entry_id = @entryId").run({ entryId });
+    rootDb.run("DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE entry_id = @entryId)", { entryId });
+    rootDb.run("DELETE FROM chunks WHERE entry_id = @entryId", { entryId });
 
     for (const chunk of chunkText(text)) {
       const chunkId = stableId(`${versionId}:${chunk.ordinal}:${sha256(chunk.text)}`);
       const cjkText = buildCjkTerms(`${title}\n${relativePath}\n${chunk.text}`).join(" ");
       const locator = headingPath ? `${headingPath} #${chunk.ordinal + 1}` : `chunk-${chunk.ordinal + 1}`;
-      rootDb.prepare(`
+      rootDb.run(`
         INSERT INTO chunks (
           id, root_id, entry_id, version_id, path, relative_path, title, heading_path,
           locator, text, cjk_text, sha256, mtime, trust_level, parser_version, ordinal
@@ -639,7 +708,7 @@ export class MemoryVaultService {
           @chunkId, @rootId, @entryId, @versionId, @path, @relativePath, @title, @headingPath,
           @locator, @text, @cjkText, @sha, @mtime, @trustLevel, 'memory-vault-v1', @ordinal
         )
-      `).run({
+      `, {
         chunkId,
         rootId: root.id,
         entryId,
@@ -656,23 +725,23 @@ export class MemoryVaultService {
         trustLevel: root.mode,
         ordinal: chunk.ordinal,
       });
-      rootDb.prepare(`
+      rootDb.run(`
         INSERT INTO chunks_fts (chunk_id, root_id, title, path, text, cjk_text)
         VALUES (@chunkId, @rootId, @title, @path, @text, @cjkText)
-      `).run({ chunkId, rootId: root.id, title, path: relativePath, text: chunk.text, cjkText });
+      `, { chunkId, rootId: root.id, title, path: relativePath, text: chunk.text, cjkText });
     }
   }
 
   /** 移除本轮扫描未再次出现的旧文件和 chunk。 */
-  private removeStaleEntries(rootDb: SqliteDatabase, rootId: string, scanId: string): void {
-    const staleEntries = rootDb.prepare(`
+  private removeStaleEntries(rootDb: MemorySqlJsDatabase, rootId: string, scanId: string): void {
+    const staleEntries = rootDb.all<Record<string, unknown>>(`
       SELECT id FROM fs_entries WHERE root_id = @rootId AND last_seen_scan_id != @scanId
-    `).all({ rootId, scanId }) as Array<{ id: string }>;
+    `, { rootId, scanId });
     for (const entry of staleEntries) {
-      rootDb.prepare("DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE entry_id = @entryId)")
-        .run({ entryId: entry.id });
-      rootDb.prepare("DELETE FROM chunks WHERE entry_id = @entryId").run({ entryId: entry.id });
-      rootDb.prepare("DELETE FROM fs_entries WHERE id = @entryId").run({ entryId: entry.id });
+      const entryId = asString(entry.id);
+      rootDb.run("DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE entry_id = @entryId)", { entryId });
+      rootDb.run("DELETE FROM chunks WHERE entry_id = @entryId", { entryId });
+      rootDb.run("DELETE FROM fs_entries WHERE id = @entryId", { entryId });
     }
   }
 
@@ -681,14 +750,14 @@ export class MemoryVaultService {
     const evidenceIds = JSON.stringify([filePath]);
     const summaryBody = buildSummaryCandidateBody(title, content);
     const summaryId = stableId(`candidate:${root.id}:${filePath}:summary:${sha256(summaryBody)}`);
-    this.db.prepare(`
+    this.db.run(`
       INSERT OR IGNORE INTO memory_candidates (
         id, type, status, title, body, confidence, evidence_ids_json, created_at, updated_at
       )
       VALUES (
         @id, 'SummaryCandidate', 'pending', @title, @body, 0.72, @evidenceIds, @createdAt, @createdAt
       )
-    `).run({
+    `, {
       id: summaryId,
       title: title.trim() || "Memo summary",
       body: summaryBody,
@@ -699,14 +768,14 @@ export class MemoryVaultService {
     const todoLines = extractTodoLines(content);
     for (const [index, line] of todoLines.entries()) {
       const todoId = stableId(`candidate:${root.id}:${filePath}:todo:${index}:${sha256(line)}`);
-      this.db.prepare(`
+      this.db.run(`
         INSERT OR IGNORE INTO memory_candidates (
           id, type, status, title, body, confidence, evidence_ids_json, created_at, updated_at
         )
         VALUES (
           @id, 'TodoCandidate', 'pending', @title, @body, 0.82, @evidenceIds, @createdAt, @createdAt
         )
-      `).run({
+      `, {
         id: todoId,
         title: line.replace(/^[-*]\s+\[[ xX]?\]\s+/, "").replace(/^TODO[:：]?\s*/i, "").slice(0, 120) || "Memo TODO",
         body: line,
@@ -723,13 +792,17 @@ export class MemoryVaultService {
   }
 
   /** 刷新根目录统计信息，并写入状态和错误。 */
-  private refreshRootStats(rootDb: SqliteDatabase, rootId: string, status: MemoryRootStatus, errorMessage: string | null): void {
-    const fileCount = (rootDb.prepare("SELECT COUNT(*) AS count FROM fs_entries WHERE root_id = @rootId")
-      .get({ rootId }) as { count: number }).count;
-    const chunkCount = (rootDb.prepare("SELECT COUNT(*) AS count FROM chunks WHERE root_id = @rootId")
-      .get({ rootId }) as { count: number }).count;
+  private refreshRootStats(rootDb: MemorySqlJsDatabase, rootId: string, status: MemoryRootStatus, errorMessage: string | null): void {
+    const fileCount = asNumber(rootDb.get<Record<string, unknown>>(
+      "SELECT COUNT(*) AS count FROM fs_entries WHERE root_id = @rootId",
+      { rootId },
+    )?.count);
+    const chunkCount = asNumber(rootDb.get<Record<string, unknown>>(
+      "SELECT COUNT(*) AS count FROM chunks WHERE root_id = @rootId",
+      { rootId },
+    )?.count);
     const timestamp = nowIso();
-    this.db.prepare(`
+    this.db.run(`
       UPDATE memory_roots
       SET status = @status,
           file_count = @fileCount,
@@ -738,17 +811,21 @@ export class MemoryVaultService {
           updated_at = @timestamp,
           error_message = @errorMessage
       WHERE id = @rootId
-    `).run({ rootId, status, fileCount, chunkCount, timestamp, errorMessage });
+    `, { rootId, status, fileCount, chunkCount, timestamp, errorMessage });
   }
 
   /** 获取根目录索引状态，供 UI 展示扫描进度。 */
   getIndexStatus(rootId: string): MemoryIndexStatus {
     console.info("[memory-vault] 获取记忆根目录索引状态", { rootId });
     const root = this.getRootOrThrow(rootId);
-    const pendingJobs = (this.db.prepare("SELECT COUNT(*) AS count FROM index_jobs WHERE target_key = @rootId AND status IN ('pending', 'running')")
-      .get({ rootId }) as { count: number }).count;
-    const failedJobs = (this.db.prepare("SELECT COUNT(*) AS count FROM index_jobs WHERE target_key = @rootId AND status = 'failed'")
-      .get({ rootId }) as { count: number }).count;
+    const pendingJobs = asNumber(this.db.get<Record<string, unknown>>(
+      "SELECT COUNT(*) AS count FROM index_jobs WHERE target_key = @rootId AND status IN ('pending', 'running')",
+      { rootId },
+    )?.count);
+    const failedJobs = asNumber(this.db.get<Record<string, unknown>>(
+      "SELECT COUNT(*) AS count FROM index_jobs WHERE target_key = @rootId AND status = 'failed'",
+      { rootId },
+    )?.count);
     return {
       rootId,
       status: root.status,
@@ -761,7 +838,7 @@ export class MemoryVaultService {
     };
   }
 
-  /** 搜索记忆库，合并路径精确命中、FTS/BM25 与 CJK ngram 命中。 */
+  /** 搜索记忆库，合并路径/正文精确命中与 CJK ngram 词项命中。 */
   async search(input: MemorySearchRequest): Promise<MemorySearchResponse> {
     const query = input.query.trim();
     const limit = Math.max(1, Math.min(input.limit ?? 10, 50));
@@ -771,7 +848,6 @@ export class MemoryVaultService {
     }
 
     const terms = buildSearchTerms(query).slice(0, 16);
-    const ftsQuery = terms.map(quoteFtsTerm).join(" OR ");
     const byId = new Map<string, SearchRow & { exactBoost: number; ftsBoost: number }>();
     const roots = input.rootIds?.length
       ? input.rootIds.map((rootId) => this.getRootOrThrow(rootId))
@@ -779,61 +855,106 @@ export class MemoryVaultService {
 
     for (const root of roots) {
       const rootDb = this.getRootIndexDb(root.id);
-      const exactRows = rootDb.prepare(`
-        SELECT c.*, @rootDisplayName AS root_display_name, NULL AS rank
+      const exactRows = rootDb.all<Record<string, unknown>>(`
+        SELECT c.*, @rootDisplayName AS root_display_name, 1 AS rank
         FROM chunks c
         WHERE c.root_id = @rootId
           AND (LOWER(c.path) LIKE @likeQuery OR LOWER(c.title) LIKE @likeQuery OR LOWER(c.text) LIKE @likeQuery)
         LIMIT @scanLimit
-      `).all({
+      `, {
         rootId: root.id,
         rootDisplayName: root.displayName,
         likeQuery: `%${query.toLowerCase()}%`,
         scanLimit: limit * 5,
-      }) as SearchRow[];
+      }).map((row) => this.mapSearchRowFromSql(row));
 
-      const ftsRows = ftsQuery
-        ? rootDb.prepare(`
-          SELECT c.*, @rootDisplayName AS root_display_name, bm25(chunks_fts) AS rank
-          FROM chunks_fts
-          JOIN chunks c ON c.id = chunks_fts.chunk_id
-          WHERE chunks_fts MATCH @ftsQuery
-            AND c.root_id = @rootId
-          ORDER BY rank ASC
-          LIMIT @scanLimit
-        `).all({
-          rootId: root.id,
-          rootDisplayName: root.displayName,
-          ftsQuery,
-          scanLimit: limit * 8,
-        }) as SearchRow[]
+      const lexicalRows = terms.length
+        ? rootDb.all<Record<string, unknown>>(
+          this.buildLexicalSearchSql(terms),
+          {
+            rootId: root.id,
+            rootDisplayName: root.displayName,
+            scanLimit: limit * 8,
+            ...Object.fromEntries(terms.map((term, index) => [`term${index}`, `%${term.toLowerCase()}%`])),
+          },
+        ).map((row) => this.mapSearchRowFromSql(row))
         : [];
 
       for (const row of exactRows) {
-        byId.set(row.id, { ...row, exactBoost: 1, ftsBoost: 0 });
+        byId.set(row.id, { ...row, exactBoost: 1, ftsBoost: 0, rank: this.scoreTermMatches(row, query, terms) });
       }
-      for (const row of ftsRows) {
+      for (const row of lexicalRows) {
+        const lexicalRank = this.scoreTermMatches(row, query, terms);
         const existing = byId.get(row.id);
         if (existing) {
           existing.ftsBoost = 1;
-          existing.rank = row.rank;
+          existing.rank = Math.max(existing.rank ?? 0, lexicalRank);
         } else {
-          byId.set(row.id, { ...row, exactBoost: 0, ftsBoost: 1 });
+          byId.set(row.id, { ...row, exactBoost: 0, ftsBoost: 1, rank: lexicalRank });
         }
       }
     }
 
     const items = Array.from(byId.values())
-      .map((row) => this.mapSearchRow(row, query))
+      .map((row) => this.mapSearchResult(row, query))
       .sort((left, right) => right.score - left.score)
       .slice(0, limit);
     return { query, items };
   }
 
+  /** 生成纯 SQL LIKE 词项查询，替代 native FTS 依赖。 */
+  private buildLexicalSearchSql(terms: string[]): string {
+    const clauses = terms.map((_, index) => [
+      `LOWER(f.title) LIKE @term${index}`,
+      `LOWER(f.path) LIKE @term${index}`,
+      `LOWER(f.text) LIKE @term${index}`,
+      `LOWER(f.cjk_text) LIKE @term${index}`,
+    ].join(" OR "));
+    return `
+      SELECT c.*, @rootDisplayName AS root_display_name, 0 AS rank
+      FROM chunks_fts f
+      JOIN chunks c ON c.id = f.chunk_id
+      WHERE f.root_id = @rootId
+        AND (${clauses.map((clause) => `(${clause})`).join(" OR ")})
+      LIMIT @scanLimit
+    `;
+  }
+
+  /** 计算词项命中比例，用于模拟 BM25/FTS 排序信号。 */
+  private scoreTermMatches(row: SearchRow, query: string, terms: string[]): number {
+    const haystack = `${row.title}\n${row.relative_path}\n${row.text}\n${row.cjk_text}`.toLowerCase();
+    const directBoost = haystack.includes(query.toLowerCase()) ? 1 : 0;
+    if (!terms.length) {
+      return directBoost;
+    }
+    const matches = terms.filter((term) => haystack.includes(term.toLowerCase())).length;
+    return Math.max(directBoost, matches / terms.length);
+  }
+
+  /** 将 sql.js 检索行转换成内部 SearchRow。 */
+  private mapSearchRowFromSql(row: Record<string, unknown>): SearchRow {
+    return {
+      id: asString(row.id),
+      root_id: asString(row.root_id),
+      root_display_name: asString(row.root_display_name),
+      path: asString(row.path),
+      relative_path: asString(row.relative_path),
+      title: asString(row.title),
+      heading_path: asNullableString(row.heading_path),
+      locator: asString(row.locator),
+      text: asString(row.text),
+      cjk_text: asString(row.cjk_text),
+      sha256: asString(row.sha256),
+      mtime: asString(row.mtime),
+      trust_level: asString(row.trust_level) as "managed" | "reference",
+      rank: row.rank == null ? null : asNumber(row.rank),
+    };
+  }
+
   /** 将 SQLite 检索行转换成 renderer 和上下文编译器可用的结果。 */
-  private mapSearchRow(row: SearchRow & { exactBoost?: number; ftsBoost?: number }, query: string): MemorySearchResult {
-    const bm25Score = row.rank === null ? 0 : Math.max(0, 1 / (1 + Math.abs(row.rank)));
-    const score = (row.exactBoost ?? 0) * 0.45 + (row.ftsBoost ?? 0) * 0.35 + bm25Score * 0.2;
+  private mapSearchResult(row: SearchRow & { exactBoost?: number; ftsBoost?: number }, query: string): MemorySearchResult {
+    const lexicalScore = row.rank === null ? 0 : Math.max(0, Math.min(1, row.rank));
+    const score = (row.exactBoost ?? 0) * 0.45 + (row.ftsBoost ?? 0) * 0.35 + lexicalScore * 0.2;
     return {
       id: row.id,
       rootId: row.root_id,
@@ -892,9 +1013,8 @@ export class MemoryVaultService {
   async listCandidates(): Promise<MemoryCandidate[]> {
     console.info("[memory-vault] 列出候选记忆");
     return this.db
-      .prepare("SELECT * FROM memory_candidates ORDER BY created_at DESC")
-      .all()
-      .map((row) => this.mapCandidateRow(row as CandidateRow));
+      .all<Record<string, unknown>>("SELECT * FROM memory_candidates ORDER BY created_at DESC")
+      .map((row) => this.mapCandidateRow(this.mapCandidateRowFromSql(row)));
   }
 
   /** 审批通过候选记忆，V1 只更新状态，不静默写长期文件。 */
@@ -912,13 +1032,16 @@ export class MemoryVaultService {
   /** 更新候选记忆状态并返回最新记录。 */
   private updateCandidateStatus(candidateId: string, status: MemoryCandidate["status"]): MemoryCandidate {
     const updatedAt = nowIso();
-    this.db.prepare("UPDATE memory_candidates SET status = @status, updated_at = @updatedAt WHERE id = @candidateId")
-      .run({ candidateId, status, updatedAt });
-    const row = this.db.prepare("SELECT * FROM memory_candidates WHERE id = @candidateId").get({ candidateId }) as CandidateRow | undefined;
+    this.db.run("UPDATE memory_candidates SET status = @status, updated_at = @updatedAt WHERE id = @candidateId", {
+      candidateId,
+      status,
+      updatedAt,
+    });
+    const row = this.db.get<Record<string, unknown>>("SELECT * FROM memory_candidates WHERE id = @candidateId", { candidateId });
     if (!row) {
       throw new Error(`Memory candidate not found: ${candidateId}`);
     }
-    return this.mapCandidateRow(row);
+    return this.mapCandidateRow(this.mapCandidateRowFromSql(row));
   }
 
   /** 将候选记忆数据库行转换成共享契约。 */
@@ -933,6 +1056,38 @@ export class MemoryVaultService {
       evidenceIds: JSON.parse(row.evidence_ids_json) as string[],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+    };
+  }
+
+  /** 将 sql.js root 行转换成强类型 RootRow。 */
+  private mapRootRow(row: Record<string, unknown>): RootRow {
+    return {
+      id: asString(row.id),
+      path: asString(row.path),
+      display_name: asString(row.display_name),
+      mode: asString(row.mode) as MemoryRootMode,
+      status: asString(row.status) as MemoryRootStatus,
+      file_count: asNumber(row.file_count),
+      chunk_count: asNumber(row.chunk_count),
+      last_indexed_at: asNullableString(row.last_indexed_at),
+      created_at: asString(row.created_at),
+      updated_at: asString(row.updated_at),
+      error_message: asNullableString(row.error_message),
+    };
+  }
+
+  /** 将 sql.js candidate 行转换成强类型 CandidateRow。 */
+  private mapCandidateRowFromSql(row: Record<string, unknown>): CandidateRow {
+    return {
+      id: asString(row.id),
+      type: asString(row.type) as MemoryCandidate["type"],
+      status: asString(row.status) as MemoryCandidate["status"],
+      title: asString(row.title),
+      body: asString(row.body),
+      confidence: asNumber(row.confidence),
+      evidence_ids_json: asString(row.evidence_ids_json),
+      created_at: asString(row.created_at),
+      updated_at: asString(row.updated_at),
     };
   }
 
