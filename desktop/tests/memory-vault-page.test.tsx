@@ -252,14 +252,17 @@ describe("MemoryWorkspacePage", () => {
     }
   });
 
-  it("creates folders and markdown files under the selected tree directory", async () => {
+  it("creates folders and markdown files with an inline tree input", async () => {
     render(<MemoryWorkspacePage />);
 
     fireEvent.click(await screen.findByTestId("memory-dir-notes"));
-    fireEvent.change(await screen.findByTestId("memory-create-name-input"), {
+    fireEvent.click(await screen.findByTestId("memory-new-folder-button"));
+
+    const folderInput = await screen.findByTestId("memory-inline-create-input");
+    fireEvent.change(folderInput, {
       target: { value: "ideas" },
     });
-    fireEvent.click(screen.getByTestId("memory-create-folder-button"));
+    fireEvent.keyDown(folderInput, { key: "Enter" });
 
     await waitFor(() => {
       expect(memoryApi.createFolder).toHaveBeenCalledWith({
@@ -269,10 +272,14 @@ describe("MemoryWorkspacePage", () => {
       });
     });
 
-    fireEvent.change(screen.getByTestId("memory-create-name-input"), {
+    fireEvent.click(await screen.findByTestId("memory-dir-notes"));
+    fireEvent.click(screen.getByTestId("memory-new-file-button"));
+
+    const fileInput = await screen.findByTestId("memory-inline-create-input");
+    fireEvent.change(fileInput, {
       target: { value: "decision" },
     });
-    fireEvent.click(screen.getByTestId("memory-create-file-button"));
+    fireEvent.keyDown(fileInput, { key: "Enter" });
 
     await waitFor(() => {
       expect(memoryApi.createFile).toHaveBeenCalledWith({
