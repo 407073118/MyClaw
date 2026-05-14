@@ -231,6 +231,9 @@ describe("MemoryWorkspacePage", () => {
 
     const editor = await screen.findByTestId("memory-document-editor");
     expect((editor as HTMLTextAreaElement).value).toContain("Initial note");
+    const preview = await screen.findByTestId("memory-markdown-preview");
+    expect(preview.querySelector("h1")?.textContent).toBe("Roadmap");
+    expect(preview.textContent).toContain("Initial note");
 
     vi.useFakeTimers();
     try {
@@ -238,6 +241,7 @@ describe("MemoryWorkspacePage", () => {
         fireEvent.change(editor, { target: { value: "# Roadmap\n\nUpdated note" } });
         await vi.advanceTimersByTimeAsync(900);
       });
+      expect(preview.textContent).toContain("Updated note");
       vi.useRealTimers();
 
       await waitFor(() => {
@@ -310,6 +314,7 @@ describe("MemoryWorkspacePage", () => {
   it("enables AI memory context for the current session", async () => {
     render(<MemoryWorkspacePage />);
 
+    expect(await screen.findByTestId("memory-ai-toggle-icon")).toBeTruthy();
     fireEvent.click(await screen.findByTestId("memory-ai-toggle"));
 
     await waitFor(() => {

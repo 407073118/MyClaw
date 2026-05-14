@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Check,
   Database,
@@ -9,6 +9,7 @@ import {
   FolderPlus,
   RefreshCw,
   Search,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -61,6 +62,14 @@ type PendingCreate = {
   name: string;
 };
 
+type MarkdownBlock =
+  | { kind: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
+  | { kind: "paragraph"; text: string }
+  | { kind: "blockquote"; text: string }
+  | { kind: "list"; ordered: boolean; items: Array<{ text: string; checked?: boolean }> }
+  | { kind: "code"; language: string; code: string }
+  | { kind: "rule" };
+
 /** 将记忆根目录模式映射成 UI 标签，保持 managed/reference 的用户语义清晰。 */
 function rootModeLabel(mode: MemoryRootMode): string {
   return mode === "managed" ? "托管" : "引用";
@@ -109,6 +118,163 @@ function createTargetLabel(root: MemoryRoot | undefined, parentRelativePath: str
   return parentRelativePath ? `${root.displayName}/${parentRelativePath}` : root.displayName;
 }
 
+/** 解析 Markdown 为轻量块结构，避免把用户文件里的 HTML 直接注入页面。 */
+function parseMarkdownBlocks(content: string): MarkdownBlock[] {
+  const blocks: MarkdownBlock[] = [];
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  let paragraph: string[] = [];
+  let list: MarkdownBlock & { kind: "list" } | null = null;
+  let codeLanguage = "";
+  let codeLines: string[] | null = null;
+
+  /** 提交暂存段落，保证后续标题、列表、代码块不会和普通文本混在一起。 */
+  const flushParagraph = () => {
+    if (paragraph.length === 0) return;
+    blocks.push({ kind: "paragraph", text: paragraph.join(" ").trim() });
+    paragraph = [];
+  };
+
+  /** 提交暂存列表，保持 task list 和普通列表的排版边界。 */
+  const flushList = () => {
+    if (!list) return;
+    blocks.push(list);
+    list = null;
+  };
+
+  for (const line of lines) {
+    const fence = line.match(/^```([\w-]*)\s*$/);
+    if (fence) {
+      if (codeLines) {
+        blocks.push({ kind: "code", language: codeLanguage, code: codeLines.join("\n") });
+        codeLines = null;
+        codeLanguage = "";
+      } else {
+        flushParagraph();
+        flushList();
+        codeLanguage = fence[1] || "";
+        codeLines = [];
+      }
+      continue;
+    }
+
+    if (codeLines) {
+      codeLines.push(line);
+      continue;
+    }
+
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = Math.min(heading[1].length, 6) as 1 | 2 | 3 | 4 | 5 | 6;
+      blocks.push({ kind: "heading", level, text: heading[2].trim() });
+      continue;
+    }
+
+    if (/^---+$/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "rule" });
+      continue;
+    }
+
+    const quote = trimmed.match(/^>\s?(.*)$/);
+    if (quote) {
+      flushParagraph();
+      flushList();
+      blocks.push({ kind: "blockquote", text: quote[1] });
+      continue;
+    }
+
+    const unordered = trimmed.match(/^[-*]\s+(?:\[([ xX])\]\s+)?(.+)$/);
+    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
+    if (unordered || ordered) {
+      flushParagraph();
+      const nextOrdered = Boolean(ordered);
+      if (!list || list.ordered !== nextOrdered) {
+        flushList();
+        list = { kind: "list", ordered: nextOrdered, items: [] };
+      }
+      if (unordered) {
+        list.items.push({
+          text: unordered[2],
+          checked: unordered[1] ? unordered[1].toLowerCase() === "x" : undefined,
+        });
+      } else if (ordered) {
+        list.items.push({ text: ordered[1] });
+      }
+      continue;
+    }
+
+    flushList();
+    paragraph.push(trimmed);
+  }
+
+  if (codeLines) {
+    blocks.push({ kind: "code", language: codeLanguage, code: codeLines.join("\n") });
+  }
+  flushParagraph();
+  flushList();
+  return blocks;
+}
+
+/** 渲染 Markdown 行内强调和代码，保持纯 React 文本节点输出。 */
+function renderInlineMarkdown(text: string): ReactNode[] {
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={`${part}-${index}`}>{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={`${part}-${index}`}>{part.slice(2, -2)}</strong>;
+    }
+    return <Fragment key={`${part}-${index}`}>{part}</Fragment>;
+  });
+}
+
+/** 把 Markdown 块渲染成可读排版，让右侧预览接近笔记工具的阅读体验。 */
+function renderMarkdownBlock(block: MarkdownBlock, index: number): JSX.Element {
+  if (block.kind === "heading") {
+    const Heading = `h${block.level}` as keyof JSX.IntrinsicElements;
+    return <Heading key={`heading-${index}`}>{renderInlineMarkdown(block.text)}</Heading>;
+  }
+  if (block.kind === "blockquote") {
+    return <blockquote key={`quote-${index}`}>{renderInlineMarkdown(block.text)}</blockquote>;
+  }
+  if (block.kind === "list") {
+    const List = block.ordered ? "ol" : "ul";
+    return (
+      <List key={`list-${index}`}>
+        {block.items.map((item, itemIndex) => (
+          <li key={`${item.text}-${itemIndex}`}>
+            {typeof item.checked === "boolean" && <input type="checkbox" checked={item.checked} readOnly />}
+            <span>{renderInlineMarkdown(item.text)}</span>
+          </li>
+        ))}
+      </List>
+    );
+  }
+  if (block.kind === "code") {
+    return (
+      <pre key={`code-${index}`}>
+        {block.language && <span className="memory-markdown-code-language">{block.language}</span>}
+        <code>{block.code}</code>
+      </pre>
+    );
+  }
+  if (block.kind === "rule") {
+    return <hr key={`rule-${index}`} />;
+  }
+  return <p key={`paragraph-${index}`}>{renderInlineMarkdown(block.text)}</p>;
+}
+
 /** 记忆库工作台页面：左侧文件树，右侧 Markdown 点开即编辑，检索作为辅助能力保留。 */
 export default function MemoryWorkspacePage() {
   const currentSession = useWorkspaceStore((state) => state.currentSession);
@@ -147,6 +313,7 @@ export default function MemoryWorkspacePage() {
     () => candidates.filter((candidate) => candidate.status === "pending"),
     [candidates],
   );
+  const markdownBlocks = useMemo(() => parseMarkdownBlocks(editorContent), [editorContent]);
 
   /** 从 preload 加载根目录、文件树和候选统计，文件树是页面第一信息架构。 */
   const loadMemoryState = useCallback(async () => {
@@ -761,22 +928,42 @@ export default function MemoryWorkspacePage() {
                     onChange={() => void handleToggleMemoryContext()}
                   />
                   <span>AI 使用记忆库</span>
+                  <Sparkles data-testid="memory-ai-toggle-icon" size={14} aria-hidden="true" />
                 </label>
               </div>
             </div>
 
-            <div className="memory-editor-surface">
+            <div className={`memory-editor-surface${activeDocument?.documentKind === "markdown" ? " memory-editor-surface--markdown" : ""}`}>
               {documentLoading ? (
                 <div className="memory-editor-empty">正在打开文档</div>
               ) : activeDocument?.documentKind === "markdown" ? (
-                <textarea
-                  data-testid="memory-document-editor"
-                  aria-label="Markdown 记忆文档编辑器"
-                  value={editorContent}
-                  readOnly={!activeDocument.editable}
-                  spellCheck={false}
-                  onChange={(event) => setEditorContent(event.target.value)}
-                />
+                <>
+                  <div className="memory-markdown-editor-column">
+                    <div className="memory-pane-label">
+                      <FileText size={14} />
+                      <span>编辑</span>
+                    </div>
+                    <textarea
+                      data-testid="memory-document-editor"
+                      aria-label="Markdown 记忆文档编辑器"
+                      value={editorContent}
+                      readOnly={!activeDocument.editable}
+                      spellCheck={false}
+                      onChange={(event) => setEditorContent(event.target.value)}
+                    />
+                  </div>
+                  <div className="memory-markdown-preview-column">
+                    <div className="memory-pane-label">
+                      <FileText size={14} />
+                      <span>预览</span>
+                    </div>
+                    <article data-testid="memory-markdown-preview" className="memory-markdown-preview">
+                      {markdownBlocks.length > 0 ? markdownBlocks.map((block, index) => renderMarkdownBlock(block, index)) : (
+                        <p className="memory-markdown-preview__empty">空白文档</p>
+                      )}
+                    </article>
+                  </div>
+                </>
               ) : activeDocument ? (
                 <div className="memory-editor-empty">
                   <File size={26} />
@@ -896,6 +1083,7 @@ export default function MemoryWorkspacePage() {
         .memory-editor-actions { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; }
         .memory-ai-toggle { height: 34px; display: inline-flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-secondary); font-size: 12px; font-weight: 800; background: rgba(0,0,0,0.16); white-space: nowrap; }
         .memory-ai-toggle input { width: 16px; height: 16px; accent-color: #38bdf8; }
+        .memory-ai-toggle svg { color: #67e8f9; opacity: 0.92; }
         .memory-save-status { display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--glass-border); color: var(--text-muted); font-size: 11px; font-weight: 900; }
         .memory-save-status--dirty, .memory-save-status--saving { color: #fde68a; border-color: rgba(250,204,21,0.25); background: rgba(250,204,21,0.08); }
         .memory-save-status--saved { color: #86efac; border-color: rgba(34,197,94,0.25); background: rgba(34,197,94,0.08); }
@@ -904,6 +1092,29 @@ export default function MemoryWorkspacePage() {
         .memory-editor-surface { min-height: 0; display: flex; padding: 0; }
         .memory-editor-surface textarea { width: 100%; min-height: 100%; resize: none; border: 0; border-radius: 0; outline: none; padding: 22px 24px 34px; background: rgba(255,255,255,0.012); color: var(--text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 14px; line-height: 1.7; }
         .memory-editor-surface textarea[readonly] { color: var(--text-secondary); background: rgba(255,255,255,0.018); }
+        .memory-editor-surface--markdown { display: grid; grid-template-columns: minmax(320px, 0.95fr) minmax(320px, 1.05fr); }
+        .memory-markdown-editor-column, .memory-markdown-preview-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+        .memory-markdown-preview-column { border-left: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.01); }
+        .memory-pane-label { height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 13px; border-bottom: 1px solid rgba(255,255,255,0.07); color: var(--text-muted); font-size: 11px; font-weight: 900; }
+        .memory-pane-label svg { color: #bae6fd; }
+        .memory-editor-surface--markdown textarea { min-height: 0; height: 100%; }
+        .memory-markdown-preview { min-width: 0; min-height: 0; overflow: auto; padding: 24px 28px 34px; color: #dbe4ef; font-size: 14px; line-height: 1.74; }
+        .memory-markdown-preview h1, .memory-markdown-preview h2, .memory-markdown-preview h3, .memory-markdown-preview h4, .memory-markdown-preview h5, .memory-markdown-preview h6 { margin: 0 0 12px; color: #f8fafc; letter-spacing: 0; line-height: 1.25; }
+        .memory-markdown-preview h1 { font-size: 25px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .memory-markdown-preview h2 { font-size: 20px; margin-top: 18px; }
+        .memory-markdown-preview h3 { font-size: 16px; margin-top: 16px; }
+        .memory-markdown-preview p { margin: 0 0 13px; color: #cbd5e1; }
+        .memory-markdown-preview strong { color: #f8fafc; font-weight: 900; }
+        .memory-markdown-preview code { padding: 2px 5px; border: 1px solid rgba(255,255,255,0.08); border-radius: 5px; background: rgba(15,23,42,0.72); color: #bfdbfe; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 0.92em; }
+        .memory-markdown-preview pre { position: relative; margin: 0 0 14px; padding: 14px; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; background: rgba(2,6,23,0.72); overflow: auto; }
+        .memory-markdown-preview pre code { display: block; padding: 0; border: 0; background: transparent; color: #dbeafe; line-height: 1.65; white-space: pre; }
+        .memory-markdown-code-language { display: inline-flex; margin-bottom: 8px; color: #93c5fd; font-size: 11px; font-weight: 900; }
+        .memory-markdown-preview blockquote { margin: 0 0 14px; padding: 9px 12px; border-left: 3px solid #22d3ee; border-radius: 0 7px 7px 0; background: rgba(8,145,178,0.1); color: #dbeafe; }
+        .memory-markdown-preview ul, .memory-markdown-preview ol { margin: 0 0 14px; padding-left: 22px; color: #cbd5e1; }
+        .memory-markdown-preview li { margin: 5px 0; padding-left: 2px; }
+        .memory-markdown-preview li input { width: 14px; height: 14px; margin: 0 7px 0 -2px; accent-color: #22d3ee; vertical-align: -2px; }
+        .memory-markdown-preview hr { border: 0; height: 1px; margin: 18px 0; background: rgba(255,255,255,0.1); }
+        .memory-markdown-preview__empty { color: var(--text-muted); }
         .memory-editor-empty { width: 100%; min-height: 360px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px; color: var(--text-muted); text-align: center; }
         .memory-editor-empty strong { color: var(--text-primary); font-size: 15px; }
         .memory-editor-empty span { max-width: 420px; color: var(--text-muted); font-size: 13px; line-height: 1.55; }
@@ -933,6 +1144,8 @@ export default function MemoryWorkspacePage() {
           .memory-workbench { grid-template-columns: 1fr; }
           .memory-sidebar { border-right: 0; border-bottom: 1px solid rgba(255,255,255,0.07); max-height: 520px; }
           .memory-search-results { grid-template-columns: 1fr; }
+          .memory-editor-surface--markdown { grid-template-columns: 1fr; grid-template-rows: minmax(320px, 1fr) minmax(260px, 0.85fr); }
+          .memory-markdown-preview-column { border-left: 0; border-top: 1px solid rgba(255,255,255,0.07); }
           .memory-editor-topbar { align-items: flex-start; flex-direction: column; }
           .memory-editor-actions { width: 100%; justify-content: space-between; }
         }
