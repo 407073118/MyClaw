@@ -88,6 +88,29 @@ describe("phase1 model transport", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({ mode: "strict" });
   });
 
+  it("throws fallback 400 response details without retrying it as fetch failure", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("primary unsupported", { status: 400, statusText: "Bad Request" }))
+      .mockResolvedValueOnce(new Response("{\"error\":{\"message\":\"fallback bad tools\"}}", { status: 400, statusText: "Bad Request" }));
+    const sleepMock = vi.fn().mockResolvedValue(undefined);
+
+    await expect(executeRequestVariants({
+      url: "https://api.example.com/v1/chat/completions",
+      headers: { authorization: "Bearer test-key" },
+      requestVariants: [
+        createVariant("primary", { mode: "strict" }),
+        createVariant("compatibility-fallback", { mode: "compat" }, "unsupported_patch"),
+      ],
+      fetchImpl: fetchMock,
+      sleep: sleepMock,
+      maxRetries: 3,
+      retryDelaysMs: [10, 20, 40],
+    })).rejects.toThrow("fallback bad tools");
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).not.toHaveBeenCalled();
+  });
+
   it("aborts an in-flight request when the transport timeout elapses", async () => {
     vi.useFakeTimers();
 

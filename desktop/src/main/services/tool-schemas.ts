@@ -83,7 +83,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "fs_read",
-        description: `Read the contents of a text file. Supports paths outside the workspace — the user will be prompted to approve the first access to a new external path; paths the user mentioned in the current message are auto-allowed. For office / pdf / pptx files use \`document_read\` (the native zero-Python reader). For Excel files specifically, \`xlsx_extract\` still works but \`document_read\` is preferred. Working directory: ${cwd}`,
+        description: `Read short text/code files before editing. Output is truncated for long files, so use \`document_read\` for .xlsx/.xls/.xlsm/.docx/.pdf/.pptx/.md/.txt/.csv/.json when you need complete analysis, outline/search, or precise section/subtree reads. For Excel files specifically, \`xlsx_extract\` still works but \`document_read\` is preferred. Supports paths outside the workspace with path-access approval. Working directory: ${cwd}`,
         parameters: {
           type: "object",
           properties: {
@@ -153,13 +153,14 @@ export function buildToolSchemas(
       function: {
         name: "document_read",
         description: [
-          `Read office / pdf / pptx / markdown / csv documents natively (zero Python required).`,
-          `Use this instead of fs_read for .xlsx/.xls/.xlsm/.docx/.pdf/.pptx/.md/.txt/.csv.`,
+          `Read office / pdf / pptx / markdown / csv / json documents natively (zero Python required).`,
+          `Use this instead of fs_read for .xlsx/.xls/.xlsm/.docx/.pdf/.pptx/.md/.txt/.csv/.json, especially when the file may exceed fs_read's truncation window.`,
           `Examples:`,
           `  1. Stats first:   {"path":"./Q4.pptx","mode":"stats"}`,
           `  2. Outline:       {"path":"./report.docx","mode":"outline"}`,
           `  3. Precise read:  {"path":"./report.docx","mode":"read","locator":{"heading":"Conclusion"},"maxChars":4000}`,
           `  4. Search:        {"path":"./book.pdf","mode":"search","query":"revenue"}`,
+          `  5. JSON subtree:  {"path":"./package.json","mode":"read","locator":{"pointer":"/dependencies/react"},"maxChars":2000}`,
           `Working directory: ${cwd}`,
         ].join("\n"),
         parameters: {
@@ -182,6 +183,7 @@ export function buildToolSchemas(
                 slide: { type: "number", description: "PPTX slide number (1-based)." },
                 sheet: { type: "string", description: "XLSX sheet name." },
                 heading: { type: "string", description: "DOCX/MD heading text to anchor on." },
+                pointer: { type: "string", description: "JSON Pointer for JSON subtrees, e.g. /dependencies/react or /scripts/build." },
                 range: {
                   type: "array",
                   items: { type: "number" },

@@ -134,6 +134,11 @@ describe("AgentTeamDock task queue", () => {
       ),
     );
 
+    expect(screen.getByTestId("agent-team-dock").className).toContain("agent-team-dock--collapsed");
+    expect(screen.queryByTestId("agent-team-task-board")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "展开 Agent Team" }));
+
     expect(screen.getByTestId("agent-team-task-board")).toBeTruthy();
     expect(screen.getByTestId("agent-team-task-count-attention").textContent).toBe("1");
     expect(screen.getByTestId("agent-team-task-count-running").textContent).toBe("1");

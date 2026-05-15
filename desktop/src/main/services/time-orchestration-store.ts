@@ -19,6 +19,7 @@ import type {
 } from "@shared/contracts";
 
 import type { MyClawPaths } from "./directory-service";
+import { findNextCronRunAt } from "./schedule-job-next-run";
 import { TimeOrchestrationDatabase } from "./time-orchestration-database";
 
 function parseReminder(row: Record<string, unknown>): Reminder {
@@ -54,6 +55,36 @@ function resolveScheduleJobOwner(input: ScheduleJobUpsertInput): { ownerScope: T
     return { ownerScope: "silicon_person", ownerId: input.executorTargetId };
   }
   return { ownerScope: "personal" };
+}
+
+/** 规范化 ISO 时间字符串，避免 SQLite TEXT 时间比较遇到非 UTC 格式。 */
+function normalizeIsoDateTime(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+}
+
+/** 根据任务配置推导首次运行时间，确保调度器能从 due 查询中读到新任务。 */
+function resolveInitialScheduleJobNextRunAt(input: ScheduleJobUpsertInput, reference: Date): string | undefined {
+  const explicitNextRunAt = normalizeIsoDateTime(input.nextRunAt);
+  if (explicitNextRunAt) {
+    return explicitNextRunAt;
+  }
+  if (input.status && input.status !== "scheduled") {
+    return undefined;
+  }
+  if (input.scheduleKind === "once") {
+    return normalizeIsoDateTime(input.startsAt);
+  }
+  if (input.scheduleKind === "interval" && input.intervalMinutes && input.intervalMinutes > 0) {
+    return new Date(reference.getTime() + input.intervalMinutes * 60_000).toISOString();
+  }
+  if (input.scheduleKind === "cron" && input.cronExpression) {
+    return findNextCronRunAt(input.cronExpression, reference, input.timezone) ?? undefined;
+  }
+  return undefined;
 }
 
 export type ReminderUpsertInput = {
@@ -341,7 +372,8 @@ export class TimeOrchestrationStore {
       scheduleKind: input.scheduleKind,
       timezone: input.timezone,
     });
-    const now = new Date().toISOString();
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
     const owner = resolveScheduleJobOwner(input);
     const job: ScheduleJob = {
       id: input.id ?? randomUUID(),
@@ -355,7 +387,7 @@ export class TimeOrchestrationStore {
       status: input.status ?? "scheduled",
       source: input.source ?? "manual",
       externalRef: input.externalRef,
-      startsAt: input.startsAt,
+      startsAt: normalizeIsoDateTime(input.startsAt),
       intervalMinutes: input.intervalMinutes,
       cronExpression: input.cronExpression,
       executor: input.executor ?? "assistant_prompt",
@@ -366,7 +398,7 @@ export class TimeOrchestrationStore {
       reasoningEffort: input.reasoningEffort,
       reasoningEnabled: input.reasoningEnabled,
       lastRunAt: input.lastRunAt,
-      nextRunAt: input.nextRunAt,
+      nextRunAt: resolveInitialScheduleJobNextRunAt(input, nowDate),
       createdAt: now,
       updatedAt: now,
     };

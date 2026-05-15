@@ -51,6 +51,7 @@ import { createTimeScheduler } from "./services/time-scheduler";
 import { TimeOrchestrationStore } from "./services/time-orchestration-store";
 import { MemoryVaultService } from "./services/memory-vault/service";
 import { canonicalize, PathAccessPolicy } from "./services/path-access-policy";
+import { resolveAppIconPath } from "./services/app-icon-path";
 
 const log = createLogger("main");
 
@@ -120,7 +121,7 @@ let runtimeContext: RuntimeContext | null = null;
 function createMainWindow(): BrowserWindow {
   // 根据平台选择标题栏模式：macOS 用 hiddenInset，Windows 用 hidden + titleBarOverlay
   const isMac = process.platform === "darwin";
-  const iconPath = join(__dirname, "../../build/icon.png");
+  const iconPath = resolveAppIconPath({ mainDir: __dirname });
   const win = new BrowserWindow({
     width: 1100,
     height: 750,

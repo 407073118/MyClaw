@@ -131,6 +131,51 @@ describe("TimeOrchestrationStore", () => {
     db.close();
   });
 
+  it("initializes next run time when creating schedule jobs from editor fields", async () => {
+    const root = mkdtempSync(join(tmpdir(), "myclaw-time-next-run-"));
+    const paths = derivePaths(root);
+    const store = await TimeOrchestrationStore.create(paths);
+    const beforeCreate = Date.now();
+
+    const onceStartsAt = "2026-04-20T07:00:00.000Z";
+    const onceJob = await store.upsertScheduleJob({
+      title: "一次性任务",
+      scheduleKind: "once",
+      timezone: "Asia/Shanghai",
+      startsAt: onceStartsAt,
+      executor: "assistant_prompt",
+    });
+    const intervalJob = await store.upsertScheduleJob({
+      title: "间隔任务",
+      scheduleKind: "interval",
+      timezone: "Asia/Shanghai",
+      intervalMinutes: 60,
+      executor: "assistant_prompt",
+    });
+    const cronJob = await store.upsertScheduleJob({
+      title: "每分钟任务",
+      scheduleKind: "cron",
+      timezone: "Asia/Shanghai",
+      cronExpression: "* * * * *",
+      executor: "assistant_prompt",
+    });
+
+    expect(onceJob.nextRunAt).toBe(onceStartsAt);
+    expect(intervalJob.nextRunAt).toBeDefined();
+    expect(Date.parse(intervalJob.nextRunAt ?? "")).toBeGreaterThanOrEqual(beforeCreate + 60 * 60_000);
+    expect(cronJob.nextRunAt).toBeDefined();
+
+    const dueOnceJobs = await store.listDueScheduleJobs(new Date(onceStartsAt));
+    const dueIntervalJobs = await store.listDueScheduleJobs(new Date(Date.now() + 61 * 60_000));
+    const dueCronJobs = await store.listDueScheduleJobs(new Date(cronJob.nextRunAt ?? ""));
+
+    expect(dueOnceJobs.map((job) => job.id)).toContain(onceJob.id);
+    expect(dueIntervalJobs.map((job) => job.id)).toContain(intervalJob.id);
+    expect(dueCronJobs.map((job) => job.id)).toContain(cronJob.id);
+
+    store.close();
+  });
+
   it("migrates legacy schedule job tables and backfills owner columns from payload", async () => {
     const root = mkdtempSync(join(tmpdir(), "myclaw-time-owner-legacy-"));
     const paths = derivePaths(root);

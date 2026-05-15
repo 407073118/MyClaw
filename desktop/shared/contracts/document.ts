@@ -22,7 +22,8 @@ export type DocumentFormat =
   | "pptx"
   | "md"
   | "txt"
-  | "csv";
+  | "csv"
+  | "json";
 
 /** 原始文件来源信息。用于缓存键与溯源审计。 */
 export type DocumentSource = {
@@ -58,6 +59,8 @@ export type Locator = {
   heading?: string;
   /** body 节点索引区间 [start, endExclusive]，用于 range 切片 */
   range?: [number, number];
+  /** json：JSON Pointer，例如 /dependencies/react；根节点用 / */
+  pointer?: string;
 };
 
 /** 扁平大纲项。供 outline mode 与 heading 跳转使用。 */

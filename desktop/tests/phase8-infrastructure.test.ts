@@ -124,6 +124,36 @@ describe("Model Client URL Resolution", () => {
     expect(url).toBe("https://api.openai.com/v1/chat/completions");
   });
 
+  it("resolves Volcengine Ark provider root to /api/v3/chat/completions", async () => {
+    const { resolveModelEndpointUrl } = await import("../src/main/services/model-client");
+    const url = resolveModelEndpointUrl({
+      id: "test",
+      name: "Test",
+      provider: "openai-compatible",
+      providerFlavor: "volcengine-ark",
+      baseUrl: "https://ark.cn-beijing.volces.com",
+      baseUrlMode: "provider-root",
+      apiKey: "test",
+      model: "doubao-seed-code",
+    });
+    expect(url).toBe("https://ark.cn-beijing.volces.com/api/v3/chat/completions");
+  });
+
+  it("normalizes Volcengine Ark Coding Plan OpenAI base URL to /api/coding/v3", async () => {
+    const { resolveModelEndpointUrl } = await import("../src/main/services/model-client");
+    const url = resolveModelEndpointUrl({
+      id: "test",
+      name: "Test",
+      provider: "openai-compatible",
+      providerFlavor: "volcengine-ark",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v1",
+      baseUrlMode: "manual",
+      apiKey: "test",
+      model: "GLM-5.1",
+    });
+    expect(url).toBe("https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions");
+  });
+
   it("resolves Anthropic URL with /v1/messages", async () => {
     const { resolveModelEndpointUrl } = await import("../src/main/services/model-client");
     const url = resolveModelEndpointUrl({

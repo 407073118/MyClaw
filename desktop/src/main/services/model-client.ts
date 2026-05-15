@@ -115,6 +115,12 @@ type BuildRequestBodyVariantsInput = {
   reasoningEffort?: "low" | "medium" | "high" | "xhigh";
 };
 
+type RequestVariantToolShapeIssue = {
+  variantId: string;
+  index: number;
+  keys: string[];
+};
+
 // ---------------------------------------------------------------------------
 // URL 解析
 // ---------------------------------------------------------------------------
@@ -161,6 +167,57 @@ function stripKnownEndpointSuffixes(baseUrl: string): string {
  */
 function isCodingDashscopeBaseUrl(baseUrl: string): boolean {
   return normalizeBaseUrl(baseUrl).toLowerCase().includes("coding.dashscope.aliyuncs.com");
+}
+
+/**
+ * 判断当前配置是否属于火山方舟，既支持显式 providerFlavor，也兼容用户只填写域名的情况。
+ */
+function isVolcengineArkProfile(profile: Pick<ModelProfile, "providerFlavor" | "baseUrl">): boolean {
+  const lowerUrl = normalizeBaseUrl(profile.baseUrl).toLowerCase();
+  return profile.providerFlavor === "volcengine-ark"
+    || lowerUrl.includes("ark.cn-beijing.volces.com")
+    || lowerUrl.includes("volces.com")
+    || lowerUrl.includes("volcengine");
+}
+
+/**
+ * 解析火山 Coding Plan 的 OpenAI 兼容根地址。
+ * 官方文档要求 OpenAI 兼容工具使用 /api/coding/v3，不能沿用 /api/coding/v1。
+ */
+function resolveVolcengineArkCodingApiRoot(profile: Pick<ModelProfile, "providerFlavor" | "baseUrl">): string | null {
+  if (!isVolcengineArkProfile(profile)) {
+    return null;
+  }
+
+  const normalized = normalizeBaseUrl(profile.baseUrl);
+  const lower = normalized.toLowerCase();
+  const codingIndex = lower.indexOf("/api/coding");
+  if (codingIndex < 0) {
+    return null;
+  }
+
+  return `${normalized.slice(0, codingIndex)}/api/coding/v3`;
+}
+
+/**
+ * 解析火山方舟普通 OpenAI 兼容根地址。
+ * provider-root 模式下用户通常只填域名，方舟普通推理入口需要补为 /api/v3。
+ */
+function resolveVolcengineArkProviderApiRoot(
+  profile: Pick<ModelProfile, "providerFlavor" | "baseUrl">,
+  cleanedBaseUrl: string,
+): string | null {
+  if (!isVolcengineArkProfile(profile)) {
+    return null;
+  }
+
+  const lower = cleanedBaseUrl.toLowerCase();
+  const apiV3Index = lower.indexOf("/api/v3");
+  if (apiV3Index >= 0) {
+    return `${cleanedBaseUrl.slice(0, apiV3Index)}/api/v3`;
+  }
+
+  return appendIfMissing(cleanedBaseUrl, "/api/v3");
 }
 
 type ProviderFlavor = "anthropic" | "qwen" | "qwen-coding" | "deepseek" | "generic";
@@ -212,6 +269,10 @@ function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
  */
 function resolveApiRoot(profile: ModelProfile): string {
   const normalized = normalizeBaseUrl(profile.baseUrl);
+  const volcengineCodingRoot = resolveVolcengineArkCodingApiRoot(profile);
+  if (volcengineCodingRoot) {
+    return volcengineCodingRoot;
+  }
 
   if (profile.baseUrlMode !== "provider-root") {
     // manual 模式下，用户可能已经手动带上路径后缀，这里保持原样。
@@ -220,6 +281,11 @@ function resolveApiRoot(profile: ModelProfile): string {
 
   // provider-root：先清理用户误带的路径后缀。
   const cleaned = stripKnownEndpointSuffixes(normalized);
+  const volcengineArkRoot = resolveVolcengineArkProviderApiRoot(profile, cleaned);
+  if (volcengineArkRoot) {
+    return volcengineArkRoot;
+  }
+
   const flavor = resolveProviderFlavor(profile);
 
   switch (flavor) {
@@ -489,6 +555,75 @@ export function buildRequestBodyVariants(input: BuildRequestBodyVariantsInput): 
   ).map((variant) => variant.body);
 }
 
+/** 判断 OpenAI Chat 兼容工具是否保持 `{ type:"function", function:{...} }` 形状。 */
+function isOpenAiFunctionToolShape(tool: unknown): tool is RequestTool {
+  if (!tool || typeof tool !== "object" || Array.isArray(tool)) {
+    return false;
+  }
+  const record = tool as Record<string, unknown>;
+  const fn = record.function;
+  return record.type === "function"
+    && !!fn
+    && typeof fn === "object"
+    && !Array.isArray(fn)
+    && typeof (fn as Record<string, unknown>).name === "string";
+}
+
+/** 汇总最终请求体里的 tools 形状，方便日志直接定位工具协议问题。 */
+function summarizeRequestVariantToolShapes(
+  requestVariants: Array<{ id: string; body: Record<string, unknown> }>,
+): string {
+  return requestVariants.map((variant) => {
+    const tools = variant.body.tools;
+    if (tools === undefined) return `${variant.id}:off`;
+    if (!Array.isArray(tools)) return `${variant.id}:invalid-non-array`;
+    const validCount = tools.filter(isOpenAiFunctionToolShape).length;
+    return `${variant.id}:${validCount}/${tools.length}`;
+  }).join(",");
+}
+
+/** 在发起 HTTP 请求前阻断坏工具定义，避免下游只返回笼统的 tools.function 缺失。 */
+function assertOpenAiCompatibleToolShapes(
+  adapterId: string,
+  requestVariants: Array<{ id: string; body: Record<string, unknown> }>,
+): void {
+  if (adapterId === "anthropic-native") {
+    return;
+  }
+
+  const issues: RequestVariantToolShapeIssue[] = [];
+  for (const variant of requestVariants) {
+    const tools = variant.body.tools;
+    if (tools === undefined) continue;
+    if (!Array.isArray(tools)) {
+      issues.push({ variantId: variant.id, index: -1, keys: [] });
+      continue;
+    }
+    tools.forEach((tool, index) => {
+      if (isOpenAiFunctionToolShape(tool)) {
+        return;
+      }
+      const keys = tool && typeof tool === "object" && !Array.isArray(tool)
+        ? Object.keys(tool as Record<string, unknown>)
+        : [];
+      issues.push({ variantId: variant.id, index, keys });
+    });
+  }
+
+  if (issues.length === 0) {
+    return;
+  }
+
+  console.error("[model-client] 工具定义不符合 OpenAI function tools 格式，已在本地阻断请求", {
+    adapterId,
+    issues: issues.slice(0, 10),
+  });
+  throw new Error(`工具定义不符合 OpenAI function tools 格式：${issues
+    .slice(0, 5)
+    .map((issue) => `${issue.variantId}[${issue.index}] keys=${issue.keys.join("|") || "(none)"}`)
+    .join("; ")}`);
+}
+
 /**
  * 调用模型并流式返回内容。
  *
@@ -548,6 +683,8 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     adapterContext,
     { ...adapterInput, messages: replayMessages },
   );
+  const toolShapeSummary = summarizeRequestVariantToolShapes(requestVariants);
+  assertOpenAiCompatibleToolShapes(adapter.id, requestVariants);
 
   // DEBUG：记录实际请求 URL 与打码后的 apiKey
   const maskedKey = profile.apiKey
@@ -568,7 +705,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
       console.info(`[model-client] Stream retry attempt ${streamAttempt}/${STREAM_RETRY_MAX} for ${profile.model}`);
     }
 
-    console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model} | adapter=${adapter.id} | reasoningEnabled=${adapterContext.reasoningEnabled ?? "(auto)"} | reasoningEffort=${adapterContext.reasoningEffort ?? "(none)"} | tools=${tools?.length ?? 0}${streamAttempt > 0 ? ` | streamRetry=${streamAttempt}` : ""}`);
+    console.info(`[model-client] POST ${url} | apiKey=${maskedKey} | model=${profile.model} | adapter=${adapter.id} | reasoningEnabled=${adapterContext.reasoningEnabled ?? "(auto)"} | reasoningEffort=${adapterContext.reasoningEffort ?? "(none)"} | tools=${tools?.length ?? 0} | toolShape=${toolShapeSummary}${streamAttempt > 0 ? ` | streamRetry=${streamAttempt}` : ""}`);
     const transportResult = await executeRequestVariants({
       url,
       headers,

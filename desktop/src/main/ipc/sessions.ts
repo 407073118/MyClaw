@@ -1174,7 +1174,8 @@ function buildSystemPrompt(
   // ── Tool Usage（按分类组织，减少 token 浪费）──────────────
   parts.push(`\n# Tools`);
   parts.push(`## Files`);
-  parts.push(`- \`fs_read\` — Read file contents. **Always read before editing.**`);
+  parts.push(`- \`fs_read\` — Read short text/code files before editing; long output is truncated, so do not rely on it for complete document analysis.`);
+  parts.push(`- \`document_read\` — Read structured/long documents with stats, outline, search, and precise reads. Prefer it for .docx/.pdf/.pptx/.xlsx/.md/.txt/.csv/.json; use JSON Pointer locators for JSON subtrees.`);
   parts.push(`- \`file_view\` — Open/view a local file in the right-side panel without placing its body in model context.`);
   parts.push(`- \`fs_edit\` — Replace a specific string in a file (preferred for partial edits).`);
   parts.push(`- \`fs_write\` — Create new files or full rewrites only.`);
@@ -1228,7 +1229,7 @@ function buildSystemPrompt(
     parts.push(`You can call MULTIPLE tools in a single response. When operations are independent, issue them all at once.`);
     parts.push(``);
     parts.push(`Examples:`);
-    parts.push(`- Need 3 files? → 3× fs_read in one response (parallel)`);
+    parts.push(`- Need 3 short code files? → 3× fs_read in one response (parallel). Need long docs/JSON/Markdown? → document_read stats/outline first, then read a locator.`);
     parts.push(`- Need to search 2 topics? → 2× web_search in one response (parallel)`);
     parts.push(`- Need git status + file content? → Both in one response (parallel)`);
     parts.push(``);
@@ -1261,7 +1262,7 @@ function buildSystemPrompt(
     parts.push(``);
     parts.push(`  Round 1 — Broad gathering`);
     parts.push(`    Issue multiple parallel tool calls to cover different angles.`);
-    parts.push(`    (e.g., 5 web_searches with different queries, or 8 fs_reads for all related files)`);
+    parts.push(`    (e.g., 5 web_searches with different queries, or 8 fs_reads for short related code files)`);
     parts.push(``);
     parts.push(`  Assess — Review what you received`);
     parts.push(`    What did you learn? What's still unclear? What needs deeper investigation?`);
@@ -1269,7 +1270,7 @@ function buildSystemPrompt(
     parts.push(`  Round 2 — Targeted deep-dive`);
     parts.push(`    Based on gaps identified, issue focused tool calls:`);
     parts.push(`    - http_fetch to read full articles from promising search results`);
-    parts.push(`    - fs_read for dependency files that turned out to be relevant`);
+    parts.push(`    - fs_read for short dependency files, or document_read for long Markdown/JSON/document files that need outline/search`);
     parts.push(`    - Additional web_search with refined queries`);
     parts.push(``);
     parts.push(`  Assess — Is information sufficient?`);

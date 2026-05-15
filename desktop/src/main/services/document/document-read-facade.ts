@@ -36,7 +36,7 @@ const DOC_MIN_MAX_CHARS = 100;
 const DOC_SEARCH_LIMIT = 20;
 
 /** 所有支持的文档格式。document.read 能识别的扩展名列表。 */
-const SUPPORTED_FORMATS_LIST = "xlsx/xls/xlsm/docx/pdf/pptx/md/txt/csv";
+const SUPPORTED_FORMATS_LIST = "xlsx/xls/xlsm/docx/pdf/pptx/md/txt/csv/json";
 
 export type DocumentReadMode = "stats" | "outline" | "read" | "search";
 
@@ -76,6 +76,7 @@ export function detectFormat(path: string): DocumentFormat | null {
     case ".md": return "md";
     case ".txt": return "txt";
     case ".csv": return "csv";
+    case ".json": return "json";
     default: return null;
   }
 }
@@ -138,6 +139,7 @@ function locatorSuffix(loc: Locator): string {
   if (typeof loc.slide === "number") parts.push(`slide=${loc.slide}`);
   if (typeof loc.sheet === "string" && loc.sheet) parts.push(`sheet=${loc.sheet}`);
   if (typeof loc.heading === "string" && loc.heading) parts.push(`heading=${loc.heading}`);
+  if (typeof loc.pointer === "string" && loc.pointer) parts.push(`pointer=${loc.pointer}`);
   if (Array.isArray(loc.range) && loc.range.length === 2) {
     parts.push(`range=${loc.range[0]}..${loc.range[1]}`);
   }
@@ -154,6 +156,7 @@ function isHeading(n: DocumentNode): n is Extract<DocumentNode, { kind: "heading
  * - heading: 找到第一个 HeadingNode 其 runs 文本等于 heading，
  *            向下切直到遇到同级或更高级的下一个 heading（或到结尾）
  * - page / slide / sheet：按节点 locator 字段过滤
+ * - pointer：按 JSON Pointer 精确过滤
  * - range：直接 [start, endExclusive]
  * - 空 locator：原样返回
  */
@@ -203,6 +206,11 @@ function sliceByLocator(body: DocumentNode[], locator?: Locator): DocumentNode[]
       if (n.kind === "sheet") return n.name === name;
       return n.locator.sheet === name;
     });
+  }
+
+  if (typeof locator.pointer === "string" && locator.pointer) {
+    const pointer = locator.pointer;
+    return body.filter((n) => n.locator.pointer === pointer);
   }
 
   if (Array.isArray(locator.range) && locator.range.length === 2) {

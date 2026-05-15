@@ -74,7 +74,7 @@ export default function AgentTeamDock() {
   const webPanelOpen = useWorkspaceStore((state) => Boolean(state.webPanel?.isOpen));
   const setActiveSiliconPersonId = useWorkspaceStore((state) => state.setActiveSiliconPersonId);
   const switchSiliconPersonSession = useWorkspaceStore((state) => state.switchSiliconPersonSession);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [panelWidth, setPanelWidth] = useState(292);
 
   const effectiveCollapsed = collapsed || webPanelOpen;

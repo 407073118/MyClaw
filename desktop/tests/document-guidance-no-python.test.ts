@@ -36,6 +36,7 @@ describe("skill guidance + tool-schemas steer model to document.read (08-09 Task
     const desc = fsRead!.function.description;
     expect(desc).toMatch(/document_read/);
     expect(desc).toMatch(/xlsx_extract/);
+    expect(desc).toMatch(/short text|truncat/i);
   });
 
   it("Test 4: document_read schema description contains all 4 mode examples as JSON fragments", () => {
@@ -43,11 +44,20 @@ describe("skill guidance + tool-schemas steer model to document.read (08-09 Task
     const docRead = schemas.find((t) => t.function.name === "document_read");
     expect(docRead).toBeDefined();
     const desc = docRead!.function.description;
+    expect(desc).toMatch(/json/i);
+    expect(desc).toMatch(/pointer/);
     // All four modes must appear as JSON-style "mode":"X" fragments in description
     expect(desc).toMatch(/"mode"\s*:\s*"stats"/);
     expect(desc).toMatch(/"mode"\s*:\s*"outline"/);
     expect(desc).toMatch(/"mode"\s*:\s*"read"/);
     expect(desc).toMatch(/"mode"\s*:\s*"search"/);
+  });
+
+  it("Test 4b: document_read locator schema includes pointer for JSON subtrees", () => {
+    const schemas = buildToolSchemas("/cwd");
+    const docRead = schemas.find((t) => t.function.name === "document_read");
+    const locator = docRead!.function.parameters.properties.locator;
+    expect(locator.properties.pointer.description).toMatch(/JSON Pointer/);
   });
 
   it("Test 5: buildWindowsPythonFallbackCommand is intact (preserved as last-resort)", () => {

@@ -236,18 +236,20 @@ export default function WebPanel() {
               </svg>
             </button>
           )}
-          <button
-            type="button"
-            className={`wp-btn wp-btn-fullscreen${isFullscreen ? " is-exit" : ""}`}
-            onClick={handleToggleFullscreen}
-            aria-label={isFullscreen ? "退出全屏" : "全屏展示"}
-            aria-pressed={isFullscreen}
-            title={isFullscreen ? "退出全屏" : "全屏展示"}
-            data-testid={isFullscreen ? "web-panel-fullscreen-exit" : "web-panel-fullscreen-toggle"}
-          >
-            {isFullscreen ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
-            {isFullscreen ? <span className="wp-btn-label">退出全屏</span> : null}
-          </button>
+          {!(isFileViewerPanel && isFullscreen) && (
+            <button
+              type="button"
+              className={`wp-btn wp-btn-fullscreen${isFullscreen ? " is-exit" : ""}`}
+              onClick={handleToggleFullscreen}
+              aria-label={isFullscreen ? "退出全屏" : "全屏展示"}
+              aria-pressed={isFullscreen}
+              title={isFullscreen ? "退出全屏" : "全屏展示"}
+              data-testid={isFullscreen ? "web-panel-fullscreen-exit" : "web-panel-fullscreen-toggle"}
+            >
+              {isFullscreen ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
+              {isFullscreen ? <span className="wp-btn-label">退出全屏</span> : null}
+            </button>
+          )}
           <button
             type="button"
             className="wp-btn wp-btn-close"
@@ -261,20 +263,6 @@ export default function WebPanel() {
         </div>
       </div>
 
-      {isFullscreen && (
-        <button
-          type="button"
-          className="wp-floating-exit"
-          onClick={handleToggleFullscreen}
-          aria-label="退出全屏"
-          title="退出全屏"
-          data-testid="web-panel-floating-fullscreen-exit"
-        >
-          <Minimize2 size={15} aria-hidden />
-          <span>退出全屏</span>
-        </button>
-      )}
-
       {/* 加载指示器 */}
       {!isFileViewerPanel && !iframeLoaded && (
         <div className="wp-loading">
@@ -285,7 +273,11 @@ export default function WebPanel() {
       {/* 内容 iframe */}
       {isFileViewerPanel ? (
         <div className="wp-file-viewer">
-          <FileViewerPanel data={webPanel.data} />
+          <FileViewerPanel
+            data={webPanel.data}
+            isFullscreen={isFullscreen}
+            onExitFullscreen={handleToggleFullscreen}
+          />
         </div>
       ) : (
         <iframe
@@ -298,6 +290,22 @@ export default function WebPanel() {
           onLoad={handleIframeLoad}
           style={{ opacity: iframeLoaded ? 1 : 0 }}
         />
+      )}
+
+      {isFullscreen && !isFileViewerPanel && (
+        <div className="wp-fullscreen-controls">
+          <button
+            type="button"
+            className="wp-floating-exit"
+            onClick={handleToggleFullscreen}
+            aria-label="退出全屏"
+            title="退出全屏"
+            data-testid="web-panel-floating-fullscreen-exit"
+          >
+            <Minimize2 size={15} aria-hidden />
+            <span>退出全屏</span>
+          </button>
+        </div>
       )}
 
       <style>{`
@@ -411,11 +419,18 @@ export default function WebPanel() {
           padding: 0 14px 0 16px;
         }
 
-        .wp-floating-exit {
+        .wp-fullscreen-controls {
           position: fixed;
-          top: 12px;
-          right: 14px;
-          z-index: 2200;
+          inset: 0;
+          z-index: 2400;
+          display: flex;
+          align-items: flex-end;
+          justify-content: flex-end;
+          padding: 0 max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) 0;
+          pointer-events: none;
+        }
+
+        .wp-floating-exit {
           height: 34px;
           padding: 0 12px;
           border: 1px solid rgba(255, 255, 255, 0.18);
@@ -429,6 +444,7 @@ export default function WebPanel() {
           font-size: 12px;
           font-weight: 700;
           cursor: pointer;
+          pointer-events: auto;
         }
 
         .wp-floating-exit:hover {

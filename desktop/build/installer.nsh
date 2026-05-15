@@ -7,6 +7,7 @@
 Var DataDirInput
 Var DataDirBrowseButton
 Var DataDirValue
+Var HasExistingDataDirConfig
 
 !macro customPageAfterChangeDir
   PageEx custom
@@ -18,6 +19,7 @@ Var DataDirValue
 ; 中文注释：从当前安装目录读取上次保存的数据目录，便于升级时沿用原配置。
 Function LoadInstallerDataDirValue
   StrCpy $DataDirValue ""
+  StrCpy $HasExistingDataDirConfig "0"
   IfFileExists "$INSTDIR\myclaw-data-root.txt" 0 done
 
   ClearErrors
@@ -26,6 +28,10 @@ Function LoadInstallerDataDirValue
 
   FileRead $0 $DataDirValue
   FileClose $0
+
+  ${If} $DataDirValue != ""
+    StrCpy $HasExistingDataDirConfig "1"
+  ${EndIf}
 
 done:
 FunctionEnd
@@ -49,8 +55,8 @@ Function ValidateDataDirAgainstInstallDir
   Push $3
   Push $4
 
-  ${GetFullPathName} $0 "$INSTDIR"
-  ${GetFullPathName} $1 "$DataDirValue"
+  GetFullPathName $0 "$INSTDIR"
+  GetFullPathName $1 "$DataDirValue"
 
   StrCpy $2 "$0" "" -1
   ${If} $2 == "\"
@@ -86,7 +92,12 @@ FunctionEnd
 
 ; 中文注释：创建“数据目录”选择页，引导用户把会话、模型、技能等运行数据放到可写目录。
 Function DataDirPageCreate
-  !insertmacro MUI_HEADER_TEXT "选择数据目录" "请选择 MyClaw 的数据存储目录"
+  ${If} $HasExistingDataDirConfig == "1"
+    !insertmacro MUI_HEADER_TEXT "保留数据目录" "检测到已有 MyClaw 数据目录"
+  ${Else}
+    !insertmacro MUI_HEADER_TEXT "选择数据目录" "请选择 MyClaw 的数据存储目录"
+  ${EndIf}
+
   nsDialogs::Create 1018
   Pop $0
 
@@ -96,7 +107,11 @@ Function DataDirPageCreate
 
   Call EnsureDefaultDataDirValue
 
-  ${NSD_CreateLabel} 0u 0u 100% 28u "安装目录只存放程序文件。请为技能、会话、模型和设置选择一个可写的数据目录，避免使用 Program Files。"
+  ${If} $HasExistingDataDirConfig == "1"
+    ${NSD_CreateLabel} 0u 0u 100% 28u "安装器已检测到上次使用的数据目录。保留这个目录可以继续使用原有技能、会话、模型和设置。"
+  ${Else}
+    ${NSD_CreateLabel} 0u 0u 100% 28u "安装目录只存放程序文件。请为技能、会话、模型和设置选择一个可写的数据目录，避免使用 Program Files。"
+  ${EndIf}
   Pop $0
 
   ${NSD_CreateLabel} 0u 42u 100% 12u "数据目录"
@@ -109,7 +124,13 @@ Function DataDirPageCreate
   Pop $DataDirBrowseButton
   ${NSD_OnClick} $DataDirBrowseButton DataDirBrowse
 
-  ${NSD_CreateLabel} 0u 84u 100% 30u "建议选择独立目录，例如 D:\MyClawData 或当前用户的 AppData\Local 目录。数据目录不能与安装目录相同，也不能放在安装目录里面。"
+  ${If} $HasExistingDataDirConfig == "1"
+    EnableWindow $DataDirInput 0
+    EnableWindow $DataDirBrowseButton 0
+    ${NSD_CreateLabel} 0u 84u 100% 30u "为避免看不到原有数据，重新安装时将沿用此目录。如确需迁移数据，请先在安装完成后手动备份并迁移该目录。"
+  ${Else}
+    ${NSD_CreateLabel} 0u 84u 100% 30u "建议选择独立目录，例如 D:\MyClawData 或当前用户的 AppData\Local 目录。数据目录不能与安装目录相同，也不能放在安装目录里面。"
+  ${EndIf}
   Pop $0
 
   nsDialogs::Show

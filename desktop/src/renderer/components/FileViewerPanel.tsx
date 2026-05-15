@@ -1,11 +1,13 @@
 import React, { useMemo } from "react";
-import { ExternalLink, FileQuestion, FolderSearch } from "lucide-react";
+import { ExternalLink, FileQuestion, FolderSearch, Minimize2 } from "lucide-react";
 
 import type { FileViewerPayload } from "@shared/contracts";
 import MarkdownView from "./MarkdownView";
 
 type FileViewerPanelProps = {
   data: unknown;
+  isFullscreen?: boolean;
+  onExitFullscreen?: () => void;
 };
 
 /** 判断主进程传入的数据是否符合文件阅览面板契约。 */
@@ -159,7 +161,7 @@ function FallbackBody({ payload, message }: { payload: FileViewerPayload; messag
 }
 
 /** 右侧文件阅览面板内容，承接 file_view 工具发送的结构化预览数据。 */
-export default function FileViewerPanel({ data }: FileViewerPanelProps) {
+export default function FileViewerPanel({ data, isFullscreen = false, onExitFullscreen }: FileViewerPanelProps) {
   if (!isFileViewerPayload(data)) {
     return <div className="file-viewer-empty">无法加载文件预览</div>;
   }
@@ -173,6 +175,12 @@ export default function FileViewerPanel({ data }: FileViewerPanelProps) {
   /** 在系统文件管理器中定位当前文件。 */
   function handleReveal() {
     void window.myClawAPI.fileViewerReveal(payload.path);
+  }
+
+  /** 退出右侧文件预览全屏，并记录触发来源，便于排查全屏状态。 */
+  function handleExitFullscreen() {
+    console.info("[file-viewer] 退出文件预览全屏", { path: payload.path });
+    onExitFullscreen?.();
   }
 
   return (
@@ -192,6 +200,18 @@ export default function FileViewerPanel({ data }: FileViewerPanelProps) {
             <FolderSearch size={14} aria-hidden />
             <span>定位文件</span>
           </button>
+          {isFullscreen && onExitFullscreen && (
+            <button
+              type="button"
+              className="file-viewer-fullscreen-exit"
+              onClick={handleExitFullscreen}
+              title="退出全屏"
+              data-testid="file-viewer-fullscreen-exit"
+            >
+              <Minimize2 size={14} aria-hidden />
+              <span>退出全屏</span>
+            </button>
+          )}
         </div>
       </header>
       <div className="file-viewer-path" title={data.path}>{data.path}</div>
@@ -267,6 +287,17 @@ export default function FileViewerPanel({ data }: FileViewerPanelProps) {
         .file-viewer-actions button:hover {
           background: rgba(255, 255, 255, 0.075);
           color: var(--text-primary);
+        }
+
+        .file-viewer-actions .file-viewer-fullscreen-exit {
+          border-color: rgba(103, 232, 249, 0.22);
+          background: rgba(103, 232, 249, 0.075);
+          color: var(--text-primary);
+        }
+
+        .file-viewer-actions .file-viewer-fullscreen-exit:hover {
+          border-color: rgba(103, 232, 249, 0.36);
+          background: rgba(103, 232, 249, 0.13);
         }
 
         .file-viewer-path {

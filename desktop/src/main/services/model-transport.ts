@@ -42,6 +42,14 @@ type AbortContext = {
   cleanup: () => void;
 };
 
+class ModelHttpError extends Error {
+  /** 构造带 HTTP 状态码与响应体摘要的模型 API 错误，避免被误判为底层 fetch 失败。 */
+  constructor(message: string) {
+    super(message);
+    this.name = "ModelHttpError";
+  }
+}
+
 /** 判断 transport 层错误是否适合重试。 */
 export function isRetryableTransportError(err: unknown, response?: Response | null): boolean {
   if (err instanceof Error && err.name === "AbortError") {
@@ -116,7 +124,7 @@ function createAbortContext(timeoutMs: number, callerSignal?: AbortSignal): Abor
 /** 统一构造 HTTP 错误文本，便于上层直接记录最后一次失败原因。 */
 async function createHttpError(response: Response): Promise<Error> {
   const detail = await response.text().catch(() => "(no body)");
-  return new Error(`Model API error ${response.status} ${response.statusText}: ${detail}`);
+  return new ModelHttpError(`Model API error ${response.status} ${response.statusText}: ${detail}`);
 }
 
 /** 把 fetch/SystemError cause 渲染成可读字符串，保留 code 优先于 message。 */
@@ -214,6 +222,10 @@ export async function executeRequestVariants(
             fallbackEvents,
           };
         } catch (err) {
+          if (err instanceof ModelHttpError) {
+            throw err;
+          }
+
           if (err instanceof Error && err.name === "AbortError") {
             if (abortContext.didTimeout()) {
               throw new Error(`Model request timed out after ${timeoutMs}ms`);

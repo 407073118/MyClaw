@@ -140,18 +140,43 @@ export function mapAssistantReasoningToReplayField(
   });
 }
 
-/** 为标准 OpenAI 兼容请求补齐通用字段。 */
+/** 清理会覆盖运行时工具契约的 profile.requestBody 字段，并记录被忽略的配置键。 */
+function sanitizeProfileRequestBody(
+  requestBody: ModelProfile["requestBody"] | undefined,
+  hasRuntimeTools: boolean,
+): Record<string, unknown> {
+  const body = { ...(requestBody ?? {}) } as Record<string, unknown>;
+  if (!hasRuntimeTools) {
+    return body;
+  }
+
+  const ignoredKeys = ["tools", "tool_choice"].filter((key) => Object.prototype.hasOwnProperty.call(body, key));
+  for (const key of ignoredKeys) {
+    delete body[key];
+  }
+
+  if (ignoredKeys.length > 0) {
+    console.warn("[provider-adapter] 已忽略 profile.requestBody 中会覆盖运行时工具契约的字段", {
+      keys: ignoredKeys,
+    });
+  }
+
+  return body;
+}
+
+/** 为标准 OpenAI 兼容请求补齐通用字段，并保护运行时编译出的工具定义。 */
 export function buildOpenAiCompatibleBody(
   profile: ModelProfile,
   input: ProviderAdapterRequestInput,
 ): Record<string, unknown> {
   const hasTools = !!(input.tools && input.tools.length > 0);
+  const requestBody = sanitizeProfileRequestBody(profile.requestBody, hasTools);
   return {
     model: profile.model,
     messages: input.messages,
     stream: true,
     ...(hasTools ? { tools: input.tools, tool_choice: "auto" } : {}),
-    ...(profile.requestBody ?? {}),
+    ...requestBody,
   };
 }
 

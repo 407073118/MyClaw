@@ -65,8 +65,10 @@ describe("WebPanel layout controls", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
     const floatingExit = screen.getByTestId("web-panel-floating-fullscreen-exit");
+    const iframe = container.querySelector(".wp-iframe");
 
     expect(floatingExit.textContent).toContain("退出全屏");
+    expect(Boolean(iframe?.compareDocumentPosition(floatingExit) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     fireEvent.click(floatingExit);
     expect(panel?.classList.contains("fullscreen")).toBe(false);
   });
@@ -171,8 +173,9 @@ describe("WebPanel layout controls", () => {
     const panel = container.querySelector(".web-panel");
 
     fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
-    const exitButton = screen.getByTestId("web-panel-fullscreen-exit");
+    const exitButton = screen.getByTestId("file-viewer-fullscreen-exit");
     expect(exitButton.textContent).toContain("退出全屏");
+    expect(screen.queryByTestId("web-panel-floating-fullscreen-exit")).toBeNull();
 
     fireEvent.click(exitButton);
     expect(panel?.classList.contains("fullscreen")).toBe(false);

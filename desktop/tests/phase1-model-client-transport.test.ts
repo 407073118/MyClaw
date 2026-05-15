@@ -120,6 +120,33 @@ describe("phase1 model client transport", () => {
     expect(fallbackBody).not.toHaveProperty("enable_code_interpreter");
   });
 
+  it("rejects malformed chat-compatible tools before sending the request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(callModel({
+      profile: {
+        id: "bad-tools-profile",
+        name: "Bad Tools",
+        provider: "openai-compatible",
+        providerFlavor: "volcengine-ark",
+        baseUrl: "https://ark.cn-beijing.volces.com/api/coding/v1",
+        apiKey: "ark-test-key",
+        model: "GLM-5.1",
+        requestBody: {
+          tools: [{ type: "web_search" }],
+        },
+      },
+      messages: [{ role: "user", content: "hello" }],
+      executionPlan: {
+        adapterId: "volcengine-ark",
+        replayPolicy: "assistant-turn-with-reasoning",
+      },
+    })).rejects.toThrow("工具定义不符合 OpenAI function tools 格式");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("normalizes non-SSE OpenAI-compatible JSON responses through the adapter", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({
       choices: [

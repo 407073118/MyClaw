@@ -112,9 +112,38 @@ describe("document-read-facade", () => {
     expect(detectFormat("a.pdf")).toBe("pdf");
     expect(detectFormat("a.pptx")).toBe("pptx");
     expect(detectFormat("a.csv")).toBe("csv");
+    expect(detectFormat("a.json")).toBe("json");
     expect(detectFormat("a.txt")).toBe("txt");
     expect(detectFormat("a.doc")).toBeNull();
     expect(detectFormat("a.bin")).toBeNull();
+  });
+
+  it("Test JSON: mode=read with locator.pointer returns the selected JSON subtree", async () => {
+    const jsonPath = join(tmpRoot, "package.json");
+    const jsonContent = JSON.stringify({
+      scripts: { build: "vite build", test: "vitest run" },
+      dependencies: { react: "18.3.1" },
+    }, null, 2);
+    await writeFile(jsonPath, jsonContent, "utf-8");
+    registerParser({
+      format: "json",
+      parse: async (input) => {
+        const { parseJsonBuffer } = await import("../src/main/services/document/parsers/json-parser");
+        return parseJsonBuffer(input);
+      },
+    });
+    const cache = createDocCache({ rootDir: join(tmpRoot, "json-cache") });
+
+    const res = await executeDocumentRead(
+      { path: jsonPath, mode: "read", locator: { pointer: "/scripts" }, maxChars: 2000 },
+      { cache, resolvedPath: jsonPath },
+    );
+
+    expect(res.success).toBe(true);
+    expect(res.output).toContain("```json");
+    expect(res.output).toContain("\"build\": \"vite build\"");
+    expect(res.output).toContain("\"test\": \"vitest run\"");
+    expect(res.output).not.toContain("\"react\"");
   });
 
   it("Test 1: mode=stats returns JSON with meta/outlineCount/bodyCount/format/bytes/sha256", async () => {

@@ -27,6 +27,7 @@ import { pdfParser } from "./document/parsers/pdf-parser";
 import { pptxParser } from "./document/parsers/pptx-parser";
 import { mdParser, txtParser } from "./document/parsers/md-txt-parser";
 import { csvParser } from "./document/parsers/csv-parser";
+import { jsonParser } from "./document/parsers/json-parser";
 import {
   canonicalize as canonicalizePath,
   PathAccessPolicy,
@@ -976,6 +977,7 @@ export class BuiltinToolExecutor {
     if (!getParser("md")) registerParser(mdParser);
     if (!getParser("txt")) registerParser(txtParser);
     if (!getParser("csv")) registerParser(csvParser);
+    if (!getParser("json")) registerParser(jsonParser);
     this.parsersRegistered = true;
   }
 

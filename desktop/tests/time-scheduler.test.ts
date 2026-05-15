@@ -93,4 +93,55 @@ describe("time scheduler", () => {
       },
     ]);
   });
+
+  it("keeps weekday cron jobs scheduled after a successful run", async () => {
+    const savedJobs: Array<{ id: string; status: string; nextRunAt?: string; lastRunAt?: string }> = [];
+
+    const scheduler = createTimeScheduler({
+      now: () => new Date("2026-04-20T01:00:00.000Z"),
+      listDueReminders: async () => [],
+      listDueJobs: async () => [
+        {
+          id: "job-weekday",
+          kind: "schedule_job",
+          title: "工作日巡检",
+          scheduleKind: "cron",
+          timezone: "Asia/Shanghai",
+          ownerScope: "personal",
+          status: "scheduled",
+          source: "manual",
+          cronExpression: "0 9 * * 1-5",
+          executor: "assistant_prompt",
+          sessionMode: "per_run",
+          nextRunAt: "2026-04-20T01:00:00.000Z",
+          createdAt: "2026-04-18T00:00:00.000Z",
+          updatedAt: "2026-04-18T00:00:00.000Z",
+        },
+      ],
+      notifyReminder: async () => true,
+      markReminderDelivered: async () => undefined,
+      recordExecutionRun: async () => undefined,
+      getAvailabilityPolicy: async () => createDefaultAvailabilityPolicy("Asia/Shanghai"),
+      saveScheduleJob: async (job) => {
+        savedJobs.push({
+          id: job.id,
+          status: job.status,
+          nextRunAt: job.nextRunAt,
+          lastRunAt: job.lastRunAt,
+        });
+      },
+      runScheduleJob: async () => ({ outputSummary: "ok", sessionId: "sess-cron" }),
+    });
+
+    await scheduler.tick();
+
+    expect(savedJobs).toEqual([
+      {
+        id: "job-weekday",
+        status: "scheduled",
+        nextRunAt: "2026-04-21T01:00:00.000Z",
+        lastRunAt: "2026-04-20T01:00:00.000Z",
+      },
+    ]);
+  });
 });

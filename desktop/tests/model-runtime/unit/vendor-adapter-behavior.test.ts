@@ -330,6 +330,51 @@ describe("vendor adapter behavior", () => {
     expect(variants[1]?.body).not.toHaveProperty("stream_options");
   });
 
+  it("keeps Ark runtime function tools when custom requestBody contains native tools", () => {
+    const adapter = getProviderAdapter("volcengine-ark");
+    const runtimeTools = [{
+      type: "function" as const,
+      function: {
+        name: "fs_read",
+        description: "Read file contents",
+        parameters: {
+          type: "object",
+          properties: {
+            path: { type: "string" },
+          },
+          required: ["path"],
+        },
+      },
+    }];
+    const profile = makeProfile({
+      providerFlavor: "volcengine-ark",
+      baseUrl: "https://ark.cn-beijing.volces.com/api/v3",
+      model: "doubao-seed-code",
+      requestBody: {
+        temperature: 0.2,
+        tools: [{ type: "web_search" }],
+      },
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEffort: "medium" },
+      {
+        messages: [{ role: "user", content: "read package.json" }],
+        tools: runtimeTools,
+      },
+    );
+
+    expect(variants[0]?.body).toMatchObject({
+      temperature: 0.2,
+      tools: runtimeTools,
+      tool_choice: "auto",
+    });
+    expect(variants[1]?.body).toMatchObject({
+      tools: runtimeTools,
+      tool_choice: "auto",
+    });
+  });
+
   it("sanitizes public minimax compatible requests instead of behaving like a pure generic alias", () => {
     const adapter = getProviderAdapter("minimax");
     const profile = makeProfile({
