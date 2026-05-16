@@ -58,6 +58,7 @@ import { createAwarenessDecisionEngine } from "./services/awareness-decision-eng
 import { createStandingOrderService } from "./services/standing-order-service";
 import { createLongRunLedger } from "./services/long-run-ledger";
 import { createAwarenessRuntime } from "./services/awareness-runtime";
+import { createAwarenessSourceAdapter, type AwarenessSourceSnapshot } from "./services/awareness-source-adapter";
 
 const log = createLogger("main");
 
@@ -479,28 +480,44 @@ async function buildRuntimeContext(
     db: awarenessDb,
     getAvailabilityPolicy: () => timeStore.getAvailabilityPolicy(),
   });
+  const awarenessSourceAdapter = createAwarenessSourceAdapter({
+    timeStore,
+    getSessions: () => sessions,
+    getWorkflowRuns: () => workflowRuns,
+    getApprovalRequests: () => approvalRequests,
+    getSiliconPersons: () => siliconPersons,
+    getActiveSessionRuns: () => runtimeCtxRef?.state.activeSessionRuns ?? new Map(),
+  });
+  let latestAwarenessSourceSnapshot: AwarenessSourceSnapshot | null = null;
   const awarenessSignalCollector = createAwarenessSignalCollector({
     getActiveSessionRuns: () => {
-      // activeSessionRuns 在 ctx 创建后才有值，先用空 Map
-      return runtimeCtxRef?.state.activeSessionRuns ?? new Map();
+      // 优先使用 tick 前统一采集的快照，避免同一轮值守读取到前后不一致的运行态。
+      return latestAwarenessSourceSnapshot?.activeSessionRuns ?? runtimeCtxRef?.state.activeSessionRuns ?? new Map();
     },
     getAgentTasks: () => {
       try { return (require("./ipc/agent-tasks") as any).getCachedAgentTasks() ?? []; }
       catch { return []; }
     },
-    getScheduleJobs: () => { return []; },
+    getScheduleJobs: () => (latestAwarenessSourceSnapshot?.scheduleJobs ?? []).map((job) => {
+      const latestRun = latestAwarenessSourceSnapshot?.latestExecutionRunsByScheduleJobId.get(job.id);
+      return latestRun ? { ...job, executionRuns: [latestRun] } : job;
+    }),
     getWorkflowRuns: () => {
-      const summaries: Array<{ id: string; status: string; workflowId: string; interruptRequested?: boolean }> = [];
-      return summaries;
+      return (latestAwarenessSourceSnapshot?.workflowRuns ?? []).map((run) => ({
+        id: run.id,
+        status: run.status,
+        workflowId: run.workflowId,
+        interruptRequested: run.status === "waiting-input",
+      }));
     },
     getBackgroundTasks: () => {
-      return sessions.filter((s) => s.backgroundTask).map((s) => ({
+      return (latestAwarenessSourceSnapshot?.sessions ?? sessions).filter((s) => s.backgroundTask).map((s) => ({
         sessionId: s.id,
         backgroundTask: s.backgroundTask ? { status: s.backgroundTask.status } : undefined,
       }));
     },
-    getApprovalRequests: () => approvalRequests,
-    getSiliconPersons: () => siliconPersons,
+    getApprovalRequests: () => latestAwarenessSourceSnapshot?.approvalRequests ?? approvalRequests,
+    getSiliconPersons: () => latestAwarenessSourceSnapshot?.siliconPersons ?? siliconPersons,
     getAvailabilityPolicy: () => approvalPolicy,
   });
   const standingOrderService = createStandingOrderService(awarenessDb);
@@ -560,6 +577,7 @@ async function buildRuntimeContext(
       return await timeJobExecutor.execute(job);
     },
     awarenessTick: async () => {
+      latestAwarenessSourceSnapshot = await awarenessSourceAdapter.snapshot();
       await awarenessRuntime.tick();
     },
   });
