@@ -597,6 +597,15 @@ const myClawAPI = {
   onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void): UnsubscribeFn =>
     onChannel("web-panel:open", callback),
 
+  panelOpen: (payload: { viewPath: string; title: string; data: unknown }): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke("panel:open", payload),
+  panelSetBounds: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke("panel:set-bounds", bounds),
+  panelClose: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke("panel:close"),
+  panelRefresh: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke("panel:refresh"),
+
   fileViewerOpenExternal: (path: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke("file-viewer:open-external", path),
 
