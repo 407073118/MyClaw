@@ -125,6 +125,7 @@ export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
         routine.decisionPolicy,
         routine.id,
         routine.purpose,
+        routine.budgetPolicy,
       );
 
       const ledgerRecord = deps.ledger.createRecord("awareness_routine", routine.id, routine.scope, "running");
