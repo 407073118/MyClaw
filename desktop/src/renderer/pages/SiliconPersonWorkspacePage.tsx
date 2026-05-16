@@ -8,8 +8,11 @@ import {
   Clock,
   ListTodo,
   MessageSquare,
+  Pause,
+  Pencil,
   Play,
   Plug,
+  RotateCcw,
   Save,
   Send,
   Trash2,
@@ -17,12 +20,13 @@ import {
   Workflow,
   Wrench,
 } from "lucide-react";
-import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, McpServer, ModelProfile, ScheduleJob, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
+import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, ExecutionRun, McpServer, ModelProfile, ScheduleJob, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
 import MarkdownView from "../components/MarkdownView";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
 import ScheduleJobEditor, { type ScheduleJobEditorSubmitInput } from "../components/time/ScheduleJobEditor";
 import { useWorkspaceStore } from "../stores/workspace";
+import { formatJobFrequency } from "../utils/frequency";
 import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
 import { resolveReasoningControlSpec } from "../utils/reasoning-controls";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
@@ -81,6 +85,7 @@ function workflowRunStatusLabel(status: string): string {
   } as Record<string, string>)[status] ?? status;
 }
 
+/** 把定时任务状态映射成员工工作台可读的中文标签。 */
 function scheduleJobStatusLabel(status: string): string {
   return ({
     scheduled: "已排期",
@@ -90,6 +95,36 @@ function scheduleJobStatusLabel(status: string): string {
     failed: "失败",
     cancelled: "已取消",
   } as Record<string, string>)[status] ?? status;
+}
+
+/** 把定时任务执行器映射成用户能理解的中文动作。 */
+function scheduleJobExecutorLabel(executor: ScheduleJob["executor"]): string {
+  return ({
+    assistant_prompt: "定时提示词",
+    workflow: "定时跑工作流",
+    silicon_person: "定时派发给员工",
+  } as Record<ScheduleJob["executor"], string>)[executor] ?? executor;
+}
+
+/** 生成最近一次运行的短回执，优先展示失败原因。 */
+function latestScheduleRunLabel(run?: ExecutionRun): string {
+  if (!run) return "上次运行：尚未运行";
+  if (run.status === "failed") return `上次失败${run.errorMessage ? ` · ${run.errorMessage}` : ""}`;
+  if (run.status === "succeeded") return `上次成功${run.outputSummary ? ` · ${run.outputSummary}` : ""}`;
+  if (run.status === "running") return "上次运行：执行中";
+  return "上次运行：已取消";
+}
+
+/** 根据执行记录构建每个定时任务的最近一次运行索引。 */
+function buildLatestRunByJobId(runs: ExecutionRun[]): Map<string, ExecutionRun> {
+  const result = new Map<string, ExecutionRun>();
+  runs.forEach((run) => {
+    const current = result.get(run.jobId);
+    if (!current || Date.parse(run.startedAt) > Date.parse(current.startedAt)) {
+      result.set(run.jobId, run);
+    }
+  });
+  return result;
 }
 
 type StatusVariant = "green" | "red" | "yellow" | "accent" | "muted";
@@ -159,7 +194,7 @@ function readWorkflowRunSummary(value: unknown): {
   };
 }
 
-/** 缂栬緫纭呭熀鍛樺伐瀹炰綋锛屽悓鏃舵壙杞芥渶灏忕鍩熶細璇濆伐浣滃彴銆?*/
+/** 编辑硅基员工实体，同时承载最小私域会话工作台。 */
 export default function SiliconPersonWorkspacePage() {
   const { id: siliconPersonId = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -262,6 +297,10 @@ export default function SiliconPersonWorkspacePage() {
     () =>
       workspace.time.scheduleJobs.filter((job) => job.ownerScope === "silicon_person" && job.ownerId === siliconPersonId),
     [workspace.time.scheduleJobs, siliconPersonId, viewVersion],
+  );
+  const latestRunByJobId = useMemo(
+    () => buildLatestRunByJobId(workspace.time.executionRuns),
+    [workspace.time.executionRuns, viewVersion],
   );
   const siliconPersonWorkingHoursSummary = useMemo(
     () => formatWorkingHoursSummary(workspace.time.availabilityPolicy?.workingHours ?? []),
@@ -529,11 +568,21 @@ export default function SiliconPersonWorkspacePage() {
     }
   }
 
-  /** 为当前硅基员工创建周期性 workflow 计划任务，统一复用时间规划存储。 */
+  /** 为当前硅基员工创建或更新定时任务，统一复用时间规划存储并保留员工归属。 */
   async function handleSaveScheduleJob(input: ScheduleJobEditorSubmitInput, mode: "create" | "update") {
+    console.info("[硅基员工工作台] 保存员工定时任务", {
+      mode,
+      siliconPersonId,
+      title: input.title,
+      executor: input.executor,
+      executorTargetId: input.executorTargetId ?? null,
+      scheduleKind: input.scheduleKind,
+    });
     if (mode === "update" && editingJob) {
       await workspace.updateScheduleJob({
         ...editingJob,
+        ownerScope: "silicon_person",
+        ownerId: siliconPersonId,
         title: input.title,
         description: input.description,
         scheduleKind: input.scheduleKind,
@@ -546,6 +595,7 @@ export default function SiliconPersonWorkspacePage() {
         modelProfileId: input.modelProfileId,
         reasoningEffort: input.reasoningEffort,
         reasoningEnabled: input.reasoningEnabled,
+        sessionMode: input.sessionMode ?? editingJob.sessionMode,
         nextRunAt: input.startsAt ?? editingJob.nextRunAt,
       });
     } else {
@@ -567,6 +617,7 @@ export default function SiliconPersonWorkspacePage() {
         modelProfileId: input.modelProfileId,
         reasoningEffort: input.reasoningEffort,
         reasoningEnabled: input.reasoningEnabled,
+        sessionMode: input.sessionMode,
         nextRunAt: input.startsAt,
       });
     }
@@ -574,17 +625,35 @@ export default function SiliconPersonWorkspacePage() {
     setEditingJob(null);
   }
 
+  /** 打开员工定时任务编辑器，保留当前任务上下文。 */
   function handleEditScheduleJob(job: ScheduleJob) {
+    console.info("[硅基员工工作台] 编辑员工定时任务", { siliconPersonId, jobId: job.id, executor: job.executor });
     setEditingJob(job);
     setChosenJobType(job.executor === "workflow" ? "workflow" : "silicon_person");
   }
 
+  /** 删除员工定时任务，并把删除动作记录到控制台便于排查。 */
   async function handleDeleteScheduleJob(jobId: string) {
+    console.info("[硅基员工工作台] 删除员工定时任务", { siliconPersonId, jobId });
     await workspace.deleteScheduleJob(jobId);
   }
 
+  /** 立即触发员工定时任务，用于列表内快速验证派发效果。 */
   async function handleExecuteScheduleJobNow(jobId: string) {
+    console.info("[硅基员工工作台] 立即执行员工定时任务", { siliconPersonId, jobId });
     await workspace.executeScheduleJobNow(jobId);
+  }
+
+  /** 暂停或恢复员工定时任务，保持列表内可以直接干预后台自动化。 */
+  async function handleToggleScheduleJob(job: ScheduleJob) {
+    const nextStatus = job.status === "paused" ? "scheduled" : "paused";
+    console.info("[硅基员工工作台] 切换员工定时任务状态", {
+      siliconPersonId,
+      jobId: job.id,
+      from: job.status,
+      to: nextStatus,
+    });
+    await workspace.updateScheduleJob({ ...job, status: nextStatus });
   }
 
   /** 保存侧栏中的硅基员工角色卡和 workflow 绑定信息。 */
@@ -1367,11 +1436,11 @@ export default function SiliconPersonWorkspacePage() {
               )}
             </article>
 
-                        <article className="ws-card">
+            <article className="ws-card">
               <div className="ws-cap-header">
                 <div>
                   <h3>定时任务</h3>
-                  <p className="ws-card-desc">为该员工创建定时执行的工作流或 Prompt 任务。</p>
+                  <p className="ws-card-desc">给该员工安排可确认、可追踪的定时工作。</p>
                 </div>
                 <span className="tag tag--muted">工作时段 {siliconPersonWorkingHoursSummary}</span>
               </div>
@@ -1381,20 +1450,22 @@ export default function SiliconPersonWorkspacePage() {
                   <button
                     type="button"
                     className="ws-schedule-type-btn"
+                    aria-label="定时跑工作流"
                     onClick={() => setChosenJobType("workflow")}
                   >
                     <Workflow size={16} aria-hidden />
-                    <span>工作流任务</span>
+                    <span>定时跑工作流</span>
                     <span className="ws-schedule-type-desc">周期执行绑定的 Workflow</span>
                   </button>
                   <button
                     type="button"
                     className="ws-schedule-type-btn"
+                    aria-label="定时派发给员工"
                     onClick={() => setChosenJobType("silicon_person")}
                   >
                     <MessageSquare size={16} aria-hidden />
-                    <span>Prompt 任务</span>
-                    <span className="ws-schedule-type-desc">定时向员工派发消息指令</span>
+                    <span>定时派发给员工</span>
+                    <span className="ws-schedule-type-desc">到点向当前员工发送工作指令</span>
                   </button>
                 </div>
               ) : (
@@ -1406,7 +1477,7 @@ export default function SiliconPersonWorkspacePage() {
                       onClick={() => setChosenJobType("workflow")}
                     >
                       <Workflow size={14} aria-hidden />
-                      工作流
+                      定时跑工作流
                     </button>
                     <button
                       type="button"
@@ -1414,7 +1485,7 @@ export default function SiliconPersonWorkspacePage() {
                       onClick={() => setChosenJobType("silicon_person")}
                     >
                       <MessageSquare size={14} aria-hidden />
-                      Prompt
+                      定时派发给员工
                     </button>
                     <button
                       type="button"
@@ -1433,6 +1504,8 @@ export default function SiliconPersonWorkspacePage() {
                     modelOptions={modelOptions}
                     ownerScope="silicon_person"
                     ownerId={siliconPersonId}
+                    hideSiliconPersonSelector={chosenJobType === "silicon_person"}
+                    siliconPersonContextName={siliconPerson?.name}
                     onSave={(_input, _mode) => void handleSaveScheduleJob(_input, _mode)}
                     onCancel={() => { setChosenJobType(null); setEditingJob(null); }}
                   />
@@ -1441,60 +1514,81 @@ export default function SiliconPersonWorkspacePage() {
 
               {siliconPersonScheduleJobs.length > 0 ? (
                 <div className="list-rows" style={{ marginTop: 16 }}>
-                  {siliconPersonScheduleJobs.map((job) => (
-                    <article key={job.id} className="list-row list-row--with-description">
-                      <div className="list-row__lead">
-                        <Clock size={16} aria-hidden />
-                      </div>
-                      <div className="list-row__main">
-                        <div className="list-row__title-row">
-                          <span className="list-row__title">{job.title}</span>
-                          <span className={`job-type-chip job-type-chip--${job.executor}`}>
-                            {job.executor === "workflow" ? "Workflow" : "Prompt"}
-                          </span>
-                          <span className={`tag ${job.status === "failed" ? "tag--danger" : "tag--muted"}`}>
-                            {scheduleJobStatusLabel(job.status)}
-                          </span>
+                  {siliconPersonScheduleJobs.map((job) => {
+                    const latestRun = latestRunByJobId.get(job.id);
+                    return (
+                      <article key={job.id} className="list-row list-row--with-description" aria-label={`${job.title} 定时任务`}>
+                        <div className="list-row__lead">
+                          <Clock size={16} aria-hidden />
                         </div>
-                        <div className="list-row__description">
-                          {job.description ? `${job.description.slice(0, 60)}${job.description.length > 60 ? "…" : ""} · ` : ""}
-                          {job.nextRunAt ? `下次执行 ${new Date(job.nextRunAt).toLocaleString("zh-CN")}` : "等待下一次执行"}
+                        <div className="list-row__main">
+                          <div className="list-row__title-row">
+                            <span className="list-row__title">{job.title}</span>
+                            <span className={`tag job-type-chip job-type-chip--${job.executor}`}>
+                              {scheduleJobExecutorLabel(job.executor)}
+                            </span>
+                            <span className={`tag ${job.status === "failed" ? "tag--danger" : "tag--muted"}`}>
+                              {scheduleJobStatusLabel(job.status)}
+                            </span>
+                          </div>
+                          <div className="list-row__description">
+                            <span>{formatJobFrequency(job, formatFullTime)}</span>
+                            <span> · </span>
+                            <span>{job.nextRunAt ? `下次执行 ${formatFullTime(job.nextRunAt)}` : "等待下一次执行"}</span>
+                            <span> · </span>
+                            <span className={latestRun?.status === "failed" ? "ws-run-receipt is-warning" : "ws-run-receipt"}>
+                              {latestScheduleRunLabel(latestRun)}
+                            </span>
+                            {job.description ? <span> · {job.description.slice(0, 60)}{job.description.length > 60 ? "…" : ""}</span> : null}
+                          </div>
                         </div>
-                      </div>
-                      <div className="list-row__trailing">
-                        <button
-                          type="button"
-                          className="btn-toolbar"
-                          title="立即执行"
-                          onClick={() => void handleExecuteScheduleJobNow(job.id)}
-                        >
-                          <Play size={14} aria-hidden />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-toolbar"
-                          title="编辑"
-                          onClick={() => handleEditScheduleJob(job)}
-                        >
-                          编辑
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-toolbar btn-toolbar--danger"
-                          title="删除"
-                          onClick={() => void handleDeleteScheduleJob(job.id)}
-                        >
-                          <Trash2 size={14} aria-hidden />
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+                        <div className="list-row__trailing">
+                          <button
+                            type="button"
+                            className="btn-toolbar"
+                            aria-label={`立即运行 ${job.title}`}
+                            title="立即运行"
+                            onClick={() => void handleExecuteScheduleJobNow(job.id)}
+                          >
+                            <Play size={14} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-toolbar"
+                            aria-label={job.status === "paused" ? `恢复 ${job.title}` : `暂停 ${job.title}`}
+                            title={job.status === "paused" ? "恢复" : "暂停"}
+                            onClick={() => void handleToggleScheduleJob(job)}
+                          >
+                            {job.status === "paused" ? <RotateCcw size={14} aria-hidden /> : <Pause size={14} aria-hidden />}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-toolbar"
+                            aria-label={`编辑 ${job.title}`}
+                            title="编辑"
+                            onClick={() => handleEditScheduleJob(job)}
+                          >
+                            <Pencil size={14} aria-hidden />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-toolbar btn-toolbar--danger"
+                            aria-label={`删除 ${job.title}`}
+                            title="删除"
+                            onClick={() => void handleDeleteScheduleJob(job.id)}
+                          >
+                            <Trash2 size={14} aria-hidden />
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
               ) : (
                 <section className="empty-state empty-state--minimal" style={{ marginTop: 16 }}>
                   <Clock size={32} className="empty-state__icon" aria-hidden />
                   <h3 className="empty-state__title">暂无定时任务</h3>
-                  <p className="empty-state__body">为该员工创建定时执行的工作流或 Prompt 任务。</p>
+                  <p className="empty-state__body">给该员工安排定时跑工作流或定时派发消息。</p>
                 </section>
               )}
             </article>
@@ -1874,6 +1968,61 @@ export default function SiliconPersonWorkspacePage() {
 
         /* ── Schedule Form (定时任务表单容器) ── */
         .ws-schedule-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 16px; }
+        .time-editor-form { display: grid; gap: 12px; }
+        .time-editor-field { min-width: 0; display: grid; gap: 6px; color: var(--text-secondary); font-size: 12px; }
+        .time-editor-field input,
+        .time-editor-field select,
+        .time-editor-field textarea {
+          min-width: 0;
+          width: 100%;
+          box-sizing: border-box;
+          padding: 9px 10px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: var(--bg-base);
+          color: var(--text-primary);
+          font-size: 13px;
+        }
+        .time-editor-submit {
+          min-height: 34px;
+          border: 1px solid var(--accent-cyan);
+          border-radius: var(--radius-md);
+          background: transparent;
+          color: var(--accent-cyan);
+          cursor: pointer;
+        }
+        .time-editor-cancel {
+          min-height: 34px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: transparent;
+          color: var(--text-secondary);
+          cursor: pointer;
+        }
+        .frequency-picker,
+        .frequency-picker__detail { display: grid; gap: 10px; }
+        .frequency-picker__chips,
+        .frequency-picker__weekdays,
+        .reasoning-chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
+        .frequency-picker__chip,
+        .frequency-picker__weekday,
+        .reasoning-chip {
+          padding: 5px 10px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-sm);
+          background: transparent;
+          color: var(--text-secondary);
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .frequency-picker__chip.is-active,
+        .frequency-picker__weekday.is-active,
+        .reasoning-chip.is-active {
+          border-color: rgba(16,163,127,0.5);
+          background: rgba(16,163,127,0.1);
+          color: var(--accent-cyan);
+        }
+        .schedule-job-editor__actions { display: flex; justify-content: flex-end; gap: 8px; }
 
         /* ── Schedule Type Picker (定时任务类型选择卡片) ── */
         .ws-schedule-type-picker {
@@ -1888,7 +2037,7 @@ export default function SiliconPersonWorkspacePage() {
           align-items: flex-start;
           gap: 4px;
           padding: 14px 16px;
-          border-radius: var(--radius-xl, 14px);
+          border-radius: var(--radius-md);
           background: var(--glass-surface, rgba(255,255,255,0.04));
           border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
           color: inherit;
@@ -1896,8 +2045,8 @@ export default function SiliconPersonWorkspacePage() {
           transition: border-color 0.2s, background 0.2s;
         }
         .ws-schedule-type-btn:hover {
-          border-color: var(--accent, #6366f1);
-          background: rgba(99, 102, 241, 0.06);
+          border-color: var(--glass-border-hover);
+          background: var(--bg-surface-hover);
         }
         .ws-schedule-type-btn > span:first-of-type {
           font-weight: 500;
@@ -1919,7 +2068,7 @@ export default function SiliconPersonWorkspacePage() {
           align-items: center;
           gap: 4px;
           padding: 4px 12px;
-          border-radius: 999px;
+          border-radius: var(--radius-sm);
           font-size: 12px;
           font-weight: 500;
           border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
@@ -1929,9 +2078,9 @@ export default function SiliconPersonWorkspacePage() {
           transition: all 0.15s;
         }
         .ws-type-chip.is-active {
-          background: rgba(99, 102, 241, 0.12);
-          border-color: rgba(99, 102, 241, 0.3);
-          color: var(--accent, #6366f1);
+          background: rgba(16, 163, 127, 0.12);
+          border-color: rgba(16, 163, 127, 0.3);
+          color: var(--accent-cyan);
         }
         .ws-type-chip--close {
           margin-left: auto;
@@ -1944,7 +2093,7 @@ export default function SiliconPersonWorkspacePage() {
         .job-type-chip {
           display: inline-block;
           padding: 1px 8px;
-          border-radius: 999px;
+          border-radius: var(--radius-sm);
           font-size: 11px;
           font-weight: 500;
           line-height: 18px;
@@ -1966,6 +2115,43 @@ export default function SiliconPersonWorkspacePage() {
         }
 
         .tag--danger { color: #f87171; }
+        .ws-run-receipt.is-warning { color: var(--status-red); }
+
+        .schedule-job-editor__section,
+        .schedule-job-preview {
+          display: grid;
+          gap: 12px;
+          padding: 12px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: rgba(255,255,255,0.02);
+        }
+        .schedule-job-editor__step {
+          color: var(--text-muted);
+          font-size: 12px;
+          font-weight: 700;
+        }
+        .schedule-job-editor__locked-target {
+          padding: 10px 12px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: rgba(255,255,255,0.02);
+        }
+        .schedule-job-editor__locked-target strong { color: var(--text-primary); font-size: 13px; }
+        .schedule-job-preview dl { display: grid; gap: 8px; margin: 0; }
+        .schedule-job-preview dl > div {
+          display: grid;
+          grid-template-columns: 88px minmax(0, 1fr);
+          gap: 10px;
+          align-items: start;
+        }
+        .schedule-job-preview dt { color: var(--text-muted); font-size: 12px; font-weight: 700; }
+        .schedule-job-preview dd { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.5; word-break: break-word; }
+        .reasoning-chip,
+        .frequency-picker__chip,
+        .frequency-picker__weekday {
+          border-radius: var(--radius-sm);
+        }
 
         /* ── Responsive ── */
         @media (max-width: 960px) {

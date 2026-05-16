@@ -3,13 +3,14 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import TimeCenterPage from "../src/renderer/pages/TimeCenterPage";
 import { useWorkspaceStore } from "../src/renderer/stores/workspace";
 
 describe("time editors", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     useWorkspaceStore.setState({
       time: {
         calendarEvents: [],
@@ -182,6 +183,10 @@ describe("time editors", () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("stores silicon person scheduled messages under the employee owner", async () => {
     useWorkspaceStore.setState({
       siliconPersons: [
@@ -213,7 +218,7 @@ describe("time editors", () => {
     if (changeTypeButton) {
       fireEvent.click(changeTypeButton);
     }
-    fireEvent.click(within(composerModal).getByRole("button", { name: /调用员工任务/ }));
+    fireEvent.click(within(composerModal).getByRole("button", { name: /定时派发给员工/ }));
     fireEvent.change(screen.getByLabelText("任务标题"), { target: { value: "每日运营巡检" } });
     fireEvent.click(screen.getByRole("radio", { name: "每 N 分钟" }));
     fireEvent.change(screen.getByLabelText("间隔分钟（5 - 1440）"), { target: { value: "120" } });
@@ -233,5 +238,131 @@ describe("time editors", () => {
         }),
       );
     });
+  });
+
+  it("updates assistant prompt session mode when editing a scheduled job", async () => {
+    useWorkspaceStore.setState({
+      time: {
+        ...useWorkspaceStore.getState().time,
+        scheduleJobs: [
+          {
+            id: "job-shared",
+            kind: "schedule_job",
+            title: "每日简报",
+            description: "生成当天简报",
+            scheduleKind: "interval",
+            timezone: "Asia/Shanghai",
+            ownerScope: "personal",
+            status: "scheduled",
+            source: "manual",
+            intervalMinutes: 60,
+            executor: "assistant_prompt",
+            sessionMode: "shared",
+            nextRunAt: "2026-04-22T02:00:00.000Z",
+            createdAt: "2026-04-18T00:00:00.000Z",
+            updatedAt: "2026-04-18T00:00:00.000Z",
+          },
+        ],
+      },
+    } as any);
+
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "定时任务" }));
+    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.change(screen.getByLabelText("任务标题"), { target: { value: "每日简报更新" } });
+    fireEvent.click(screen.getByRole("radio", { name: "每次新会话" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存修改" }));
+
+    await waitFor(() => {
+      const state = useWorkspaceStore.getState() as any;
+      expect(state.updateScheduleJob).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "job-shared",
+          title: "每日简报更新",
+          sessionMode: "per_run",
+        }),
+      );
+    });
+  });
+
+  it("renders a Monday-start week planner and keeps unscheduled jobs out of day lanes", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-22T02:00:00.000Z"));
+    useWorkspaceStore.setState({
+      siliconPersons: [
+        {
+          id: "sp-1",
+          name: "运营助手",
+          title: "运营助手",
+          description: "处理周期运营事项",
+          status: "idle",
+          source: "personal",
+          approvalMode: "inherit",
+          currentSessionId: null,
+          sessions: [],
+          unreadCount: 0,
+          hasUnread: false,
+          needsApproval: false,
+          workflowIds: [],
+          updatedAt: "2026-04-18T00:00:00.000Z",
+        },
+      ],
+      time: {
+        ...useWorkspaceStore.getState().time,
+        scheduleJobs: [
+          {
+            id: "job-real",
+            kind: "schedule_job",
+            title: "晨间巡检",
+            scheduleKind: "cron",
+            timezone: "Asia/Shanghai",
+            ownerScope: "silicon_person",
+            ownerId: "sp-1",
+            status: "scheduled",
+            source: "manual",
+            cronExpression: "0 9 * * 1",
+            executor: "silicon_person",
+            executorTargetId: "sp-1",
+            nextRunAt: "2026-04-20T01:00:00.000Z",
+            createdAt: "2026-04-18T00:00:00.000Z",
+            updatedAt: "2026-04-18T00:00:00.000Z",
+          },
+          {
+            id: "job-floating",
+            kind: "schedule_job",
+            title: "后台巡检",
+            scheduleKind: "interval",
+            timezone: "Asia/Shanghai",
+            ownerScope: "personal",
+            status: "scheduled",
+            source: "manual",
+            intervalMinutes: 60,
+            executor: "assistant_prompt",
+            createdAt: "2026-04-18T00:00:00.000Z",
+            updatedAt: "2026-04-18T00:00:00.000Z",
+          },
+        ],
+      },
+    } as any);
+
+    renderPage();
+
+    const weekButtons = screen.getAllByRole("button", { name: "本周" });
+    fireEvent.click(weekButtons[weekButtons.length - 1]);
+
+    const headers = within(screen.getByTestId("week-planner-grid")).getAllByTestId("week-planner-day-header");
+    expect(headers.map((header) => within(header).getByTestId("week-planner-weekday").textContent)).toEqual([
+      "一",
+      "二",
+      "三",
+      "四",
+      "五",
+      "六",
+      "日",
+    ]);
+    expect(within(screen.getByTestId("week-planner-lane-morning-2026-04-20")).getByText("晨间巡检")).toBeTruthy();
+    expect(within(screen.getByTestId("week-planner-grid")).queryByText("后台巡检")).toBeNull();
+    expect(within(screen.getByTestId("week-planner-side-rail")).getByText("后台巡检")).toBeTruthy();
   });
 });

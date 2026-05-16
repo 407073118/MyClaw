@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { Bot, MessageSquare, Pause, Pencil, Play, RotateCcw, Trash2, Workflow } from "lucide-react";
 
 import type {
   AvailabilityPolicy,
@@ -385,6 +386,7 @@ export default function TimeCenterPage() {
         modelProfileId: input.modelProfileId,
         reasoningEffort: input.reasoningEffort,
         reasoningEnabled: input.reasoningEnabled,
+        sessionMode: input.sessionMode ?? editingJob.sessionMode,
         nextRunAt: input.startsAt ?? editingJob.nextRunAt,
       });
       setFeedback(`已更新定时任务：${input.title}`);
@@ -407,6 +409,7 @@ export default function TimeCenterPage() {
         modelProfileId: input.modelProfileId,
         reasoningEffort: input.reasoningEffort,
         reasoningEnabled: input.reasoningEnabled,
+        sessionMode: input.sessionMode,
         nextRunAt: input.startsAt,
       });
       setFeedback(`已保存定时任务：${input.title}`);
@@ -892,17 +895,6 @@ function IconSpinner(): React.JSX.Element {
   );
 }
 
-function IconEdit(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M3 17.25V21h3.75l11-11.04-3.75-3.75L3 17.25zM20.71 7.04a.996.996 0 0 0 0-1.41l-2.34-2.34a.996.996 0 0 0-1.41 0L15.13 5.13l3.75 3.75 1.83-1.84z"
-      />
-    </svg>
-  );
-}
-
 /** 根据定时任务执行器推导存储归属，确保员工任务进入员工分区而不是主日程 personal。 */
 function resolveScheduleJobOwnerDraft(
   input: ScheduleJobEditorSubmitInput,
@@ -921,55 +913,6 @@ function formatExecutorLabel(executor: ScheduleJobExecutor): string {
   if (executor === "assistant_prompt") return "Prompt";
   if (executor === "workflow") return "Workflow";
   return "员工";
-}
-
-function IconClose(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M18.3 5.71a1 1 0 0 0-1.41 0L12 10.59 7.11 5.7A1 1 0 0 0 5.7 7.11L10.59 12 5.7 16.89a1 1 0 1 0 1.41 1.41L12 13.41l4.89 4.89a1 1 0 0 0 1.41-1.41L13.41 12l4.89-4.89a1 1 0 0 0 0-1.4z"
-      />
-    </svg>
-  );
-}
-
-function IconPlay(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path fill="currentColor" d="M8 5.5a1 1 0 0 1 1.5-.87l9 5.5a1 1 0 0 1 0 1.74l-9 5.5A1 1 0 0 1 8 16.5v-11z" />
-    </svg>
-  );
-}
-
-function IconRestore(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 4a8 8 0 0 1 7.75 6h-2.1A6 6 0 1 0 16.24 16l-1.64-1.65 1.41-1.41L20 17.93 15.01 23l-1.41-1.41L16 19.18A8 8 0 1 1 12 4zM5 3v5h5l-1.9-1.9A7.95 7.95 0 0 1 12 4v2a5.95 5.95 0 0 0-2.49.54L8 5H5z"
-      />
-    </svg>
-  );
-}
-
-function IconPause(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path fill="currentColor" d="M7 5h4v14H7zm6 0h4v14h-4z" />
-    </svg>
-  );
-}
-
-function IconTrash(): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M9 3h6l1 2h4v2H4V5h4l1-2zm1 6h2v9h-2V9zm4 0h2v9h-2V9zM7 9h2v9H7V9zm1 12h8a2 2 0 0 0 2-2V8H6v11a2 2 0 0 0 2 2z"
-      />
-    </svg>
-  );
 }
 
 /** 渲染主区视图切换：时间轴默认，日程/提醒/定时任务拥有独立列表页。 */
@@ -1520,16 +1463,16 @@ function ScheduleJobListPage({
                     loading={isRunPending}
                     onClick={() => handleRunClick(job)}
                   >
-                  <IconPlay />
+                  <Play size={14} aria-hidden />
                 </ActionIconButton>
                 <ActionIconButton title="编辑" onClick={() => onEdit(job)}>
-                  <IconEdit />
+                  <Pencil size={14} aria-hidden />
                 </ActionIconButton>
                 <ActionIconButton title={job.status === "paused" ? "恢复" : "暂停"} onClick={() => onToggle(job)}>
-                  {job.status === "paused" ? <IconRestore /> : <IconPause />}
+                  {job.status === "paused" ? <RotateCcw size={14} aria-hidden /> : <Pause size={14} aria-hidden />}
                 </ActionIconButton>
                 <ActionIconButton title="删除" variant="danger" onClick={() => onDelete(job.id)}>
-                  <IconTrash />
+                  <Trash2 size={14} aria-hidden />
                 </ActionIconButton>
               </div>
             </article>
@@ -1555,21 +1498,21 @@ type JobTypeCard = {
 const JOB_TYPE_CARDS: JobTypeCard[] = [
   {
     type: "assistant_prompt",
-    title: "Prompt 任务",
-    description: "让模型按时回答 / 总结，输出 Markdown 直接渲染。",
-    icon: <span aria-hidden="true">💬</span>,
+    title: "定时提示词",
+    description: "让模型按时回答或总结，并把结果写入执行记录。",
+    icon: <MessageSquare size={20} aria-hidden />,
   },
   {
     type: "workflow",
-    title: "Workflow 任务",
-    description: "到点跑工作流（自动发布、检查、提醒等流程）。",
-    icon: <span aria-hidden="true">⚙️</span>,
+    title: "定时跑工作流",
+    description: "到点执行已配置工作流，适合检查、发布、提醒等流程。",
+    icon: <Workflow size={20} aria-hidden />,
   },
   {
     type: "silicon_person",
-    title: "调用员工任务",
-    description: "到点向员工派发消息，让员工按其角色处理。",
-    icon: <span aria-hidden="true">👤</span>,
+    title: "定时派发给员工",
+    description: "到点向硅基员工派发消息，让员工按角色处理。",
+    icon: <Bot size={20} aria-hidden />,
   },
 ];
 
@@ -2168,31 +2111,24 @@ function buildScheduleJobTimelineEntries(
   }));
 }
 
-/** 解析定时任务在目标日期内的触发时刻。
- *  策略：
- *  1. nextRunAt/startsAt 落在当天 → 作为精确触发点
- *  2. cron 任务 → 枚举当天所有触发点
- *  3. 以上都没有但任务仍处于 scheduled 状态 → 以 lastRunAt 或当日 09:00 作为占位标记
- */
+/** 解析定时任务在目标日期内的真实触发时刻，避免把后台任务伪装成 09:00 日程。 */
 function resolveScheduleJobTimes(job: ScheduleJob, dateKey: string, timezone: string): string[] {
+  const times = new Set<string>();
   // 精确匹配：nextRunAt / startsAt 在当天
   const primaryTime = job.nextRunAt ?? job.startsAt;
   if (primaryTime && isoToDateKey(primaryTime, timezone) === dateKey) {
-    return [primaryTime];
+    times.add(primaryTime);
   }
   // cron 任务：枚举当天全部触发点
   if (job.scheduleKind === "cron" && job.cronExpression) {
     const cronTimes = enumerateCronRunsOnDate(job.cronExpression, dateKey, timezone, { limit: 6 });
-    if (cronTimes.length > 0) return cronTimes;
+    cronTimes.forEach((time) => times.add(time));
   }
-  // 兜底：活跃的定时任务即使在今天没有精确触发时间，也显示一个占位条目
-  if (job.status === "scheduled") {
-    if (job.lastRunAt) return [job.lastRunAt];
-    // 以当天 09:00 本地时间作为默认展示位置
-    const [y, m, d] = dateKey.split("-").map(Number);
-    return [new Date(Date.UTC(y, m - 1, d, 9, 0, 0)).toISOString()];
+  // 真实发生过的运行可以回看，但不能为没有触发时间的任务制造占位。
+  if (job.lastRunAt && isoToDateKey(job.lastRunAt, timezone) === dateKey) {
+    times.add(job.lastRunAt);
   }
-  return [];
+  return Array.from(times).sort((a, b) => a.localeCompare(b));
 }
 
 /** 构建每个定时任务最近一次运行记录索引。 */
@@ -2361,9 +2297,16 @@ function formatPriority(priority: TaskCommitment["priority"]): string {
   }[priority];
 }
 
-// ─── 本周日历视图 ──────────────────────────────────────────────────────────
+// ─── 本周规划板 ──────────────────────────────────────────────────────────
 
 const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+const WEEK_LANES = [
+  { key: "morning", label: "上午", startHour: 0, endHour: 12 },
+  { key: "afternoon", label: "下午", startHour: 12, endHour: 18 },
+  { key: "evening", label: "今晚", startHour: 18, endHour: 24 },
+] as const;
+
+type WeekLaneKey = (typeof WEEK_LANES)[number]["key"];
 
 function WeekView({
   selectedDate,
@@ -2415,75 +2358,137 @@ function WeekView({
   }, [weekDays, calendarEvents, reminders, taskCommitments, scheduleJobs, timezone, latestRunByJobId, siliconPersonNameById]);
 
   const todayKey = isoToDateKey(new Date().toISOString(), timezone);
+  const placedScheduleJobIds = useMemo(() => {
+    const ids = new Set<string>();
+    entriesByDay.forEach((entries) => {
+      entries.forEach((entry) => {
+        if (entry.kind === "schedule_job") ids.add(entry.itemId);
+      });
+    });
+    return ids;
+  }, [entriesByDay]);
+  const sideRailJobs = useMemo(
+    () =>
+      scheduleJobs
+        .filter((job) => job.status !== "cancelled" && !placedScheduleJobIds.has(job.id))
+        .sort((a, b) => (a.nextRunAt ?? "").localeCompare(b.nextRunAt ?? "")),
+    [scheduleJobs, placedScheduleJobIds],
+  );
+  const failedJobs = useMemo(
+    () => scheduleJobs.filter((job) => job.status === "failed" || latestRunByJobId.get(job.id)?.status === "failed"),
+    [scheduleJobs, latestRunByJobId],
+  );
 
   return (
-    <section className="week-view" data-testid="week-view">
-      <div className="week-view__header">
-        {weekDays.map((dayKey, i) => (
-          <div key={dayKey} className={`week-view__header-cell${dayKey === todayKey ? " is-today" : ""}`}>
-            <span className="week-view__weekday">{WEEKDAY_LABELS[i]}</span>
-            <span className="week-view__date-num">{Number(dayKey.slice(8))}</span>
-          </div>
-        ))}
+    <section className="week-planner" data-testid="week-view" aria-label="本周规划板">
+      <header className="week-planner__toolbar">
+        <div>
+          <h3>本周规划</h3>
+          <p>{formatWeekRange(weekDays, timezone)} · {scheduleJobs.length} 个定时任务</p>
+        </div>
+        <div className="week-planner__actions" aria-label="周切换">
+          <button type="button" className="btn-toolbar" onClick={() => onSelectDate(addDaysToDateKey(weekStart, -7))}>上周</button>
+          <button type="button" className="btn-toolbar" onClick={() => onSelectDate(todayKey)}>本周</button>
+          <button type="button" className="btn-toolbar" onClick={() => onSelectDate(addDaysToDateKey(weekStart, 7))}>下周</button>
+        </div>
+      </header>
+      <div className="week-planner__layout">
+        <div className="week-planner__grid" data-testid="week-planner-grid">
+          {weekDays.map((dayKey) => {
+            const entries = entriesByDay.get(dayKey) ?? [];
+            return (
+              <section key={dayKey} className={`week-planner__day${dayKey === todayKey ? " is-today" : ""}`}>
+                <button
+                  type="button"
+                  className="week-planner__day-header"
+                  data-testid="week-planner-day-header"
+                  onClick={() => onSelectDate(dayKey)}
+                >
+                  <span className="week-planner__weekday" data-testid="week-planner-weekday">
+                    {WEEKDAY_LABELS[weekdayFromDateKey(dayKey)]}
+                  </span>
+                  <strong>{Number(dayKey.slice(8))}</strong>
+                  <span>{formatWeekDayLoad(entries)}</span>
+                </button>
+                {WEEK_LANES.map((lane) => {
+                  const laneEntries = entries.filter((entry) => resolveWeekLane(entry.startsAt, timezone) === lane.key);
+                  return (
+                    <div
+                      key={lane.key}
+                      className="week-planner__lane"
+                      data-testid={`week-planner-lane-${lane.key}-${dayKey}`}
+                    >
+                      <div className="week-planner__lane-title">
+                        <span>{lane.label}</span>
+                        <span>{laneEntries.length}</span>
+                      </div>
+                      {laneEntries.length > 0 ? (
+                        <ul className="week-planner__entries">
+                          {laneEntries.map((entry) => (
+                            <li key={entry.id} className={`week-planner__entry week-planner__entry--${entry.tone}`}>
+                              <span className="week-planner__entry-time">{formatClock(entry.startsAt, timezone)}</span>
+                              <span className="week-planner__entry-title" title={entry.displayTitle}>
+                                {entry.title}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className="week-planner__empty">可安排</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </section>
+            );
+          })}
+        </div>
+        <aside className="week-planner__side" data-testid="week-planner-side-rail">
+          <section>
+            <h4>未落日程</h4>
+            {sideRailJobs.length === 0 ? (
+              <p className="side-empty">本周没有等待定位的后台任务。</p>
+            ) : (
+              <ul className="week-planner__side-list">
+                {sideRailJobs.slice(0, 8).map((job) => (
+                  <li key={job.id}>
+                    <strong>{job.title}</strong>
+                    <span>{buildJobOwnerLabel(job, siliconPersonNameById)} · {formatJobFrequency(job, (iso) => formatDateTime(iso, timezone))}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+          <section>
+            <h4>异常与容量</h4>
+            <p>{failedJobs.length > 0 ? `${failedJobs.length} 个任务需要处理` : "暂无失败任务"}</p>
+            <p>{weekDays.map((dayKey) => `${WEEKDAY_LABELS[weekdayFromDateKey(dayKey)]}${entriesByDay.get(dayKey)?.length ?? 0}`).join(" · ")}</p>
+          </section>
+        </aside>
       </div>
-      <div className="week-view__body">
-        {weekDays.map((dayKey) => {
-          const entries = entriesByDay.get(dayKey) ?? [];
-          const isToday = dayKey === todayKey;
-          return (
-            <div
-              key={dayKey}
-              className={`week-view__day${isToday ? " is-today" : ""}`}
-              onClick={() => onSelectDate(dayKey)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => { if (e.key === "Enter") onSelectDate(dayKey); }}
-            >
-              {entries.length === 0 ? (
-                <span className="week-view__empty">-</span>
-              ) : (
-                <ul className="week-view__entries">
-                  {entries.slice(0, 6).map((entry) => (
-                    <li key={entry.id} className={`week-view__entry week-view__entry--${entry.tone}`}>
-                      <span className="week-view__entry-time">
-                        {new Date(entry.startsAt).toLocaleTimeString("zh-CN", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false })}
-                      </span>
-                      <span className="week-view__entry-title">{entry.displayTitle}</span>
-                    </li>
-                  ))}
-                  {entries.length > 6 && (
-                    <li className="week-view__more">+{entries.length - 6} 项</li>
-                  )}
-                </ul>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <style>{`
-        .week-view { border-radius: var(--radius-xl, 14px); overflow: hidden; background: var(--bg-card, rgba(255,255,255,0.02)); border: 1px solid var(--glass-border, rgba(255,255,255,0.06)); }
-        .week-view__header { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.06)); }
-        .week-view__header-cell { padding: 10px 4px; text-align: center; }
-        .week-view__header-cell.is-today { background: rgba(16,163,127,0.1); }
-        .week-view__weekday { display: block; font-size: 11px; color: var(--text-muted, #666); }
-        .week-view__date-num { display: block; font-size: 16px; font-weight: 600; color: var(--text-primary, #e0e0e0); margin-top: 2px; }
-        .week-view__header-cell.is-today .week-view__date-num { color: var(--accent-cyan, #10a37f); }
-        .week-view__body { display: grid; grid-template-columns: repeat(7, 1fr); min-height: 280px; }
-        .week-view__day { padding: 6px 4px; border-right: 1px solid var(--glass-border, rgba(255,255,255,0.04)); cursor: pointer; transition: background 0.15s; min-height: 120px; }
-        .week-view__day:last-child { border-right: none; }
-        .week-view__day:hover { background: rgba(255,255,255,0.03); }
-        .week-view__day.is-today { background: rgba(16,163,127,0.04); }
-        .week-view__empty { display: block; text-align: center; color: var(--text-muted, #666); font-size: 12px; padding: 20px 0; }
-        .week-view__entries { list-style: none; margin: 0; padding: 0; }
-        .week-view__entry { display: flex; gap: 4px; padding: 3px 4px; border-radius: 4px; font-size: 11px; line-height: 1.4; margin-bottom: 2px; }
-        .week-view__entry--personal { background: rgba(59,130,246,0.1); color: var(--text-secondary, #bbb); }
-        .week-view__entry--silicon { background: rgba(139,92,246,0.1); color: var(--text-secondary, #bbb); }
-        .week-view__entry-time { color: var(--text-muted, #666); white-space: nowrap; flex-shrink: 0; }
-        .week-view__entry-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .week-view__more { font-size: 10px; color: var(--text-muted, #666); padding: 2px 4px; }
-      `}</style>
     </section>
   );
+}
+
+/** 格式化周范围，给周规划板头部提供稳定摘要。 */
+function formatWeekRange(weekDays: string[], timezone: string): string {
+  const first = weekDays[0];
+  const last = weekDays[weekDays.length - 1];
+  return `${formatDateTitle(first, timezone)} - ${formatDateTitle(last, timezone)}`;
+}
+
+/** 将条目开始时间映射到本周规划板的上午 / 下午 / 今晚。 */
+function resolveWeekLane(startsAt: string, timezone: string): WeekLaneKey {
+  const hour = getLocalHour(startsAt, timezone);
+  const lane = WEEK_LANES.find((item) => hour >= item.startHour && hour < item.endHour);
+  return lane?.key ?? "evening";
+}
+
+/** 生成每日容量摘要，帮助用户快速扫描哪天已被占满。 */
+function formatWeekDayLoad(entries: TimelineEntry[]): string {
+  if (entries.length === 0) return "空";
+  if (entries.length >= 6) return "满";
+  return `${entries.length} 项`;
 }
 
 const styles = `
@@ -3083,6 +3088,209 @@ const styles = `
     flex: 1;
   }
 
+  .week-planner {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    overflow: hidden;
+  }
+
+  .week-planner__toolbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--glass-border);
+  }
+
+  .week-planner__toolbar h3 {
+    margin: 0 0 4px;
+    color: var(--text-primary);
+    font-size: 16px;
+  }
+
+  .week-planner__toolbar p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .week-planner__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .week-planner__layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 240px;
+    min-height: 0;
+  }
+
+  .week-planner__grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(110px, 1fr));
+    min-height: 520px;
+    overflow-x: auto;
+  }
+
+  .week-planner__day {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    border-right: 1px solid var(--glass-border);
+  }
+
+  .week-planner__day:last-child {
+    border-right: 0;
+  }
+
+  .week-planner__day.is-today .week-planner__day-header {
+    background: rgba(16, 163, 127, 0.08);
+  }
+
+  .week-planner__day-header {
+    display: grid;
+    gap: 3px;
+    width: 100%;
+    min-height: 70px;
+    padding: 10px;
+    border: 0;
+    border-bottom: 1px solid var(--glass-border);
+    background: transparent;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .week-planner__day-header:hover {
+    background: var(--bg-surface-hover);
+  }
+
+  .week-planner__weekday,
+  .week-planner__day-header span:last-child {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .week-planner__day-header strong {
+    font-size: 18px;
+    line-height: 1.1;
+  }
+
+  .week-planner__lane {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 145px;
+    padding: 10px;
+    border-bottom: 1px solid var(--glass-border);
+  }
+
+  .week-planner__lane:last-child {
+    border-bottom: 0;
+  }
+
+  .week-planner__lane-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .week-planner__entries,
+  .week-planner__side-list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .week-planner__entry {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 6px;
+    align-items: center;
+    padding: 6px 7px;
+    border-left: 2px solid var(--accent-cyan);
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+
+  .week-planner__entry--silicon,
+  .week-planner__entry--automation {
+    border-left-color: var(--status-yellow);
+  }
+
+  .week-planner__entry--warning {
+    border-left-color: var(--status-red);
+  }
+
+  .week-planner__entry-time {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .week-planner__entry-title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .week-planner__empty {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .week-planner__side {
+    display: grid;
+    align-content: start;
+    gap: 16px;
+    padding: 14px;
+    border-left: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .week-planner__side h4 {
+    margin: 0 0 8px;
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+
+  .week-planner__side p,
+  .week-planner__side-list span {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .week-planner__side-list li {
+    display: grid;
+    gap: 3px;
+    padding: 8px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.025);
+  }
+
+  .week-planner__side-list strong {
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
   .resource-list,
   .job-list,
   .compact-list {
@@ -3210,7 +3418,7 @@ const styles = `
     align-items: center;
     height: 18px;
     padding: 0 8px;
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.04em;
@@ -3245,7 +3453,7 @@ const styles = `
   .job-type-filter__chip {
     padding: 4px 12px;
     border: 1px solid var(--glass-border);
-    border-radius: 999px;
+    border-radius: var(--radius-md);
     background: transparent;
     color: var(--text-muted);
     font-size: 12px;
@@ -3344,6 +3552,61 @@ const styles = `
     margin-top: 4px;
   }
 
+  .schedule-job-editor__section,
+  .schedule-job-preview {
+    display: grid;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .schedule-job-editor__step {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .schedule-job-editor__locked-target {
+    padding: 10px 12px;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .schedule-job-editor__locked-target strong {
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+
+  .schedule-job-preview dl {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+  }
+
+  .schedule-job-preview dl > div {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+  }
+
+  .schedule-job-preview dt {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .schedule-job-preview dd {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+    word-break: break-word;
+  }
+
   .schedule-job-editor__actions {
     display: flex;
     align-items: center;
@@ -3380,7 +3643,7 @@ const styles = `
   .frequency-picker__chip {
     padding: 5px 10px;
     border: 1px solid var(--glass-border);
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-secondary);
     font-size: 12px;
@@ -3539,7 +3802,7 @@ const styles = `
   .reasoning-chip {
     padding: 5px 12px;
     border: 1px solid var(--glass-border);
-    border-radius: 999px;
+    border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-secondary);
     font-size: 12px;
