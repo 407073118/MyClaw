@@ -11,10 +11,12 @@ type CatchUpSignal = {
   createdAt: string;
 };
 
+const EMPTY_DELIVERIES: Array<{ id: string; title: string; body: string; createdAt: string }> = [];
+
 /** 在时间中心侧栏展示最新值守补看事项。 */
 export default function AwarenessCatchUp() {
-  const snapshot = useWorkspaceStore((state) => state.time.awarenessSnapshot) as { activeSignals?: CatchUpSignal[] } | null;
-  const deliveries = useWorkspaceStore((state) => state.time.awarenessDeliveries);
+  const snapshot = useWorkspaceStore((state) => state.time?.awarenessSnapshot) as { activeSignals?: CatchUpSignal[] } | null;
+  const deliveries = useWorkspaceStore((state) => state.time?.awarenessDeliveries ?? EMPTY_DELIVERIES);
   const activeSignals = useMemo(
     () => (snapshot?.activeSignals ?? []).filter((signal) => signal.status === "active").slice(0, 5),
     [snapshot?.activeSignals],

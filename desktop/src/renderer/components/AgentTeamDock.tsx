@@ -723,7 +723,7 @@ export default function AgentTeamDock() {
 
 /** 硅基员工值守信号数量 badge */
 function AwarenessBadge({ personId }: { personId: string }) {
-  const snapshot = useWorkspaceStore((s) => s.time.awarenessSnapshot) as {
+  const snapshot = useWorkspaceStore((s) => s.time?.awarenessSnapshot) as {
     activeSignals?: Array<{
       scope: { kind: string; ownerId?: string };
       severity: string;
