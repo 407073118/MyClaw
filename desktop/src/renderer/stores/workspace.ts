@@ -142,6 +142,7 @@ export type WorkspaceTimeState = {
   availabilityPolicy: AvailabilityPolicy | null;
   todayBrief: TodayBrief | null;
   awarenessSnapshot: Record<string, unknown> | null;
+  awarenessDeliveries: Record<string, unknown>[];
 };
 
 function createEmptyTimeState(): WorkspaceTimeState {
@@ -154,6 +155,7 @@ function createEmptyTimeState(): WorkspaceTimeState {
     availabilityPolicy: null,
     todayBrief: null,
     awarenessSnapshot: null,
+    awarenessDeliveries: [],
   };
 }
 
@@ -257,6 +259,7 @@ type WorkspaceState = {
   openArtifact: (artifactId: string) => Promise<void>;
   revealArtifact: (artifactId: string) => Promise<void>;
   applyArtifactEvent: (event: Record<string, unknown>) => void;
+  applyAwarenessDelivery: (delivery: Record<string, unknown>) => void;
 
   createModelProfile: (input: Omit<ModelProfile, "id">) => Promise<ModelProfile>;
   updateModelProfile: (profileId: string, input: Omit<ModelProfile, "id">) => Promise<ModelProfile>;
@@ -817,6 +820,9 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
           hasSubscribedToAwareness = true;
           api.awareness.onAwarenessChanged(() => {
             void get().loadAwarenessSnapshot();
+          });
+          api.awareness.onAwarenessDelivery?.((delivery: Record<string, unknown>) => {
+            get().applyAwarenessDelivery(delivery);
           });
         }
       }
@@ -1479,6 +1485,19 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         recentArtifacts: mergeArtifactRecord(state.recentArtifacts, artifact),
       };
     });
+  },
+
+  /** 将值守投递事件写入时间中心状态，供今日补看和入口徽标消费。 */
+  applyAwarenessDelivery(delivery) {
+    set((state) => ({
+      time: {
+        ...state.time,
+        awarenessDeliveries: [
+          delivery,
+          ...state.time.awarenessDeliveries.filter((item) => item.id !== delivery.id),
+        ].slice(0, 50),
+      },
+    }));
   },
 
 

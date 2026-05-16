@@ -17,6 +17,7 @@ import type { StandingOrderService } from "./standing-order-service";
 import type { LongRunLedgerService } from "./long-run-ledger";
 import { createAwarenessPolicyEngine } from "./awareness-policy-engine";
 import { createAwarenessActionExecutor } from "./awareness-action-executor";
+import { createAwarenessDeliveryService } from "./awareness-delivery-service";
 
 export type AwarenessRuntimeDeps = {
   store: AwarenessStore;
@@ -34,6 +35,10 @@ export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
   const policyEngine = createAwarenessPolicyEngine({ now });
   const actionExecutor = createAwarenessActionExecutor({
     updateSignalStatus: deps.store.updateSignalStatus,
+    now,
+  });
+  const deliveryService = createAwarenessDeliveryService({
+    broadcastEvent: deps.broadcastEvent,
     now,
   });
 
@@ -153,6 +158,14 @@ export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
           summary: decision.reason,
         });
       }
+
+      await deliveryService.deliverDecision({
+        routine,
+        signals: actionableSignals,
+        decision,
+        ledgerRecord,
+        quietHours,
+      });
 
       const receipt: AwarenessTickReceipt = {
         tickedAt: currentTime.toISOString(),
