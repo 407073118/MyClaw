@@ -1,5 +1,6 @@
 import type {
   AwarenessActionKind,
+  AwarenessDecisionSkipReason,
   AwarenessRoutine,
   AwarenessRoutineCreateInput,
   AwarenessRoutineStatus,
@@ -97,9 +98,9 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
     };
     db.run(
       `INSERT INTO awareness_routines (
-        id, scope_kind, owner_id, name, status, cadence_minutes, payload_json, created_at, updated_at
+        id, scope_kind, owner_id, name, status, cadence_minutes, next_run_at, payload_json, created_at, updated_at
       ) VALUES (
-        @id, @scope_kind, @owner_id, @name, @status, @cadence_minutes, @payload_json, @created_at, @updated_at
+        @id, @scope_kind, @owner_id, @name, @status, @cadence_minutes, @next_run_at, @payload_json, @created_at, @updated_at
       )`,
       {
         id: routine.id,
@@ -108,6 +109,7 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
         name: routine.name,
         status: routine.status,
         cadence_minutes: routine.cadenceMinutes,
+        next_run_at: routine.nextRunAt ?? null,
         payload_json: JSON.stringify(routine),
         created_at: nowIso,
         updated_at: nowIso,
@@ -146,12 +148,13 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
       updatedAt: nowIso,
     };
     db.run(
-      `UPDATE awareness_routines SET name = @name, status = @status, cadence_minutes = @cadence_minutes, payload_json = @payload_json, updated_at = @updated_at WHERE id = @id`,
+      `UPDATE awareness_routines SET name = @name, status = @status, cadence_minutes = @cadence_minutes, next_run_at = @next_run_at, payload_json = @payload_json, updated_at = @updated_at WHERE id = @id`,
       {
         id,
         name: updated.name,
         status: updated.status,
         cadence_minutes: updated.cadenceMinutes,
+        next_run_at: updated.nextRunAt ?? null,
         payload_json: JSON.stringify(updated),
         updated_at: nowIso,
       },
@@ -167,6 +170,11 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
     id: string,
     succeeded: boolean,
     receipt: AwarenessTickReceipt,
+    patch?: {
+      lastSkippedReason?: AwarenessDecisionSkipReason;
+      lastDecisionSummary?: string;
+      nextRunAt?: string;
+    },
   ): Promise<AwarenessRoutine | null> {
     const routine = await getRoutine(id);
     if (!routine) return null;
@@ -181,15 +189,18 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
       status,
       consecutiveFailures,
       lastRunAt: nowIso,
-      nextRunAt: new Date(now().getTime() + routine.cadenceMinutes * 60_000).toISOString(),
+      nextRunAt: patch?.nextRunAt ?? new Date(now().getTime() + routine.cadenceMinutes * 60_000).toISOString(),
       lastReceipt: receipt,
+      lastSkippedReason: patch?.lastSkippedReason,
+      lastDecisionSummary: patch?.lastDecisionSummary ?? routine.lastDecisionSummary,
       updatedAt: nowIso,
     };
     db.run(
-      `UPDATE awareness_routines SET status = @status, payload_json = @payload_json, updated_at = @updated_at WHERE id = @id`,
+      `UPDATE awareness_routines SET status = @status, next_run_at = @next_run_at, payload_json = @payload_json, updated_at = @updated_at WHERE id = @id`,
       {
         id,
         status: updated.status,
+        next_run_at: updated.nextRunAt ?? null,
         payload_json: JSON.stringify(updated),
         updated_at: nowIso,
       },
