@@ -36,7 +36,15 @@ export default function AwarenessRoutineManager() {
     () => (snapshot?.activeSignals ?? []).filter((signal) => signal.status === "active"),
     [snapshot?.activeSignals],
   );
-  const [draft, setDraft] = useState({ name: "", purpose: "", cadenceMinutes: 30 });
+  const [draft, setDraft] = useState({
+    name: "",
+    purpose: "",
+    cadenceMinutes: 30,
+    maxModelCallsPerRoutinePerDay: 10,
+    notifyOnDecision: true,
+    deliveryChannel: "today_catchup",
+    catchUpMode: "once",
+  });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState({ name: "", purpose: "", cadenceMinutes: 30 });
 
@@ -48,8 +56,26 @@ export default function AwarenessRoutineManager() {
       scope: { kind: "personal" },
       purpose: draft.purpose.trim() || "自动检查日程、任务和后台运行状态。",
       cadenceMinutes: draft.cadenceMinutes,
+      budgetPolicy: {
+        maxModelCallsPerRoutinePerDay: draft.maxModelCallsPerRoutinePerDay,
+      },
+      deliveryPolicy: {
+        notifyOnDecision: draft.notifyOnDecision,
+        deliveryChannel: draft.deliveryChannel,
+      },
+      catchUpPolicy: {
+        mode: draft.catchUpMode,
+      },
     });
-    setDraft({ name: "", purpose: "", cadenceMinutes: 30 });
+    setDraft({
+      name: "",
+      purpose: "",
+      cadenceMinutes: 30,
+      maxModelCallsPerRoutinePerDay: 10,
+      notifyOnDecision: true,
+      deliveryChannel: "today_catchup",
+      catchUpMode: "once",
+    });
   }
 
   /** 进入行内编辑模式，避免弹窗打断时间规划工作流。 */
@@ -89,6 +115,33 @@ export default function AwarenessRoutineManager() {
           <button type="button" className="btn-premium" onClick={handleCreate} title="新建值守">
             <Plus size={14} /> 新建
           </button>
+        </div>
+        <div className="awareness-guardrails" aria-label="值守护栏设置">
+          <label>
+            <span>单规则每日模型预算</span>
+            <input className="form-input" type="number" min={0} max={200} value={draft.maxModelCallsPerRoutinePerDay} onChange={(event) => setDraft({ ...draft, maxModelCallsPerRoutinePerDay: Number(event.target.value) || 0 })} />
+          </label>
+          <label>
+            <span>补跑策略</span>
+            <select className="form-input" value={draft.catchUpMode} onChange={(event) => setDraft({ ...draft, catchUpMode: event.target.value })}>
+              <option value="once">只补一次</option>
+              <option value="skip_missed">跳过错过周期</option>
+              <option value="run_all_due">运行所有到期</option>
+            </select>
+          </label>
+          <label>
+            <span>投递目标</span>
+            <select className="form-input" value={draft.deliveryChannel} onChange={(event) => setDraft({ ...draft, deliveryChannel: event.target.value })}>
+              <option value="today_catchup">今日补看</option>
+              <option value="dock_badge">入口徽标</option>
+              <option value="chat_card">会话卡片</option>
+              <option value="silent">静默</option>
+            </select>
+          </label>
+          <label className="awareness-guardrails__check">
+            <input type="checkbox" checked={draft.notifyOnDecision} onChange={(event) => setDraft({ ...draft, notifyOnDecision: event.target.checked })} />
+            <span>有决策时通知</span>
+          </label>
         </div>
 
         <div className="awareness-routine-list">
@@ -143,6 +196,10 @@ export default function AwarenessRoutineManager() {
         .awareness-pill { border-radius: 999px; padding: 3px 9px; background: rgba(16,163,127,0.16); color: var(--status-green, #10a37f); font-size: 12px; white-space: nowrap; }
         .awareness-pill--warn { background: rgba(245,158,11,0.16); color: var(--status-yellow, #f59e0b); }
         .awareness-create-row { display: grid; grid-template-columns: minmax(120px, 0.8fr) minmax(180px, 1.4fr) 86px auto; gap: 8px; margin-bottom: 12px; }
+        .awareness-guardrails { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+        .awareness-guardrails label { display: flex; flex-direction: column; gap: 4px; color: var(--text-muted); font-size: 11px; }
+        .awareness-guardrails__check { justify-content: end; }
+        .awareness-guardrails__check input { align-self: flex-start; }
         .awareness-routine-list { display: flex; flex-direction: column; gap: 8px; }
         .awareness-routine-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) repeat(4, auto); gap: 8px; align-items: center; padding: 10px 12px; border-radius: 8px; background: rgba(255,255,255,0.03); border: 1px solid var(--glass-border); }
         .awareness-routine-row__body { min-width: 0; }
