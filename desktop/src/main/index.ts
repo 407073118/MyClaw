@@ -576,6 +576,28 @@ async function buildRuntimeContext(
     runScheduleJob: async (job) => {
       return await timeJobExecutor.execute(job);
     },
+    recordScheduleJobLedger: async (event) => {
+      if (!longRunLedger) return {};
+      if (event.phase === "started") {
+        const record = longRunLedger.createRecord("schedule_job", event.job.id, {
+          kind: event.job.ownerScope as any,
+          ownerId: event.job.ownerId,
+        }, "running", {
+          sourceTitle: event.job.title,
+          notifyPolicy: "state_changes",
+          deliveryTarget: "today_catchup",
+        });
+        await longRunLedger.upsertRecord(record);
+        return { ledgerRecordId: record.id };
+      }
+      if (event.ledgerRecordId && event.status) {
+        await longRunLedger.finishRecord(event.ledgerRecordId, event.status, {
+          summary: event.summary,
+          error: event.error,
+        });
+      }
+      return {};
+    },
     awarenessTick: async () => {
       latestAwarenessSourceSnapshot = await awarenessSourceAdapter.snapshot();
       await awarenessRuntime.tick();
@@ -754,7 +776,11 @@ app.whenReady().then(async () => {
   if (ledgerService) {
     setAgentTaskStatusChangedHook((task: { id: string; status: string }) => {
       if (task.status === "failed" || task.status === "succeeded" || task.status === "waiting_user") {
-        const record = ledgerService.createRecord("agent_task", task.id, { kind: "personal" });
+        const record = ledgerService.createRecord("agent_task", task.id, { kind: "personal" }, "queued", {
+          sourceTitle: `Agent Task ${task.id}`,
+          notifyPolicy: "state_changes",
+          deliveryTarget: task.status === "waiting_user" ? "dock_badge" : "today_catchup",
+        });
         record.status = task.status === "succeeded" ? "succeeded" : task.status === "failed" ? "failed" : "waiting_user";
         record.startedAt = new Date().toISOString();
         ledgerService.upsertRecord(record).catch(() => {});

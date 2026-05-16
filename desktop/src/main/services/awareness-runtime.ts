@@ -139,7 +139,11 @@ export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
         routine.budgetPolicy,
       );
 
-      const ledgerRecord = deps.ledger.createRecord("awareness_routine", routine.id, routine.scope, "running");
+      const ledgerRecord = deps.ledger.createRecord("awareness_routine", routine.id, routine.scope, "running", {
+        sourceTitle: routine.name,
+        notifyPolicy: routine.deliveryPolicy.notifyOnDecision ? "state_changes" : "silent",
+        deliveryTarget: routine.deliveryPolicy.deliveryChannel,
+      });
       await deps.ledger.upsertRecord(ledgerRecord);
 
       const { actionsExecuted, actionsBlocked } = await executeActions(

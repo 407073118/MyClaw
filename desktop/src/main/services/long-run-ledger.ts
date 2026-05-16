@@ -70,15 +70,20 @@ export function createLongRunLedger(db: TimeOrchestrationDatabase) {
     sourceId: string,
     scope: AwarenessScope,
     status: LongRunStatus = "queued",
+    options?: Pick<LongRunRecord, "sourceTitle" | "parentRecordId" | "notifyPolicy" | "deliveryTarget">,
   ): LongRunRecord {
     const now = new Date().toISOString();
     return {
       id: randomUUID(),
       kind,
       sourceId,
+      sourceTitle: options?.sourceTitle,
+      parentRecordId: options?.parentRecordId,
       scope,
       status,
       startedAt: now,
+      notifyPolicy: options?.notifyPolicy,
+      deliveryTarget: options?.deliveryTarget,
       deliveryStatus: "not_required",
       createdAt: now,
       updatedAt: now,
@@ -135,6 +140,7 @@ export function createLongRunLedger(db: TimeOrchestrationDatabase) {
   async function listRecords(query?: {
     kind?: LongRunKind;
     status?: LongRunStatus;
+    deliveryStatus?: LongRunRecord["deliveryStatus"];
     limit?: number;
   }): Promise<LongRunRecord[]> {
     const conditions: string[] = [];
@@ -146,6 +152,10 @@ export function createLongRunLedger(db: TimeOrchestrationDatabase) {
     if (query?.status) {
       conditions.push("status = @status");
       params.status = query.status;
+    }
+    if (query?.deliveryStatus) {
+      conditions.push("delivery_status = @delivery_status");
+      params.delivery_status = query.deliveryStatus;
     }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const limit = query?.limit ?? 50;
