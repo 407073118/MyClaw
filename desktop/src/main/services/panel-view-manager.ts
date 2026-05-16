@@ -31,7 +31,8 @@ type FileTokenRecord = {
   mimeType: string | null;
 };
 
-const PANEL_PARTITION = "myclaw-panel";
+export const PANEL_PARTITION = "myclaw-panel";
+const PANEL_CONTENT_ZOOM_FACTOR = 0.85;
 const FILE_TOKEN_PATTERN = /^myclaw-file:\/\/([^/]+)\/([^/?#]+)/i;
 const SAFE_SKILL_ASSET_EXTENSIONS = new Set([
   ".css",
@@ -123,8 +124,26 @@ export class PanelViewManager {
       viewPath: preparedPayload.viewPath,
       url: target.url,
     });
-    await view.webContents.loadURL(target.url);
-    this.sendHostMessage({ type: "skill-data", payload: preparedPayload.data });
+    try {
+      await view.webContents.loadURL(target.url);
+      this.sendHostMessage({ type: "skill-data", payload: preparedPayload.data });
+    } catch (error) {
+      owner.contentView.removeChildView(view);
+      view.webContents.close();
+      this.current = null;
+      throw error;
+    }
+  }
+
+  /** 只更新当前面板数据，不重建 WebContentsView，保持右侧预览常驻。 */
+  updateData(data: unknown): void {
+    if (!this.current) return;
+    this.current.payload = { ...this.current.payload, data };
+    console.info("[panel-view] 向右侧 WebContentsView 增量注入面板数据", {
+      panelId: this.current.id,
+      title: this.current.payload.title,
+    });
+    this.sendHostMessage({ type: "skill-data", payload: data });
   }
 
   /** 根据右侧 Dock 的屏幕矩形同步 WebContentsView bounds。 */
@@ -141,7 +160,9 @@ export class PanelViewManager {
 
   /** 刷新当前面板，并重新发送最新结构化数据。 */
   async refresh(): Promise<void> {
-    if (!this.current) return;
+    if (!this.current) {
+      throw new Error("右侧面板尚未打开，无法刷新。");
+    }
     console.info("[panel-view] 刷新右侧 WebContentsView 面板", {
       panelId: this.current.id,
       title: this.current.payload.title,
@@ -249,6 +270,7 @@ export class PanelViewManager {
         partition: PANEL_PARTITION,
       },
     });
+    view.webContents.setZoomFactor(PANEL_CONTENT_ZOOM_FACTOR);
     this.configureWebContentsSecurity(view.webContents);
     return view;
   }
@@ -430,9 +452,31 @@ export class PanelViewManager {
 /** 注入默认 CSP，约束旧 Skill HTML 的资源范围。 */
 function injectHtmlCsp(html: string): string {
   const csp = `<meta http-equiv="Content-Security-Policy" content="default-src 'self' myclaw-skill: myclaw-file: data:; img-src 'self' myclaw-skill: myclaw-file: data:; media-src 'self' myclaw-file:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'none';">`;
-  if (/<meta\s+http-equiv=["']Content-Security-Policy["']/i.test(html)) return html;
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (head) => `${head}\n${csp}`);
-  return `${csp}\n${html}`;
+  const withCsp = /<meta\s+http-equiv=["']Content-Security-Policy["']/i.test(html)
+    ? html
+    : injectIntoHtmlHead(html, csp);
+  return injectHtmlHostDefaults(withCsp);
+}
+
+/** 向 HTML head 注入片段；没有 head 时保持片段在文档最前方。 */
+function injectIntoHtmlHead(html: string, fragment: string): string {
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head[^>]*>/i, (head) => `${head}\n${fragment}`);
+  return `${fragment}\n${html}`;
+}
+
+/** 注入 Codex 风格的暗色宿主默认值，避免旧面板空白期呈现整片白底。 */
+function injectHtmlHostDefaults(html: string): string {
+  if (/id=["']myclaw-panel-host-defaults["']/i.test(html)) return html;
+  const style = `<style id="myclaw-panel-host-defaults">
+:root{color-scheme:dark;}
+*,*::before,*::after{box-sizing:border-box;min-width:0;}
+html{min-height:100%;width:100%;max-width:100%;background:#0c0c0d;overflow-x:hidden;}
+body{min-height:100vh;width:100%;max-width:100%;margin:0;background:#0c0c0d;color:#f4f4f5;font-family:"Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;overflow-x:hidden;}
+img,video,canvas,svg,table,pre,code{max-width:100%;}
+body>*,#app,.app,.shell,.container,.page,.layout,.content,.main{max-width:100%;}
+body:empty::before{content:"正在加载预览";min-height:100vh;display:flex;align-items:center;justify-content:center;color:#a1a1aa;font-size:13px;background:#0c0c0d;}
+</style>`;
+  return injectIntoHtmlHead(html, style);
 }
 
 /** 根据扩展名返回基础 Content-Type。 */

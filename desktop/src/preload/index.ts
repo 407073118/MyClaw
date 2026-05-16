@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer, webFrame } from "electron";
 
 // 将整体界面缩放到 85%，让布局密度更接近 Codex 或 Claude Node Desktop 这类 IDE 风格应用
-webFrame.setZoomFactor(0.85);
+const RENDERER_ZOOM_FACTOR = 0.85;
+webFrame.setZoomFactor(RENDERER_ZOOM_FACTOR);
 
 import type {
   ApprovalDecision,
@@ -68,6 +69,7 @@ function onChannel<T>(channel: string, callback: (payload: T) => void): Unsubscr
 const myClawAPI = {
   // ---- 平台信息 ------------------------------------------------------------
   platform: process.platform as NodeJS.Platform,
+  rendererZoomFactor: RENDERER_ZOOM_FACTOR,
 
   // ---- 窗口控制 API（自定义标题栏使用） ------------------------------------
   windowControls: {
@@ -601,6 +603,8 @@ const myClawAPI = {
     ipcRenderer.invoke("panel:open", payload),
   panelSetBounds: (bounds: { x: number; y: number; width: number; height: number }): Promise<{ success: boolean }> =>
     ipcRenderer.invoke("panel:set-bounds", bounds),
+  panelUpdateData: (data: unknown): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke("panel:update-data", data),
   panelClose: (): Promise<{ success: boolean }> =>
     ipcRenderer.invoke("panel:close"),
   panelRefresh: (): Promise<{ success: boolean; error?: string }> =>

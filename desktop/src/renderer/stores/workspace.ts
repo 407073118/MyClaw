@@ -125,6 +125,14 @@ type BackgroundTaskSnapshot = {
 
 type ArtifactScopeMap = Record<string, ArtifactRecord[]>;
 
+export type WebPanelTab = {
+  id: string;
+  viewPath: string | null;
+  title: string;
+  data: unknown;
+  createdAt: string;
+};
+
 export type WorkspaceTimeState = {
   calendarEvents: CalendarEvent[];
   taskCommitments: TaskCommitment[];
@@ -219,6 +227,8 @@ type WorkspaceState = {
     title: string;
     data: unknown;
     panelWidth: number;
+    tabs: WebPanelTab[];
+    activeTabId: string | null;
   };
 
   // Derived (recalculated after set())
@@ -404,6 +414,9 @@ type WorkspaceState = {
   // WebPanel actions
   openWebPanel: (viewPath: string, title: string, data: unknown) => void;
   closeWebPanel: () => void;
+  selectWebPanelTab: (tabId: string) => void;
+  closeWebPanelTab: (tabId: string) => void;
+  createWebPanelTab: () => void;
   setWebPanelWidth: (width: number) => void;
   updateWebPanelData: (data: unknown) => void;
 };
@@ -438,6 +451,21 @@ function buildWorkflowSummaryMap(
   workflows: WorkflowDefinitionSummary[],
 ): Record<string, WorkflowDefinitionSummary> {
   return Object.fromEntries(workflows.map((w) => [w.id, w]));
+}
+
+/** 创建右侧面板 tab ID，避免同一路径多次打开时发生节点冲突。 */
+function createWebPanelTabId(): string {
+  return `web-panel-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 从 tab 同步旧版单面板字段，兼容现有页面对 webPanel.viewPath/data 的读取。 */
+function panelFieldsFromTab(tab: WebPanelTab | null): Pick<WorkspaceState["webPanel"], "viewPath" | "title" | "data" | "activeTabId"> {
+  return {
+    viewPath: tab?.viewPath ?? null,
+    title: tab?.title ?? "",
+    data: tab?.data ?? null,
+    activeTabId: tab?.id ?? null,
+  };
 }
 
 /** 统一把硅基员工会话 payload 合并回 store，避免会话正文与员工摘要分叉。 */
@@ -688,6 +716,8 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     title: "",
     data: null,
     panelWidth: 420,
+    tabs: [],
+    activeTabId: null,
   },
 
   currentSession: null,
@@ -2300,13 +2330,36 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   // -------------------------------------------------------------------------
 
   openWebPanel(viewPath, title, data) {
+    const current = get().webPanel;
+    const existingIndex = current.tabs.findIndex((tab) => tab.viewPath === viewPath);
+    const nextTab: WebPanelTab = existingIndex >= 0
+      ? {
+          ...current.tabs[existingIndex]!,
+          title,
+          data,
+        }
+      : {
+          id: createWebPanelTabId(),
+          viewPath,
+          title,
+          data,
+          createdAt: new Date().toISOString(),
+        };
+    const tabs = existingIndex >= 0
+      ? current.tabs.map((tab, index) => (index === existingIndex ? nextTab : tab))
+      : [...current.tabs, nextTab];
+    console.info("[workspace] 打开右侧 WebPanel 标签页", {
+      tabId: nextTab.id,
+      title,
+      viewPath,
+      reused: existingIndex >= 0,
+    });
     set({
       webPanel: {
-        ...get().webPanel,
+        ...current,
         isOpen: true,
-        viewPath,
-        title,
-        data,
+        tabs,
+        ...panelFieldsFromTab(nextTab),
       },
     });
   },
@@ -2319,6 +2372,68 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         viewPath: null,
         title: "",
         data: null,
+        tabs: [],
+        activeTabId: null,
+      },
+    });
+  },
+
+  selectWebPanelTab(tabId) {
+    const panel = get().webPanel;
+    const tab = panel.tabs.find((item) => item.id === tabId) ?? null;
+    if (!tab) return;
+    console.info("[workspace] 切换右侧 WebPanel 标签页", {
+      tabId,
+      title: tab.title,
+      viewPath: tab.viewPath,
+    });
+    set({
+      webPanel: {
+        ...panel,
+        isOpen: true,
+        ...panelFieldsFromTab(tab),
+      },
+    });
+  },
+
+  closeWebPanelTab(tabId) {
+    const panel = get().webPanel;
+    const closeIndex = panel.tabs.findIndex((tab) => tab.id === tabId);
+    if (closeIndex < 0) return;
+    const closingTab = panel.tabs[closeIndex]!;
+    const tabs = panel.tabs.filter((tab) => tab.id !== tabId);
+    const fallbackTab = tabs[Math.max(0, closeIndex - 1)] ?? tabs[0] ?? null;
+    console.info("[workspace] 关闭右侧 WebPanel 标签页", {
+      tabId,
+      title: closingTab.title,
+      remainingTabs: tabs.length,
+    });
+    set({
+      webPanel: {
+        ...panel,
+        isOpen: tabs.length > 0,
+        tabs,
+        ...panelFieldsFromTab(fallbackTab),
+      },
+    });
+  },
+
+  createWebPanelTab() {
+    const panel = get().webPanel;
+    const tab: WebPanelTab = {
+      id: createWebPanelTabId(),
+      viewPath: null,
+      title: "新面板",
+      data: null,
+      createdAt: new Date().toISOString(),
+    };
+    console.info("[workspace] 新增右侧空白 WebPanel 标签页", { tabId: tab.id });
+    set({
+      webPanel: {
+        ...panel,
+        isOpen: true,
+        tabs: [...panel.tabs, tab],
+        ...panelFieldsFromTab(tab),
       },
     });
   },
@@ -2335,8 +2450,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   updateWebPanelData(data) {
     const panel = get().webPanel;
     if (panel.isOpen) {
+      const tabs = panel.tabs.map((tab) =>
+        tab.id === panel.activeTabId ? { ...tab, data } : tab,
+      );
       set({
-        webPanel: { ...panel, data },
+        webPanel: { ...panel, tabs, data },
       });
     }
   },

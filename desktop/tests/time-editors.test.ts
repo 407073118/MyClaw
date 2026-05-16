@@ -321,7 +321,7 @@ describe("time editors", () => {
             ownerId: "sp-1",
             status: "scheduled",
             source: "manual",
-            cronExpression: "0 9 * * 1",
+            cronExpression: "0 9 * * 1-5",
             executor: "silicon_person",
             executorTargetId: "sp-1",
             nextRunAt: "2026-04-20T01:00:00.000Z",
@@ -346,10 +346,12 @@ describe("time editors", () => {
       },
     } as any);
 
-    renderPage();
+    const { container } = renderPage();
 
     const weekButtons = screen.getAllByRole("button", { name: "本周" });
     fireEvent.click(weekButtons[weekButtons.length - 1]);
+
+    expect(container.querySelector(".date-navigator__label")?.textContent).toBe("4月20日周一 - 4月26日周日");
 
     const headers = within(screen.getByTestId("week-planner-grid")).getAllByTestId("week-planner-day-header");
     expect(headers.map((header) => within(header).getByTestId("week-planner-weekday").textContent)).toEqual([
@@ -362,6 +364,11 @@ describe("time editors", () => {
       "日",
     ]);
     expect(within(screen.getByTestId("week-planner-lane-morning-2026-04-20")).getByText("晨间巡检")).toBeTruthy();
+    expect(within(screen.getByTestId("week-planner-lane-morning-2026-04-21")).getByText("晨间巡检")).toBeTruthy();
+    expect(within(screen.getByTestId("week-planner-lane-morning-2026-04-22")).getByText("晨间巡检")).toBeTruthy();
+    expect(within(screen.getByTestId("week-planner-lane-morning-2026-04-23")).getByText("晨间巡检")).toBeTruthy();
+    expect(within(screen.getByTestId("week-planner-lane-morning-2026-04-24")).getByText("晨间巡检")).toBeTruthy();
+    expect(within(screen.getByTestId("week-planner-lane-morning-2026-04-25")).queryByText("晨间巡检")).toBeNull();
     expect(within(screen.getByTestId("week-planner-grid")).queryByText("后台巡检")).toBeNull();
     expect(within(screen.getByTestId("week-planner-side-rail")).getByText("后台巡检")).toBeTruthy();
   });

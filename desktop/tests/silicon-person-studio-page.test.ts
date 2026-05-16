@@ -99,7 +99,19 @@ const mocks = vi.hoisted(() => {
     defaultModelProfileId: "model-1",
     time: {
       scheduleJobs: [],
+      executionRuns: [],
     },
+    webPanel: {
+      isOpen: false,
+      viewPath: null,
+      title: "",
+      data: null,
+      panelWidth: 420,
+      tabs: [],
+      activeTabId: null,
+    },
+    createWebPanelTab: vi.fn(),
+    closeWebPanel: vi.fn(),
     loadSiliconPersonById: vi.fn().mockResolvedValue(null),
     loadWorkflows: vi.fn().mockResolvedValue([]),
     updateSiliconPerson: vi.fn((siliconPersonId: string, input: Record<string, unknown>) => {
@@ -174,6 +186,9 @@ describe("Silicon person studio page", () => {
     mocks.workspace.sendSiliconPersonMessage.mockClear();
     mocks.workspace.startSiliconPersonWorkflowRun.mockClear();
     mocks.workspace.markSiliconPersonSessionRead.mockClear();
+    mocks.workspace.createWebPanelTab.mockClear();
+    mocks.workspace.closeWebPanel.mockClear();
+    mocks.workspace.webPanel.isOpen = false;
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });
 
@@ -206,6 +221,8 @@ describe("Silicon person studio page", () => {
     expect(screen.getByTestId("silicon-person-composer-input")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-session-pill-session-1")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-message-list").textContent).toContain("Break the problem into three steps first.");
+    expect(screen.queryByText("会话文件")).toBeNull();
+    expect(screen.queryByText("当前对话产生的文件")).toBeNull();
     expect(mocks.workspace.markSiliconPersonSessionRead).toHaveBeenCalledWith("sp-1", "session-1");
   });
 
@@ -227,10 +244,77 @@ describe("Silicon person studio page", () => {
     });
   });
 
+  it("places the WebPanel action to the right of the new session action", async () => {
+    await renderPage();
+
+    const sessionActions = screen.getByTestId("silicon-person-session-actions");
+    const createSession = screen.getByTestId("silicon-person-create-session");
+    const webPanelToggle = screen.getByTestId("silicon-person-web-panel-toggle");
+
+    expect(Array.from(sessionActions.children)).toEqual([createSession, webPanelToggle]);
+    expect(webPanelToggle.getAttribute("aria-label")).toBe("打开 WebPanel");
+
+    fireEvent.click(webPanelToggle);
+
+    expect(mocks.workspace.createWebPanelTab).toHaveBeenCalledTimes(1);
+    expect(mocks.workspace.closeWebPanel).not.toHaveBeenCalled();
+  });
+
+  it("marks the silicon person WebPanel action active and closes it when already open", async () => {
+    mocks.workspace.webPanel.isOpen = true;
+
+    await renderPage();
+
+    const webPanelToggle = screen.getByTestId("silicon-person-web-panel-toggle");
+
+    expect(webPanelToggle.getAttribute("aria-label")).toBe("收起 WebPanel");
+    expect(webPanelToggle.className).toContain("is-open");
+
+    fireEvent.click(webPanelToggle);
+
+    expect(mocks.workspace.closeWebPanel).toHaveBeenCalledTimes(1);
+    expect(mocks.workspace.createWebPanelTab).not.toHaveBeenCalled();
+  });
+
+  it("places persona editing in basic info and keeps directories in system information", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getByTestId("studio-tab-profile"));
+
+    const basicInfo = screen.getByTestId("profile-tab-form");
+    expect(basicInfo.textContent).toContain("人格画像");
+    expect(basicInfo.querySelector("[data-testid='profile-tab-soul']")).toBeTruthy();
+    expect(basicInfo.textContent).not.toContain("数据目录");
+    expect(basicInfo.textContent).not.toContain("技能目录");
+    expect(screen.queryByTestId("profile-persona-form")).toBeNull();
+
+    const systemInfo = screen.getByTestId("profile-system-info");
+    await waitFor(() => {
+      expect(systemInfo.textContent).toContain("数据目录");
+      expect(systemInfo.textContent).toContain("技能目录");
+      expect(systemInfo.textContent).toContain("C:/data/myClaw/silicon-persons/sp-1");
+      expect(systemInfo.textContent).toContain("C:/data/myClaw/silicon-persons/sp-1/skills");
+    });
+  });
+
   it("offers the xhigh reasoning preset and persists it from the profile tab", async () => {
     await renderPage();
 
     fireEvent.click(screen.getByTestId("studio-tab-profile"));
+    const reasoningPanel = screen.getByTestId("profile-tab-reasoning-panel");
+    const effortOptions = screen.getByTestId("profile-tab-reasoning-effort");
+
+    expect(reasoningPanel.className).toContain("reasoning-panel--compact");
+    expect(effortOptions.children).toHaveLength(4);
+    expect(reasoningPanel.textContent).toContain("快速");
+    expect(reasoningPanel.textContent).toContain("思考");
+    expect(reasoningPanel.textContent).toContain("深度");
+    expect(reasoningPanel.textContent).toContain("极深");
+    expect(reasoningPanel.textContent).not.toContain("低延迟响应");
+    expect(reasoningPanel.textContent).not.toContain("默认推理深度");
+    expect(reasoningPanel.textContent).not.toContain("复杂拆解");
+    expect(reasoningPanel.textContent).not.toContain("thinking budget");
+
     fireEvent.click(screen.getByRole("button", { name: "极深" }));
     fireEvent.click(screen.getByTestId("profile-tab-save"));
     fireEvent.click(await screen.findByText("确认保存"));

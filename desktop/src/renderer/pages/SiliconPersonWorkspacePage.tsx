@@ -8,6 +8,8 @@ import {
   Clock,
   ListTodo,
   MessageSquare,
+  PanelRightClose,
+  PanelRightOpen,
   Pause,
   Pencil,
   Play,
@@ -20,10 +22,9 @@ import {
   Workflow,
   Wrench,
 } from "lucide-react";
-import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, ExecutionRun, McpServer, ModelProfile, ScheduleJob, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
+import type { ApprovalDecision, ApprovalRequest, ExecutionRun, McpServer, ModelProfile, ScheduleJob, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
 import MarkdownView from "../components/MarkdownView";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
-import WorkFilesPanel from "../components/WorkFilesPanel";
 import ScheduleJobEditor, { type ScheduleJobEditorSubmitInput } from "../components/time/ScheduleJobEditor";
 import { useWorkspaceStore } from "../stores/workspace";
 import { formatJobFrequency } from "../utils/frequency";
@@ -218,17 +219,9 @@ export default function SiliconPersonWorkspacePage() {
   const currentSession = currentSessionSummary
     ? sessionMap.get(currentSessionSummary.id) ?? null
     : null;
-  const workFilesScope = useMemo<ArtifactScopeRef | null>(() => {
-    if (currentSessionSummary?.id) {
-      return { scopeKind: "session", scopeId: currentSessionSummary.id };
-    }
-    if (siliconPersonId) {
-      return { scopeKind: "siliconPerson", scopeId: siliconPersonId };
-    }
-    return null;
-  }, [currentSessionSummary?.id, siliconPersonId]);
   const currentSessionTasks = currentSession?.tasks ?? [];
   const currentSessionMessages = currentSession?.messages ?? [];
+  const webPanelIsOpen = Boolean(workspace.webPanel?.isOpen);
   const currentSessionApprovalRequests = useMemo(
     () => workspace.approvalRequests.filter((request) => request.sessionId === currentSessionSummary?.id),
     [workspace.approvalRequests, currentSessionSummary?.id, viewVersion],
@@ -712,6 +705,20 @@ export default function SiliconPersonWorkspacePage() {
     }
   }
 
+  /** 切换当前硅基员工工作台里的 WebPanel，保持面板入口贴近会话操作区。 */
+  function handleToggleWebPanel() {
+    console.info("[silicon-person-studio] 切换会话栏 WebPanel 入口", {
+      siliconPersonId,
+      sessionId: currentSessionSummary?.id ?? null,
+      open: !webPanelIsOpen,
+    });
+    if (webPanelIsOpen) {
+      workspace.closeWebPanel();
+      return;
+    }
+    workspace.createWebPanelTab();
+  }
+
   /** 显式切换硅基员工 currentSession，保证本页查看与消息路由一致。 */
   async function handleSwitchSession(sessionId: string) {
     if (!siliconPersonId) return;
@@ -991,15 +998,28 @@ export default function SiliconPersonWorkspacePage() {
                       );
                     })}
                 </div>
-                <button
-                  type="button"
-                  className="btn-toolbar"
-                  data-testid="silicon-person-create-session"
-                  onClick={() => void handleCreateSession()}
-                  disabled={isCreatingSession}
-                >
-                  {isCreatingSession ? "新建中..." : "新建会话"}
-                </button>
+                <div className="ws-session-actions" data-testid="silicon-person-session-actions">
+                  <button
+                    type="button"
+                    className="btn-toolbar"
+                    data-testid="silicon-person-create-session"
+                    onClick={() => void handleCreateSession()}
+                    disabled={isCreatingSession}
+                  >
+                    {isCreatingSession ? "新建中..." : "新建会话"}
+                  </button>
+                  <button
+                    type="button"
+                    className={`ws-session-web-panel-toggle${webPanelIsOpen ? " is-open" : ""}`}
+                    data-testid="silicon-person-web-panel-toggle"
+                    onClick={handleToggleWebPanel}
+                    aria-label={webPanelIsOpen ? "收起 WebPanel" : "打开 WebPanel"}
+                    title={webPanelIsOpen ? "收起 WebPanel" : "打开 WebPanel"}
+                    aria-pressed={webPanelIsOpen}
+                  >
+                    {webPanelIsOpen ? <PanelRightClose size={15} aria-hidden /> : <PanelRightOpen size={15} aria-hidden />}
+                  </button>
+                </div>
               </div>
 
               {sessionError && (
@@ -1139,15 +1159,6 @@ export default function SiliconPersonWorkspacePage() {
                 </>
               )}
             </article>
-            <article className="ws-card">
-              <WorkFilesPanel
-                scope={workFilesScope}
-                mode="page"
-                title="会话文件"
-                description="当前对话产生的文件"
-                emptyHint="暂无文件——对话产生的文件会显示在这里"
-              />
-            </article>
           </section>
         )}
         {/* ═══════════ 资料 Tab ═══════════ */}
@@ -1166,27 +1177,8 @@ export default function SiliconPersonWorkspacePage() {
                     <span>职位头衔</span>
                     <input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} data-testid="profile-tab-title" type="text" />
                   </label>
-                  {personPaths.personDir && (
-                    <div className="ws-field ws-field--full">
-                      <span>数据目录</span>
-                      <div className="ws-path-display" title={personPaths.personDir}>{personPaths.personDir}</div>
-                    </div>
-                  )}
-                {personPaths.skillsDir && (
-                    <div className="ws-field ws-field--full">
-                      <span>技能目录</span>
-                      <div className="ws-path-display" title={personPaths.skillsDir}>{personPaths.skillsDir}</div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* 身份与人格 */}
-              <div className="ws-card ws-form-card" data-testid="profile-persona-form">
-                <h3>人格画像</h3>
-                <div className="ws-form-fields">
                   <label className="ws-field ws-field--full">
-                    <span>人格定义</span>
+                    <span>人格画像</span>
                     <textarea value={draftSoul} onChange={(e) => setDraftSoul(e.target.value)} data-testid="profile-tab-soul" rows={6} placeholder="定义这个硅基员工的行为特点和人格风格。示例：这是一个偏向严谨、善于数据分析、回答稳定可复现的助手。" />
                   </label>
                 </div>
@@ -1225,6 +1217,9 @@ export default function SiliconPersonWorkspacePage() {
                       effort={draftReasoningEffort}
                       onEnabledChange={setDraftReasoningEnabled}
                       onEffortChange={setDraftReasoningEffort}
+                      variant="compact"
+                      panelTestId="profile-tab-reasoning-panel"
+                      effortTestId="profile-tab-reasoning-effort"
                     />
                   </div>
                   <label className="ws-field">
@@ -1239,7 +1234,7 @@ export default function SiliconPersonWorkspacePage() {
               </div>
 
               {/* 系统信息 */}
-              <div className="ws-card">
+              <div className="ws-card" data-testid="profile-system-info">
                 <h3>系统信息</h3>
                 <div className="ws-readonly-grid">
                   <div className="ws-stat-cell">
@@ -1254,6 +1249,22 @@ export default function SiliconPersonWorkspacePage() {
                     <span className="ws-stat-label">更新时间</span>
                     <span className="ws-stat-value">{siliconPerson.updatedAt}</span>
                   </div>
+                  {personPaths.personDir && (
+                    <div className="ws-stat-cell">
+                      <span className="ws-stat-label">数据目录</span>
+                      <span className="ws-stat-value">
+                        <span className="ws-path-display" title={personPaths.personDir}>{personPaths.personDir}</span>
+                      </span>
+                    </div>
+                  )}
+                  {personPaths.skillsDir && (
+                    <div className="ws-stat-cell">
+                      <span className="ws-stat-label">技能目录</span>
+                      <span className="ws-stat-value">
+                        <span className="ws-path-display" title={personPaths.skillsDir}>{personPaths.skillsDir}</span>
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1506,6 +1517,7 @@ export default function SiliconPersonWorkspacePage() {
                     ownerId={siliconPersonId}
                     hideSiliconPersonSelector={chosenJobType === "silicon_person"}
                     siliconPersonContextName={siliconPerson?.name}
+                    presentation="embedded"
                     onSave={(_input, _mode) => void handleSaveScheduleJob(_input, _mode)}
                     onCancel={() => { setChosenJobType(null); setEditingJob(null); }}
                   />
@@ -1714,6 +1726,7 @@ export default function SiliconPersonWorkspacePage() {
         /* ── Session Bar ── */
         .ws-session-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
         .ws-session-pills { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0; }
+        .ws-session-actions { display: inline-flex; align-items: center; gap: 8px; flex: 0 0 auto; }
         .ws-session-pill {
           display: inline-flex; align-items: center; gap: 6px;
           max-width: 220px; min-width: 0;
@@ -1755,6 +1768,34 @@ export default function SiliconPersonWorkspacePage() {
           background: rgba(239, 68, 68, 0.08);
         }
         .ws-session-delete:disabled { cursor: not-allowed; opacity: 0.4; }
+        .ws-session-web-panel-toggle {
+          width: 32px;
+          height: 32px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: var(--bg-surface);
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .ws-session-web-panel-toggle:hover {
+          background: var(--bg-surface-hover);
+          border-color: var(--glass-border-hover);
+          color: var(--text-primary);
+        }
+        .ws-session-web-panel-toggle:focus-visible {
+          outline: 2px solid var(--accent-cyan);
+          outline-offset: 2px;
+        }
+        .ws-session-web-panel-toggle.is-open {
+          color: var(--accent-cyan);
+          border-color: rgba(16, 163, 127, 0.34);
+          background: rgba(16, 163, 127, 0.12);
+          box-shadow: inset 0 0 0 1px rgba(16, 163, 127, 0.12);
+        }
         .ws-session-badge { min-width: 16px; height: 16px; border-radius: 999px; background: var(--accent-cyan); color: #fff; font-size: 10px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; }
         .ws-session-badge.warn { background: var(--status-yellow); color: #000; }
         .ws-empty-hint { color: var(--text-muted); font-size: 12px; }
@@ -1926,7 +1967,7 @@ export default function SiliconPersonWorkspacePage() {
         .ws-field input:focus, .ws-field textarea:focus, .ws-field select:focus { border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16,163,127,0.15); outline: none; background: rgba(0,0,0,0.3); }
         .ws-field select { appearance: none; -webkit-appearance: none; padding-right: 36px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; }
         .ws-field select option { background: var(--bg-card); color: var(--text-primary); padding: 8px 12px; }
-        .ws-path-display { width: 100%; padding: 10px 14px; border: 1px dashed var(--glass-border); border-radius: var(--radius-md); background: rgba(0,0,0,0.1); color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; cursor: text; box-sizing: border-box; }
+        .ws-path-display { display: block; width: 100%; padding: 10px 14px; border: 1px dashed var(--glass-border); border-radius: var(--radius-md); background: rgba(0,0,0,0.1); color: var(--text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.78rem; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; user-select: all; cursor: text; box-sizing: border-box; }
 
         /* ── Readonly Stats（dl 描述列表模式，桌面应用紧凑展示）── */
         .ws-readonly-grid {
@@ -1957,7 +1998,7 @@ export default function SiliconPersonWorkspacePage() {
         .ws-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
         .ws-text-muted { color: var(--text-muted); }
 
-        /* 鈹€鈹€ Capabilities 鈹€鈹€ */
+        /* ── Capabilities ── */
         .ws-cap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
         .ws-cap-header > div:first-child { min-width: 0; flex: 1; }
         .ws-bind-row { display: flex; gap: 8px; align-items: center; }
@@ -1969,6 +2010,37 @@ export default function SiliconPersonWorkspacePage() {
         /* ── Schedule Form (定时任务表单容器) ── */
         .ws-schedule-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 16px; }
         .time-editor-form { display: grid; gap: 12px; }
+        .schedule-job-editor--embedded {
+          padding: 12px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-lg);
+          background: rgba(255,255,255,0.025);
+        }
+        .schedule-job-editor__context {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          min-width: 0;
+          padding: 2px 2px 12px;
+          border-bottom: 1px solid var(--glass-border);
+        }
+        .schedule-job-editor__context > div {
+          display: grid;
+          gap: 2px;
+          min-width: 0;
+          flex: 1;
+        }
+        .schedule-job-editor__context strong {
+          color: var(--text-primary);
+          font-size: 13px;
+          font-weight: 600;
+          line-height: 1.4;
+        }
+        .schedule-job-editor__context span:not(.tag) {
+          color: var(--text-muted);
+          font-size: 12px;
+          line-height: 1.45;
+        }
         .time-editor-field { min-width: 0; display: grid; gap: 6px; color: var(--text-secondary); font-size: 12px; }
         .time-editor-field input,
         .time-editor-field select,
@@ -1982,6 +2054,15 @@ export default function SiliconPersonWorkspacePage() {
           background: var(--bg-base);
           color: var(--text-primary);
           font-size: 13px;
+          line-height: 1.45;
+        }
+        .time-editor-field textarea { resize: vertical; }
+        .time-editor-field input:focus,
+        .time-editor-field select:focus,
+        .time-editor-field textarea:focus {
+          border-color: var(--accent-cyan);
+          box-shadow: 0 0 0 3px rgba(16,163,127,0.14);
+          outline: none;
         }
         .time-editor-submit {
           min-height: 34px;
@@ -1999,8 +2080,15 @@ export default function SiliconPersonWorkspacePage() {
           color: var(--text-secondary);
           cursor: pointer;
         }
-        .frequency-picker,
-        .frequency-picker__detail { display: grid; gap: 10px; }
+        .frequency-picker { display: grid; gap: 10px; }
+        .frequency-picker__detail {
+          display: grid;
+          gap: 10px;
+          padding: 10px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: rgba(0,0,0,0.12);
+        }
         .frequency-picker__chips,
         .frequency-picker__weekdays,
         .reasoning-chip-group { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -2023,6 +2111,9 @@ export default function SiliconPersonWorkspacePage() {
           color: var(--accent-cyan);
         }
         .schedule-job-editor__actions { display: flex; justify-content: flex-end; gap: 8px; }
+        .schedule-job-editor--embedded .schedule-job-editor__actions {
+          padding-top: 2px;
+        }
 
         /* ── Schedule Type Picker (定时任务类型选择卡片) ── */
         .ws-schedule-type-picker {
@@ -2130,6 +2221,27 @@ export default function SiliconPersonWorkspacePage() {
           color: var(--text-muted);
           font-size: 12px;
           font-weight: 700;
+        }
+        .schedule-job-editor--embedded .schedule-job-editor__section {
+          padding: 0;
+          border: none;
+          background: transparent;
+        }
+        .schedule-job-editor--embedded .schedule-job-editor__frequency {
+          margin: 0;
+          padding: 0;
+          border: none;
+          min-inline-size: 0;
+        }
+        .schedule-job-editor--embedded .schedule-job-editor__frequency legend {
+          padding: 0;
+          margin-bottom: 6px;
+          color: var(--text-secondary);
+          font-size: 12px;
+        }
+        .schedule-job-editor--embedded .schedule-job-preview {
+          padding: 10px 12px;
+          background: rgba(0,0,0,0.12);
         }
         .schedule-job-editor__locked-target {
           padding: 10px 12px;

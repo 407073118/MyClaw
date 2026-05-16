@@ -11,6 +11,17 @@ const mocks = vi.hoisted(() => {
     loading: false,
     error: null,
     requiresInitialSetup: false,
+    webPanel: {
+      isOpen: false,
+      viewPath: null,
+      title: "",
+      data: null,
+      panelWidth: 420,
+      tabs: [],
+      activeTabId: null,
+    },
+    createWebPanelTab: vi.fn(),
+    closeWebPanel: vi.fn(),
     models: [],
     defaultModelProfileId: null,
     loadBootstrap: vi.fn(),
@@ -115,7 +126,10 @@ describe("AppShell time assistant presence", () => {
     mocks.workspace.loading = false;
     mocks.workspace.error = null;
     mocks.workspace.requiresInitialSetup = false;
+    mocks.workspace.webPanel.isOpen = false;
     mocks.workspace.loadBootstrap.mockReset();
+    mocks.workspace.createWebPanelTab.mockReset();
+    mocks.workspace.closeWebPanel.mockReset();
     mocks.workspace.setActiveSiliconPersonId.mockReset();
     mocks.auth.logout.mockReset();
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
@@ -164,6 +178,38 @@ describe("AppShell time assistant presence", () => {
     expect(screen.queryByTestId("floating-time-capsule")).toBeNull();
 
     vi.useRealTimers();
+  });
+
+  it("does not render the WebPanel toggle in the global titlebar", async () => {
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        platform: "win32",
+        onWorkflowStream: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: AppShell } = await import("../src/renderer/layouts/AppShell");
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ["/chat"] },
+        React.createElement(
+          Routes,
+          null,
+          React.createElement(
+            Route,
+            { element: React.createElement(AppShell) },
+            React.createElement(Route, { path: "/chat", element: React.createElement("div", null, "chat body") }),
+          ),
+        ),
+      ),
+    );
+
+    expect(screen.queryByTestId("titlebar-web-panel-toggle")).toBeNull();
+    expect(mocks.workspace.closeWebPanel).not.toHaveBeenCalled();
+    expect(mocks.workspace.createWebPanelTab).not.toHaveBeenCalled();
   });
 
   it("does not retry bootstrap automatically while an error is visible", async () => {

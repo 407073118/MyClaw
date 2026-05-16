@@ -30,6 +30,9 @@ export function matchesCronField(field: string, value: number): boolean {
       const step = Number(part.slice(2));
       return Number.isFinite(step) && step > 0 && value % step === 0;
     }
+    if (part.includes("-")) {
+      return matchesCronRange(part, value);
+    }
     const expected = Number(part);
     if (!Number.isFinite(expected)) {
       return false;
@@ -39,6 +42,20 @@ export function matchesCronField(field: string, value: number): boolean {
     }
     return value === expected;
   });
+}
+
+/** 判断 cron 范围字段是否命中，例如工作日 `1-5`。 */
+function matchesCronRange(part: string, value: number): boolean {
+  const [startText, endText] = part.split("-");
+  const start = Number(startText);
+  const end = Number(endText);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return false;
+  }
+  if (start <= end) {
+    return (value >= start && value <= end) || (value === 0 && start <= 7 && end >= 7);
+  }
+  return value >= start || value <= end || (value === 0 && (start <= 7 || end >= 7));
 }
 
 type CronParts = {

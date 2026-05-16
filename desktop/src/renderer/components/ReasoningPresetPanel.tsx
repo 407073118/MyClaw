@@ -45,6 +45,8 @@ type ReasoningPresetPanelProps = {
   effort: ReasoningEffortLevel;
   onEnabledChange: (enabled: boolean) => void;
   onEffortChange: (effort: ReasoningEffortLevel) => void;
+  variant?: "full" | "compact";
+  panelTestId?: string;
   effortTestId?: string;
 };
 
@@ -55,21 +57,27 @@ export default function ReasoningPresetPanel({
   effort,
   onEnabledChange,
   onEffortChange,
+  variant = "full",
+  panelTestId,
   effortTestId,
 }: ReasoningPresetPanelProps) {
-  return (
-    <div className="reasoning-panel">
-      <div className="reasoning-panel__header">
-        <div className="reasoning-panel__header-copy">
-          <span className="reasoning-panel__eyebrow">{spec.title}</span>
-          <p className="reasoning-panel__description">{spec.description}</p>
-        </div>
-        <span className={`tag tag--${badgeTagVariant(spec.kind)}`}>
-          {REASONING_KIND_BADGE[spec.kind]}
-        </span>
-      </div>
+  const compact = variant === "compact";
 
-      {spec.supportsToggle && (
+  return (
+    <div className={`reasoning-panel${compact ? " reasoning-panel--compact" : ""}`} data-testid={panelTestId}>
+      {!compact && (
+        <div className="reasoning-panel__header">
+          <div className="reasoning-panel__header-copy">
+            <span className="reasoning-panel__eyebrow">{spec.title}</span>
+            <p className="reasoning-panel__description">{spec.description}</p>
+          </div>
+          <span className={`tag tag--${badgeTagVariant(spec.kind)}`}>
+            {REASONING_KIND_BADGE[spec.kind]}
+          </span>
+        </div>
+      )}
+
+      {!compact && spec.supportsToggle && (
         <div className="reasoning-panel__toggle" role="group" aria-label="thinking 开关">
           <button
             type="button"
@@ -90,19 +98,19 @@ export default function ReasoningPresetPanel({
         </div>
       )}
 
-      {spec.kind === "always_on" && (
+      {!compact && spec.kind === "always_on" && (
         <div className="reasoning-panel__note reasoning-panel__note--success">
           当前模型始终开启 thinking，无需额外配置。
         </div>
       )}
 
-      {spec.kind === "unsupported" && (
+      {!compact && spec.kind === "unsupported" && (
         <div className="reasoning-panel__note">
           当前模型不支持手动调节 thinking，系统会按普通回答处理。
         </div>
       )}
 
-      {spec.supportsToggle && !enabled && spec.supportsEffort && (
+      {!compact && spec.supportsToggle && !enabled && spec.supportsEffort && (
         <div className="reasoning-panel__note">
           当前已关闭 thinking，重新开启后会按你选择的档位生效。
         </div>
@@ -120,8 +128,8 @@ export default function ReasoningPresetPanel({
             onClick={() => onEffortChange(preset.level)}
           >
             <span className="reasoning-panel__option-label">{preset.label}</span>
-            <span className="reasoning-panel__option-title">{preset.title}</span>
-            <span className="reasoning-panel__option-description">{preset.description}</span>
+            {!compact && <span className="reasoning-panel__option-title">{preset.title}</span>}
+            {!compact && <span className="reasoning-panel__option-description">{preset.description}</span>}
           </button>
         ))}
       </div>
@@ -137,6 +145,14 @@ export default function ReasoningPresetPanel({
           background:
             linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.015));
           box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        }
+
+        .reasoning-panel--compact {
+          padding: 0;
+          border: 0;
+          border-radius: 0;
+          background: transparent;
+          box-shadow: none;
         }
 
         .reasoning-panel__header {
@@ -225,6 +241,11 @@ export default function ReasoningPresetPanel({
           gap: 10px;
         }
 
+        .reasoning-panel--compact .reasoning-panel__grid {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+          gap: 8px;
+        }
+
         .reasoning-panel__option {
           display: flex;
           flex-direction: column;
@@ -235,6 +256,15 @@ export default function ReasoningPresetPanel({
           border-radius: var(--radius-lg);
           text-align: left;
           cursor: pointer;
+        }
+
+        .reasoning-panel--compact .reasoning-panel__option {
+          min-height: 36px;
+          align-items: center;
+          justify-content: center;
+          padding: 0 12px;
+          border-radius: var(--radius-md);
+          text-align: center;
         }
 
         .reasoning-panel__option.is-disabled {
@@ -276,6 +306,10 @@ export default function ReasoningPresetPanel({
 
           .reasoning-panel__grid {
             grid-template-columns: 1fr;
+          }
+
+          .reasoning-panel--compact .reasoning-panel__grid {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
           }
         }
       `}</style>

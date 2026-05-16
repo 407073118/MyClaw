@@ -57,6 +57,11 @@ export function registerWebPanelHandlers(ctx: RuntimeContext, panelViewManager?:
     return { success: true };
   });
 
+  ipcMain.handle("panel:update-data", async (_event, data: unknown) => {
+    panelViewManager?.updateData(data);
+    return { success: true };
+  });
+
   ipcMain.handle("panel:close", async () => {
     panelViewManager?.close();
     return { success: true };

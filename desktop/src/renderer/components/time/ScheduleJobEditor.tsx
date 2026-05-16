@@ -62,6 +62,7 @@ type Props = {
   ownerId?: string;
   hideSiliconPersonSelector?: boolean;
   siliconPersonContextName?: string;
+  presentation?: "standard" | "embedded";
   onSave: (input: ScheduleJobEditorSubmitInput, mode: ScheduleJobEditorMode) => void | Promise<void>;
   onCancel?: () => void;
 };
@@ -84,6 +85,7 @@ export default function ScheduleJobEditor({
   ownerId,
   hideSiliconPersonSelector = false,
   siliconPersonContextName,
+  presentation = "standard",
   onSave,
   onCancel,
 }: Props) {
@@ -117,6 +119,11 @@ export default function ScheduleJobEditor({
     () => buildPreviewNextRunLabel(frequency, timezone, initialJob?.nextRunAt),
     [frequency, timezone, initialJob?.nextRunAt],
   );
+  const isEmbedded = presentation === "embedded";
+  const editorClassName = `time-editor-form schedule-job-editor${isEmbedded ? " schedule-job-editor--embedded" : ""}`;
+  const targetName = executor === "workflow" ? selectedWorkflowName : selectedPersonName;
+  const summaryText = buildEditorSummaryText(executor, targetName);
+  const summaryHint = buildEditorSummaryHint(executor);
 
   // executor 切换时（理论上 ComposerModal 已锁，但保险起见兼容）：清掉 target
   useEffect(() => {
@@ -180,18 +187,29 @@ export default function ScheduleJobEditor({
   }
 
   return (
-    <form className="time-editor-form schedule-job-editor" onSubmit={handleSubmit}>
-      <div className="schedule-job-editor__type-line">
-        <span className={`tag job-type-chip job-type-chip--${executor}`}>{EXECUTOR_LABELS[executor]}</span>
-        {mode === "create" && onCancel ? (
-          <button type="button" className="schedule-job-editor__back" onClick={onCancel}>
-            ← 换类型
-          </button>
-        ) : null}
-        {mode === "update" ? (
-          <span className="schedule-job-editor__mode-hint">编辑模式</span>
-        ) : null}
-      </div>
+    <form className={editorClassName} onSubmit={handleSubmit}>
+      {isEmbedded ? (
+        <div className="schedule-job-editor__context">
+          <span className={`tag job-type-chip job-type-chip--${executor}`}>{EXECUTOR_LABELS[executor]}</span>
+          <div>
+            <strong>{summaryText}</strong>
+            <span>{summaryHint}</span>
+          </div>
+          {mode === "update" ? <span className="schedule-job-editor__mode-hint">编辑模式</span> : null}
+        </div>
+      ) : (
+        <div className="schedule-job-editor__type-line">
+          <span className={`tag job-type-chip job-type-chip--${executor}`}>{EXECUTOR_LABELS[executor]}</span>
+          {mode === "create" && onCancel ? (
+            <button type="button" className="schedule-job-editor__back" onClick={onCancel}>
+              ← 换类型
+            </button>
+          ) : null}
+          {mode === "update" ? (
+            <span className="schedule-job-editor__mode-hint">编辑模式</span>
+          ) : null}
+        </div>
+      )}
 
       <section className="schedule-job-editor__section" aria-label="任务内容">
         <div className="schedule-job-editor__step">1 · 任务内容</div>
@@ -361,7 +379,7 @@ export default function ScheduleJobEditor({
         executor={executor}
         title={title}
         description={description}
-        targetName={executor === "workflow" ? selectedWorkflowName : selectedPersonName}
+        targetName={targetName}
         frequencyLabel={frequencyLabel}
         nextRunLabel={nextRunLabel}
         sessionMode={sessionMode}
@@ -377,6 +395,20 @@ export default function ScheduleJobEditor({
       </div>
     </form>
   );
+}
+
+/** 生成编辑器内嵌场景的主说明，减少重复类型切换带来的阅读负担。 */
+function buildEditorSummaryText(executor: ScheduleJobExecutor, targetName: string): string {
+  if (executor === "workflow") return targetName ? `将按时运行工作流 ${targetName}` : "选择工作流后按时运行";
+  if (executor === "silicon_person") return targetName ? `将按时向 ${targetName} 派发消息` : "选择员工后按时派发消息";
+  return "将按时由默认助手执行提示词";
+}
+
+/** 生成编辑器内嵌场景的辅助说明，说明保存后的记录归属。 */
+function buildEditorSummaryHint(executor: ScheduleJobExecutor): string {
+  if (executor === "workflow") return "保存后进入当前员工的定时任务列表，到点运行绑定的工作流。";
+  if (executor === "silicon_person") return "保存后进入该员工的定时任务列表，到点写入执行记录。";
+  return "保存后会在时间中心触发，并写入定时任务执行记录。";
 }
 
 /** 渲染提交前确认预览，把 who / when / what / result 讲清楚。 */

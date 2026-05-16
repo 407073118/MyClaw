@@ -128,7 +128,7 @@ describe("silicon person scheduled jobs", () => {
     fireEvent.change(screen.getByLabelText("间隔分钟（5 - 1440）"), { target: { value: "120" } });
     fireEvent.change(screen.getByLabelText("派发消息"), { target: { value: "检查今日运营异常并回复结果。" } });
 
-    expect(screen.getByText(/向 运营助理 派发/)).toBeTruthy();
+    expect(screen.getByText("向 运营助理 派发")).toBeTruthy();
     expect(screen.getByText(/下次运行/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "保存定时任务" }));
@@ -147,6 +147,18 @@ describe("silicon person scheduled jobs", () => {
         }),
       );
     });
+  });
+
+  it("uses a compact editor inside the employee workspace", async () => {
+    const { default: SiliconPersonWorkspacePage } = await import("../src/renderer/pages/SiliconPersonWorkspacePage");
+
+    renderStudio(SiliconPersonWorkspacePage);
+
+    fireEvent.click(screen.getByRole("button", { name: "能力" }));
+    fireEvent.click(screen.getByRole("button", { name: "定时派发给员工" }));
+
+    expect(screen.getByText("将按时向 运营助理 派发消息")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "← 换类型" })).toBeNull();
   });
 
   it("shows next run, latest failure and a run-now action for employee jobs", async () => {

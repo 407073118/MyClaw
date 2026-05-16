@@ -21,6 +21,17 @@ const mocks = vi.hoisted(() => {
     loading: false,
     error: "",
     requiresInitialSetup: false,
+    webPanel: {
+      isOpen: false,
+      viewPath: null,
+      title: "",
+      data: null,
+      panelWidth: 420,
+      tabs: [],
+      activeTabId: null,
+    },
+    createWebPanelTab: vi.fn(),
+    closeWebPanel: vi.fn(),
     time: {
       calendarEvents: [],
       reminders: [],

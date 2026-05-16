@@ -638,6 +638,7 @@ export default function TimeCenterPage() {
             selectedDate={selectedDate}
             todayDateKey={todayDateKey}
             timezone={timezone}
+            activeView={activeView}
             onSelectDate={setSelectedDate}
             onSwitchToWeek={() => setActiveView("week")}
           />
@@ -977,15 +978,21 @@ function DateNavigator({
   selectedDate,
   todayDateKey,
   timezone,
+  activeView,
   onSelectDate,
   onSwitchToWeek,
 }: {
   selectedDate: string;
   todayDateKey: string;
   timezone: string;
+  activeView: PlanningView;
   onSelectDate: (dateKey: string) => void;
   onSwitchToWeek: () => void;
 }) {
+  const displayLabel = activeView === "week"
+    ? formatWeekRange(buildWeekDays(selectedDate), timezone)
+    : formatDateTitle(selectedDate, timezone);
+
   return (
     <div className="date-navigator" aria-label="日期切换">
       <button type="button" className="icon-btn" aria-label="前一天" onClick={() => onSelectDate(addDaysToDateKey(selectedDate, -1))}>
@@ -1000,7 +1007,7 @@ function DateNavigator({
       <button type="button" className="btn-toolbar" onClick={onSwitchToWeek}>
         本周
       </button>
-      <span className="date-navigator__label">{formatDateTitle(selectedDate, timezone)}</span>
+      <span className="date-navigator__label">{displayLabel}</span>
       <button type="button" className="icon-btn" aria-label="后一天" onClick={() => onSelectDate(addDaysToDateKey(selectedDate, 1))}>
         →
       </button>
@@ -2330,15 +2337,10 @@ function WeekView({
   onSelectDate: (dateKey: string) => void;
 }) {
   // 计算本周一 ~ 周日
-  const weekStart = useMemo(() => {
-    const wd = weekdayFromDateKey(selectedDate);
-    // 周一为一周起始：偏移量 = (wd + 6) % 7，即周一=0 偏移
-    const mondayOffset = wd === 0 ? -6 : 1 - wd;
-    return addDaysToDateKey(selectedDate, mondayOffset);
-  }, [selectedDate]);
+  const weekStart = useMemo(() => buildWeekStartDateKey(selectedDate), [selectedDate]);
 
   const weekDays = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDaysToDateKey(weekStart, i)),
+    () => buildWeekDays(weekStart),
     [weekStart],
   );
 
@@ -2468,6 +2470,20 @@ function WeekView({
       </div>
     </section>
   );
+}
+
+/** 根据任意日期键计算该周的周一日期键。 */
+function buildWeekStartDateKey(dateKey: string): string {
+  const wd = weekdayFromDateKey(dateKey);
+  // 周一为一周起始：偏移量 = (wd + 6) % 7，即周一=0 偏移
+  const mondayOffset = wd === 0 ? -6 : 1 - wd;
+  return addDaysToDateKey(dateKey, mondayOffset);
+}
+
+/** 根据任意日期键生成周一到周日的日期键列表，供周标题和周面板共用。 */
+function buildWeekDays(dateKey: string): string[] {
+  const weekStart = buildWeekStartDateKey(dateKey);
+  return Array.from({ length: 7 }, (_, index) => addDaysToDateKey(weekStart, index));
 }
 
 /** 格式化周范围，给周规划板头部提供稳定摘要。 */

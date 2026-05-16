@@ -11,6 +11,7 @@ import { useWorkspaceStore } from "../src/renderer/stores/workspace";
 describe("WebPanel layout controls", () => {
   const panelOpen = vi.fn(async () => ({ success: true }));
   const panelSetBounds = vi.fn(async () => ({ success: true }));
+  const panelUpdateData = vi.fn(async () => ({ success: true }));
   const panelClose = vi.fn(async () => ({ success: true }));
   const panelRefresh = vi.fn(async () => ({ success: true }));
 
@@ -21,6 +22,7 @@ describe("WebPanel layout controls", () => {
       value: {
         panelOpen,
         panelSetBounds,
+        panelUpdateData,
         panelClose,
         panelRefresh,
       },
@@ -64,6 +66,38 @@ describe("WebPanel layout controls", () => {
     expect(useWorkspaceStore.getState().webPanel.panelWidth).toBe(1120);
   });
 
+  it("converts zoomed renderer coordinates before reporting native surface bounds", async () => {
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        panelOpen,
+        panelSetBounds,
+        panelUpdateData,
+        panelClose,
+        panelRefresh,
+        rendererZoomFactor: 0.85,
+      },
+    });
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("wp-native-surface")) {
+        return { left: 100, top: 50, width: 800, height: 600, right: 900, bottom: 650, x: 100, y: 50, toJSON: () => ({}) };
+      }
+      return { left: 0, top: 0, width: 0, height: 0, right: 0, bottom: 0, x: 0, y: 0, toJSON: () => ({}) };
+    });
+
+    try {
+      render(<WebPanel />);
+      await waitFor(() => expect(panelSetBounds).toHaveBeenCalledWith({
+        x: 85,
+        y: 42.5,
+        width: 680,
+        height: 510,
+      }));
+    } finally {
+      rectSpy.mockRestore();
+    }
+  });
+
   it("uses a native WebContentsView surface instead of rendering an iframe", async () => {
     const { container } = render(<WebPanel />);
 
@@ -100,6 +134,39 @@ describe("WebPanel layout controls", () => {
     }
   });
 
+  it("keeps fullscreen fallback bounds below the toolbar while layout settles", async () => {
+    const originalInnerWidth = window.innerWidth;
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 720 });
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 0,
+      height: 0,
+      right: 0,
+      bottom: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    try {
+      render(<WebPanel />);
+      fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
+      await waitFor(() => expect(panelSetBounds).toHaveBeenLastCalledWith({
+        x: 0,
+        y: 44,
+        width: 1280,
+        height: 676,
+      }));
+    } finally {
+      rectSpy.mockRestore();
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: originalInnerWidth });
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: originalInnerHeight });
+    }
+  });
+
   it("toggles a fullscreen preview mode from the toolbar", () => {
     const { container } = render(<WebPanel />);
     const panel = container.querySelector(".web-panel");
@@ -111,22 +178,26 @@ describe("WebPanel layout controls", () => {
     expect(panel?.classList.contains("fullscreen")).toBe(false);
   });
 
-  it("keeps fullscreen exit in the dock toolbar outside the native surface", () => {
+  it("shows a floating fullscreen exit above the native surface", () => {
     const { container } = render(<WebPanel />);
     const panel = container.querySelector(".web-panel");
 
     fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
     const toolbarExit = screen.getByTestId("web-panel-fullscreen-exit");
+    const floatingExit = screen.getByTestId("web-panel-floating-fullscreen-exit");
     const nativeSurface = container.querySelector(".wp-native-surface");
 
     expect(toolbarExit.textContent).toContain("退出全屏");
     expect(Boolean(nativeSurface?.compareDocumentPosition(toolbarExit) & Node.DOCUMENT_POSITION_PRECEDING)).toBe(true);
-    expect(screen.queryByTestId("web-panel-floating-fullscreen-exit")).toBeNull();
-    fireEvent.click(toolbarExit);
+    expect(floatingExit.textContent).toContain("退出全屏");
+    expect(Boolean(nativeSurface?.compareDocumentPosition(floatingExit) & Node.DOCUMENT_POSITION_PRECEDING)).toBe(true);
+
+    fireEvent.click(floatingExit);
     expect(panel?.classList.contains("fullscreen")).toBe(false);
+    expect(screen.queryByTestId("web-panel-floating-fullscreen-exit")).toBeNull();
   });
 
-  it("reopens the native panel surface when panel data changes", async () => {
+  it("updates the native panel data without reopening the surface", async () => {
     render(<WebPanel />);
     await waitFor(() => expect(panelOpen).toHaveBeenCalledTimes(1));
 
@@ -136,13 +207,10 @@ describe("WebPanel layout controls", () => {
       });
     });
 
-    await waitFor(() => {
-      expect(panelOpen).toHaveBeenLastCalledWith({
-        viewPath: "F:/MyClaw/preview.html",
-        title: "Preview",
-        data: { diagnosis: { matchScore: 35 } },
-      });
-    });
+    await waitFor(() => expect(panelUpdateData).toHaveBeenCalledWith({
+      diagnosis: { matchScore: 35 },
+    }));
+    expect(panelOpen).toHaveBeenCalledTimes(1);
   });
 
   it("refreshes the native WebContentsView surface from the toolbar", async () => {
@@ -153,7 +221,7 @@ describe("WebPanel layout controls", () => {
     await waitFor(() => expect(panelRefresh).toHaveBeenCalledTimes(1));
   });
 
-  it("keeps the dock fullscreen controls for file previews", () => {
+  it("keeps reachable fullscreen controls for file previews", () => {
     useWorkspaceStore.setState((state) => ({
       webPanel: {
         ...state.webPanel,
@@ -177,10 +245,11 @@ describe("WebPanel layout controls", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
     const exitButton = screen.getByTestId("web-panel-fullscreen-exit");
+    const floatingExit = screen.getByTestId("web-panel-floating-fullscreen-exit");
     expect(exitButton.textContent).toContain("退出全屏");
-    expect(screen.queryByTestId("web-panel-floating-fullscreen-exit")).toBeNull();
+    expect(floatingExit.textContent).toContain("退出全屏");
 
-    fireEvent.click(exitButton);
+    fireEvent.click(floatingExit);
     expect(panel?.classList.contains("fullscreen")).toBe(false);
   });
 });

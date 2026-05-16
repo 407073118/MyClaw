@@ -185,6 +185,8 @@ declare global {
     myClawAPI: {
       /** The host platform string, e.g. "darwin", "win32", "linux" */
       platform: string;
+      /** Renderer page zoom factor used by the Electron host shell. */
+      rendererZoomFactor: number;
 
       /** 窗口控制 API — 自定义标题栏使用 */
       windowControls: {
@@ -541,6 +543,7 @@ declare global {
       onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void) => () => void;
       panelOpen: (payload: { viewPath: string; title: string; data: unknown }) => Promise<{ success: boolean; error?: string }>;
       panelSetBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ success: boolean }>;
+      panelUpdateData: (data: unknown) => Promise<{ success: boolean }>;
       panelClose: () => Promise<{ success: boolean }>;
       panelRefresh: () => Promise<{ success: boolean; error?: string }>;
       fileViewerOpenExternal: (path: string) => Promise<{ success: boolean }>;

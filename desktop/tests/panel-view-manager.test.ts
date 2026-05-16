@@ -11,6 +11,7 @@ const electronMocks = vi.hoisted(() => ({
   setBounds: vi.fn(),
   closeWebContents: vi.fn(),
   send: vi.fn(),
+  setZoomFactor: vi.fn(),
   executeJavaScript: vi.fn(async () => undefined),
   setWindowOpenHandler: vi.fn(),
   on: vi.fn(),
@@ -27,6 +28,7 @@ vi.mock("electron", () => ({
     webContents: {
       loadURL: electronMocks.loadURL,
       send: electronMocks.send,
+      setZoomFactor: electronMocks.setZoomFactor,
       executeJavaScript: electronMocks.executeJavaScript,
       on: electronMocks.on,
       close: electronMocks.closeWebContents,
@@ -78,6 +80,7 @@ describe("PanelViewManager", () => {
       }),
     }));
     expect(electronMocks.addChildView).toHaveBeenCalledTimes(1);
+    expect(electronMocks.setZoomFactor).toHaveBeenCalledWith(0.85);
     expect(electronMocks.loadURL).toHaveBeenCalledWith(expect.stringContaining("myclaw-viewer://file-viewer"));
     expect(electronMocks.send).toHaveBeenCalledWith("panel:host-message", {
       type: "skill-data",

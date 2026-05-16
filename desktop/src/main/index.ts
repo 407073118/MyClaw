@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, protocol, shell } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, session, shell } from "electron";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -105,7 +105,7 @@ import { invokeRegisteredSessionSendMessage, shutdownToolExecutor } from "./ipc/
 import { invokeRegisteredWorkflowStartRun } from "./ipc/workflows";
 import { ensureSiliconPersonCurrentSession } from "./services/silicon-person-session";
 import { shutdownAllWorkspaces } from "./services/silicon-person-workspace";
-import { PanelViewManager } from "./services/panel-view-manager";
+import { PANEL_PARTITION, PanelViewManager } from "./services/panel-view-manager";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -132,6 +132,22 @@ redirectUserData();
 let mainWindow: BrowserWindow | null = null;
 let runtimeContext: RuntimeContext | null = null;
 let panelViewManager: PanelViewManager | null = null;
+
+/** 注册右侧面板使用的自定义协议，覆盖默认会话和独立面板会话。 */
+function registerPanelProtocolHandlers(manager: PanelViewManager): void {
+  const handler = (request: Request) =>
+    manager.handleProtocolRequest(request.url);
+  protocol.handle("myclaw-skill", handler);
+  protocol.handle("myclaw-viewer", handler);
+  protocol.handle("myclaw-file", handler);
+  protocol.handle("myclaw-vendor", handler);
+
+  const panelProtocol = session.fromPartition(PANEL_PARTITION).protocol;
+  panelProtocol.handle("myclaw-skill", handler);
+  panelProtocol.handle("myclaw-viewer", handler);
+  panelProtocol.handle("myclaw-file", handler);
+  panelProtocol.handle("myclaw-vendor", handler);
+}
 
 function createMainWindow(): BrowserWindow {
   // 根据平台选择标题栏模式：macOS 用 hiddenInset，Windows 用 hidden + titleBarOverlay
@@ -711,10 +727,7 @@ app.whenReady().then(async () => {
     runtimeContext: ctx,
     panelPreloadPath: join(__dirname, "../preload/panel-preload.js"),
   });
-  protocol.handle("myclaw-skill", (request) => panelViewManager?.handleProtocolRequest(request.url) ?? new Response("Panel not ready", { status: 503 }));
-  protocol.handle("myclaw-viewer", (request) => panelViewManager?.handleProtocolRequest(request.url) ?? new Response("Panel not ready", { status: 503 }));
-  protocol.handle("myclaw-file", (request) => panelViewManager?.handleProtocolRequest(request.url) ?? new Response("Panel not ready", { status: 503 }));
-  protocol.handle("myclaw-vendor", (request) => panelViewManager?.handleProtocolRequest(request.url) ?? new Response("Panel not ready", { status: 503 }));
+  registerPanelProtocolHandlers(panelViewManager);
   registerAllIpcHandlers(ctx, panelViewManager);
 
   // 注入员工任务状态变更钩子，同步感知账本
