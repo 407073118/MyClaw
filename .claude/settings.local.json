@@ -312,7 +312,17 @@
       "WebFetch(domain:api.python.langchain.com)",
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:docs.letta.com)",
-      "WebFetch(domain:docs.mem0.ai)"
+      "WebFetch(domain:docs.mem0.ai)",
+      "Bash(powershell *)",
+      "mcp__ide__getDiagnostics",
+      "PowerShell(Set-Location F:\\\\MyClaw\\\\desktop; npx tsc --noEmit 2>&1 | Select-String \"error TS\" | Where-Object { $_ -notmatch \"awarenessSnapshot|tests/\" } | Select-Object -First 10)",
+      "PowerShell(Set-Location F:\\\\MyClaw\\\\desktop; npx tsc --noEmit 2>&1 | Select-String \"ChatPage.tsx|workspace.ts|bootstrap.ts|preload\" | Where-Object { $_ -notmatch \"awarenessSnapshot\" })",
+      "Bash(xxd desktop/src/renderer/pages/MemoryWorkspacePage.tsx)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('version','?'\\)\\)\\)\")",
+      "Bash(npm pack *)",
+      "mcp__pencil__get_guidelines",
+      "Bash(curl -s \"https://api.github.com/repos/tinyhumansai/openhuman/git/trees/main?recursive=1\")",
+      "Bash(python -c \"import sys,json; data=json.load\\(sys.stdin\\); [print\\(t['path']\\) for t in data.get\\('tree',[]\\) if t['type']=='tree' or \\(t['type']=='blob' and any\\(k in t['path'].lower\\(\\) for k in ['connector','integration','tool','oauth','gmail','slack','notion']\\)\\)]\")"
     ]
   }
 }

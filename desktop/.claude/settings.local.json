@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "mcp__ide__getDiagnostics",
+      "Bash(npx tsc *)",
+      "Bash(pnpm run *)",
+      "Bash(head -3935 src/renderer/pages/TimeCenterPage.tsx)",
+      "Bash(tail -n +4240 src/renderer/pages/TimeCenterPage.tsx)",
+      "Read(//tmp/**)",
+      "Bash(head -3936 src/renderer/pages/TimeCenterPage.tsx)",
+      "Bash(tail -n +4084 src/renderer/pages/TimeCenterPage.tsx)",
+      "Bash(git stash *)"
+    ]
+  }
+}
