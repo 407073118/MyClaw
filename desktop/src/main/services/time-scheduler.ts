@@ -34,6 +34,8 @@ export type TimeSchedulerDeps = {
   getAvailabilityPolicy: () => Promise<AvailabilityPolicy | null>;
   saveScheduleJob: (job: ScheduleJob) => Promise<void>;
   runScheduleJob?: (job: DueScheduleJob) => Promise<TimeScheduleJobRunResult | void>;
+  /** 心跳感知 tick，可选。不传则跳过。 */
+  awarenessTick?: () => Promise<void>;
 };
 
 export type TimeScheduler = ReturnType<typeof createTimeScheduler>;
@@ -131,7 +133,14 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
       sessionId,
     });
     const nextState = buildNextScheduleJobState(job, finishedAt, succeeded);
-    await deps.saveScheduleJob(nextState);
+    try {
+      await deps.saveScheduleJob(nextState);
+    } catch (saveError) {
+      console.warn("[time-scheduler] 保存任务状态失败，可能已被删除", {
+        jobId: job.id,
+        error: saveError instanceof Error ? saveError.message : String(saveError),
+      });
+    }
     return nextState;
   }
 
@@ -218,6 +227,20 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
           });
         } else {
           console.info("[time-scheduler] tick 完成", { elapsedMs: tickElapsed });
+        }
+
+        // 心跳感知 tick，放在 reminders 和 jobs 之后
+        if (deps.awarenessTick) {
+          try {
+            await Promise.race([
+              deps.awarenessTick(),
+              new Promise((_, reject) => setTimeout(() => reject(new Error("awareness tick timeout")), 30_000)),
+            ]);
+          } catch (error) {
+            console.warn("[time-scheduler] awareness tick 失败，不影响调度", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       } finally {
         running = false;

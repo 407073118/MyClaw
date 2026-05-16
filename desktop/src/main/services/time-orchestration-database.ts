@@ -65,6 +65,80 @@ CREATE TABLE IF NOT EXISTS availability_policies (
   updated_at TEXT NOT NULL,
   payload_json TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS awareness_routines (
+  id TEXT PRIMARY KEY,
+  scope_kind TEXT NOT NULL,
+  owner_id TEXT,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'enabled',
+  cadence_minutes INTEGER NOT NULL DEFAULT 30,
+  next_run_at TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS awareness_signals (
+  id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  source_kind TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL,
+  owner_id TEXT,
+  severity TEXT NOT NULL DEFAULT 'info',
+  status TEXT NOT NULL DEFAULT 'active',
+  cooldown_until TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_signals_fingerprint ON awareness_signals(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_signals_status ON awareness_signals(status);
+
+CREATE TABLE IF NOT EXISTS standing_orders (
+  id TEXT PRIMARY KEY,
+  scope_kind TEXT NOT NULL,
+  owner_id TEXT,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS long_run_ledger (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL,
+  owner_id TEXT,
+  status TEXT NOT NULL DEFAULT 'queued',
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  last_heartbeat_at TEXT,
+  delivery_status TEXT NOT NULL DEFAULT 'not_required',
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ledger_kind_status ON long_run_ledger(kind, status);
+CREATE INDEX IF NOT EXISTS idx_ledger_source ON long_run_ledger(kind, source_id);
+
+CREATE TABLE IF NOT EXISTS awareness_audit_events (
+  id TEXT PRIMARY KEY,
+  ledger_record_id TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  risk_level TEXT NOT NULL,
+  approval_status TEXT NOT NULL,
+  detail TEXT NOT NULL,
+  standing_order_id TEXT,
+  payload_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_ledger ON awareness_audit_events(ledger_record_id);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON awareness_audit_events(timestamp);
 `;
 
 function bindParams(params?: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -78,6 +152,8 @@ function bindParams(params?: Record<string, unknown>): Record<string, unknown> |
 
 export class TimeOrchestrationDatabase {
   private dirty = false;
+  private _batchDepth = 0;
+  private _flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   private constructor(
     private readonly db: Database,
@@ -104,6 +180,7 @@ export class TimeOrchestrationDatabase {
     const instance = new TimeOrchestrationDatabase(db, dbPath);
     instance.db.exec(SCHEMA_SQL);
     instance.migrateScheduleJobOwnerColumns();
+    instance.migrateAwarenessTables();
     instance.flush();
     return instance;
   }
@@ -150,7 +227,113 @@ export class TimeOrchestrationDatabase {
   }
 
   /**
-   * 执行写入语句，并在成功后立即落盘到 `time.db`。
+   * 确保感知相关新表的 payload_json 列存在。
+   * 旧 time.db 可能在之前某次开发运行中创建了空表但缺 payload_json 列，
+   * 此方法检测并重建这些表。表内无用户数据，直接 DROP + CREATE 是安全的。
+   */
+  private migrateAwarenessTables(): void {
+    const tables = [
+      "awareness_routines",
+      "awareness_signals",
+      "standing_orders",
+      "long_run_ledger",
+      "awareness_audit_events",
+    ];
+    for (const table of tables) {
+      try {
+        const result = this.db.exec(`PRAGMA table_info(${table})`);
+        if (result.length > 0) {
+          const columns = new Set((result[0]?.values ?? []).map((row) => String(row[1])));
+          if (!columns.has("payload_json") || (table === "awareness_routines" && !columns.has("next_run_at"))) {
+            const missing = [];
+            if (!columns.has("payload_json")) missing.push("payload_json");
+            if (table === "awareness_routines" && !columns.has("next_run_at")) missing.push("next_run_at");
+            console.info("[time-db] 感知表缺列，重建", { table, missing });
+            this.db.exec(`DROP TABLE IF EXISTS ${table}`);
+          }
+        }
+      } catch {
+        // 表不存在，忽略
+      }
+    }
+    // 重建被 DROP 的表
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS awareness_routines (
+        id TEXT PRIMARY KEY,
+        scope_kind TEXT NOT NULL,
+        owner_id TEXT,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'enabled',
+        cadence_minutes INTEGER NOT NULL DEFAULT 30,
+        next_run_at TEXT,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS awareness_signals (
+        id TEXT PRIMARY KEY,
+        fingerprint TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        scope_kind TEXT NOT NULL,
+        owner_id TEXT,
+        severity TEXT NOT NULL DEFAULT 'info',
+        status TEXT NOT NULL DEFAULT 'active',
+        cooldown_until TEXT,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_signals_fingerprint ON awareness_signals(fingerprint);
+      CREATE INDEX IF NOT EXISTS idx_signals_status ON awareness_signals(status);
+      CREATE TABLE IF NOT EXISTS standing_orders (
+        id TEXT PRIMARY KEY,
+        scope_kind TEXT NOT NULL,
+        owner_id TEXT,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS long_run_ledger (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        scope_kind TEXT NOT NULL,
+        owner_id TEXT,
+        status TEXT NOT NULL DEFAULT 'queued',
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        last_heartbeat_at TEXT,
+        delivery_status TEXT NOT NULL DEFAULT 'not_required',
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_ledger_kind_status ON long_run_ledger(kind, status);
+      CREATE INDEX IF NOT EXISTS idx_ledger_source ON long_run_ledger(kind, source_id);
+      CREATE TABLE IF NOT EXISTS awareness_audit_events (
+        id TEXT PRIMARY KEY,
+        ledger_record_id TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        action TEXT NOT NULL,
+        actor TEXT NOT NULL,
+        risk_level TEXT NOT NULL,
+        approval_status TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        standing_order_id TEXT,
+        payload_json TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_ledger ON awareness_audit_events(ledger_record_id);
+      CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON awareness_audit_events(timestamp);
+    `);
+    this.dirty = true;
+  }
+
+  /**
+   * 执行写入语句，标记脏数据并安排延迟落盘。
+   * 在 batch 回调内时不会触发独立 flush，由 batch 结束时统一落盘。
    */
   run(sql: string, params?: Record<string, unknown>): void {
     console.info("[time-db] 执行写入语句", { dbPath: this.dbPath });
@@ -165,7 +348,42 @@ export class TimeOrchestrationDatabase {
     } finally {
       stmt.free();
     }
-    this.flush();
+    // batch 内不单独 flush，由 batch 结束统一落盘
+    if (this._batchDepth === 0) {
+      this._scheduleDeferredFlush();
+    }
+  }
+
+  /**
+   * 批量执行写入操作，在整个回调结束后统一落盘一次，
+   * 避免多次 run() 各自触发独立序列化。
+   */
+  batch<T>(fn: () => T): T {
+    this._batchDepth++;
+    // 进入 batch 后取消待执行的延迟 flush，由 batch 结束时统一处理
+    if (this._batchDepth === 1 && this._flushTimer !== null) {
+      clearTimeout(this._flushTimer);
+      this._flushTimer = null;
+    }
+    try {
+      return fn();
+    } finally {
+      this._batchDepth--;
+      if (this._batchDepth === 0) {
+        this.flush();
+      }
+    }
+  }
+
+  /**
+   * 安排 1 秒后自动 flush，确保不在 batch 内的单次写入也能最终落盘。
+   */
+  private _scheduleDeferredFlush(): void {
+    if (this._flushTimer !== null) return;
+    this._flushTimer = setTimeout(() => {
+      this._flushTimer = null;
+      this.flush();
+    }, 1000);
   }
 
   /**
@@ -193,8 +411,19 @@ export class TimeOrchestrationDatabase {
    * 查询单行记录，未命中时返回 `null`。
    */
   queryOne(sql: string, params?: Record<string, unknown>): Record<string, unknown> | null {
-    console.info("[time-db] 查询单行记录", { dbPath: this.dbPath });
-    return this.queryAll(sql, params)[0] ?? null;
+    const stmt = this.db.prepare(sql);
+    try {
+      const bound = bindParams(params);
+      if (bound) {
+        stmt.bind(bound as any);
+      }
+      if (stmt.step()) {
+        return stmt.getAsObject() as Record<string, unknown>;
+      }
+      return null;
+    } finally {
+      stmt.free();
+    }
   }
 
   /**
@@ -218,6 +447,10 @@ export class TimeOrchestrationDatabase {
    */
   close(): void {
     console.info("[time-db] 关闭时间编排数据库", { dbPath: this.dbPath });
+    if (this._flushTimer !== null) {
+      clearTimeout(this._flushTimer);
+      this._flushTimer = null;
+    }
     if (this.dirty) {
       this.flush();
     }

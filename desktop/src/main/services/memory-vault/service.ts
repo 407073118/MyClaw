@@ -1246,7 +1246,17 @@ export class MemoryVaultService {
         "",
       ]),
     ];
-    const promptBlock = lines.join("\n").slice(0, budget * 4);
+    let promptBlock = lines.join("\n");
+    // 中文 token 密度约 1.5-2 token/字，远高于英文的 1 token/4 chars。
+    // 用 budget * 2.5 字符做粗截断，再逐步缩减确保不超预算。
+    const charBudget = Math.floor(budget * 2.5);
+    if (promptBlock.length > charBudget) {
+      promptBlock = promptBlock.slice(0, charBudget);
+      const lastNewline = promptBlock.lastIndexOf("\n");
+      if (lastNewline > charBudget * 0.6) {
+        promptBlock = promptBlock.slice(0, lastNewline);
+      }
+    }
     console.info("[memory-vault] 已构建记忆上下文证据包", {
       query: input.query,
       evidenceCount: evidence.length,
@@ -1257,7 +1267,7 @@ export class MemoryVaultService {
       query: response.query,
       promptBlock,
       evidence,
-      tokenEstimate: Math.ceil(promptBlock.length / 4),
+      tokenEstimate: Math.ceil(promptBlock.length / 2.5),
     };
   }
 

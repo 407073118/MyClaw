@@ -138,6 +138,10 @@ const myClawAPI = {
       ipcRenderer.invoke("time:suggest-timeboxes") as Promise<{ items: SuggestedTimebox[] }>,
     listExecutionRuns: () =>
       ipcRenderer.invoke("time:list-execution-runs") as Promise<{ items: ExecutionRun[] }>,
+    deleteExecutionRun: (id: string) =>
+      ipcRenderer.invoke("time:delete-execution-run", id) as Promise<{ ok: boolean }>,
+    deleteExecutionRunsByJob: (jobId: string) =>
+      ipcRenderer.invoke("time:delete-execution-runs-by-job", jobId) as Promise<{ ok: boolean; count: number }>,
     generateTodayDigest: (input: Record<string, unknown>) =>
       ipcRenderer.invoke("time:generate-today-digest", input) as Promise<{ lines: string[] }>,
   },
@@ -240,6 +244,10 @@ const myClawAPI = {
 
   cancelPlanMode: (sessionId: string) =>
     ipcRenderer.invoke("session:cancel-plan-mode", sessionId),
+
+  // ── 懒加载会话消息 ──
+  getSessionMessages: (sessionId: string) =>
+    ipcRenderer.invoke("session:get-messages", sessionId) as Promise<import("../../shared/contracts").ChatMessage[]>,
 
   // ---- 宸ヤ綔鏂囦欢 ------------------------------------------------------------
   listArtifactsByScope: (scope: ArtifactScopeRef) =>
@@ -441,6 +449,9 @@ const myClawAPI = {
 
   cancelWorkflowRun: (runId: string) =>
     ipcRenderer.invoke("workflow:cancel-run", runId),
+
+  deleteWorkflowRun: (runId: string) =>
+    ipcRenderer.invoke("workflow:delete-run", runId) as Promise<{ success: boolean }>,
 
   getWorkflowRunDetail: (runId: string) =>
     ipcRenderer.invoke("workflow:get-run-detail", runId),
@@ -648,6 +659,65 @@ const myClawAPI = {
 
   saveAsrConfig: (config: AsrConfig) =>
     ipcRenderer.invoke("asr:save-config", config) as Promise<{ config: AsrConfig }>,
+
+  // ---- 值守 / Awareness ----------------------------------------------------
+  awareness: {
+    listRoutines: () =>
+      ipcRenderer.invoke("awareness:list-routines") as Promise<{ items: unknown[] }>,
+    createRoutine: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("awareness:create-routine", input) as Promise<{ item: unknown }>,
+    updateRoutine: (id: string, patch: Record<string, unknown>) =>
+      ipcRenderer.invoke("awareness:update-routine", id, patch) as Promise<{ item: unknown }>,
+    pauseRoutine: (id: string) =>
+      ipcRenderer.invoke("awareness:pause-routine", id) as Promise<{ item: unknown }>,
+    resumeRoutine: (id: string) =>
+      ipcRenderer.invoke("awareness:resume-routine", id) as Promise<{ item: unknown }>,
+    deleteRoutine: (id: string) =>
+      ipcRenderer.invoke("awareness:delete-routine", id) as Promise<{ ok: boolean }>,
+    runRoutineNow: (id: string) =>
+      ipcRenderer.invoke("awareness:run-routine-now", id) as Promise<{ ok: boolean }>,
+    previewRoutine: (id: string) =>
+      ipcRenderer.invoke("awareness:preview-routine", id) as Promise<{
+        signalsFound: number;
+        wouldCallModel: boolean;
+        potentialActions: Array<{ kind: string; riskLevel: string }>;
+        estimatedCost: "free" | "low" | "normal";
+      }>,
+    listSignals: (status?: string) =>
+      ipcRenderer.invoke("awareness:list-signals", status) as Promise<{ items: unknown[] }>,
+    getSnapshot: () =>
+      ipcRenderer.invoke("awareness:get-snapshot") as Promise<unknown>,
+    dismissSignal: (id: string) =>
+      ipcRenderer.invoke("awareness:dismiss-signal", id) as Promise<{ ok: boolean }>,
+    acknowledgeSignal: (id: string) =>
+      ipcRenderer.invoke("awareness:acknowledge-signal", id) as Promise<{ ok: boolean }>,
+    onAwarenessChanged: (callback: (payload: Record<string, unknown>) => void): UnsubscribeFn =>
+      onChannel("session:stream", (event: Record<string, unknown>) => {
+        if (event.type === "awareness.changed") callback(event);
+      }),
+  },
+
+  standingOrders: {
+    list: (scope?: { kind: string; ownerId?: string }) =>
+      ipcRenderer.invoke("standing-order:list", scope) as Promise<{ items: unknown[] }>,
+    create: (input: Record<string, unknown>) =>
+      ipcRenderer.invoke("standing-order:create", input) as Promise<{ item: unknown }>,
+    update: (id: string, patch: Record<string, unknown>) =>
+      ipcRenderer.invoke("standing-order:update", id, patch) as Promise<{ item: unknown }>,
+    delete: (id: string) =>
+      ipcRenderer.invoke("standing-order:delete", id) as Promise<{ ok: boolean }>,
+  },
+
+  longRun: {
+    list: (query?: { kind?: string; status?: string; limit?: number }) =>
+      ipcRenderer.invoke("long-run:list", query) as Promise<{ items: unknown[] }>,
+    detail: (id: string) =>
+      ipcRenderer.invoke("long-run:detail", id) as Promise<{ record: unknown; auditEvents: unknown[] }>,
+    cancel: (id: string) =>
+      ipcRenderer.invoke("long-run:cancel", id) as Promise<{ ok: boolean }>,
+    retry: (id: string) =>
+      ipcRenderer.invoke("long-run:retry", id) as Promise<{ ok: boolean }>,
+  },
 } as const;
 
 contextBridge.exposeInMainWorld("myClawAPI", myClawAPI);

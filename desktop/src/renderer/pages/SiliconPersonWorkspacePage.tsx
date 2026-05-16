@@ -17,15 +17,15 @@ import {
   Workflow,
   Wrench,
 } from "lucide-react";
-import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, McpServer, ModelProfile, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
+import type { ApprovalDecision, ApprovalRequest, ArtifactScopeRef, McpServer, ModelProfile, ScheduleJob, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
 import MarkdownView from "../components/MarkdownView";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
+import ScheduleJobEditor, { type ScheduleJobEditorSubmitInput } from "../components/time/ScheduleJobEditor";
 import { useWorkspaceStore } from "../stores/workspace";
 import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
 import { resolveReasoningControlSpec } from "../utils/reasoning-controls";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
-import { localDateTimeToUtcIso } from "../../../shared/time/local-time";
 
 /** 把消息内容转成可直接展示的文本，兼容字符串和富结构内容。 */
 function textOf(content: unknown): string {
@@ -78,6 +78,17 @@ function workflowRunStatusLabel(status: string): string {
     succeeded: "已成功",
     failed: "已失败",
     canceled: "已取消",
+  } as Record<string, string>)[status] ?? status;
+}
+
+function scheduleJobStatusLabel(status: string): string {
+  return ({
+    scheduled: "已排期",
+    running: "运行中",
+    paused: "已暂停",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
   } as Record<string, string>)[status] ?? status;
 }
 
@@ -202,10 +213,8 @@ export default function SiliconPersonWorkspacePage() {
   const confirmBtnRef = useRef<HTMLButtonElement | null>(null);
   const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
   const [draftMessage, setDraftMessage] = useState("");
-  const [scheduledWorkflowId, setScheduledWorkflowId] = useState("");
-  const [scheduledStartsAt, setScheduledStartsAt] = useState("2026-04-21T09:00");
-  const [scheduledIntervalMinutes, setScheduledIntervalMinutes] = useState("1440");
-  const [scheduleMessage, setScheduleMessage] = useState("");
+  const [chosenJobType, setChosenJobType] = useState<"workflow" | "silicon_person" | null>(null);
+  const [editingJob, setEditingJob] = useState<ScheduleJob | null>(null);
 
   // 草稿状态，与当前硅基员工实体保持同构。
   const [draftName, setDraftName] = useState("");
@@ -241,6 +250,14 @@ export default function SiliconPersonWorkspacePage() {
         .filter((run) => draftWorkflowIds.includes(run.workflowId)),
     [draftWorkflowIds, workflowRunMap],
   );
+  const boundWorkflowOptions = useMemo(
+    () => boundWorkflows.map(({ workflowId, summary }) => ({ id: workflowId, name: summary.name })),
+    [boundWorkflows],
+  );
+  const modelOptions = useMemo(
+    () => workspace.models.map((m) => ({ id: m.id, name: m.name })),
+    [workspace.models],
+  );
   const siliconPersonScheduleJobs = useMemo(
     () =>
       workspace.time.scheduleJobs.filter((job) => job.ownerScope === "silicon_person" && job.ownerId === siliconPersonId),
@@ -275,13 +292,6 @@ export default function SiliconPersonWorkspacePage() {
     setDraftReasoningEnabled(siliconPerson.reasoningEnabled ?? true);
     setDraftReasoningEffort(siliconPerson.reasoningEffort ?? "medium");
   }, [siliconPerson?.id, siliconPerson?.updatedAt, siliconPerson?.approvalMode]);
-
-  // 默认把首个已绑定 workflow 作为定时任务创建目标，减少重复选择。
-  useEffect(() => {
-    if (!scheduledWorkflowId && boundWorkflows[0]?.workflowId) {
-      setScheduledWorkflowId(boundWorkflows[0].workflowId);
-    }
-  }, [boundWorkflows, scheduledWorkflowId]);
 
   // 加载员工独立工作空间的 skills、MCP 服务和路径信息。
   const loadPersonResources = useCallback(async () => {
@@ -520,45 +530,61 @@ export default function SiliconPersonWorkspacePage() {
   }
 
   /** 为当前硅基员工创建周期性 workflow 计划任务，统一复用时间规划存储。 */
-  async function handleCreateScheduledWorkflowJob() {
-    if (!siliconPersonId || !scheduledWorkflowId) {
-      setScheduleMessage("请先选择要绑定的工作流。");
-      return;
+  async function handleSaveScheduleJob(input: ScheduleJobEditorSubmitInput, mode: "create" | "update") {
+    if (mode === "update" && editingJob) {
+      await workspace.updateScheduleJob({
+        ...editingJob,
+        title: input.title,
+        description: input.description,
+        scheduleKind: input.scheduleKind,
+        timezone: input.timezone,
+        startsAt: input.startsAt,
+        intervalMinutes: input.intervalMinutes,
+        cronExpression: input.cronExpression,
+        executor: input.executor,
+        executorTargetId: input.executorTargetId,
+        modelProfileId: input.modelProfileId,
+        reasoningEffort: input.reasoningEffort,
+        reasoningEnabled: input.reasoningEnabled,
+        nextRunAt: input.startsAt ?? editingJob.nextRunAt,
+      });
+    } else {
+      await workspace.createScheduleJob({
+        kind: "schedule_job",
+        title: input.title,
+        description: input.description,
+        scheduleKind: input.scheduleKind,
+        timezone: input.timezone,
+        ownerScope: "silicon_person",
+        ownerId: siliconPersonId,
+        status: "scheduled",
+        source: "manual",
+        startsAt: input.startsAt,
+        intervalMinutes: input.intervalMinutes,
+        cronExpression: input.cronExpression,
+        executor: input.executor,
+        executorTargetId: input.executorTargetId,
+        modelProfileId: input.modelProfileId,
+        reasoningEffort: input.reasoningEffort,
+        reasoningEnabled: input.reasoningEnabled,
+        nextRunAt: input.startsAt,
+      });
     }
+    setChosenJobType(null);
+    setEditingJob(null);
+  }
 
-    const timezone = workspace.time.availabilityPolicy?.timezone ?? "Asia/Shanghai";
-    const intervalMinutes = Number(scheduledIntervalMinutes);
-    if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
-      setScheduleMessage("周期分钟必须是大于 0 的数字。");
-      return;
-    }
+  function handleEditScheduleJob(job: ScheduleJob) {
+    setEditingJob(job);
+    setChosenJobType(job.executor === "workflow" ? "workflow" : "silicon_person");
+  }
 
-    const workflow = workspace.workflows.find((item) => item.id === scheduledWorkflowId);
-    const startsAt = localDateTimeToUtcIso(scheduledStartsAt, timezone);
-    console.info("[silicon-person-studio] 创建硅基员工定时工作流", {
-      siliconPersonId,
-      workflowId: scheduledWorkflowId,
-      startsAt,
-      intervalMinutes,
-    });
+  async function handleDeleteScheduleJob(jobId: string) {
+    await workspace.deleteScheduleJob(jobId);
+  }
 
-    await workspace.createScheduleJob({
-      kind: "schedule_job",
-      title: `${workflow?.name ?? scheduledWorkflowId} 定时运行`,
-      description: `硅基员工 ${siliconPerson?.name ?? siliconPersonId} 周期执行 ${workflow?.name ?? scheduledWorkflowId}`,
-      scheduleKind: "interval",
-      timezone,
-      ownerScope: "silicon_person",
-      ownerId: siliconPersonId,
-      status: "scheduled",
-      source: "manual",
-      startsAt,
-      intervalMinutes,
-      executor: "workflow",
-      executorTargetId: scheduledWorkflowId,
-      nextRunAt: startsAt,
-    });
-    setScheduleMessage("创建周期性工作流任务失败。");
+  async function handleExecuteScheduleJobNow(jobId: string) {
+    await workspace.executeScheduleJobNow(jobId);
   }
 
   /** 保存侧栏中的硅基员工角色卡和 workflow 绑定信息。 */
@@ -1341,55 +1367,77 @@ export default function SiliconPersonWorkspacePage() {
               )}
             </article>
 
-            <article className="ws-card">
+                        <article className="ws-card">
               <div className="ws-cap-header">
                 <div>
                   <h3>定时任务</h3>
-                  <p className="ws-card-desc">当前员工绑定的 workflow 工作流将按设置的间隔与时区执行定时任务。</p>
+                  <p className="ws-card-desc">为该员工创建定时执行的工作流或 Prompt 任务。</p>
                 </div>
                 <span className="tag tag--muted">工作时段 {siliconPersonWorkingHoursSummary}</span>
               </div>
 
-              <div className="ws-schedule-form">
-                <label className="ws-field">
-                <span>定时工作流</span>
-                          <select value={scheduledWorkflowId} onChange={(e) => setScheduledWorkflowId(e.target.value)} aria-label="定时工作流">
-                    <option value="">选择工作流</option>
-                    {boundWorkflows.map(({ workflowId, summary }) => (
-                      <option key={workflowId} value={workflowId}>{summary.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="ws-field">
-                  <span>首次运行时间</span>
-                  <input
-                    type="datetime-local"
-                    value={scheduledStartsAt}
-                    onChange={(e) => setScheduledStartsAt(e.target.value)}
-                    aria-label="首次运行时间"
-                  />
-                </label>
-                <label className="ws-field">
-                  <span>周期分钟</span>
-                  <input
-                    type="number"
-                    min="1"
-                    value={scheduledIntervalMinutes}
-                    onChange={(e) => setScheduledIntervalMinutes(e.target.value)}
-                    aria-label="周期分钟"
-                  />
-                </label>
-                <div className="ws-field ws-field--action">
-                  <span>执行策略</span>
-                  <button type="button" className="btn-toolbar" onClick={() => void handleCreateScheduledWorkflowJob()}>
-                    创建定时工作流
+              {!chosenJobType ? (
+                <div className="ws-schedule-type-picker">
+                  <button
+                    type="button"
+                    className="ws-schedule-type-btn"
+                    onClick={() => setChosenJobType("workflow")}
+                  >
+                    <Workflow size={16} aria-hidden />
+                    <span>工作流任务</span>
+                    <span className="ws-schedule-type-desc">周期执行绑定的 Workflow</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="ws-schedule-type-btn"
+                    onClick={() => setChosenJobType("silicon_person")}
+                  >
+                    <MessageSquare size={16} aria-hidden />
+                    <span>Prompt 任务</span>
+                    <span className="ws-schedule-type-desc">定时向员工派发消息指令</span>
                   </button>
                 </div>
-              </div>
-
-              {scheduleMessage ? (
-                <p className="ws-card-desc" style={{ marginTop: 12 }}>{scheduleMessage}</p>
-              ) : null}
+              ) : (
+                <div style={{ marginTop: 16 }}>
+                  <div className="ws-schedule-type-chips">
+                    <button
+                      type="button"
+                      className={chosenJobType === "workflow" ? "ws-type-chip is-active" : "ws-type-chip"}
+                      onClick={() => setChosenJobType("workflow")}
+                    >
+                      <Workflow size={14} aria-hidden />
+                      工作流
+                    </button>
+                    <button
+                      type="button"
+                      className={chosenJobType === "silicon_person" ? "ws-type-chip is-active" : "ws-type-chip"}
+                      onClick={() => setChosenJobType("silicon_person")}
+                    >
+                      <MessageSquare size={14} aria-hidden />
+                      Prompt
+                    </button>
+                    <button
+                      type="button"
+                      className="ws-type-chip ws-type-chip--close"
+                      onClick={() => { setChosenJobType(null); setEditingJob(null); }}
+                    >
+                      收起
+                    </button>
+                  </div>
+                  <ScheduleJobEditor
+                    timezone={workspace.time.availabilityPolicy?.timezone ?? "Asia/Shanghai"}
+                    executor={chosenJobType}
+                    initialJob={editingJob ?? undefined}
+                    workflows={boundWorkflowOptions}
+                    siliconPersons={siliconPerson ? [{ id: siliconPersonId, name: siliconPerson.name }] : []}
+                    modelOptions={modelOptions}
+                    ownerScope="silicon_person"
+                    ownerId={siliconPersonId}
+                    onSave={(_input, _mode) => void handleSaveScheduleJob(_input, _mode)}
+                    onCancel={() => { setChosenJobType(null); setEditingJob(null); }}
+                  />
+                </div>
+              )}
 
               {siliconPersonScheduleJobs.length > 0 ? (
                 <div className="list-rows" style={{ marginTop: 16 }}>
@@ -1401,9 +1449,43 @@ export default function SiliconPersonWorkspacePage() {
                       <div className="list-row__main">
                         <div className="list-row__title-row">
                           <span className="list-row__title">{job.title}</span>
-                          <span className="tag tag--muted">{job.scheduleKind}</span>
+                          <span className={`job-type-chip job-type-chip--${job.executor}`}>
+                            {job.executor === "workflow" ? "Workflow" : "Prompt"}
+                          </span>
+                          <span className={`tag ${job.status === "failed" ? "tag--danger" : "tag--muted"}`}>
+                            {scheduleJobStatusLabel(job.status)}
+                          </span>
                         </div>
-                        <div className="list-row__description">{job.nextRunAt ? `下次执行 ${job.nextRunAt}` : "等待下一次执行"}</div>
+                        <div className="list-row__description">
+                          {job.description ? `${job.description.slice(0, 60)}${job.description.length > 60 ? "…" : ""} · ` : ""}
+                          {job.nextRunAt ? `下次执行 ${new Date(job.nextRunAt).toLocaleString("zh-CN")}` : "等待下一次执行"}
+                        </div>
+                      </div>
+                      <div className="list-row__trailing">
+                        <button
+                          type="button"
+                          className="btn-toolbar"
+                          title="立即执行"
+                          onClick={() => void handleExecuteScheduleJobNow(job.id)}
+                        >
+                          <Play size={14} aria-hidden />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-toolbar"
+                          title="编辑"
+                          onClick={() => handleEditScheduleJob(job)}
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-toolbar btn-toolbar--danger"
+                          title="删除"
+                          onClick={() => void handleDeleteScheduleJob(job.id)}
+                        >
+                          <Trash2 size={14} aria-hidden />
+                        </button>
                       </div>
                     </article>
                   ))}
@@ -1412,7 +1494,7 @@ export default function SiliconPersonWorkspacePage() {
                 <section className="empty-state empty-state--minimal" style={{ marginTop: 16 }}>
                   <Clock size={32} className="empty-state__icon" aria-hidden />
                   <h3 className="empty-state__title">暂无定时任务</h3>
-                  <p className="empty-state__body">该硅基员工还未创建定时 workflow 任务。</p>
+                  <p className="empty-state__body">为该员工创建定时执行的工作流或 Prompt 任务。</p>
                 </section>
               )}
             </article>
@@ -1792,6 +1874,98 @@ export default function SiliconPersonWorkspacePage() {
 
         /* ── Schedule Form (定时任务表单容器) ── */
         .ws-schedule-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-top: 16px; }
+
+        /* ── Schedule Type Picker (定时任务类型选择卡片) ── */
+        .ws-schedule-type-picker {
+          display: flex;
+          gap: 12px;
+          margin-top: 16px;
+        }
+        .ws-schedule-type-btn {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 4px;
+          padding: 14px 16px;
+          border-radius: var(--radius-xl, 14px);
+          background: var(--glass-surface, rgba(255,255,255,0.04));
+          border: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+          color: inherit;
+          cursor: pointer;
+          transition: border-color 0.2s, background 0.2s;
+        }
+        .ws-schedule-type-btn:hover {
+          border-color: var(--accent, #6366f1);
+          background: rgba(99, 102, 241, 0.06);
+        }
+        .ws-schedule-type-btn > span:first-of-type {
+          font-weight: 500;
+          font-size: 14px;
+        }
+        .ws-schedule-type-desc {
+          font-size: 12px;
+          color: var(--text-secondary, #888);
+        }
+
+        /* ── Schedule Type Chips (编辑器内类型切换) ── */
+        .ws-schedule-type-chips {
+          display: flex;
+          gap: 8px;
+          margin-bottom: 12px;
+        }
+        .ws-type-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 4px 12px;
+          border-radius: 999px;
+          font-size: 12px;
+          font-weight: 500;
+          border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
+          background: transparent;
+          color: var(--text-secondary, #888);
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .ws-type-chip.is-active {
+          background: rgba(99, 102, 241, 0.12);
+          border-color: rgba(99, 102, 241, 0.3);
+          color: var(--accent, #6366f1);
+        }
+        .ws-type-chip--close {
+          margin-left: auto;
+          color: var(--text-tertiary, #666);
+          border-color: transparent;
+        }
+        .ws-type-chip--close:hover { color: var(--text-secondary, #888); }
+
+        /* ── Job Type Chips (任务列表中的类型标签) ── */
+        .job-type-chip {
+          display: inline-block;
+          padding: 1px 8px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 500;
+          line-height: 18px;
+        }
+        .job-type-chip--workflow {
+          background: rgba(99, 102, 241, 0.12);
+          color: #818cf8;
+          border: 1px solid rgba(99, 102, 241, 0.25);
+        }
+        .job-type-chip--silicon_person {
+          background: rgba(16, 163, 127, 0.12);
+          color: #2dd4bf;
+          border: 1px solid rgba(16, 163, 127, 0.25);
+        }
+        .job-type-chip--assistant_prompt {
+          background: rgba(234, 179, 8, 0.12);
+          color: #facc15;
+          border: 1px solid rgba(234, 179, 8, 0.25);
+        }
+
+        .tag--danger { color: #f87171; }
 
         /* ── Responsive ── */
         @media (max-width: 960px) {

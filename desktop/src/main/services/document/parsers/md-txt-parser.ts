@@ -9,9 +9,7 @@
  * - txtParser：按空行（一个或多个 \n）切段，每段一个 ParagraphNode。
  *   UTF-8 BOM 自动剥离；单换行保留在段落内部。
  *
- * 依赖：marked ^17（desktop/package.json 已声明，无需本 plan 改动）。
- * 本模块纯计算，零 I/O；遵循 08-05/08-06/08-07 parser 的惰性 require 模式，
- * 防止启动时强制加载 marked。
+ * 依赖：marked ^17（ESM-only，通过 dynamicEsmImport 加载以绕过 TS CJS 降级）。
  */
 
 import type {
@@ -33,11 +31,17 @@ type MarkedModule = {
   marked?: { lexer: (src: string) => unknown[] };
 };
 
-/** 惰性加载 marked；缺失时抛 [E_DOC_DEP_MISSING] 并给出下一步提示。 */
-function loadMarked(): MarkedModule {
+/**
+ * 原生 ESM 动态 import。
+ * TS 在 module:"CommonJS" 下会把 import() 编译成 require()，而 marked@17 是 ESM-only，
+ * require() 会报错。通过 Function 构造器让 TS 不介入，保留运行时原生 import()。
+ */
+const dynamicEsmImport = new Function("m", "return import(m)") as (m: string) => Promise<any>;
+
+/** 惰性加载 marked（ESM-only @17）；缺失时抛 [E_DOC_DEP_MISSING]。 */
+async function loadMarked(): Promise<MarkedModule> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    return require("marked") as MarkedModule;
+    return (await dynamicEsmImport("marked")) as MarkedModule;
   } catch (err) {
     throw new Error(
       "[E_DOC_DEP_MISSING] 无法加载 marked 依赖，请确认 desktop/package.json 中 marked 已声明。原始错误：" +
@@ -69,7 +73,7 @@ function cellText(cell: unknown): string {
  * 其它（space / html / hr / def）无语义价值，跳过。
  */
 export async function parseMarkdownBuffer(input: ParseInput): Promise<DocumentIR> {
-  const marked = loadMarked();
+  const marked = await loadMarked();
   const lexer =
     typeof marked.lexer === "function"
       ? marked.lexer

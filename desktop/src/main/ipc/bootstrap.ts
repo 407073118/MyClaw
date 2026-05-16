@@ -88,8 +88,7 @@ export function registerBootstrapHandlers(ctx: RuntimeContext): void {
 
     return {
       sessions: ctx.state.sessions,
-      models: ctx.state.models,
-      defaultModelProfileId: ctx.state.getDefaultModelProfileId(),
+      models: ctx.state.models,      defaultModelProfileId: ctx.state.getDefaultModelProfileId(),
       tools: {
         builtin: ctx.tools.resolveBuiltinTools(),
         mcp: ctx.tools.resolveMcpTools(),
@@ -112,5 +111,11 @@ export function registerBootstrapHandlers(ctx: RuntimeContext): void {
       updates: ctx.services.appUpdater.getSnapshot(),
       time: timeSnapshot,
     };
+  });
+
+  // ── 懒加载：按需获取指定会话的消息列表 ──
+  ipcMain.handle("session:get-messages", async (_event, sessionId: string) => {
+    const session = ctx.state.sessions.find((s) => s.id === sessionId);
+    return session?.messages ?? [];
   });
 }

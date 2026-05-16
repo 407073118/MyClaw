@@ -176,6 +176,7 @@ export default function TimeJobDetailPage() {
                 selected={selectedRunId === run.id}
                 onSelect={() => setSelectedRunId(run.id)}
                 onOpenSession={handleOpenRunSession}
+                onDelete={(runId) => { void useWorkspaceStore.getState().deleteExecutionRun(runId); if (selectedRunId === runId) setSelectedRunId(null); }}
               />
             ))}
           </ol>
@@ -196,9 +197,11 @@ type RunRowProps = {
   selected: boolean;
   onSelect: () => void;
   onOpenSession: (sessionId: string) => void;
+  onDelete: (id: string) => void;
 };
 
-function RunRow({ run, timezone, selected, onSelect, onOpenSession }: RunRowProps) {
+function RunRow({ run, timezone, selected, onSelect, onOpenSession, onDelete }: RunRowProps) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const summaryPreview = run.outputSummary
     ? run.outputSummary.replace(/\s+/g, " ").trim().slice(0, 160)
     : "";
@@ -228,15 +231,25 @@ function RunRow({ run, timezone, selected, onSelect, onOpenSession }: RunRowProp
         </div>
       </button>
       <div className="run-row__actions">
-        <button
-          type="button"
-          className="run-row__chat-btn"
-          disabled={!canOpen}
-          onClick={canOpen && run.sessionId ? () => onOpenSession(run.sessionId!) : undefined}
-          title={canOpen ? "打开这次触发的聊天会话" : "本次触发没有关联会话"}
-        >
-          打开聊天
-        </button>
+        {confirmDelete ? (
+          <>
+            <button type="button" className="run-row__del-confirm" onClick={() => { onDelete(run.id); setConfirmDelete(false); }}>确认删除</button>
+            <button type="button" className="run-row__del-cancel" onClick={() => setConfirmDelete(false)}>取消</button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="run-row__chat-btn"
+              disabled={!canOpen}
+              onClick={canOpen && run.sessionId ? () => onOpenSession(run.sessionId!) : undefined}
+              title={canOpen ? "打开这次触发的聊天会话" : "本次触发没有关联会话"}
+            >
+              打开聊天
+            </button>
+            <button type="button" className="run-row__del-btn" onClick={() => setConfirmDelete(true)} title="删除此条记录">删除</button>
+          </>
+        )}
       </div>
     </li>
   );
@@ -629,9 +642,23 @@ const styles = `
 
   .run-row__actions {
     display: flex;
+    align-items: center;
+    gap: 6px;
     justify-content: flex-end;
     padding: 0 12px 10px 46px;
   }
+
+  .run-row__del-btn {
+    height: 26px; padding: 0 10px; border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm); background: transparent;
+    color: var(--text-muted, #666); font-size: 12px; cursor: pointer;
+  }
+  .run-row__del-btn:hover { color: var(--status-red, #ef4444); border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.08); }
+  .run-row__del-confirm { height: 26px; padding: 0 10px; border: 1px solid rgba(239,68,68,0.5);
+    border-radius: var(--radius-sm); background: rgba(239,68,68,0.12); color: var(--status-red, #ef4444); font-size: 12px; cursor: pointer; font-weight: 600; }
+  .run-row__del-confirm:hover { background: rgba(239,68,68,0.2); }
+  .run-row__del-cancel { height: 26px; padding: 0 10px; border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
 
   .run-row__chat-btn {
     height: 26px;

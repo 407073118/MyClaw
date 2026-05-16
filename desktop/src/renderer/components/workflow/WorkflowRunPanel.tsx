@@ -59,6 +59,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [panelError, setPanelError] = useState("");
   const [runInputValues, setRunInputValues] = useState<Record<string, string>>({});
 
@@ -385,7 +386,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
           ) : (
             <div className="run-scroll">
               {runs.map((run, index) => (
-                <button
+                <div
                   key={run.id}
                   className={`run-item${run.id === selectedRunId ? " active" : ""}`}
                   onClick={() => setSelectedRunId(run.id)}
@@ -394,8 +395,18 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
                     <span className="run-title">{formatRunHistoryTitle(index, runs.length)}</span>
                     <span className="run-status-dot" data-status={run.status}></span>
                   </div>
-                  <div className="run-item-meta">{formatRunStatus(run.status)} · {run.updatedAt}</div>
-                </button>
+                  <div className="run-item-bottom">
+                    <span className="run-item-meta">{formatRunStatus(run.status)} · {run.updatedAt}</span>
+                    {confirmDeleteId === run.id ? (
+                      <span className="run-item-del-group">
+                        <button className="run-item-del-confirm" onClick={(e) => { e.stopPropagation(); workspace.deleteWorkflowRun(run.id); setConfirmDeleteId(null); if (selectedRunId === run.id) setSelectedRunId(null); }}>确认</button>
+                        <button className="run-item-del-cancel" onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(null); }}>取消</button>
+                      </span>
+                    ) : (
+                      <button className="run-item-del" title="删除" onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(run.id); }}>×</button>
+                    )}
+                  </div>
+                </div>
               ))}
             </div>
           )}
@@ -645,6 +656,7 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
           text-align: left;
           cursor: pointer;
           transition: all 0.2s;
+          position: relative;
         }
         .run-panel .run-item:hover { background: #18181b; }
         .run-panel .run-item.active {
@@ -653,6 +665,13 @@ export default function WorkflowRunPanel({ workflowId, definition }: WorkflowRun
         }
         .run-panel .run-title { font-size: 12px; font-weight: 700; color: #e4e4e7; }
         .run-panel .run-item-top { display: flex; align-items: center; justify-content: space-between; }
+        .run-panel .run-item-bottom { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+        .run-panel .run-item-del { background: none; border: none; color: #52525b; font-size: 14px; cursor: pointer; padding: 0 2px; line-height: 1; opacity: 0; transition: opacity 0.15s; }
+        .run-panel .run-item:hover .run-item-del { opacity: 1; }
+        .run-panel .run-item-del:hover { color: #ef4444; }
+        .run-panel .run-item-del-group { display: flex; gap: 4px; }
+        .run-panel .run-item-del-confirm { background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: #f87171; font-size: 10px; padding: 1px 6px; border-radius: 3px; cursor: pointer; }
+        .run-panel .run-item-del-cancel { background: none; border: 1px solid #27272a; color: #71717a; font-size: 10px; padding: 1px 6px; border-radius: 3px; cursor: pointer; }
         .run-panel .run-status-dot { width: 6px; height: 6px; border-radius: 50%; background: #52525b; }
         .run-panel .run-status-dot[data-status="succeeded"] { background: #10b981; }
         .run-panel .run-status-dot[data-status="running"] { background: #2563eb; }

@@ -424,9 +424,9 @@ export default function WebPanel() {
           inset: 0;
           z-index: 2400;
           display: flex;
-          align-items: flex-end;
-          justify-content: flex-end;
-          padding: 0 max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) 0;
+          align-items: flex-start;
+          justify-content: flex-start;
+          padding: max(52px, calc(env(safe-area-inset-top) + 44px)) 0 0 max(18px, env(safe-area-inset-left));
           pointer-events: none;
         }
 

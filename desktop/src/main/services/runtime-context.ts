@@ -29,6 +29,10 @@ import type { TimeNotificationService } from "./time-notification-service";
 import type { TimeScheduler } from "./time-scheduler";
 import type { TimeOrchestrationStore } from "./time-orchestration-store";
 import type { MemoryVaultService } from "./memory-vault/service";
+import type { AwarenessRuntimeService } from "./awareness-runtime";
+import type { AwarenessStore } from "./awareness-store";
+import type { StandingOrderService } from "./standing-order-service";
+import type { LongRunLedgerService } from "./long-run-ledger";
 
 export type ActiveSessionRun = {
   runId: string;
@@ -38,6 +42,8 @@ export type ActiveSessionRun = {
   currentMessageId: string;
   pendingApprovalIds: string[];
   cancelRequested: boolean;
+  /** 运行创建时间，用于 stuck 检测 */
+  startedAt: string;
 };
 
 export type RuntimeContext = {
@@ -88,6 +94,11 @@ export type RuntimeContext = {
     timeScheduler?: TimeScheduler;
     timeStore?: TimeOrchestrationStore;
     memoryVault?: MemoryVaultService;
+    awarenessRuntime?: AwarenessRuntimeService;
+    awarenessStore?: AwarenessStore;
+    awarenessSignalCollector?: unknown;
+    standingOrderService?: StandingOrderService;
+    longRunLedger?: LongRunLedgerService;
   };
   tools: {
     resolveBuiltinTools: () => ResolvedBuiltinTool[];

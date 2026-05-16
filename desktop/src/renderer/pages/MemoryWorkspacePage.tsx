@@ -1,12 +1,17 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Check,
+  ChevronDown,
+  ChevronRight,
   Database,
+  Eye,
+  EyeOff,
   File,
   FilePlus2,
   FileText,
   Folder,
   FolderPlus,
+  Info,
   RefreshCw,
   Search,
   Sparkles,
@@ -297,9 +302,21 @@ export default function MemoryWorkspacePage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
   const [loading, setLoading] = useState(true);
   const [documentLoading, setDocumentLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [showAddRoot, setShowAddRoot] = useState(false);
+
+  const saveTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const noticeTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+
+  /** 设置提示横幅，3 秒后自动消失。 */
+  const showNotice = useCallback((message: string) => {
+    setNotice(message);
+    if (noticeTimerRef.current) window.clearTimeout(noticeTimerRef.current);
+    noticeTimerRef.current = window.setTimeout(() => setNotice(null), 3000);
+  }, []);
 
   const managedRoots = useMemo(() => roots.filter((root) => root.mode === "managed"), [roots]);
   const createTargetRoot = useMemo(
@@ -359,7 +376,7 @@ export default function MemoryWorkspacePage() {
       const response = await window.myClawAPI.memory.addRoot({ path, mode: rootMode });
       await window.myClawAPI.memory.rescanRoot(response.item.id);
       setRootPath("");
-      setNotice("根目录已添加，文件树已刷新");
+      showNotice("根目录已添加，文件树已刷新");
       await loadMemoryState();
     } catch (addError) {
       const message = addError instanceof Error ? addError.message : String(addError);
@@ -370,8 +387,14 @@ export default function MemoryWorkspacePage() {
     }
   }, [loadMemoryState, rootMode, rootPath]);
 
-  /** 删除 sidecar 中的根目录索引记录，绝不删除用户真实文件。 */
+  /** 删除 sidecar 中的根目录索引记录，绝不删除用户真实文件。需要二次确认。 */
   const handleRemoveRoot = useCallback(async (rootId: string) => {
+    const root = roots.find((item) => item.id === rootId);
+    const displayName = root?.displayName ?? rootId;
+    const confirmed = window.confirm(
+      `确认移除根目录「${displayName}」的所有索引记录？\n\n原始文件不会被删除，但索引重建需要重新扫描。${activeDocument?.rootId === rootId ? "\n\n当前正在编辑该根目录下的文件，移除后编辑器将关闭。" : ""}`,
+    );
+    if (!confirmed) return;
     console.info("[memory-page] 移除记忆库根目录索引记录", { rootId });
     setBusy(`remove-${rootId}`);
     setError(null);
@@ -385,7 +408,7 @@ export default function MemoryWorkspacePage() {
         setLastSavedContent("");
         setSaveStatus("idle");
       }
-      setNotice("根目录索引记录已移除，原始文件未删除");
+      showNotice("根目录索引记录已移除，原始文件未删除");
       await loadMemoryState();
     } catch (removeError) {
       const message = removeError instanceof Error ? removeError.message : String(removeError);
@@ -394,7 +417,7 @@ export default function MemoryWorkspacePage() {
     } finally {
       setBusy(null);
     }
-  }, [activeDocument?.rootId, loadMemoryState]);
+  }, [activeDocument?.rootId, loadMemoryState, roots]);
 
   /** 手动重扫根目录，补齐 watcher 可能漏掉的文件变化并刷新文件树。 */
   const handleRescanRoot = useCallback(async (rootId: string) => {
@@ -404,7 +427,7 @@ export default function MemoryWorkspacePage() {
     setNotice(null);
     try {
       await window.myClawAPI.memory.rescanRoot(rootId);
-      setNotice("重扫完成，文件树与索引已刷新");
+      showNotice("重扫完成，文件树与索引已刷新");
       await loadMemoryState();
     } catch (scanError) {
       const message = scanError instanceof Error ? scanError.message : String(scanError);
@@ -421,7 +444,7 @@ export default function MemoryWorkspacePage() {
     if (!root) return;
     if (root.mode !== "managed") {
       console.info("[memory-page] 尝试选择引用根目录作为新建目标，已拦截", { rootId, parentRelativePath });
-      setNotice("引用根目录只读，不能在里面新建文件或文件夹");
+      showNotice("引用根目录只读，不能在里面新建文件或文件夹");
       return;
     }
     console.info("[memory-page] 选择记忆库新建目标目录", { rootId, parentRelativePath });
@@ -429,9 +452,13 @@ export default function MemoryWorkspacePage() {
     setNotice(null);
   }, [roots]);
 
-  /** 打开左侧文件树中的文档；Markdown 会在右侧直接进入编辑面板。 */
+  /** 打开左侧文件树中的文档；Markdown 会在右侧直接进入编辑面板。切换前先取消上一文件的防抖保存。 */
   const handleOpenFile = useCallback(async (node: MemoryFileNode) => {
     if (node.kind !== "file") return;
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
     console.info("[memory-page] 打开记忆库文件", { rootId: node.rootId, relativePath: node.relativePath });
     setSelectedFile({ rootId: node.rootId, relativePath: node.relativePath });
     setDocumentLoading(true);
@@ -466,7 +493,7 @@ export default function MemoryWorkspacePage() {
   const startInlineCreate = useCallback((kind: PendingCreateKind) => {
     if (!createTargetRoot) {
       console.info("[memory-page] 未选择托管目录，拒绝启动树内新建", { kind });
-      setNotice("请先在左侧选择一个托管目录，再新建文件或文件夹");
+      showNotice("请先在左侧选择一个托管目录，再新建文件或文件夹");
       return;
     }
     console.info("[memory-page] 启动树内就地新建", {
@@ -509,7 +536,7 @@ export default function MemoryWorkspacePage() {
         rootId: pendingCreate.rootId,
         parentRelativePath: pendingCreate.parentRelativePath,
       });
-      setNotice("引用根目录只读，不能在里面新建文件或文件夹");
+      showNotice("引用根目录只读，不能在里面新建文件或文件夹");
       setPendingCreate(null);
       return;
     }
@@ -531,12 +558,13 @@ export default function MemoryWorkspacePage() {
           parentRelativePath: pendingCreate.parentRelativePath,
           name,
         });
-        setNotice(`文件夹已创建：${response.item.relativePath}`);
+        showNotice(`文件夹已创建：${response.item.relativePath}`);
       } else {
+        const fileName = name.endsWith(".md") ? name : `${name}.md`;
         const response = await window.myClawAPI.memory.createFile({
           rootId: pendingCreate.rootId,
           parentRelativePath: pendingCreate.parentRelativePath,
-          title: name,
+          title: fileName,
           content: "",
         });
         setSelectedFile({ rootId: response.item.rootId, relativePath: response.item.relativePath });
@@ -545,7 +573,7 @@ export default function MemoryWorkspacePage() {
         setLastSavedContent(response.item.content);
         setSaveStatus(response.item.editable ? "saved" : "readonly");
         setCreateTarget({ rootId: response.item.rootId, parentRelativePath: parentPathOf(response.item.relativePath) });
-        setNotice("Markdown 文件已创建并打开");
+        showNotice("Markdown 文件已创建并打开");
       }
       setPendingCreate(null);
       await loadMemoryState();
@@ -563,7 +591,7 @@ export default function MemoryWorkspacePage() {
     }
   }, [loadMemoryState, pendingCreate, roots]);
 
-  /** Markdown 内容变化后自动防抖保存，保持“点开就是编辑”的 Notion 式体验。 */
+  /** Markdown 内容变化后自动防抖保存，保持"点开就是编辑"的 Notion 式体验。 */
   useEffect(() => {
     if (!activeDocument || !activeDocument.editable || activeDocument.documentKind !== "markdown") {
       return undefined;
@@ -574,18 +602,19 @@ export default function MemoryWorkspacePage() {
 
     setSaveStatus("dirty");
     const contentToSave = editorContent;
+    const docRef = activeDocument;
     const timer = window.setTimeout(() => {
       void (async () => {
         console.info("[memory-page] 自动保存记忆库 Markdown 文档", {
-          rootId: activeDocument.rootId,
-          relativePath: activeDocument.relativePath,
+          rootId: docRef.rootId,
+          relativePath: docRef.relativePath,
         });
         setSaveStatus("saving");
         setSaveError(null);
         try {
           const response = await window.myClawAPI.memory.updateDocument({
-            rootId: activeDocument.rootId,
-            relativePath: activeDocument.relativePath,
+            rootId: docRef.rootId,
+            relativePath: docRef.relativePath,
             content: contentToSave,
           });
           setActiveDocument(response.item);
@@ -595,8 +624,8 @@ export default function MemoryWorkspacePage() {
         } catch (saveFailure) {
           const message = saveFailure instanceof Error ? saveFailure.message : String(saveFailure);
           console.error("[memory-page] 自动保存记忆库 Markdown 文档失败", {
-            rootId: activeDocument.rootId,
-            relativePath: activeDocument.relativePath,
+            rootId: docRef.rootId,
+            relativePath: docRef.relativePath,
             error: message,
           });
           setSaveError(message);
@@ -605,7 +634,11 @@ export default function MemoryWorkspacePage() {
       })();
     }, SAVE_DEBOUNCE_MS);
 
-    return () => window.clearTimeout(timer);
+    saveTimerRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      saveTimerRef.current = null;
+    };
   }, [activeDocument, editorContent, lastSavedContent]);
 
   /** 执行记忆检索，并同步构建可注入模型的 evidence pack 预览。 */
@@ -642,7 +675,7 @@ export default function MemoryWorkspacePage() {
     setError(null);
     try {
       await updateSessionRuntimeIntent({ memoryContextEnabled: nextEnabled });
-      setNotice(nextEnabled ? "AI 记忆库已对当前会话开启" : "AI 记忆库已对当前会话关闭");
+      showNotice(nextEnabled ? "AI 记忆库已对当前会话开启" : "AI 记忆库已对当前会话关闭");
     } catch (toggleError) {
       const message = toggleError instanceof Error ? toggleError.message : String(toggleError);
       console.error("[memory-page] 切换 AI 记忆库注入失败", { error: message });
@@ -671,8 +704,8 @@ export default function MemoryWorkspacePage() {
           data-testid="memory-inline-create-input"
           autoFocus
           value={pendingCreate.name}
-          placeholder={creatingFolder ? "文件夹名称" : "Markdown 文件名"}
-          onChange={(event) => setPendingCreate({ ...pendingCreate, name: event.target.value })}
+              placeholder={creatingFolder ? "文件夹名称" : "文件名（自动追加 .md）"}
+              onChange={(event) => setPendingCreate({ ...pendingCreate, name: event.target.value })}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) {
               return;
@@ -782,11 +815,19 @@ export default function MemoryWorkspacePage() {
 
         <section className="memory-workbench" aria-label="记忆库文件编辑工作台">
           <aside className="memory-sidebar" aria-label="记忆库文件树">
-            <div className="memory-add-root">
-              <label htmlFor="memory-root-path">根目录路径</label>
+            <button
+              type="button"
+              className="memory-add-root-toggle"
+              onClick={() => setShowAddRoot((v) => !v)}
+            >
+              {showAddRoot ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              <FolderPlus size={14} />
+              <span>添加根目录</span>
+            </button>
+            {showAddRoot && (
+              <div className="memory-add-root">
               <div className="memory-add-root__row">
                 <input
-                  id="memory-root-path"
                   value={rootPath}
                   onChange={(event) => setRootPath(event.target.value)}
                   placeholder="F:\\Work\\Memory"
@@ -817,7 +858,8 @@ export default function MemoryWorkspacePage() {
                   引用
                 </button>
               </div>
-            </div>
+              </div>
+            )}
 
             <div className="memory-tree-header">
               <div className="memory-tree-heading">
@@ -919,7 +961,7 @@ export default function MemoryWorkspacePage() {
               </div>
               <div className="memory-editor-actions">
                 <span className={`memory-save-status memory-save-status--${saveStatus}`}>{saveStatusLabel(saveStatus)}</span>
-                <label className="memory-ai-toggle">
+                <label className="memory-ai-toggle" title="开启后，发送消息时会检索相关记忆并注入系统提示">
                   <input
                     data-testid="memory-ai-toggle"
                     type="checkbox"
@@ -927,13 +969,29 @@ export default function MemoryWorkspacePage() {
                     disabled={!currentSession || busy === "memory-ai"}
                     onChange={() => void handleToggleMemoryContext()}
                   />
-                  <span>AI 使用记忆库</span>
+                  <span>AI 引用记忆库</span>
                   <Sparkles data-testid="memory-ai-toggle-icon" size={14} aria-hidden="true" />
                 </label>
+                {memoryContextEnabled && contextPack.tokenEstimate > 0 && (
+                  <span className="memory-ai-budget" title="预估注入 token 数">
+                    <Info size={12} />
+                    ~{contextPack.tokenEstimate} tokens
+                  </span>
+                )}
+                {activeDocument?.documentKind === "markdown" && (
+                  <button
+                    type="button"
+                    className={`memory-icon-button${showPreview ? " is-active-preview" : ""}`}
+                    title={showPreview ? "隐藏预览" : "显示预览"}
+                    onClick={() => setShowPreview((v) => !v)}
+                  >
+                    {showPreview ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className={`memory-editor-surface${activeDocument?.documentKind === "markdown" ? " memory-editor-surface--markdown" : ""}`}>
+            <div className={`memory-editor-surface${activeDocument?.documentKind === "markdown" ? " memory-editor-surface--markdown" : ""}${activeDocument?.documentKind === "markdown" && showPreview ? " memory-editor-surface--split" : ""}`}>
               {documentLoading ? (
                 <div className="memory-editor-empty">正在打开文档</div>
               ) : activeDocument?.documentKind === "markdown" ? (
@@ -952,17 +1010,19 @@ export default function MemoryWorkspacePage() {
                       onChange={(event) => setEditorContent(event.target.value)}
                     />
                   </div>
-                  <div className="memory-markdown-preview-column">
-                    <div className="memory-pane-label">
-                      <FileText size={14} />
-                      <span>预览</span>
+                  {showPreview && (
+                    <div className="memory-markdown-preview-column">
+                      <div className="memory-pane-label">
+                        <FileText size={14} />
+                        <span>预览</span>
+                      </div>
+                      <article data-testid="memory-markdown-preview" className="memory-markdown-preview">
+                        {markdownBlocks.length > 0 ? markdownBlocks.map((block, index) => renderMarkdownBlock(block, index)) : (
+                          <p className="memory-markdown-preview__empty">空白文档</p>
+                        )}
+                      </article>
                     </div>
-                    <article data-testid="memory-markdown-preview" className="memory-markdown-preview">
-                      {markdownBlocks.length > 0 ? markdownBlocks.map((block, index) => renderMarkdownBlock(block, index)) : (
-                        <p className="memory-markdown-preview__empty">空白文档</p>
-                      )}
-                    </article>
-                  </div>
+                  )}
                 </>
               ) : activeDocument ? (
                 <div className="memory-editor-empty">
@@ -1008,7 +1068,7 @@ export default function MemoryWorkspacePage() {
                   {results.length === 0 ? (
                     <div className="memory-empty memory-empty--compact">暂无检索结果</div>
                   ) : results.map((item) => (
-                    <article key={item.id} className="memory-result-row">
+                    <article key={item.id} className="memory-result-row memory-result-row--clickable" role="button" tabIndex={0} title={"打开 " + item.relativePath} onClick={() => void handleOpenFile({ kind: "file" as const, id: item.id, rootId: item.rootId, name: item.title, path: item.relativePath, relativePath: item.relativePath, documentKind: "markdown" as const, editable: true })} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void handleOpenFile({ kind: "file" as const, id: item.id, rootId: item.rootId, name: item.title, path: item.relativePath, relativePath: item.relativePath, documentKind: "markdown" as const, editable: true }); } }}>
                       <div className="memory-result-row__title">
                         <strong>{item.title}</strong>
                         <span>{Math.round(item.score * 100)}%</span>
@@ -1033,12 +1093,15 @@ export default function MemoryWorkspacePage() {
         .memory-stats { display: grid; grid-template-columns: repeat(4, minmax(82px, 1fr)); gap: 8px; min-width: 420px; }
         .memory-stats span { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-muted); font-size: 11px; background: rgba(255,255,255,0.025); }
         .memory-stats strong { color: var(--text-primary); font-size: 17px; }
-        .memory-content { min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+        .memory-content { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; overflow: hidden; }
         .memory-banner { padding: 10px 12px; border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-secondary); background: rgba(255,255,255,0.03); }
         .memory-banner--error { border-color: rgba(248,113,113,0.32); color: #fca5a5; background: rgba(127,29,29,0.14); }
         .memory-banner--ok { border-color: rgba(34,197,94,0.24); color: #86efac; background: rgba(20,83,45,0.12); }
-        .memory-workbench { min-height: 720px; display: grid; grid-template-columns: minmax(290px, 360px) minmax(0, 1fr); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; overflow: hidden; background: rgba(255,255,255,0.018); }
+        .memory-workbench { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(290px, 360px) minmax(0, 1fr); border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; overflow: hidden; background: rgba(255,255,255,0.018); }
         .memory-sidebar { min-width: 0; display: flex; flex-direction: column; border-right: 1px solid rgba(255,255,255,0.07); background: rgba(0,0,0,0.14); }
+        .memory-add-root-toggle { height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 12px; border: 0; border-bottom: 1px solid rgba(255,255,255,0.07); border-radius: 0; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 12px; font-weight: 800; width: 100%; text-align: left; }
+        .memory-add-root-toggle:hover { background: rgba(255,255,255,0.04); color: var(--text-secondary); }
+        .memory-add-root-toggle svg:first-child { transition: transform 0.15s ease; }
         .memory-add-root { display: flex; flex-direction: column; gap: 9px; padding: 12px; border-bottom: 1px solid rgba(255,255,255,0.07); }
         .memory-add-root label { color: var(--text-secondary); font-size: 12px; font-weight: 800; }
         .memory-add-root__row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 8px; align-items: center; }
@@ -1084,20 +1147,23 @@ export default function MemoryWorkspacePage() {
         .memory-ai-toggle { height: 34px; display: inline-flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--glass-border); border-radius: 8px; color: var(--text-secondary); font-size: 12px; font-weight: 800; background: rgba(0,0,0,0.16); white-space: nowrap; }
         .memory-ai-toggle input { width: 16px; height: 16px; accent-color: #38bdf8; }
         .memory-ai-toggle svg { color: #67e8f9; opacity: 0.92; }
+        .memory-ai-budget { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+        .memory-ai-budget svg { color: #67e8f9; opacity: 0.7; }
         .memory-save-status { display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--glass-border); color: var(--text-muted); font-size: 11px; font-weight: 900; }
         .memory-save-status--dirty, .memory-save-status--saving { color: #fde68a; border-color: rgba(250,204,21,0.25); background: rgba(250,204,21,0.08); }
         .memory-save-status--saved { color: #86efac; border-color: rgba(34,197,94,0.25); background: rgba(34,197,94,0.08); }
         .memory-save-status--readonly { color: #bae6fd; border-color: rgba(56,189,248,0.25); background: rgba(56,189,248,0.08); }
         .memory-save-status--error { color: #fca5a5; border-color: rgba(248,113,113,0.25); background: rgba(248,113,113,0.08); }
-        .memory-editor-surface { min-height: 0; display: flex; padding: 0; }
+        .memory-editor-surface { min-height: 0; display: flex; padding: 0; overflow: hidden; }
         .memory-editor-surface textarea { width: 100%; min-height: 100%; resize: none; border: 0; border-radius: 0; outline: none; padding: 22px 24px 34px; background: rgba(255,255,255,0.012); color: var(--text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 14px; line-height: 1.7; }
         .memory-editor-surface textarea[readonly] { color: var(--text-secondary); background: rgba(255,255,255,0.018); }
-        .memory-editor-surface--markdown { display: grid; grid-template-columns: minmax(320px, 0.95fr) minmax(320px, 1.05fr); }
-        .memory-markdown-editor-column, .memory-markdown-preview-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+        .memory-editor-surface--markdown { display: flex; flex-direction: column; }
+        .memory-editor-surface--markdown.memory-editor-surface--split { display: grid; grid-template-columns: minmax(320px, 0.95fr) minmax(320px, 1.05fr); grid-template-rows: 1fr; flex-direction: row; }
+        .memory-editor-surface--markdown textarea { flex: 1; min-height: 0; height: 100%; }
+        .memory-markdown-editor-column, .memory-markdown-preview-column { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); flex: 1; overflow: hidden; }
         .memory-markdown-preview-column { border-left: 1px solid rgba(255,255,255,0.07); background: rgba(255,255,255,0.01); }
         .memory-pane-label { height: 36px; display: inline-flex; align-items: center; gap: 7px; padding: 0 13px; border-bottom: 1px solid rgba(255,255,255,0.07); color: var(--text-muted); font-size: 11px; font-weight: 900; }
         .memory-pane-label svg { color: #bae6fd; }
-        .memory-editor-surface--markdown textarea { min-height: 0; height: 100%; }
         .memory-markdown-preview { min-width: 0; min-height: 0; overflow: auto; padding: 24px 28px 34px; color: #dbe4ef; font-size: 14px; line-height: 1.74; }
         .memory-markdown-preview h1, .memory-markdown-preview h2, .memory-markdown-preview h3, .memory-markdown-preview h4, .memory-markdown-preview h5, .memory-markdown-preview h6 { margin: 0 0 12px; color: #f8fafc; letter-spacing: 0; line-height: 1.25; }
         .memory-markdown-preview h1 { font-size: 25px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); }
@@ -1125,6 +1191,8 @@ export default function MemoryWorkspacePage() {
         .memory-search-results { display: grid; grid-template-columns: minmax(0, 0.95fr) minmax(280px, 1.05fr); gap: 10px; align-items: stretch; }
         .memory-result-list { min-height: 120px; max-height: 220px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
         .memory-result-row { display: flex; flex-direction: column; gap: 5px; padding: 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(255,255,255,0.025); }
+        .memory-result-row--clickable { cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease; }
+        .memory-result-row--clickable:hover { background: rgba(125,211,252,0.075); border-color: rgba(125,211,252,0.2); }
         .memory-result-row__title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         .memory-result-row__title strong { color: var(--text-primary); font-size: 13px; overflow-wrap: anywhere; }
         .memory-result-row__title span, .memory-result-row code { color: var(--text-muted); font-size: 11px; }
@@ -1132,6 +1200,7 @@ export default function MemoryWorkspacePage() {
         .memory-context-preview { min-height: 120px; max-height: 220px; overflow: auto; margin: 0; padding: 10px; border: 1px solid rgba(255,255,255,0.07); border-radius: 8px; background: rgba(0,0,0,0.24); color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.55; }
         .memory-icon-button { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--glass-border); border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; }
         .memory-icon-button:hover { background: rgba(255,255,255,0.06); color: var(--text-primary); }
+        .memory-icon-button.is-active-preview { background: rgba(125,211,252,0.14); color: #bae6fd; border-color: rgba(125,211,252,0.3); }
         .memory-chip { display: inline-flex; align-items: center; min-height: 19px; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--glass-border); color: var(--text-muted); font-size: 10px; font-weight: 900; }
         .memory-chip--managed, .memory-chip--ready, .memory-chip--approved { color: #86efac; border-color: rgba(34,197,94,0.25); background: rgba(34,197,94,0.08); }
         .memory-chip--reference, .memory-chip--indexing, .memory-chip--pending { color: #bae6fd; border-color: rgba(56,189,248,0.25); background: rgba(56,189,248,0.08); }
@@ -1142,9 +1211,9 @@ export default function MemoryWorkspacePage() {
         @media (max-width: 1180px) {
           .memory-stats { min-width: 0; width: 100%; grid-template-columns: repeat(2, minmax(110px, 1fr)); }
           .memory-workbench { grid-template-columns: 1fr; }
-          .memory-sidebar { border-right: 0; border-bottom: 1px solid rgba(255,255,255,0.07); max-height: 520px; }
+          .memory-sidebar { border-right: 0; border-bottom: 1px solid rgba(255,255,255,0.07); max-height: 320px; }
           .memory-search-results { grid-template-columns: 1fr; }
-          .memory-editor-surface--markdown { grid-template-columns: 1fr; grid-template-rows: minmax(320px, 1fr) minmax(260px, 0.85fr); }
+          .memory-editor-surface--markdown.memory-editor-surface--split { grid-template-columns: 1fr; grid-template-rows: minmax(320px, 1fr) minmax(260px, 0.85fr); }
           .memory-markdown-preview-column { border-left: 0; border-top: 1px solid rgba(255,255,255,0.07); }
           .memory-editor-topbar { align-items: flex-start; flex-direction: column; }
           .memory-editor-actions { width: 100%; justify-content: space-between; }

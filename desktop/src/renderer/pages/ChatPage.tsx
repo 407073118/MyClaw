@@ -1,7 +1,10 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUp, Square } from "lucide-react";
 import { marked } from "marked";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useWorkspaceStore, bufferStreamingDelta, getCachedMarkdown, flushStreamingBufferNow } from "../stores/workspace";
+import { useShallow } from "zustand/react/shallow";
 type ChatReminderBannerPayload = {
   id?: string;
   title: string;
@@ -13,7 +16,6 @@ import { PlanSidePanel } from "../components/PlanSidePanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
 import InlineFileReferenceContent from "../components/InlineFileReferenceContent";
 import { useDialogA11y } from "../hooks/useDialogA11y";
-import { useWorkspaceStore } from "../stores/workspace";
 import type {
   A2UiForm,
   A2UiPayload,
@@ -54,6 +56,11 @@ function renderMarkdown(content: string): string {
   } catch {
     return content;
   }
+}
+
+/** 快速 HTML 转义，用于流式消息的轻量渲染（跳过 marked.parse 开销）。 */
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
 }
 
 /** 生成任务面板关闭状态的任务签名，新任务加入时签名变化会重新展示面板。 */
@@ -385,7 +392,48 @@ function readRuntimeStatus(event: Record<string, unknown>): ChatRunRuntimeStatus
 
 /** 渲染聊天主界面，并负责消息流、审批和内联表单交互。 */
 export default function ChatPage() {
-  const workspace = useWorkspaceStore();
+  const workspace = useWorkspaceStore(useShallow((s) => ({
+    // Data properties ChatPage actually reads
+    sessions: s.sessions,
+    currentSession: s.currentSession,
+    siliconPersons: s.siliconPersons,
+    activeSiliconPersonId: s.activeSiliconPersonId,
+    agentTasks: s.agentTasks,
+    skills: s.skills,
+    models: s.models,
+    defaultModelProfileId: s.defaultModelProfileId,
+    approvalRequests: s.approvalRequests,
+    myClawRootPath: s.myClawRootPath,
+    workspaceRootPath: s.workspaceRootPath,
+    time: s.time,
+    modelSwitchNotice: s.modelSwitchNotice,
+    // Actions (stable references, never trigger re-render by themselves)
+    loadSiliconPersonById: s.loadSiliconPersonById,
+    markSiliconPersonSessionRead: s.markSiliconPersonSessionRead,
+    updateSessionRuntimeIntent: s.updateSessionRuntimeIntent,
+    applySessionUpdate: s.applySessionUpdate,
+    cancelSessionRun: s.cancelSessionRun,
+    approvePlan: s.approvePlan,
+    cancelPlanMode: s.cancelPlanMode,
+    pushAssistantMessage: s.pushAssistantMessage,
+    createSiliconPersonSession: s.createSiliconPersonSession,
+    createSession: s.createSession,
+    dismissModelSwitchNotice: s.dismissModelSwitchNotice,
+    switchSiliconPersonSession: s.switchSiliconPersonSession,
+    selectSession: s.selectSession,
+    deleteSession: s.deleteSession,
+    setActiveSiliconPersonId: s.setActiveSiliconPersonId,
+    cancelAgentTask: s.cancelAgentTask,
+    retryAgentTask: s.retryAgentTask,
+    followUpAgentTask: s.followUpAgentTask,
+    appendAgentTaskResultToSource: s.appendAgentTaskResultToSource,
+    createAgentTask: s.createAgentTask,
+    sendSiliconPersonMessage: s.sendSiliconPersonMessage,
+    sendMessage: s.sendMessage,
+    resolveApproval: s.resolveApproval,
+    pollBackgroundTask: s.pollBackgroundTask,
+    cancelBackgroundTask: s.cancelBackgroundTask,
+  })));
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [composerDraft, setComposerDraft] = useState("");
@@ -399,6 +447,7 @@ export default function ChatPage() {
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => Promise<void> | void } | null>(null);
   const timelinePanelRef = useRef<HTMLElement | null>(null);
   const timelineStickToBottomRef = useRef(true);
+  const streamingMessageIdRef = useRef<string | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const confirmCancelRef = useRef<HTMLButtonElement | null>(null);
   // 投递痕迹 5s 自动消失的定时器集中管理，组件 unmount 时统一清理。
@@ -434,7 +483,7 @@ export default function ChatPage() {
   const mentionTargetSiliconPerson = mentionTargetSiliconPersonId
     ? siliconPersons.find((sp) => sp.id === mentionTargetSiliconPersonId) ?? null
     : null;
-  const agentTasks = ((workspace as unknown as { agentTasks?: AgentTask[] }).agentTasks ?? []);
+  const agentTasks = workspace.agentTasks ?? [];
   const siliconPersonNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const person of siliconPersons) {
@@ -559,11 +608,11 @@ export default function ChatPage() {
 
   /** 当前默认模型配置，用于显示运行时状态。 */
   const activeModelProfile = useMemo(() => {
-    const models = (workspace as any).models as Array<Record<string, unknown>> | undefined;
-    const defaultId = (workspace as any).defaultModelProfileId as string | null | undefined;
+    const models = workspace.models as Array<Record<string, unknown>> | undefined;
+    const defaultId = workspace.defaultModelProfileId as string | null | undefined;
     if (!models || models.length === 0) return null;
     return models.find((m) => m.id === defaultId) ?? models[0] ?? null;
-  }, [(workspace as any).models, (workspace as any).defaultModelProfileId]);
+  }, [workspace.models, workspace.defaultModelProfileId]);
 
   /** 当前硅基员工是否缺少有效 modelProfileId（空或不在已配置模型列表里）。 */
   const siliconPersonModelMissing = useMemo(() => {
@@ -574,11 +623,11 @@ export default function ChatPage() {
     if (!person) return false;
     const profileId = person.modelProfileId?.trim();
     if (!profileId) return true;
-    const models = (workspace as any).models as Array<Record<string, unknown>> | undefined;
+    const models = workspace.models as Array<Record<string, unknown>> | undefined;
     if (!models || models.length === 0) return true;
     return !models.find((m) => m.id === profileId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSiliconPersonView, session, siliconPersons, (workspace as any).models]);
+  }, [isSiliconPersonView, session, siliconPersons, workspace.models]);
 
   activeViewSessionIdRef.current = session?.id ?? null;
   activeViewSiliconPersonIdRef.current = selectedSiliconPerson?.id ?? null;
@@ -759,6 +808,7 @@ export default function ChatPage() {
 
   const parsedMessages = useMemo(() => {
     if (!sessionMessages) return [];
+    const streamingId = streamingMessageIdRef.current;
     return sessionMessages.map((msg: ChatMessage) => {
       if (!msg || typeof msg.content !== "string") return msg;
       const a2uiSubmitMatch = msg.content.match(/^\[A2UI_FORM:([a-zA-Z0-9_-]+)\]\s*(.*)$/);
@@ -767,7 +817,17 @@ export default function ChatPage() {
       }
       const a2uiMatch = msg.content.match(/```a2ui\s*([\s\S]*?)\s*```/);
       if (!a2uiMatch) {
-        return { ...msg, renderedHtml: renderMarkdown(msg.content), renderedReasoningHtml: msg.reasoning ? renderMarkdown(msg.reasoning) : "" };
+        const isStreaming = msg.id === streamingId;
+        return {
+          ...msg,
+          renderedHtml: isStreaming
+            ? escapeHtml(msg.content)
+            : getCachedMarkdown(msg.id, msg.content, renderMarkdown),
+          renderedReasoningHtml: msg.reasoning
+            ? (isStreaming ? escapeHtml(msg.reasoning) : getCachedMarkdown(msg.id + "-r", msg.reasoning, renderMarkdown))
+            : "",
+          _isStreaming: isStreaming,
+        };
       }
       try {
         const parsed = JSON.parse(a2uiMatch[1]);
@@ -775,9 +835,9 @@ export default function ChatPage() {
         let finalUi = (msg as any).ui;
         if (!finalUi && parsed.ui) finalUi = { ...parsed.ui, id: parsed.ui.id || msg.id };
         const finalContent = replacedContent || parsed.text || "";
-        return { ...msg, content: finalContent, ui: finalUi, renderedHtml: renderMarkdown(finalContent), renderedReasoningHtml: msg.reasoning ? renderMarkdown(msg.reasoning) : "" };
+        return { ...msg, content: finalContent, ui: finalUi, renderedHtml: getCachedMarkdown(msg.id, finalContent, renderMarkdown), renderedReasoningHtml: msg.reasoning ? getCachedMarkdown(msg.id + "-r", msg.reasoning, renderMarkdown) : "" };
       } catch {
-        return { ...msg, renderedHtml: renderMarkdown(textOf(msg.content)), renderedReasoningHtml: msg.reasoning ? renderMarkdown(msg.reasoning) : "" };
+        return { ...msg, renderedHtml: getCachedMarkdown(msg.id, textOf(msg.content), renderMarkdown), renderedReasoningHtml: msg.reasoning ? getCachedMarkdown(msg.id + "-r", msg.reasoning, renderMarkdown) : "" };
       }
     });
   }, [sessionMessages]);
@@ -834,6 +894,22 @@ export default function ChatPage() {
     // 移除过滤后变空的技术分组
     return result.filter((g) => !g.isTechnicalGroup || (g.items && g.items.length > 0));
   }, [parsedMessages]);
+
+  // ── 虚拟滚动 ──
+  const virtualizer = useVirtualizer({
+    count: groupedMessages.length,
+    getScrollElement: () => timelinePanelRef.current,
+    estimateSize: (index: number) => {
+      const msg = groupedMessages[index];
+      if (!msg) return 100;
+      if (msg.isTechnicalGroup) return 60;
+      const len = (msg.content ?? "").length;
+      if (len > 2000) return 400;
+      if (len > 500) return 200;
+      return 120;
+    },
+    overscan: 5,
+  });
 
   const sessionApprovalRequests = useMemo(() => {
     if (!session) return [];
@@ -1037,6 +1113,8 @@ export default function ChatPage() {
       } else if (type === "runtime.status" && runtimeStatus) {
         if (!isActiveViewSession(runtimeStatus.sessionId)) return;
         if (TERMINAL_RUN_STATUSES.has(runtimeStatus.status)) {
+          streamingMessageIdRef.current = null;
+          flushStreamingBufferNow();
           setActiveRunState(null);
           setCurrentRound(0);
           setActiveTools(new Map());
@@ -1051,10 +1129,13 @@ export default function ChatPage() {
           });
         }
       } else if (type === "message.delta" && eventSessionId && messageId && (delta?.content || delta?.reasoning)) {
-        ws.patchStreamingMessage(eventSessionId, messageId, delta.content ?? null, delta.reasoning ?? null);
+        streamingMessageIdRef.current = messageId;
+        bufferStreamingDelta(eventSessionId, messageId, delta.content ?? null, delta.reasoning ?? null);
         // 流式输出时持续滚动到底部，避免用户需要手动滚动查看新内容。
         scrollToBottomRef.current("smooth");
       } else if (type === "session.updated" && updatedSession) {
+        streamingMessageIdRef.current = null;
+        flushStreamingBufferNow();
         ws.applySessionUpdate(updatedSession);
         if (updatedSession.siliconPersonId) {
           void ws.loadSiliconPersonById(updatedSession.siliconPersonId).catch((error) => {
@@ -1945,27 +2026,43 @@ export default function ChatPage() {
                 </div>
               )}
 
-              {groupedMessages.map((message, index) => {
-                const msgCreatedAt = message.isTechnicalGroup
-                  ? message.items[0]?.createdAt
-                  : message.createdAt;
-                const prevCreatedAt = index > 0
-                  ? (groupedMessages[index - 1].isTechnicalGroup
-                      ? groupedMessages[index - 1].items[0]?.createdAt
-                      : groupedMessages[index - 1].createdAt)
-                  : undefined;
-                const showDateSep = msgCreatedAt && (
-                  index === 0 || (prevCreatedAt && isDifferentDay(prevCreatedAt, msgCreatedAt))
-                );
+              {/* ── 消息列表：虚拟滚动 ── */}
+              <div style={{ height: virtualizer.getTotalSize(), position: "relative", width: "100%" }}>
+                {virtualizer.getVirtualItems().map((virtualItem) => {
+                  const message = groupedMessages[virtualItem.index];
+                  if (!message) return null;
+                  const msgCreatedAt = message.isTechnicalGroup
+                    ? message.items[0]?.createdAt
+                    : message.createdAt;
+                  const prevCreatedAt = virtualItem.index > 0
+                    ? (groupedMessages[virtualItem.index - 1].isTechnicalGroup
+                        ? groupedMessages[virtualItem.index - 1].items[0]?.createdAt
+                        : groupedMessages[virtualItem.index - 1].createdAt)
+                    : undefined;
+                  const showDateSep = msgCreatedAt && (
+                    virtualItem.index === 0 || (prevCreatedAt && isDifferentDay(prevCreatedAt, msgCreatedAt))
+                  );
+                  const virtualItemStyle: React.CSSProperties = {
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualItem.start}px)`,
+                    paddingBottom: "32px",
+                  };
 
-                if (!message.isTechnicalGroup) {
+                  if (!message.isTechnicalGroup) {
                   const isReasoningOpen = message.role === "assistant" && message.renderedReasoningHtml
                     ? isReasoningPanelOpen(message.id)
                     : false;
                   const reasoningToggleLabel = isReasoningOpen ? "点击折叠" : "点击展开";
-                  // 普通消息卡片。
                   return (
-                    <React.Fragment key={message.id}>
+                    <div
+                      key={message.id}
+                      data-index={virtualItem.index}
+                      ref={virtualizer.measureElement}
+                      style={virtualItemStyle}
+                    >
                     {showDateSep && (
                       <div className="date-separator"><span>{formatDateSeparator(msgCreatedAt)}</span></div>
                     )}
@@ -2031,7 +2128,7 @@ export default function ChatPage() {
 
                         {message.content && (
                           <InlineFileReferenceContent
-                            className="message-content"
+                            className={`message-content${(message as any)._isStreaming ? " message-content--streaming" : ""}`}
                             html={message.renderedHtml}
                             baseDirectory={inlineFileBaseDirectory}
                           />
@@ -2087,110 +2184,116 @@ export default function ChatPage() {
                         {shouldRenderInlineA2UiForm(message.ui) && renderUiFields(message)}
                       </div>
                     </div>
-                    </React.Fragment>
+                    </div>
                   );
-                } else {
-                  // 技术链分组，用于折叠展示工具调用过程。
-                  return (
-                    <React.Fragment key={message.id}>
-                    {showDateSep && (
-                      <div className="date-separator"><span>{formatDateSeparator(msgCreatedAt)}</span></div>
-                    )}
-                    <div className="message-row role-tool">
-                      <div className="message-avatar">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
-                        </svg>
-                      </div>
+                  } else {
+                    // 技术链分组，用于折叠展示工具调用过程。
+                    return (
                       <div
-                        className="message-body"
-                        data-testid={`execution-chain-group-${message.items[0]?.id ?? message.id}`}
+                        key={message.id}
+                        data-index={virtualItem.index}
+                        ref={virtualizer.measureElement}
+                        style={virtualItemStyle}
                       >
-                        <details className="tool-chain-details" open={isLastTechnicalGroup(index)}>
-                          <summary className="tool-chain-summary">
-                            <svg className="tool-chain-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
-                              <polyline points="6 9 12 15 18 9" />
-                            </svg>
-                            {activeTools.size > 0 && isLastTechnicalGroup(index) && (
-                              <span className="tool-spinner"></span>
-                            )}
-                            <span className="tool-chain-title">{toolChainTitle(message.items)}</span>
-                            <span className="tool-chain-count">{message.items.length} 步</span>
-                            {currentRound > 0 && isLastTechnicalGroup(index) && (
-                              <span className="tool-chain-round">轮次 {currentRound}</span>
-                            )}
-                            {msgCreatedAt && (
-                              <span className="tool-chain-time" title={formatFullTime(msgCreatedAt)}>
-                                {formatMessageTime(msgCreatedAt)}
-                              </span>
-                            )}
-                          </summary>
-                          <ol className="execution-chain-list">
-                            {message.items.map((item: ChatMessage) => {
-                              const tcId = item.tool_call_id;
-                              const timing = tcId ? toolTimings.get(tcId) : undefined;
-                              const isActive = tcId ? activeTools.has(tcId) : false;
+                      {showDateSep && (
+                        <div className="date-separator"><span>{formatDateSeparator(msgCreatedAt)}</span></div>
+                      )}
+                      <div className="message-row role-tool">
+                        <div className="message-avatar">
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z" />
+                          </svg>
+                        </div>
+                        <div
+                          className="message-body"
+                          data-testid={`execution-chain-group-${message.items[0]?.id ?? message.id}`}
+                        >
+                          <details className="tool-chain-details" open={isLastTechnicalGroup(virtualItem.index)}>
+                            <summary className="tool-chain-summary">
+                              <svg className="tool-chain-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+                                <polyline points="6 9 12 15 18 9" />
+                              </svg>
+                              {activeTools.size > 0 && isLastTechnicalGroup(virtualItem.index) && (
+                                <span className="tool-spinner"></span>
+                              )}
+                              <span className="tool-chain-title">{toolChainTitle(message.items)}</span>
+                              <span className="tool-chain-count">{message.items.length} 步</span>
+                              {currentRound > 0 && isLastTechnicalGroup(virtualItem.index) && (
+                                <span className="tool-chain-round">轮次 {currentRound}</span>
+                              )}
+                              {msgCreatedAt && (
+                                <span className="tool-chain-time" title={formatFullTime(msgCreatedAt)}>
+                                  {formatMessageTime(msgCreatedAt)}
+                                </span>
+                              )}
+                            </summary>
+                            <ol className="execution-chain-list">
+                              {message.items.map((item: ChatMessage) => {
+                                const tcId = item.tool_call_id;
+                                const timing = tcId ? toolTimings.get(tcId) : undefined;
+                                const isActive = tcId ? activeTools.has(tcId) : false;
 
-                              return (
-                                <li
-                                  key={item.id}
-                                  data-testid={`execution-chain-step-${item.id}`}
-                                  className={`execution-chain-step execution-chain-step--${item.role}${isActive ? " is-active" : ""}`}
-                                >
-                                  {isActive && <span className="tool-step-spinner"></span>}
-                                  <span className="execution-chain-badge">{executionChainBadge(item)}</span>
+                                return (
+                                  <li
+                                    key={item.id}
+                                    data-testid={`execution-chain-step-${item.id}`}
+                                    className={`execution-chain-step execution-chain-step--${item.role}${isActive ? " is-active" : ""}`}
+                                  >
+                                    {isActive && <span className="tool-step-spinner"></span>}
+                                    <span className="execution-chain-badge">{executionChainBadge(item)}</span>
+                                    <div className="execution-chain-main">
+                                      {item.role === "assistant" && Array.isArray((item as any).tool_calls) && (item as any).tool_calls.length > 0 ? (
+                                        <details className="execution-chain-output">
+                                          <summary className="execution-chain-output-summary">
+                                            {executionChainSummary(item)}
+                                          </summary>
+                                          <div className="execution-chain-output-body tool-args-preview">
+                                            {((item as any).tool_calls as Array<{ function: { name: string; arguments: string } }>).map((tc, i) => (
+                                              <div key={i} className="tool-call-args">
+                                                <div className="tool-call-name">{tc.function.name}</div>
+                                                <pre className="tool-args-json">{formatToolArgs(tc.function.arguments)}</pre>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </details>
+                                      ) : item.role === "tool" ? (
+                                        <details className="execution-chain-output">
+                                          <summary className="execution-chain-output-summary">
+                                            {executionChainSummary(item)}
+                                            {timing !== undefined && (
+                                              <span className="tool-timing">{timing}ms</span>
+                                            )}
+                                          </summary>
+                                          <div className="execution-chain-output-body">
+                                            <ToolLogContent messageId={item.id} content={typeof item.content === "string" ? item.content : (item.content as any[])?.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n") || ""} />
+                                          </div>
+                                        </details>
+                                      ) : (
+                                        <span className="execution-chain-text">{executionChainSummary(item)}</span>
+                                      )}
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                              {/* 展示仍在执行、尚未产出结果的工具。 */}
+                              {isLastTechnicalGroup(virtualItem.index) && Array.from(activeTools.entries()).map(([tcId, info]) => (
+                                <li key={`active-${tcId}`} className="execution-chain-step execution-chain-step--active is-active">
+                                  <span className="tool-step-spinner"></span>
+                                  <span className="execution-chain-badge">执行中</span>
                                   <div className="execution-chain-main">
-                                    {item.role === "assistant" && Array.isArray((item as any).tool_calls) && (item as any).tool_calls.length > 0 ? (
-                                      <details className="execution-chain-output">
-                                        <summary className="execution-chain-output-summary">
-                                          {executionChainSummary(item)}
-                                        </summary>
-                                        <div className="execution-chain-output-body tool-args-preview">
-                                          {((item as any).tool_calls as Array<{ function: { name: string; arguments: string } }>).map((tc, i) => (
-                                            <div key={i} className="tool-call-args">
-                                              <div className="tool-call-name">{tc.function.name}</div>
-                                              <pre className="tool-args-json">{formatToolArgs(tc.function.arguments)}</pre>
-                                            </div>
-                                          ))}
-                                        </div>
-                                      </details>
-                                    ) : item.role === "tool" ? (
-                                      <details className="execution-chain-output">
-                                        <summary className="execution-chain-output-summary">
-                                          {executionChainSummary(item)}
-                                          {timing !== undefined && (
-                                            <span className="tool-timing">{timing}ms</span>
-                                          )}
-                                        </summary>
-                                        <div className="execution-chain-output-body">
-                                          <ToolLogContent messageId={item.id} content={typeof item.content === "string" ? item.content : (item.content as any[])?.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n") || ""} />
-                                        </div>
-                                      </details>
-                                    ) : (
-                                      <span className="execution-chain-text">{executionChainSummary(item)}</span>
-                                    )}
+                                    <span className="execution-chain-text">{info.toolName?.replace(/_/g, ".") ?? info.toolId}</span>
                                   </div>
                                 </li>
-                              );
-                            })}
-                            {/* 展示仍在执行、尚未产出结果的工具。 */}
-                            {isLastTechnicalGroup(index) && Array.from(activeTools.entries()).map(([tcId, info]) => (
-                              <li key={`active-${tcId}`} className="execution-chain-step execution-chain-step--active is-active">
-                                <span className="tool-step-spinner"></span>
-                                <span className="execution-chain-badge">执行中</span>
-                                <div className="execution-chain-main">
-                                  <span className="execution-chain-text">{info.toolName?.replace(/_/g, ".") ?? info.toolId}</span>
-                                </div>
-                              </li>
-                            ))}
-                          </ol>
-                        </details>
+                              ))}
+                            </ol>
+                          </details>
+                        </div>
                       </div>
-                    </div>
-                    </React.Fragment>
-                  );
-                }
-              })}
+                      </div>
+                    );
+                  }
+                })}
+              </div>
 
               {/* 等待模型响应中 */}
               {isAwaitingModelResponse && (
@@ -2767,6 +2870,7 @@ export default function ChatPage() {
         .date-separator::before, .date-separator::after { content: ""; flex: 1; height: 1px; background: var(--glass-border); }
         .date-separator span { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
         .message-content { line-height: 1.7; font-size: 14px; color: var(--text-primary); }
+        .message-content--streaming { white-space: pre-wrap; word-break: break-word; }
         .message-content p { margin: 0 0 16px; }
         .message-content p:last-child { margin-bottom: 0; }
         .message-content ul, .message-content ol { margin: 0 0 16px; padding-left: 24px; }

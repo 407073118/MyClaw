@@ -24,6 +24,7 @@
     "postinstall": "node scripts/install-app-deps-safe.js"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.24",
     "electron-updater": "^6.8.3",
     "handlebars": "^4.7.9",
     "jszip": "^3.10.1",

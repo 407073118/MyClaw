@@ -1,5 +1,6 @@
 import type { RuntimeContext } from "../services/runtime-context";
 import { registerAgentTaskHandlers } from "./agent-tasks";
+import { registerAwarenessHandlers } from "./awareness";
 import { registerApprovalHandlers } from "./approvals";
 import { registerArtifactHandlers } from "./artifacts";
 import { registerBootstrapHandlers } from "./bootstrap";
@@ -43,4 +44,5 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerMeetingHandlers(ctx);
   registerMemoryHandlers(ctx);
   registerTimeOrchestrationHandlers(ctx);
+  registerAwarenessHandlers(ctx);
 }

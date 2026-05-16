@@ -669,6 +669,16 @@ export class TimeOrchestrationStore {
     ).map((row) => parseExecutionRun(row));
   }
 
+  async deleteExecutionRun(id: string): Promise<void> {
+    this.database.run("DELETE FROM execution_runs WHERE id = @id", { id });
+  }
+
+  async deleteExecutionRunsByJobId(jobId: string): Promise<number> {
+    this.database.run("DELETE FROM execution_runs WHERE entity_id = @jobId", { jobId });
+    const result = this.database.queryOne("SELECT changes() AS count") as Record<string, unknown>;
+    return Number(result?.count ?? 0);
+  }
+
   /**
    * 关闭底层数据库连接，供应用退出时调用。
    */

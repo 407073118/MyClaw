@@ -19,6 +19,12 @@ export enum EventType {
   ArtifactLinked = "artifact.linked",
   /** 上下文压缩次数过多，建议用户新建对话。 */
   ContextLimitWarning = "context.limit_warning",
+
+  // ---- Awareness / Heartbeat 事件 ----
+  AwarenessChanged = "awareness.changed",
+  LongRunChanged = "longrun.changed",
+  StandingOrderChanged = "standingorder.changed",
+  AwarenessActionRequiresApproval = "awareness.action.requires_approval",
 }
 
 export enum ToolRiskCategory {

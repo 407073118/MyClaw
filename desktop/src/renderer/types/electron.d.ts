@@ -247,6 +247,8 @@ declare global {
         getTodayBrief: () => Promise<{ brief: TodayBrief }>;
         suggestTimeboxes: () => Promise<{ items: SuggestedTimebox[] }>;
         listExecutionRuns: () => Promise<{ items: ExecutionRun[] }>;
+        deleteExecutionRun: (id: string) => Promise<{ ok: boolean }>;
+        deleteExecutionRunsByJob: (jobId: string) => Promise<{ ok: boolean; count: number }>;
         generateTodayDigest: (input: Record<string, unknown>) => Promise<{ lines: string[] }>;
       };
 
@@ -323,6 +325,10 @@ declare global {
       cancelPlanMode: (
         sessionId: string,
       ) => Promise<{ session: import("@shared/contracts").ChatSession }>;
+      /** 懒加载：按需获取指定会话的消息列表 */
+      getSessionMessages: (
+        sessionId: string,
+      ) => Promise<import("@shared/contracts").ChatMessage[]>;
       listArtifactsByScope: (scope: ArtifactScopeRef) => Promise<ArtifactRecord[]>;
       listRecentArtifacts: (input?: { limit?: number }) => Promise<ArtifactRecord[]>;
       markArtifactFinal: (artifactId: string, scope?: ArtifactScopeRef) => Promise<ArtifactRecord>;
@@ -513,6 +519,7 @@ declare global {
       resumeWorkflowRun: (runId: string, resumeValue?: unknown) => Promise<{ success: boolean }>;
       deleteWorkflow: (workflowId: string) => Promise<{ success: boolean }>;
       cancelWorkflowRun: (runId: string) => Promise<{ success: boolean }>;
+      deleteWorkflowRun: (runId: string) => Promise<{ success: boolean }>;
       getWorkflowRunDetail: (runId: string) => Promise<unknown>;
       /** 订阅工作流引擎流式事件 */
       onWorkflowStream: (callback: (event: unknown) => void) => () => void;
@@ -579,6 +586,44 @@ declare global {
       // --- ASR config ---
       getAsrConfig: () => Promise<{ config: AsrConfig }>;
       saveAsrConfig: (config: AsrConfig) => Promise<{ config: AsrConfig }>;
+
+      // --- Awareness ---
+      awareness: {
+        listRoutines: () => Promise<{ items: unknown[] }>;
+        createRoutine: (input: Record<string, unknown>) => Promise<{ item: unknown }>;
+        updateRoutine: (id: string, patch: Record<string, unknown>) => Promise<{ item: unknown }>;
+        pauseRoutine: (id: string) => Promise<{ item: unknown }>;
+        resumeRoutine: (id: string) => Promise<{ item: unknown }>;
+        deleteRoutine: (id: string) => Promise<{ ok: boolean }>;
+        runRoutineNow: (id: string) => Promise<{ ok: boolean }>;
+        previewRoutine: (id: string) => Promise<{
+          signalsFound: number;
+          wouldCallModel: boolean;
+          potentialActions: Array<{ kind: string; riskLevel: string }>;
+          estimatedCost: "free" | "low" | "normal";
+        }>;
+        listSignals: (status?: string) => Promise<{ items: unknown[] }>;
+        getSnapshot: () => Promise<unknown>;
+        dismissSignal: (id: string) => Promise<{ ok: boolean }>;
+        acknowledgeSignal: (id: string) => Promise<{ ok: boolean }>;
+        onAwarenessChanged: (callback: (payload: Record<string, unknown>) => void) => () => void;
+      };
+
+      // --- Standing Orders ---
+      standingOrders: {
+        list: (scope?: { kind: string; ownerId?: string }) => Promise<{ items: unknown[] }>;
+        create: (input: Record<string, unknown>) => Promise<{ item: unknown }>;
+        update: (id: string, patch: Record<string, unknown>) => Promise<{ item: unknown }>;
+        delete: (id: string) => Promise<{ ok: boolean }>;
+      };
+
+      // --- Long Run ---
+      longRun: {
+        list: (query?: { kind?: string; status?: string; limit?: number }) => Promise<{ items: unknown[] }>;
+        detail: (id: string) => Promise<{ record: unknown; auditEvents: unknown[] }>;
+        cancel: (id: string) => Promise<{ ok: boolean }>;
+        retry: (id: string) => Promise<{ ok: boolean }>;
+      };
     };
   }
 }

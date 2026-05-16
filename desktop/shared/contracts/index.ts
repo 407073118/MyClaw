@@ -2,6 +2,7 @@ export * from "./approval";
 export * from "./agent-task";
 export * from "./artifact";
 export * from "./auth";
+export * from "./awareness";
 export * from "./builtin-tool";
 export * from "./calendar";
 export * from "./document";

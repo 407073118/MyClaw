@@ -2464,6 +2464,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
     await deleteSessionFiles(ctx.runtime.paths, sessionId, session?.siliconPersonId);
 
+    sessionPathPolicies.delete(sessionId);
+    getActiveSessionRuns(ctx).delete(sessionId);
+
     // 如果被删的 session 归属硅基员工，同步清理该员工的 sessions 摘要
     if (session?.siliconPersonId) {
       const siliconPerson = ctx.state.siliconPersons.find((sp) => sp.id === session.siliconPersonId);
@@ -2531,6 +2534,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         currentMessageId: messageId,
         pendingApprovalIds: [],
         cancelRequested: false,
+        startedAt: new Date().toISOString(),
       };
       const streamedDrafts = new Map<string, { content: string; reasoning?: string }>();
       let currentMessageId = messageId;

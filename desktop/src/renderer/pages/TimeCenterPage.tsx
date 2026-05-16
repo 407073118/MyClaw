@@ -12,7 +12,7 @@ import type {
   TaskCommitment,
 } from "@shared/contracts";
 import { formatJobFrequency } from "../utils/frequency";
-import { addDaysToDateKey, isoToDateKey, utcIsoToLocalDateTimeInput } from "@shared/time/local-time";
+import { addDaysToDateKey, isoToDateKey, utcIsoToLocalDateTimeInput, weekdayFromDateKey } from "@shared/time/local-time";
 import { enumerateCronRunsOnDate } from "@shared/time/cron";
 
 import MarkdownView from "../components/MarkdownView";
@@ -32,7 +32,7 @@ import TaskCommitmentEditor, {
 import { useWorkspaceStore } from "../stores/workspace";
 
 type ComposerKind = "event" | "reminder" | "job" | "task" | "rules";
-type PlanningView = "timeline" | "events" | "reminders" | "jobs";
+type PlanningView = "timeline" | "events" | "reminders" | "jobs" | "week" | "awareness";
 
 type TimelineEntryKind =
   | "calendar_event"
@@ -142,6 +142,12 @@ export default function TimeCenterPage() {
   // 详情页通过 navigate("/time", { state }) 返回定时任务列表或触发编辑器。
   const location = useLocation();
   const navigate = useNavigate();
+
+  // 首次进入时加载值守快照
+  useEffect(() => {
+    void workspace.loadAwarenessSnapshot();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const state = location.state as { editJobId?: string; activeView?: PlanningView } | null;
     const editJobId = state?.editJobId;
@@ -630,6 +636,7 @@ export default function TimeCenterPage() {
             todayDateKey={todayDateKey}
             timezone={timezone}
             onSelectDate={setSelectedDate}
+            onSwitchToWeek={() => setActiveView("week")}
           />
           <button type="button" className="btn-primary" onClick={() => openEventComposer({})}>
             新建
@@ -638,6 +645,8 @@ export default function TimeCenterPage() {
       </header>
 
       <ScheduleSummaryBar model={planningModel} feedback={feedback} />
+
+      <AwarenessCatchUp />
 
       <PlanningViewSwitcher activeView={activeView} onChange={setActiveView} />
 
@@ -686,6 +695,20 @@ export default function TimeCenterPage() {
           />
         ) : null}
 
+        {activeView === "week" ? (
+          <WeekView
+            selectedDate={selectedDate}
+            timezone={timezone}
+            calendarEvents={time.calendarEvents}
+            reminders={time.reminders}
+            taskCommitments={time.taskCommitments}
+            scheduleJobs={time.scheduleJobs}
+            latestRunByJobId={latestRunByJobId}
+            siliconPersonNameById={siliconPersonNameById}
+            onSelectDate={(d) => { setSelectedDate(d); setActiveView("timeline"); }}
+          />
+        ) : null}
+
         {activeView === "reminders" ? (
           <ReminderListPage reminders={time.reminders} timezone={timezone} onDelete={handleDeleteReminder} />
         ) : null}
@@ -701,6 +724,10 @@ export default function TimeCenterPage() {
             onRunNow={handleRunScheduleJobNow}
             onEdit={handleEditScheduleJob}
           />
+        ) : null}
+
+        {activeView === "awareness" ? (
+          <AwarenessRoutineManager />
         ) : null}
 
         <aside className="schedule-resource-rail" data-testid="schedule-resource-rail">
@@ -946,7 +973,7 @@ function IconTrash(): React.JSX.Element {
 }
 
 /** 渲染主区视图切换：时间轴默认，日程/提醒/定时任务拥有独立列表页。 */
-function PlanningViewSwitcher({
+const PlanningViewSwitcher = React.memo(function PlanningViewSwitcher({
   activeView,
   onChange,
 }: {
@@ -955,9 +982,11 @@ function PlanningViewSwitcher({
 }) {
   const views: Array<{ key: PlanningView; label: string }> = [
     { key: "timeline", label: "时间轴" },
+    { key: "week", label: "本周" },
     { key: "events", label: "日程列表" },
     { key: "reminders", label: "提醒列表" },
     { key: "jobs", label: "定时任务" },
+    { key: "awareness", label: "值守" },
   ];
 
   return (
@@ -974,10 +1003,10 @@ function PlanningViewSwitcher({
       ))}
     </nav>
   );
-}
+});
 
 /** 渲染轻量顶部汇总条，避免占用时间轴首屏空间。 */
-function ScheduleSummaryBar({ model, feedback }: { model: SchedulePlanningModel; feedback: string }) {
+const ScheduleSummaryBar = React.memo(function ScheduleSummaryBar({ model, feedback }: { model: SchedulePlanningModel; feedback: string }) {
   const metrics = [
     { label: "我的安排", value: model.personalCount },
     { label: "硅基人任务", value: model.siliconCount },
@@ -998,7 +1027,7 @@ function ScheduleSummaryBar({ model, feedback }: { model: SchedulePlanningModel;
       {feedback ? <span className="schedule-summary-bar__feedback">{feedback}</span> : null}
     </section>
   );
-}
+});
 
 /** 渲染日期切换，默认让用户停留在今天的日程时间轴。 */
 function DateNavigator({
@@ -1006,11 +1035,13 @@ function DateNavigator({
   todayDateKey,
   timezone,
   onSelectDate,
+  onSwitchToWeek,
 }: {
   selectedDate: string;
   todayDateKey: string;
   timezone: string;
   onSelectDate: (dateKey: string) => void;
+  onSwitchToWeek: () => void;
 }) {
   return (
     <div className="date-navigator" aria-label="日期切换">
@@ -1023,7 +1054,7 @@ function DateNavigator({
       <button type="button" className="btn-toolbar" onClick={() => onSelectDate(addDaysToDateKey(todayDateKey, 1))}>
         明天
       </button>
-      <button type="button" className="btn-toolbar" onClick={() => onSelectDate(todayDateKey)}>
+      <button type="button" className="btn-toolbar" onClick={onSwitchToWeek}>
         本周
       </button>
       <span className="date-navigator__label">{formatDateTitle(selectedDate, timezone)}</span>
@@ -1056,7 +1087,7 @@ function TimelineHeader({
 }
 
 /** 渲染统一时间轴，保留按小时阅读，同时让空白时间块能直接操作。*/
-function ScheduleTimeline({
+const ScheduleTimeline = React.memo(function ScheduleTimeline({
   entries,
   hiddenEntryCount,
   timezone,
@@ -1228,7 +1259,7 @@ function ScheduleTimeline({
       ) : null}
     </div>
   );
-}
+});
 
 /** 渲染时间轴条目的详情弹层，承载查看、编辑和删除三个基础动作。 */
 function TimelineEntryDetailModal({
@@ -1563,7 +1594,7 @@ function ScheduleJobTypePicker({ onPick }: { onPick: (type: ScheduleJobExecutor)
 }
 
 /** 渲染日程规划编辑弹层，采用桌面端居中高斯模糊背景。 */
-function ComposerModal({
+const ComposerModal = React.memo(function ComposerModal({
   activeComposer,
   onSelectComposer,
   timezone,
@@ -1718,10 +1749,10 @@ function ComposerModal({
       </section>
     </div>
   );
-}
+});
 
 /** 渲染资源状态：我和每个硅基人在当前日期的占用情况。 */
-function ResourceStatusCard({
+const ResourceStatusCard = React.memo(function ResourceStatusCard({
   siliconPersons,
   entries,
   jobs,
@@ -1803,7 +1834,7 @@ function ResourceStatusCard({
       </div>
     </section>
   );
-}
+});
 
 /** 渲染定时任务状态栏，确保自动发生的事始终可见、可暂停。 */
 function ScheduleJobStatusCard({
@@ -2137,14 +2168,29 @@ function buildScheduleJobTimelineEntries(
   }));
 }
 
-/** 解析定时任务在目标日期内的触发时刻。 */
+/** 解析定时任务在目标日期内的触发时刻。
+ *  策略：
+ *  1. nextRunAt/startsAt 落在当天 → 作为精确触发点
+ *  2. cron 任务 → 枚举当天所有触发点
+ *  3. 以上都没有但任务仍处于 scheduled 状态 → 以 lastRunAt 或当日 09:00 作为占位标记
+ */
 function resolveScheduleJobTimes(job: ScheduleJob, dateKey: string, timezone: string): string[] {
+  // 精确匹配：nextRunAt / startsAt 在当天
   const primaryTime = job.nextRunAt ?? job.startsAt;
   if (primaryTime && isoToDateKey(primaryTime, timezone) === dateKey) {
     return [primaryTime];
   }
+  // cron 任务：枚举当天全部触发点
   if (job.scheduleKind === "cron" && job.cronExpression) {
-    return enumerateCronRunsOnDate(job.cronExpression, dateKey, timezone, { limit: 6 });
+    const cronTimes = enumerateCronRunsOnDate(job.cronExpression, dateKey, timezone, { limit: 6 });
+    if (cronTimes.length > 0) return cronTimes;
+  }
+  // 兜底：活跃的定时任务即使在今天没有精确触发时间，也显示一个占位条目
+  if (job.status === "scheduled") {
+    if (job.lastRunAt) return [job.lastRunAt];
+    // 以当天 09:00 本地时间作为默认展示位置
+    const [y, m, d] = dateKey.split("-").map(Number);
+    return [new Date(Date.UTC(y, m - 1, d, 9, 0, 0)).toISOString()];
   }
   return [];
 }
@@ -2313,6 +2359,131 @@ function formatPriority(priority: TaskCommitment["priority"]): string {
     high: "高优先级",
     urgent: "紧急",
   }[priority];
+}
+
+// ─── 本周日历视图 ──────────────────────────────────────────────────────────
+
+const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+
+function WeekView({
+  selectedDate,
+  timezone,
+  calendarEvents,
+  reminders,
+  taskCommitments,
+  scheduleJobs,
+  latestRunByJobId,
+  siliconPersonNameById,
+  onSelectDate,
+}: {
+  selectedDate: string;
+  timezone: string;
+  calendarEvents: CalendarEvent[];
+  reminders: Reminder[];
+  taskCommitments: TaskCommitment[];
+  scheduleJobs: ScheduleJob[];
+  latestRunByJobId: ReadonlyMap<string, ExecutionRun>;
+  siliconPersonNameById: ReadonlyMap<string, string>;
+  onSelectDate: (dateKey: string) => void;
+}) {
+  // 计算本周一 ~ 周日
+  const weekStart = useMemo(() => {
+    const wd = weekdayFromDateKey(selectedDate);
+    // 周一为一周起始：偏移量 = (wd + 6) % 7，即周一=0 偏移
+    const mondayOffset = wd === 0 ? -6 : 1 - wd;
+    return addDaysToDateKey(selectedDate, mondayOffset);
+  }, [selectedDate]);
+
+  const weekDays = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDaysToDateKey(weekStart, i)),
+    [weekStart],
+  );
+
+  // 每天的 entries
+  const entriesByDay = useMemo(() => {
+    const map = new Map<string, TimelineEntry[]>();
+    for (const dayKey of weekDays) {
+      const entries = [
+        ...buildEventEntries(calendarEvents, dayKey, timezone, siliconPersonNameById),
+        ...buildReminderEntries(reminders, dayKey, timezone, siliconPersonNameById),
+        ...buildTaskEntries(taskCommitments, dayKey, timezone, siliconPersonNameById),
+        ...buildJobEntries(scheduleJobs, dayKey, timezone, latestRunByJobId, siliconPersonNameById),
+      ].sort((a, b) => a.startsAt.localeCompare(b.startsAt));
+      map.set(dayKey, entries);
+    }
+    return map;
+  }, [weekDays, calendarEvents, reminders, taskCommitments, scheduleJobs, timezone, latestRunByJobId, siliconPersonNameById]);
+
+  const todayKey = isoToDateKey(new Date().toISOString(), timezone);
+
+  return (
+    <section className="week-view" data-testid="week-view">
+      <div className="week-view__header">
+        {weekDays.map((dayKey, i) => (
+          <div key={dayKey} className={`week-view__header-cell${dayKey === todayKey ? " is-today" : ""}`}>
+            <span className="week-view__weekday">{WEEKDAY_LABELS[i]}</span>
+            <span className="week-view__date-num">{Number(dayKey.slice(8))}</span>
+          </div>
+        ))}
+      </div>
+      <div className="week-view__body">
+        {weekDays.map((dayKey) => {
+          const entries = entriesByDay.get(dayKey) ?? [];
+          const isToday = dayKey === todayKey;
+          return (
+            <div
+              key={dayKey}
+              className={`week-view__day${isToday ? " is-today" : ""}`}
+              onClick={() => onSelectDate(dayKey)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter") onSelectDate(dayKey); }}
+            >
+              {entries.length === 0 ? (
+                <span className="week-view__empty">-</span>
+              ) : (
+                <ul className="week-view__entries">
+                  {entries.slice(0, 6).map((entry) => (
+                    <li key={entry.id} className={`week-view__entry week-view__entry--${entry.tone}`}>
+                      <span className="week-view__entry-time">
+                        {new Date(entry.startsAt).toLocaleTimeString("zh-CN", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false })}
+                      </span>
+                      <span className="week-view__entry-title">{entry.displayTitle}</span>
+                    </li>
+                  ))}
+                  {entries.length > 6 && (
+                    <li className="week-view__more">+{entries.length - 6} 项</li>
+                  )}
+                </ul>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <style>{`
+        .week-view { border-radius: var(--radius-xl, 14px); overflow: hidden; background: var(--bg-card, rgba(255,255,255,0.02)); border: 1px solid var(--glass-border, rgba(255,255,255,0.06)); }
+        .week-view__header { display: grid; grid-template-columns: repeat(7, 1fr); border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.06)); }
+        .week-view__header-cell { padding: 10px 4px; text-align: center; }
+        .week-view__header-cell.is-today { background: rgba(16,163,127,0.1); }
+        .week-view__weekday { display: block; font-size: 11px; color: var(--text-muted, #666); }
+        .week-view__date-num { display: block; font-size: 16px; font-weight: 600; color: var(--text-primary, #e0e0e0); margin-top: 2px; }
+        .week-view__header-cell.is-today .week-view__date-num { color: var(--accent-cyan, #10a37f); }
+        .week-view__body { display: grid; grid-template-columns: repeat(7, 1fr); min-height: 280px; }
+        .week-view__day { padding: 6px 4px; border-right: 1px solid var(--glass-border, rgba(255,255,255,0.04)); cursor: pointer; transition: background 0.15s; min-height: 120px; }
+        .week-view__day:last-child { border-right: none; }
+        .week-view__day:hover { background: rgba(255,255,255,0.03); }
+        .week-view__day.is-today { background: rgba(16,163,127,0.04); }
+        .week-view__empty { display: block; text-align: center; color: var(--text-muted, #666); font-size: 12px; padding: 20px 0; }
+        .week-view__entries { list-style: none; margin: 0; padding: 0; }
+        .week-view__entry { display: flex; gap: 4px; padding: 3px 4px; border-radius: 4px; font-size: 11px; line-height: 1.4; margin-bottom: 2px; }
+        .week-view__entry--personal { background: rgba(59,130,246,0.1); color: var(--text-secondary, #bbb); }
+        .week-view__entry--silicon { background: rgba(139,92,246,0.1); color: var(--text-secondary, #bbb); }
+        .week-view__entry-time { color: var(--text-muted, #666); white-space: nowrap; flex-shrink: 0; }
+        .week-view__entry-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .week-view__more { font-size: 10px; color: var(--text-muted, #666); padding: 2px 4px; }
+      `}</style>
+    </section>
+  );
 }
 
 const styles = `
@@ -3632,3 +3803,383 @@ const styles = `
     }
   }
 `;
+
+// ─── 值守 Routine 管理组件 ─────────────────────────────────────────────────
+
+const AwarenessRoutineManager = React.memo(function AwarenessRoutineManager() {
+  const snapshot = useWorkspaceStore((s) => s.time.awarenessSnapshot) as {
+    routines?: Array<{
+      id: string;
+      name: string;
+      scope: { kind: string; ownerId?: string };
+      purpose: string;
+      cadenceMinutes: number;
+      status: string;
+      consecutiveFailures: number;
+      lastRunAt?: string;
+      nextRunAt?: string;
+      signalSources?: string[];
+    }>;
+    standingOrders?: Array<{
+      id: string;
+      name: string;
+      intent: string;
+      status: string;
+      scope: { kind: string; ownerId?: string };
+    }>;
+    activeSignals?: Array<{
+      id: string;
+      sourceKind: string;
+      severity: string;
+      summary: string;
+      status: string;
+      createdAt: string;
+    }>;
+  } | null;
+
+  const pauseRoutine = useWorkspaceStore((s) => s.pauseAwarenessRoutine);
+  const resumeRoutine = useWorkspaceStore((s) => s.resumeAwarenessRoutine);
+  const runRoutineNow = useWorkspaceStore((s) => s.runAwarenessRoutineNow);
+  const createRoutine = useWorkspaceStore((s) => s.createAwarenessRoutine);
+  const updateRoutine = useWorkspaceStore((s) => s.updateAwarenessRoutine);
+  const deleteRoutineFn = useWorkspaceStore((s) => s.deleteAwarenessRoutine);
+
+  const routines = snapshot?.routines ?? [];
+  const activeSignals = snapshot?.activeSignals?.filter((s) => s.status === "active") ?? [];
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPurpose, setEditPurpose] = useState("");
+  const [editCadence, setEditCadence] = useState(30);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createPurpose, setCreatePurpose] = useState("");
+  const [createCadence, setCreateCadence] = useState(30);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  function startEdit(routine: { id: string; name: string; purpose: string; cadenceMinutes: number }) {
+    setEditingId(routine.id);
+    setEditName(routine.name);
+    setEditPurpose(routine.purpose);
+    setEditCadence(routine.cadenceMinutes);
+  }
+
+  function saveEdit() {
+    if (!editingId) return;
+    void updateRoutine(editingId, { name: editName, purpose: editPurpose, cadenceMinutes: editCadence });
+    setEditingId(null);
+  }
+
+  function handleCreate() {
+    if (!createName.trim()) return;
+    void createRoutine({
+      name: createName.trim(),
+      scope: { kind: "personal" },
+      purpose: createPurpose.trim() || "自动监控任务和系统状态",
+      cadenceMinutes: createCadence,
+    });
+    setCreateName("");
+    setCreatePurpose("");
+    setCreateCadence(30);
+    setShowCreate(false);
+  }
+
+  const statusDotColor = (s: string) => {
+    if (s === "enabled") return "var(--status-green, #10a37f)";
+    if (s === "paused") return "var(--text-muted, #666)";
+    return "var(--status-red, #ef4444)";
+  };
+
+  const statusLabel = (s: string) => {
+    const map: Record<string, string> = { enabled: "运行中", paused: "已暂停", failed: "异常", disabled: "已禁用" };
+    return map[s] ?? s;
+  };
+
+  return (
+    <div className="awareness-manager">
+      {/* 运行状态概览 */}
+      <div className="awareness-manager__section">
+        <div className="awareness-manager__header">
+          <h3>值守状态</h3>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <span className="awareness-manager__badge" style={{
+              padding: "2px 10px", borderRadius: 999, fontSize: 12, fontWeight: 600,
+              background: activeSignals.length > 0 ? "var(--status-yellow, #f59e0b)" : "var(--status-green, #10a37f)",
+              color: activeSignals.length > 0 ? "#000" : "#fff",
+            }}>
+              {activeSignals.length > 0 ? `${activeSignals.length} 个待处理` : "一切正常"}
+            </span>
+            <button type="button" className="btn-premium" style={{ fontSize: 12, padding: "3px 12px" }} onClick={() => setShowCreate(true)}>新建</button>
+          </div>
+        </div>
+
+        {/* 新建 Routine 内联表单 */}
+        {showCreate && (
+          <div className="glass-card" style={{ padding: 12, marginBottom: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+            <input className="form-input" placeholder="值守名称" value={createName} onChange={(e) => setCreateName(e.target.value)} style={{ fontSize: 13 }} />
+            <textarea className="form-input" placeholder="监控目标（可选）" value={createPurpose} onChange={(e) => setCreatePurpose(e.target.value)} rows={2} style={{ fontSize: 13, resize: "vertical" }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+              <span>检查频率</span>
+              <input type="number" className="form-input" value={createCadence} onChange={(e) => setCreateCadence(Number(e.target.value) || 30)} min={5} max={1440} style={{ width: 70, fontSize: 13 }} />
+              <span>分钟</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+              <button type="button" className="btn-premium" style={{ fontSize: 12 }} onClick={() => setShowCreate(false)}>取消</button>
+              <button type="button" className="btn-premium" style={{ fontSize: 12 }} onClick={handleCreate}>创建</button>
+            </div>
+          </div>
+        )}
+
+        {routines.length === 0 ? (
+          <p className="awareness-manager__hint">值守功能正在初始化，请稍等...</p>
+        ) : (
+          <div className="list-rows">
+            {routines.map((routine) => (
+              <div key={routine.id} className="list-row" style={{ padding: "10px 12px", alignItems: "center" }}>
+                {editingId === routine.id ? (
+                  /* 内联编辑模式 */
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                    <input className="form-input" value={editName} onChange={(e) => setEditName(e.target.value)} style={{ fontSize: 13 }} />
+                    <textarea className="form-input" value={editPurpose} onChange={(e) => setEditPurpose(e.target.value)} rows={2} style={{ fontSize: 13, resize: "vertical" }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                      <span>频率</span>
+                      <input type="number" className="form-input" value={editCadence} onChange={(e) => setEditCadence(Number(e.target.value) || 30)} min={5} max={1440} style={{ width: 70, fontSize: 13 }} />
+                      <span>分钟</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                      <button type="button" className="btn-premium" style={{ fontSize: 12 }} onClick={() => setEditingId(null)}>取消</button>
+                      <button type="button" className="btn-premium" style={{ fontSize: 12 }} onClick={saveEdit}>保存</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="status-dot" style={{ backgroundColor: statusDotColor(routine.status) }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <strong style={{ fontSize: 14 }}>{routine.name}</strong>
+                        <span className="tag">{routine.cadenceMinutes}分钟/次</span>
+                        <span style={{ fontSize: 11, color: "var(--text-muted, #666)" }}>
+                          {statusLabel(routine.status)}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: 12, color: "var(--text-secondary, #999)", margin: "2px 0 0" }}>
+                        {routine.purpose}
+                      </p>
+                      {routine.lastRunAt && (
+                        <span style={{ fontSize: 11, color: "var(--text-muted, #666)" }}>
+                          上次检查: {new Date(routine.lastRunAt).toLocaleTimeString()}
+                        </span>
+                      )}
+                      {routine.consecutiveFailures > 0 && (
+                        <span style={{ fontSize: 11, color: "var(--status-red, #ef4444)", marginLeft: 8 }}>
+                          连续失败 {routine.consecutiveFailures} 次
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", gap: 4, opacity: 0, transition: "opacity 0.15s" }}
+                         className="awareness-routine-row__actions-wrapper">
+                      {routine.status === "enabled" ? (
+                        <button type="button" className="icon-btn" title="暂停" onClick={() => pauseRoutine(routine.id)}>⏸</button>
+                      ) : (routine.status === "paused" || routine.status === "failed") ? (
+                        <button type="button" className="icon-btn" title="恢复" onClick={() => resumeRoutine(routine.id)}>▶</button>
+                      ) : null}
+                      <button type="button" className="icon-btn" title="编辑" onClick={() => startEdit(routine)}>✎</button>
+                      <button type="button" className="icon-btn" title="立即检查一次" onClick={() => runRoutineNow(routine.id)}>↻</button>
+                      {confirmDeleteId === routine.id ? (
+                        <>
+                          <button type="button" className="icon-btn" style={{ color: "var(--status-red, #ef4444)" }} title="确认删除" onClick={() => { void deleteRoutineFn(routine.id); setConfirmDeleteId(null); }}>✓</button>
+                          <button type="button" className="icon-btn" title="取消" onClick={() => setConfirmDeleteId(null)}>✕</button>
+                        </>
+                      ) : (
+                        <button type="button" className="icon-btn" title="删除" onClick={() => setConfirmDeleteId(routine.id)}>🗑</button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 待处理信号 */}
+      {activeSignals.length > 0 && (
+        <div className="awareness-manager__section">
+          <h3>待处理 ({activeSignals.length})</h3>
+          <div className="list-rows">
+            {activeSignals.map((signal) => (
+              <SignalCard key={signal.id} signal={signal} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 底部说明 */}
+      <div style={{ padding: "16px 0", fontSize: 12, color: "var(--text-muted, #666)", lineHeight: 1.6 }}>
+        <p>值守功能自动监控你的任务、定时任务、工作流和系统状态，发现问题会在这里通知你。</p>
+        <p>没有问题时不会打扰你。你可以在设置中调整值守频率和通知偏好。</p>
+      </div>
+
+      <style>{`
+        .awareness-manager__section { margin-bottom: 20px; }
+        .awareness-manager__header {
+          display: flex; align-items: center; justify-content: space-between;
+          margin-bottom: 10px;
+        }
+        .awareness-manager__header h3 {
+          font-size: 15px; font-weight: 600; color: var(--text-primary, #e0e0e0); margin: 0;
+        }
+        .awareness-manager__hint {
+          font-size: 13px; color: var(--text-muted, #666); margin: 0; padding: 16px 0;
+        }
+        .list-row:hover .awareness-routine-row__actions-wrapper { opacity: 1 !important; }
+      `}</style>
+    </div>
+  );
+});
+
+function SignalCard({ signal }: {
+  signal: { id: string; sourceKind: string; severity: string; summary: string; createdAt: string };
+}) {
+  const dismiss = useWorkspaceStore((s) => s.dismissAwarenessSignal);
+  const acknowledge = useWorkspaceStore((s) => s.acknowledgeAwarenessSignal);
+
+  const sevColor = signal.severity === "critical" ? "var(--status-red, #ef4444)"
+    : signal.severity === "warning" ? "var(--status-yellow, #f59e0b)"
+    : "var(--status-green, #10a37f)";
+
+  const sourceLabel = (kind: string) => {
+    const map: Record<string, string> = {
+      agent_task: "员工任务", schedule_job: "定时任务", workflow_run: "工作流",
+      background_task: "后台任务", session_stuck: "会话", approval_pending: "审批", system_health: "系统",
+    };
+    return map[kind] ?? kind;
+  };
+
+  return (
+    <div className="list-row" style={{ padding: "10px 12px", alignItems: "center" }}>
+      <div className="status-dot" style={{ backgroundColor: sevColor }} />
+      <span className="tag">{sourceLabel(signal.sourceKind)}</span>
+      <span style={{ flex: 1, fontSize: 13, color: "var(--text-primary, #e0e0e0)" }}>{signal.summary}</span>
+      <span style={{ fontSize: 11, color: "var(--text-muted, #666)", whiteSpace: "nowrap" }}>
+        {new Date(signal.createdAt).toLocaleTimeString()}
+      </span>
+      <div style={{ display: "flex", gap: 4, marginLeft: 8 }}>
+        <button type="button" className="btn-premium" style={{ fontSize: 12, padding: "3px 10px" }}
+                onClick={() => acknowledge(signal.id)}>知道了</button>
+        <button type="button" className="icon-btn" title="不再提醒此类" onClick={() => dismiss(signal.id)}>✕</button>
+      </div>
+    </div>
+  );
+}
+
+// ─── 值守 Catch-up 组件 ─────────────────────────────────────────────────
+
+// ─── 值守 Catch-up 组件 ─────────────────────────────────────────────────
+
+// ─── 值守 Catch-up 组件 ─────────────────────────────────────────────────
+
+function AwarenessCatchUp() {
+  const snapshot = useWorkspaceStore((s) => s.time.awarenessSnapshot) as {
+    activeSignals?: Array<{
+      id: string;
+      sourceKind: string;
+      severity: string;
+      summary: string;
+      status: string;
+      createdAt: string;
+    }>;
+    routines?: Array<{
+      id: string;
+      name: string;
+      status: string;
+    }>;
+  } | null;
+
+  const activeSignals = snapshot?.activeSignals?.filter((s) => s.status === "active") ?? [];
+
+  if (activeSignals.length === 0) return null;
+
+  const sevColor = (sev: string) =>
+    sev === "critical" ? "var(--status-red, #ef4444)" :
+    sev === "warning" ? "var(--status-yellow, #f59e0b)" :
+    "var(--status-green, #10a37f)";
+
+  const sourceLabel = (kind: string) => {
+    const map: Record<string, string> = {
+      agent_task: "员工任务", schedule_job: "定时任务", workflow_run: "工作流",
+      background_task: "后台任务", session_stuck: "会话", approval_pending: "审批", system_health: "系统",
+    };
+    return map[kind] ?? kind;
+  };
+
+  const timeAgo = (iso: string) => {
+    const diff = Date.now() - new Date(iso).getTime();
+    if (diff < 60000) return "刚刚";
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    return `${Math.floor(diff / 3600000)}h ago`;
+  };
+
+  return (
+    <div className="awareness-catchup">
+      <div className="awareness-catchup__header">
+        <span className="awareness-catchup__title">值守通知</span>
+        <span className="awareness-catchup__count">{activeSignals.length}</span>
+      </div>
+      <div className="awareness-catchup__list">
+        {activeSignals.slice(0, 5).map((signal) => (
+          <div key={signal.id} className="awareness-catchup__item list-row">
+            <div className="status-dot" style={{ backgroundColor: sevColor(signal.severity) }} />
+            <div className="awareness-catchup__item-body">
+              <span className="awareness-catchup__source">{sourceLabel(signal.sourceKind)}</span>
+              <span className="awareness-catchup__summary">{signal.summary}</span>
+            </div>
+            <span className="awareness-catchup__time">{timeAgo(signal.createdAt)}</span>
+          </div>
+        ))}
+      </div>
+      <style>{`
+        .awareness-catchup {
+          margin-bottom: 12px;
+          border: 1px solid var(--glass-border, rgba(255,255,255,0.06));
+          border-radius: var(--radius-xl, 14px);
+          background: var(--bg-card, rgba(255,255,255,0.02));
+          overflow: hidden;
+        }
+        .awareness-catchup__header {
+          display: flex; align-items: center; gap: 8px;
+          padding: 10px 14px;
+          border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.06));
+        }
+        .awareness-catchup__title {
+          font-size: 13px; font-weight: 600; color: var(--text-secondary, #999);
+        }
+        .awareness-catchup__count {
+          display: inline-flex; align-items: center; justify-content: center;
+          min-width: 18px; height: 18px; padding: 0 5px;
+          border-radius: 999px; background: var(--accent-cyan, #10a37f);
+          color: #fff; font-size: 11px; font-weight: 600;
+        }
+        .awareness-catchup__item {
+          display: flex; align-items: center; gap: 10px;
+          padding: 8px 14px;
+          border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.04));
+        }
+        .awareness-catchup__item:last-child { border-bottom: none; }
+        .awareness-catchup__item-body {
+          flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0;
+        }
+        .awareness-catchup__source {
+          font-size: 11px; color: var(--text-muted, #666); white-space: nowrap;
+        }
+        .awareness-catchup__summary {
+          font-size: 13px; color: var(--text-primary, #e0e0e0);
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .awareness-catchup__time {
+          font-size: 11px; color: var(--text-muted, #666); white-space: nowrap;
+        }
+      `}</style>
+    </div>
+  );
+}

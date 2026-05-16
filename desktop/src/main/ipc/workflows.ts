@@ -1041,4 +1041,16 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
       return { run, items: [...ctx.state.workflowRuns] };
     },
   );
+
+  ipcMain.handle(
+    "workflow:delete-run",
+    async (_event, runId: string): Promise<{ success: boolean }> => {
+      const index = ctx.state.workflowRuns.findIndex((r) => r.id === runId);
+      if (index < 0) {
+        return { success: false };
+      }
+      ctx.state.workflowRuns.splice(index, 1);
+      return { success: true };
+    },
+  );
 }

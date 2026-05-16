@@ -197,6 +197,18 @@ export function registerTimeOrchestrationHandlers(ctx: RuntimeContext): void {
     return { items };
   });
 
+  ipcMain.handle("time:delete-execution-run", async (_event, id: string) => {
+    console.info("[time-ipc] 删除执行记录", { id });
+    await requireTimeStore(ctx).deleteExecutionRun(id);
+    return { ok: true };
+  });
+
+  ipcMain.handle("time:delete-execution-runs-by-job", async (_event, jobId: string) => {
+    console.info("[time-ipc] 删除定时任务的全部执行记录", { jobId });
+    const count = await requireTimeStore(ctx).deleteExecutionRunsByJobId(jobId);
+    return { ok: true, count };
+  });
+
   ipcMain.handle("time:generate-today-digest", async (_event, input: TodayDigestInput) => {
     console.info("[time-ipc] 生成今日助手摘要", {
       todayDateKey: input.todayDateKey,

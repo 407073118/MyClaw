@@ -52,6 +52,12 @@ import { TimeOrchestrationStore } from "./services/time-orchestration-store";
 import { MemoryVaultService } from "./services/memory-vault/service";
 import { canonicalize, PathAccessPolicy } from "./services/path-access-policy";
 import { resolveAppIconPath } from "./services/app-icon-path";
+import { createAwarenessStore } from "./services/awareness-store";
+import { createAwarenessSignalCollector } from "./services/awareness-signal-collector";
+import { createAwarenessDecisionEngine } from "./services/awareness-decision-engine";
+import { createStandingOrderService } from "./services/standing-order-service";
+import { createLongRunLedger } from "./services/long-run-ledger";
+import { createAwarenessRuntime } from "./services/awareness-runtime";
 
 const log = createLogger("main");
 
@@ -171,6 +177,46 @@ function createMainWindow(): BrowserWindow {
 // ---------------------------------------------------------------------------
 // 运行时上下文启动（先用启动时加载出的状态初始化）
 // ---------------------------------------------------------------------------
+
+/**
+ * 首次启动时自动创建默认值守 Routine，让心跳系统"装上就用"。
+ * 如果已有任何 routine 则跳过（用户可能手动删除过默认值）。
+ */
+async function seedDefaultAwarenessRoutines(
+  store: ReturnType<typeof import("./services/awareness-store").createAwarenessStore>,
+): Promise<void> {
+  const existing = await store.listRoutines();
+  if (existing.length > 0) return;
+
+  console.info("[awareness] 首次启动，自动创建默认值守 Routine");
+
+  await store.createRoutine({
+    name: "个人巡检",
+    scope: { kind: "personal" },
+    purpose: "自动监控员工任务失败、定时任务异常、工作流卡住、审批等待过久等系统状态",
+    cadenceMinutes: 30,
+    signalSources: [
+      "agent_task",
+      "schedule_job",
+      "workflow_run",
+      "background_task",
+      "session_stuck",
+      "approval_pending",
+      "system_health",
+    ],
+  });
+
+  await store.createRoutine({
+    name: "员工值守",
+    scope: { kind: "silicon_person" },
+    purpose: "监控所有硅基员工的执行状态、异常和等待用户处理的事项",
+    cadenceMinutes: 60,
+    signalSources: [
+      "agent_task",
+      "system_health",
+    ],
+  });
+}
 
 async function buildRuntimeContext(
   paths: MyClawPaths,
@@ -401,7 +447,75 @@ async function buildRuntimeContext(
       return { outputSummary, sessionId: session.id };
     },
   });
-  const timeScheduler = createTimeScheduler({
+
+  // ─── 心跳感知服务 ───
+  const awarenessDb = (timeStore as any).database;
+  const awarenessStore = createAwarenessStore({
+    db: awarenessDb,
+    getAvailabilityPolicy: () => timeStore.getAvailabilityPolicy(),
+  });
+  const awarenessSignalCollector = createAwarenessSignalCollector({
+    getActiveSessionRuns: () => {
+      // activeSessionRuns 在 ctx 创建后才有值，先用空 Map
+      return runtimeCtxRef?.state.activeSessionRuns ?? new Map();
+    },
+    getAgentTasks: () => {
+      try { return (require("./ipc/agent-tasks") as any).getCachedAgentTasks() ?? []; }
+      catch { return []; }
+    },
+    getScheduleJobs: () => { return []; },
+    getWorkflowRuns: () => {
+      const summaries: Array<{ id: string; status: string; workflowId: string; interruptRequested?: boolean }> = [];
+      return summaries;
+    },
+    getBackgroundTasks: () => {
+      return sessions.filter((s) => s.backgroundTask).map((s) => ({
+        sessionId: s.id,
+        backgroundTask: s.backgroundTask ? { status: s.backgroundTask.status } : undefined,
+      }));
+    },
+    getApprovalRequests: () => approvalRequests,
+    getSiliconPersons: () => siliconPersons,
+    getAvailabilityPolicy: () => approvalPolicy,
+  });
+  const standingOrderService = createStandingOrderService(awarenessDb);
+  const longRunLedger = createLongRunLedger(awarenessDb);
+  const awarenessDecisionEngine = createAwarenessDecisionEngine({
+    callModel: async (prompt: string) => {
+      const profile = models.find((m) => m.id === defaultModelProfileId) ?? models[0];
+      if (!profile) return "";
+      const result = await callModel({
+        profile,
+        messages: [{ role: "user", content: prompt }],
+      });
+      return result.content;
+    },
+    getModelCallsToday: (routineId) => awarenessRuntime?.getModelCallsToday(routineId) ?? 0,
+    incrementModelCalls: (routineId) => awarenessRuntime?.incrementModelCalls(routineId),
+  });
+  let awarenessRuntime: ReturnType<typeof createAwarenessRuntime> | undefined;
+  awarenessRuntime = createAwarenessRuntime({
+    store: awarenessStore,
+    signalCollector: awarenessSignalCollector,
+    decisionEngine: awarenessDecisionEngine,
+    standingOrderService,
+    ledger: longRunLedger,
+    getAvailabilityPolicy: () => timeStore.getAvailabilityPolicy(),
+    broadcastEvent: (type, payload) => {
+      const { BrowserWindow: BW } = require("electron") as { BrowserWindow: typeof Electron.BrowserWindow };
+      for (const win of BW.getAllWindows()) {
+        win.webContents.send("session:stream", {
+          id: `awareness-${Date.now()}`,
+          type,
+          createdAt: new Date().toISOString(),
+          payload,
+        });
+      }
+    },
+  });
+
+  // 将 awarenessTick 注入 timeScheduler（通过闭包引用）
+  const schedulerWithAwareness = createTimeScheduler({
     listDueReminders: async (at) => timeStore.listDueReminders(at),
     listDueJobs: async (at) => timeStore.listDueScheduleJobs(at),
     notifyReminder: async (reminder, policy) => {
@@ -419,6 +533,9 @@ async function buildRuntimeContext(
     },
     runScheduleJob: async (job) => {
       return await timeJobExecutor.execute(job);
+    },
+    awarenessTick: async () => {
+      await awarenessRuntime.tick();
     },
   });
 
@@ -508,9 +625,14 @@ async function buildRuntimeContext(
       timeApplication,
       timeJobExecutor,
       timeNotificationService,
-      timeScheduler,
       timeStore,
       memoryVault,
+      awarenessRuntime,
+      awarenessStore,
+      awarenessSignalCollector,
+      standingOrderService,
+      longRunLedger,
+      timeScheduler: schedulerWithAwareness,
     },
     tools: {
       resolveBuiltinTools: () => {
@@ -539,6 +661,12 @@ async function buildRuntimeContext(
     },
   });
   runtimeCtxRef = ctx;
+
+  // 首次启动自动创建默认值守 Routine，确保"装上就用"
+  seedDefaultAwarenessRoutines(awarenessStore).catch((error) => {
+    console.warn("[main] seedDefaultAwarenessRoutines 失败", { error: error instanceof Error ? error.message : String(error) });
+  });
+
   return ctx;
 }
 
@@ -570,6 +698,21 @@ app.whenReady().then(async () => {
   const ctx = await buildRuntimeContext(paths, mcpManager, appUpdater);
   runtimeContext = ctx;
   registerAllIpcHandlers(ctx);
+
+  // 注入员工任务状态变更钩子，同步感知账本
+  const { setAgentTaskStatusChangedHook } = require("./ipc/agent-tasks") as { setAgentTaskStatusChangedHook: (hook: (task: any) => void) => void };
+  const ledgerService = ctx.services.longRunLedger;
+  if (ledgerService) {
+    setAgentTaskStatusChangedHook((task: { id: string; status: string }) => {
+      if (task.status === "failed" || task.status === "succeeded" || task.status === "waiting_user") {
+        const record = ledgerService.createRecord("agent_task", task.id, { kind: "personal" });
+        record.status = task.status === "succeeded" ? "succeeded" : task.status === "failed" ? "failed" : "waiting_user";
+        record.startedAt = new Date().toISOString();
+        ledgerService.upsertRecord(record).catch(() => {});
+      }
+    });
+  }
+
   ctx.services.timeScheduler?.start();
 
   // 在后台自动连接所有启用中的 MCP 服务，将 Promise 存入 ctx 以便 bootstrap 等待
@@ -632,6 +775,14 @@ app.on("window-all-closed", () => {
 let isQuitting = false;
 
 app.on("before-quit", (event) => {
+  if (!runtimeContext) return;
+
+  // 阻止立即退出，等所有清理完成后再真正退出
+  event.preventDefault();
+
+  if (isQuitting) return;
+  isQuitting = true;
+
   // 关闭浏览器进程（如果存在），避免遗留孤儿 Chrome 进程
   shutdownToolExecutor().catch((err) => {
     log.warn("[shutdown] 关闭工具执行器失败", { error: err instanceof Error ? err.message : String(err) });
@@ -640,20 +791,28 @@ app.on("before-quit", (event) => {
   shutdownAllWorkspaces().catch((err) => {
     log.warn("[shutdown] 关闭硅基员工工作空间失败", { error: err instanceof Error ? err.message : String(err) });
   });
-  runtimeContext?.services.timeScheduler?.stop();
-  runtimeContext?.services.timeStore?.close();
-  runtimeContext?.services.memoryVault?.close();
 
+  // 先停调度器（同步），不再触发新任务
+  runtimeContext.services.timeScheduler?.stop();
+
+  // 等待所有 pending saves 完成后再关闭数据库，防止写入被截断
   const pendingCount = getPendingSavesCount();
-  if (pendingCount > 0 && !isQuitting) {
-    event.preventDefault();
-    isQuitting = true;
-    log.info(`[shutdown] Waiting for ${pendingCount} pending save(s)...`);
-    waitForPendingSaves().then(() => {
-      app.quit();
-    });
-    return;
-  }
-  mainWindow = null;
-  runtimeContext = null;
+  const waitForSaves = pendingCount > 0
+    ? (log.info(`[shutdown] Waiting for ${pendingCount} pending save(s)...`), waitForPendingSaves())
+    : Promise.resolve();
+
+  waitForSaves.then(() => {
+    runtimeContext?.services.timeStore?.close();
+    runtimeContext?.services.memoryVault?.close();
+    mainWindow = null;
+    runtimeContext = null;
+    app.quit();
+  }).catch((err) => {
+    log.warn("[shutdown] 等待 pending saves 失败，强制关闭", { error: err instanceof Error ? err.message : String(err) });
+    runtimeContext?.services.timeStore?.close();
+    runtimeContext?.services.memoryVault?.close();
+    mainWindow = null;
+    runtimeContext = null;
+    app.quit();
+  });
 });

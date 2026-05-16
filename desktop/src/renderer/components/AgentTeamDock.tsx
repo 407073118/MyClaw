@@ -305,6 +305,7 @@ export default function AgentTeamDock() {
                     <strong>{person.name}</strong>
                     <em>{STATUS_LABEL[person.status] ?? person.status}</em>
                   </span>
+                  <AwarenessBadge personId={person.id} />
                   <span className="agent-person-load">{activeCount}</span>
                 </button>
               ))}
@@ -717,5 +718,40 @@ export default function AgentTeamDock() {
         }
       `}</style>
     </aside>
+  );
+}
+
+/** 硅基员工值守信号数量 badge */
+function AwarenessBadge({ personId }: { personId: string }) {
+  const snapshot = useWorkspaceStore((s) => s.time.awarenessSnapshot) as {
+    activeSignals?: Array<{
+      scope: { kind: string; ownerId?: string };
+      severity: string;
+      status: string;
+    }>;
+  } | null;
+
+  const count = (snapshot?.activeSignals ?? []).filter(
+    (s) => s.status === "active" && s.scope.kind === "silicon_person" && s.scope.ownerId === personId,
+  ).length;
+
+  if (count === 0) return null;
+
+  return (
+    <span className="awareness-badge" style={{
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      minWidth: 16,
+      height: 16,
+      padding: "0 4px",
+      borderRadius: 999,
+      background: "var(--status-yellow, #f59e0b)",
+      color: "#000",
+      fontSize: 10,
+      fontWeight: 600,
+    }}>
+      {count}
+    </span>
   );
 }

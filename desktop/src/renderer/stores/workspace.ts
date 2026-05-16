@@ -133,6 +133,7 @@ export type WorkspaceTimeState = {
   executionRuns: ExecutionRun[];
   availabilityPolicy: AvailabilityPolicy | null;
   todayBrief: TodayBrief | null;
+  awarenessSnapshot: Record<string, unknown> | null;
 };
 
 function createEmptyTimeState(): WorkspaceTimeState {
@@ -144,6 +145,7 @@ function createEmptyTimeState(): WorkspaceTimeState {
     executionRuns: [],
     availabilityPolicy: null,
     todayBrief: null,
+    awarenessSnapshot: null,
   };
 }
 
@@ -228,6 +230,7 @@ type WorkspaceState = {
   // 动作
   loadBootstrap: () => Promise<void>;
   selectSession: (sessionId: string) => void;
+  loadSessionMessages: (sessionId: string) => Promise<void>;
   createSession: () => Promise<ChatSession>;
   deleteSession: (sessionId: string) => Promise<unknown>;
   sendMessage: (content: string) => Promise<void>;
@@ -296,10 +299,25 @@ type WorkspaceState = {
   deleteScheduleJob: (id: string) => Promise<void>;
   executeScheduleJobNow: (id: string) => Promise<ScheduleJob>;
   refreshExecutionRuns: () => Promise<ExecutionRun[]>;
+  deleteExecutionRun: (id: string) => Promise<void>;
+  deleteExecutionRunsByJob: (jobId: string) => Promise<void>;
   saveAvailabilityPolicy: (policy: AvailabilityPolicy) => Promise<AvailabilityPolicy>;
   refreshTodayBrief: () => Promise<TodayBrief>;
   suggestTimeboxes: () => Promise<SuggestedTimebox[]>;
   generateTodayDigest: (input: Record<string, unknown>) => Promise<string[]>;
+
+  // ─── 值守 / Awareness ───
+  loadAwarenessSnapshot: () => Promise<void>;
+  createAwarenessRoutine: (input: Record<string, unknown>) => Promise<void>;
+  updateAwarenessRoutine: (id: string, patch: Record<string, unknown>) => Promise<void>;
+  deleteAwarenessRoutine: (id: string) => Promise<void>;
+  pauseAwarenessRoutine: (id: string) => Promise<void>;
+  resumeAwarenessRoutine: (id: string) => Promise<void>;
+  runAwarenessRoutineNow: (id: string) => Promise<void>;
+  dismissAwarenessSignal: (signalId: string) => Promise<void>;
+  acknowledgeAwarenessSignal: (signalId: string) => Promise<void>;
+  createStandingOrder: (input: Record<string, unknown>) => Promise<void>;
+  deleteStandingOrder: (id: string) => Promise<void>;
 
   importCloudSkill: (input: { releaseId: string; skillName: string }) => Promise<unknown>;
   importCloudMcp: (input: { releaseId: string; servers: McpServerConfig[] }) => Promise<unknown>;
@@ -353,6 +371,7 @@ type WorkspaceState = {
   startWorkflowRun: (workflowId: string, initialState?: Record<string, unknown>) => Promise<{ runId: string | null }>;
   resumeWorkflowRun: (runId: string, resumeValue?: unknown) => Promise<{ success: boolean }>;
   cancelWorkflowRun: (runId: string) => Promise<{ success: boolean }>;
+  deleteWorkflowRun: (runId: string) => Promise<{ success: boolean }>;
 
   // Skills
   refreshSkills: () => Promise<void>;
@@ -498,6 +517,93 @@ function getMostRecentSessionId(sessions: ChatSession[]): string | null {
   return sorted[0].id;
 }
 
+// ---------------------------------------------------------------------------
+// Markdown 渲染缓存 — 避免流式更新时对已完成消息重复调用 marked.parse()
+// Key: `${messageId}:${contentHash}`
+// ---------------------------------------------------------------------------
+
+const _markdownCache = new Map<string, string>();
+
+function contentHash(content: string): string {
+  // Fast hash for cache key — not cryptographic, just needs to detect change
+  let h = 0;
+  for (let i = 0; i < content.length; i++) {
+    h = ((h << 5) - h + content.charCodeAt(i)) | 0;
+  }
+  return h.toString(36);
+}
+
+export function getCachedMarkdown(messageId: string, content: string, renderer: (c: string) => string): string {
+  const key = `${messageId}:${contentHash(content)}`;
+  const cached = _markdownCache.get(key);
+  if (cached !== undefined) return cached;
+  const html = renderer(content);
+  _markdownCache.set(key, html);
+  return html;
+}
+
+export function clearMarkdownCache() {
+  _markdownCache.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Streaming token batch buffer
+// ---------------------------------------------------------------------------
+
+type StreamingBuffer = {
+  sessionId: string;
+  messageId: string;
+  content: string;
+  reasoning: string;
+};
+
+let _streamBuffer: StreamingBuffer | null = null;
+let _streamRafId: number | null = null;
+
+/** Flush accumulated streaming deltas into the store in a single update. */
+function flushStreamBuffer() {
+  _streamRafId = null;
+  const buf = _streamBuffer;
+  if (!buf) return;
+  _streamBuffer = null;
+  useWorkspaceStore.getState().patchStreamingMessage(
+    buf.sessionId,
+    buf.messageId,
+    buf.content || null,
+    buf.reasoning || null,
+  );
+}
+
+/** Buffer a streaming delta and schedule a rAF flush (coalesces rapid deltas). */
+export function bufferStreamingDelta(
+  sessionId: string,
+  messageId: string,
+  deltaContent: string | null,
+  deltaReasoning: string | null,
+) {
+  if (!_streamBuffer || _streamBuffer.sessionId !== sessionId || _streamBuffer.messageId !== messageId) {
+    // New message — flush previous buffer immediately
+    if (_streamBuffer && _streamRafId !== null) {
+      cancelAnimationFrame(_streamRafId);
+      flushStreamBuffer();
+    }
+    _streamBuffer = { sessionId, messageId, content: "", reasoning: "" };
+  }
+  if (deltaContent) _streamBuffer.content += deltaContent;
+  if (deltaReasoning) _streamBuffer.reasoning += deltaReasoning;
+  if (_streamRafId === null) {
+    _streamRafId = requestAnimationFrame(flushStreamBuffer);
+  }
+}
+
+/** Flush any pending streaming buffer immediately (call on stream end). */
+export function flushStreamingBufferNow() {
+  if (_streamRafId !== null) {
+    cancelAnimationFrame(_streamRafId);
+  }
+  flushStreamBuffer();
+}
+
 /** Compute current session from state — only considers main chat sessions. */
 function computeCurrentSession(
   sessions: ChatSession[],
@@ -516,6 +622,7 @@ let pendingTodayBriefRequest: Promise<TodayBrief> | null = null;
 export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   let hasSubscribedToAppUpdates = false;
   let hasSubscribedToAgentTasks = false;
+  let hasSubscribedToAwareness = false;
 
   // Wrap set() so currentSession is recomputed after every state change.
   const set = (
@@ -648,7 +755,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
           updatedAt: null,
         },
         appUpdate: payload.updates ?? null,
-        time: payload.time ?? createEmptyTimeState(),
+        time: { ...createEmptyTimeState(), ...payload.time },
         ready: true,
         error: null,
       });
@@ -672,6 +779,20 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
           }));
         });
       }
+
+      // 订阅感知状态变更事件
+      if (!hasSubscribedToAwareness) {
+        const api = (window as any).myClawAPI;
+        if (api?.awareness?.onAwarenessChanged) {
+          hasSubscribedToAwareness = true;
+          api.awareness.onAwarenessChanged(() => {
+            void get().loadAwarenessSnapshot();
+          });
+        }
+      }
+
+      // 加载初始感知快照
+      void get().loadAwarenessSnapshot();
 
       // Auto-create a default session if none exist (e.g. fresh install)
       if (!payload.sessions || payload.sessions.length === 0) {
@@ -827,6 +948,16 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return executionRuns;
   },
 
+  async deleteExecutionRun(id: string) {
+    await window.myClawAPI.time.deleteExecutionRun(id);
+    await get().refreshExecutionRuns();
+  },
+
+  async deleteExecutionRunsByJob(jobId: string) {
+    await window.myClawAPI.time.deleteExecutionRunsByJob(jobId);
+    await get().refreshExecutionRuns();
+  },
+
   async saveAvailabilityPolicy(policy) {
     const { policy: nextPolicy } = await window.myClawAPI.time.saveAvailabilityPolicy(policy);
     set((state) => ({
@@ -870,6 +1001,131 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return lines;
   },
 
+  // ─── 值守 / Awareness ───────────────────────────────────────────────────
+
+  async loadAwarenessSnapshot() {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.getSnapshot) return;
+      const snapshot = await api.awareness.getSnapshot();
+      set((s) => ({
+        time: { ...s.time, awarenessSnapshot: snapshot as Record<string, unknown> },
+      }));
+    } catch (error) {
+      console.warn("[workspace] loadAwarenessSnapshot 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async createAwarenessRoutine(input: Record<string, unknown>) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.createRoutine) return;
+      await api.awareness.createRoutine(input);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] createAwarenessRoutine 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async updateAwarenessRoutine(id: string, patch: Record<string, unknown>) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.updateRoutine) return;
+      await api.awareness.updateRoutine(id, patch);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] updateAwarenessRoutine 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async deleteAwarenessRoutine(id: string) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.deleteRoutine) return;
+      await api.awareness.deleteRoutine(id);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] deleteAwarenessRoutine 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async pauseAwarenessRoutine(id: string) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.pauseRoutine) return;
+      await api.awareness.pauseRoutine(id);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] pauseAwarenessRoutine 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async resumeAwarenessRoutine(id: string) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.resumeRoutine) return;
+      await api.awareness.resumeRoutine(id);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] resumeAwarenessRoutine 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async runAwarenessRoutineNow(id: string) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.runRoutineNow) return;
+      await api.awareness.runRoutineNow(id);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] runAwarenessRoutineNow 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async dismissAwarenessSignal(signalId: string) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.dismissSignal) return;
+      await api.awareness.dismissSignal(signalId);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] dismissAwarenessSignal 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async acknowledgeAwarenessSignal(signalId: string) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.awareness?.acknowledgeSignal) return;
+      await api.awareness.acknowledgeSignal(signalId);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] acknowledgeAwarenessSignal 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async createStandingOrder(input: Record<string, unknown>) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.standingOrders?.create) return;
+      await api.standingOrders.create(input);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] createStandingOrder 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
+  async deleteStandingOrder(id: string) {
+    try {
+      const api = (window as any).myClawAPI;
+      if (!api?.standingOrders?.delete) return;
+      await api.standingOrders.delete(id);
+      void get().loadAwarenessSnapshot();
+    } catch (error) {
+      console.warn("[workspace] deleteStandingOrder 失败", { error: error instanceof Error ? error.message : String(error) });
+    }
+  },
+
   // -------------------------------------------------------------------------
   // Sessions
   // -------------------------------------------------------------------------
@@ -877,6 +1133,26 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   selectSession(sessionId) {
     if (get().sessions.some((s) => s.id === sessionId)) {
       set({ activeSessionId: sessionId });
+    }
+  },
+
+  async loadSessionMessages(sessionId) {
+    try {
+      const messages = await window.myClawAPI.getSessionMessages(sessionId);
+      set((s) => {
+        const sessions = [...s.sessions];
+        const idx = sessions.findIndex((item) => item.id === sessionId);
+        if (idx >= 0) {
+          const session = sessions[idx]!;
+          // 只在消息确实为空时填充，避免覆盖已更新的消息
+          if (session.messages.length === 0) {
+            sessions[idx] = { ...session, messages };
+          }
+        }
+        return { sessions };
+      });
+    } catch (error) {
+      console.error("[workspace] 加载会话消息失败", { sessionId, error: error instanceof Error ? error.message : String(error) });
     }
   },
 
@@ -963,7 +1239,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     }
 
     if (payload?.time) {
-      set({ time: payload.time });
+      set((s) => ({ time: { ...s.time, ...payload.time } }));
     }
   },
 
@@ -1791,6 +2067,17 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return payload;
   },
 
+  async deleteWorkflowRun(runId: string) {
+    const payload = await window.myClawAPI.deleteWorkflowRun(runId);
+    if (payload.success) {
+      set((s) => {
+        const { [runId]: _removed, ...rest } = s.workflowRuns as Record<string, unknown>;
+        return { workflowRuns: rest };
+      });
+    }
+    return payload;
+  },
+
   // -------------------------------------------------------------------------
   // Skills
   // -------------------------------------------------------------------------
@@ -1839,39 +2126,43 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   },
 
   patchStreamingMessage(sessionId, messageId, deltaContent, deltaReasoning) {
-    set((s) => {
-      const sessionIndex = s.sessions.findIndex((item) => item.id === sessionId);
-      if (sessionIndex < 0) return {};
-      const session = s.sessions[sessionIndex]!;
-      const msgIndex = session.messages.findIndex((m) => m.id === messageId);
+    // Fast path: use rawSet to avoid computeCurrentSession overhead on every token.
+    // We know which session is being patched, so we can update currentSession directly.
+    const state = get();
+    const sessionIndex = state.sessions.findIndex((item) => item.id === sessionId);
+    if (sessionIndex < 0) return;
+    const session = state.sessions[sessionIndex]!;
+    const msgIndex = session.messages.findIndex((m) => m.id === messageId);
 
-      let newMessages: typeof session.messages;
-      if (msgIndex >= 0) {
-        // Append delta to existing streaming message — only copy the messages array
-        const existing = session.messages[msgIndex]!;
-        const patched: typeof existing = {
-          ...existing,
-          content: existing.content + (deltaContent ?? ""),
-          ...(deltaReasoning ? { reasoning: (existing.reasoning ?? "") + deltaReasoning } : {}),
-        };
-        newMessages = [...session.messages];
-        newMessages[msgIndex] = patched;
-      } else {
-        // Create a new in-progress assistant message
-        newMessages = [...session.messages, {
-          id: messageId,
-          role: "assistant" as const,
-          content: deltaContent ?? "",
-          ...(deltaReasoning ? { reasoning: deltaReasoning } : {}),
-          createdAt: new Date().toISOString(),
-        }];
-      }
+    let newMessages: typeof session.messages;
+    if (msgIndex >= 0) {
+      const existing = session.messages[msgIndex]!;
+      const patched: typeof existing = {
+        ...existing,
+        content: existing.content + (deltaContent ?? ""),
+        ...(deltaReasoning ? { reasoning: (existing.reasoning ?? "") + deltaReasoning } : {}),
+      };
+      newMessages = [...session.messages];
+      newMessages[msgIndex] = patched;
+    } else {
+      newMessages = [...session.messages, {
+        id: messageId,
+        role: "assistant" as const,
+        content: deltaContent ?? "",
+        ...(deltaReasoning ? { reasoning: deltaReasoning } : {}),
+        createdAt: new Date().toISOString(),
+      }];
+    }
 
-      // Only create new references for the changed session, not the entire array
-      const newSession = { ...session, messages: newMessages };
-      const newSessions = [...s.sessions];
-      newSessions[sessionIndex] = newSession;
-      return { sessions: newSessions };
+    const newSession = { ...session, messages: newMessages };
+    const newSessions = [...state.sessions];
+    newSessions[sessionIndex] = newSession;
+
+    // Update currentSession directly if this is the active session
+    const isCurrentSession = state.currentSession?.id === sessionId;
+    rawSet({
+      sessions: newSessions,
+      ...(isCurrentSession ? { currentSession: newSession } : {}),
     });
   },
 

@@ -20,6 +20,18 @@ let cachedAgentTasks: AgentTask[] | null = null;
 const workerQueues = new Map<string, AgentTaskQueueItem[]>();
 const runningWorkers = new Set<string>();
 
+/** 暴露当前缓存的员工任务列表给感知信号收集器。 */
+export function getCachedAgentTasks(): AgentTask[] {
+  return cachedAgentTasks ?? [];
+}
+
+/** 任务状态变更钩子，由 RuntimeContext 初始化时注入，用于同步感知账本。 */
+let onAgentTaskStatusChanged: ((task: AgentTask) => void) | null = null;
+
+export function setAgentTaskStatusChangedHook(hook: (task: AgentTask) => void): void {
+  onAgentTaskStatusChanged = hook;
+}
+
 /** 广播任务变更，让渲染进程里的任务卡和 Team Dock 保持同步。 */
 function broadcastAgentTaskChanged(task: AgentTask): void {
   for (const wc of webContents.getAllWebContents()) {
@@ -31,6 +43,8 @@ function broadcastAgentTaskChanged(task: AgentTask): void {
       // 忽略已销毁窗口，避免后台任务更新中断。
     }
   }
+  // 通知感知系统任务状态变更，用于实时同步 LongRunLedger
+  onAgentTaskStatusChanged?.(task);
 }
 
 /** 广播会话变更，让主聊天时间线立即出现被追加的员工结果。 */
