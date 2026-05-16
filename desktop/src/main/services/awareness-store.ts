@@ -14,8 +14,11 @@ import type {
 import {
   createDefaultActionPolicy,
   createDefaultBudgetPolicy,
+  createDefaultCatchUpPolicy,
+  createDefaultContextPolicy,
   createDefaultDecisionPolicy,
   createDefaultDeliveryPolicy,
+  createDefaultQuietHoursPolicy,
   isInQuietHours,
 } from "@shared/contracts";
 import { randomUUID } from "node:crypto";
@@ -78,10 +81,13 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
         "session_stuck",
         "approval_pending",
       ],
+      contextPolicy: { ...createDefaultContextPolicy(), ...input.contextPolicy },
       decisionPolicy: { ...createDefaultDecisionPolicy(), ...input.decisionPolicy },
       actionPolicy: { ...createDefaultActionPolicy(), ...input.actionPolicy },
       deliveryPolicy: { ...createDefaultDeliveryPolicy(), ...input.deliveryPolicy },
       budgetPolicy: { ...createDefaultBudgetPolicy(), ...input.budgetPolicy },
+      quietHoursPolicy: { ...createDefaultQuietHoursPolicy(), ...input.quietHoursPolicy },
+      catchUpPolicy: { ...createDefaultCatchUpPolicy(), ...input.catchUpPolicy },
       standingOrderIds: input.standingOrderIds ?? [],
       status: "enabled",
       consecutiveFailures: 0,
@@ -122,10 +128,19 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
       cadenceMinutes: input.cadenceMinutes ?? existing.cadenceMinutes,
       activeHours: input.activeHours ?? existing.activeHours,
       signalSources: input.signalSources ?? existing.signalSources,
+      contextPolicy: input.contextPolicy
+        ? { ...createDefaultContextPolicy(), ...existing.contextPolicy, ...input.contextPolicy }
+        : existing.contextPolicy,
       decisionPolicy: input.decisionPolicy ? { ...existing.decisionPolicy, ...input.decisionPolicy } : existing.decisionPolicy,
       actionPolicy: input.actionPolicy ? { ...existing.actionPolicy, ...input.actionPolicy } : existing.actionPolicy,
       deliveryPolicy: input.deliveryPolicy ? { ...existing.deliveryPolicy, ...input.deliveryPolicy } : existing.deliveryPolicy,
       budgetPolicy: input.budgetPolicy ? { ...existing.budgetPolicy, ...input.budgetPolicy } : existing.budgetPolicy,
+      quietHoursPolicy: input.quietHoursPolicy
+        ? { ...createDefaultQuietHoursPolicy(), ...existing.quietHoursPolicy, ...input.quietHoursPolicy }
+        : existing.quietHoursPolicy,
+      catchUpPolicy: input.catchUpPolicy
+        ? { ...createDefaultCatchUpPolicy(), ...existing.catchUpPolicy, ...input.catchUpPolicy }
+        : existing.catchUpPolicy,
       standingOrderIds: input.standingOrderIds ?? existing.standingOrderIds,
       status: input.status ?? existing.status,
       updatedAt: nowIso,
@@ -199,6 +214,39 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
   }
 
   async function upsertSignal(signal: AwarenessSignal): Promise<void> {
+    const existing = await findSignalByFingerprint(signal.fingerprint);
+    if (existing && existing.id !== signal.id) {
+      if (
+        (existing.status === "dismissed" || existing.status === "suppressed")
+        && existing.cooldownUntil
+        && new Date(existing.cooldownUntil) > now()
+      ) {
+        console.info("[awareness-store] 信号仍在冷却期，跳过重复写入", {
+          fingerprint: signal.fingerprint,
+          cooldownUntil: existing.cooldownUntil,
+        });
+        return;
+      }
+      const nowIso = now().toISOString();
+      const updated: AwarenessSignal = {
+        ...existing,
+        status: existing.status === "resolved" ? "active" : existing.status,
+        severity: signal.severity,
+        title: signal.title ?? existing.title,
+        summary: signal.summary,
+        recommendedAction: signal.recommendedAction,
+        lastSeenAt: signal.lastSeenAt ?? signal.updatedAt ?? nowIso,
+        occurrenceCount: (existing.occurrenceCount ?? 1) + 1,
+        cooldownUntil: signal.cooldownUntil,
+        updatedAt: nowIso,
+      };
+      await upsertSignalRow(updated);
+      return;
+    }
+    await upsertSignalRow(signal);
+  }
+
+  async function upsertSignalRow(signal: AwarenessSignal): Promise<void> {
     db.run(
       `INSERT INTO awareness_signals (
         id, fingerprint, source_kind, source_id, scope_kind, owner_id,
@@ -240,7 +288,7 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
   async function updateSignalStatus(
     id: string,
     status: AwarenessSignalStatus,
-    extra?: { cooldownUntil?: string; resolvedAt?: string; dismissedAt?: string },
+    extra?: { cooldownUntil?: string; resolvedAt?: string; dismissedAt?: string; resolvedBySourceState?: boolean },
   ): Promise<void> {
     const row = db.queryOne("SELECT payload_json FROM awareness_signals WHERE id = @id", { id });
     if (!row) return;
@@ -252,6 +300,7 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
       cooldownUntil: extra?.cooldownUntil,
       resolvedAt: extra?.resolvedAt,
       dismissedAt: extra?.dismissedAt,
+      resolvedBySourceState: extra?.resolvedBySourceState ?? existing.resolvedBySourceState,
       updatedAt: nowIso,
     };
     db.run(
@@ -267,15 +316,14 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
   }
 
   async function cleanupStaleSignals(): Promise<number> {
-    const nowIso = now().toISOString();
     const resolved = db.queryAll(
-      "SELECT id, payload_json FROM awareness_signals WHERE status = 'active'",
+      "SELECT id, payload_json FROM awareness_signals WHERE status IN ('dismissed', 'suppressed')",
     );
     let cleaned = 0;
     for (const row of resolved) {
       const signal = parseSignal(row);
       if (signal.cooldownUntil && new Date(signal.cooldownUntil) < now()) {
-        await updateSignalStatus(signal.id, "suppressed");
+        await updateSignalStatus(signal.id, "suppressed", { cooldownUntil: undefined });
         cleaned++;
       }
     }
