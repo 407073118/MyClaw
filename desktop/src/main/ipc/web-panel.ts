@@ -1,8 +1,10 @@
 import { ipcMain } from "electron";
-import { join, relative, resolve, sep } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
+import { extname, join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
 
+import type { OpenWebPanelPayload, PanelBounds } from "@shared/contracts";
 import type { RuntimeContext } from "../services/runtime-context";
+import type { PanelViewManager } from "../services/panel-view-manager";
 
 /** 统一路径分隔符，便于跨平台做目录边界校验和回传相对路径。 */
 function normalizeSep(path: string): string {
@@ -35,8 +37,62 @@ function parsePanelDataRefContent(content: string): unknown {
   return JSON.parse(jsonText);
 }
 
-export function registerWebPanelHandlers(ctx: RuntimeContext): void {
-  // Resolve a skill HTML page absolute path for the renderer to load in iframe
+export function registerWebPanelHandlers(ctx: RuntimeContext, panelViewManager?: PanelViewManager): void {
+  ipcMain.handle("panel:open", async (_event, payload: OpenWebPanelPayload) => {
+    if (!panelViewManager) {
+      return { success: false, error: "PanelViewManager 未初始化。" };
+    }
+    try {
+      await panelViewManager.open(payload);
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[panel-view] 打开右侧原生面板失败", { error: message });
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.handle("panel:set-bounds", async (_event, bounds: PanelBounds) => {
+    panelViewManager?.setBounds(bounds);
+    return { success: true };
+  });
+
+  ipcMain.handle("panel:close", async () => {
+    panelViewManager?.close();
+    return { success: true };
+  });
+
+  ipcMain.handle("panel:refresh", async () => {
+    try {
+      await panelViewManager?.refresh();
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[panel-view] 刷新右侧原生面板失败", { error: message });
+      return { success: false, error: message };
+    }
+  });
+
+  ipcMain.on("panel:message", (event, message: unknown) => {
+    if (!panelViewManager?.isPanelSender(event.sender)) {
+      console.warn("[panel-view] 非当前面板 WebContents 的消息已拒绝");
+      return;
+    }
+    void panelViewManager?.handlePanelMessage(message);
+  });
+
+  ipcMain.handle("panel:action", async (event, input: { action?: unknown; data?: unknown }) => {
+    if (!panelViewManager || typeof input?.action !== "string") {
+      return { success: false, error: "面板动作参数无效。" };
+    }
+    if (!panelViewManager.isPanelSender(event.sender)) {
+      console.warn("[panel-view] 非当前面板 WebContents 的动作已拒绝", { action: input.action });
+      return { success: false, error: "面板来源无效。" };
+    }
+    return panelViewManager.invokeAction(input.action, input.data);
+  });
+
+  // 解析 Skill HTML 的绝对路径，供主进程 WebContentsView 自定义协议加载。
   ipcMain.handle("web-panel:resolve-page", async (_event, skillId: string, relativePath: string) => {
     const skill = ctx.state.skills.find((s) => s.id === skillId);
     if (!skill?.path || !relativePath) return null;
@@ -68,8 +124,18 @@ export function registerWebPanelHandlers(ctx: RuntimeContext): void {
       });
       return { success: false, error: "dataRef 只能读取当前 Skill 目录内的文件。" };
     }
+    if (extname(resolvedPath).toLowerCase() !== ".json") {
+      console.warn("[web-panel] HTML 面板请求非 JSON dataRef 已拒绝", {
+        skillId,
+        dataRef,
+      });
+      return { success: false, error: "dataRef 只允许读取 JSON 文件。" };
+    }
     if (!existsSync(resolvedPath)) {
       return { success: false, error: "dataRef 文件不存在：" + normalizeSep(relative(skillRoot, resolvedPath)) };
+    }
+    if (statSync(resolvedPath).size > 2 * 1024 * 1024) {
+      return { success: false, error: "dataRef 超过 2MiB 上限。" };
     }
 
     try {

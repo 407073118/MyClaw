@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, protocol, shell } from "electron";
 import { join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -105,6 +105,7 @@ import { invokeRegisteredSessionSendMessage, shutdownToolExecutor } from "./ipc/
 import { invokeRegisteredWorkflowStartRun } from "./ipc/workflows";
 import { ensureSiliconPersonCurrentSession } from "./services/silicon-person-session";
 import { shutdownAllWorkspaces } from "./services/silicon-person-workspace";
+import { PanelViewManager } from "./services/panel-view-manager";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -113,6 +114,13 @@ import { shutdownAllWorkspaces } from "./services/silicon-person-workspace";
 const IS_DEV = process.env.NODE_ENV === "development";
 const RENDERER_DEV_URL = "http://localhost:1420";
 const RENDERER_PROD_FILE = join(__dirname, "../../renderer/index.html");
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: "myclaw-skill", privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: "myclaw-viewer", privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: "myclaw-file", privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+  { scheme: "myclaw-vendor", privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
 
 // 必须在 app.whenReady() 之前把 Electron userData 重定向到便携目录
 redirectUserData();
@@ -123,6 +131,7 @@ redirectUserData();
 
 let mainWindow: BrowserWindow | null = null;
 let runtimeContext: RuntimeContext | null = null;
+let panelViewManager: PanelViewManager | null = null;
 
 function createMainWindow(): BrowserWindow {
   // 根据平台选择标题栏模式：macOS 用 hiddenInset，Windows 用 hidden + titleBarOverlay
@@ -697,7 +706,16 @@ app.whenReady().then(async () => {
   // 初始化运行时上下文并注册所有 IPC 处理器
   const ctx = await buildRuntimeContext(paths, mcpManager, appUpdater);
   runtimeContext = ctx;
-  registerAllIpcHandlers(ctx);
+  panelViewManager = new PanelViewManager({
+    getMainWindow: () => mainWindow,
+    runtimeContext: ctx,
+    panelPreloadPath: join(__dirname, "../preload/panel-preload.js"),
+  });
+  protocol.handle("myclaw-skill", (request) => panelViewManager?.handleProtocolRequest(request.url) ?? new Response("Panel not ready", { status: 503 }));
+  protocol.handle("myclaw-viewer", (request) => panelViewManager?.handleProtocolRequest(request.url) ?? new Response("Panel not ready", { status: 503 }));
+  protocol.handle("myclaw-file", (request) => panelViewManager?.handleProtocolRequest(request.url) ?? new Response("Panel not ready", { status: 503 }));
+  protocol.handle("myclaw-vendor", (request) => panelViewManager?.handleProtocolRequest(request.url) ?? new Response("Panel not ready", { status: 503 }));
+  registerAllIpcHandlers(ctx, panelViewManager);
 
   // 注入员工任务状态变更钩子，同步感知账本
   const { setAgentTaskStatusChangedHook } = require("./ipc/agent-tasks") as { setAgentTaskStatusChangedHook: (hook: (task: any) => void) => void };
@@ -802,16 +820,20 @@ app.on("before-quit", (event) => {
     : Promise.resolve();
 
   waitForSaves.then(() => {
+    panelViewManager?.close();
     runtimeContext?.services.timeStore?.close();
     runtimeContext?.services.memoryVault?.close();
     mainWindow = null;
+    panelViewManager = null;
     runtimeContext = null;
     app.quit();
   }).catch((err) => {
     log.warn("[shutdown] 等待 pending saves 失败，强制关闭", { error: err instanceof Error ? err.message : String(err) });
+    panelViewManager?.close();
     runtimeContext?.services.timeStore?.close();
     runtimeContext?.services.memoryVault?.close();
     mainWindow = null;
+    panelViewManager = null;
     runtimeContext = null;
     app.quit();
   });

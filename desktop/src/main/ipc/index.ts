@@ -19,12 +19,13 @@ import { registerTimeOrchestrationHandlers } from "./time-orchestration";
 import { registerUpdateHandlers } from "./update";
 import { registerWebPanelHandlers } from "./web-panel";
 import { registerWorkflowHandlers } from "./workflows";
+import type { PanelViewManager } from "../services/panel-view-manager";
 
 /**
  * Register all IPC handlers with the Electron main process.
  * Call once after the runtime context has been initialized.
  */
-export function registerAllIpcHandlers(ctx: RuntimeContext): void {
+export function registerAllIpcHandlers(ctx: RuntimeContext, panelViewManager?: PanelViewManager): void {
   registerBootstrapHandlers(ctx);
   registerAgentTaskHandlers(ctx);
   registerArtifactHandlers(ctx);
@@ -39,7 +40,7 @@ export function registerAllIpcHandlers(ctx: RuntimeContext): void {
   registerFileViewerHandlers();
   registerUpdateHandlers(ctx);
   registerSiliconPersonHandlers(ctx);
-  registerWebPanelHandlers(ctx);
+  registerWebPanelHandlers(ctx, panelViewManager);
   registerSkillFileHandlers(ctx);
   registerMeetingHandlers(ctx);
   registerMemoryHandlers(ctx);

@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => {
     webPanelResolvePage: vi.fn(),
     skillReadTree: vi.fn(),
     skillReadFile: vi.fn(),
+    panelOpen: vi.fn(),
+    panelSetBounds: vi.fn(),
+    panelClose: vi.fn(),
+    panelRefresh: vi.fn(),
   };
   const workspaceState: Record<string, unknown> = {
     skills: [] as SkillDefinition[],
@@ -117,6 +121,10 @@ describe("skills rendering accessibility and preview safety", () => {
     });
     mocks.apiMock.webPanelResolvePage.mockImplementation(async (_skillId: string, relativePath: string) => `/tmp/${relativePath}`);
     mocks.apiMock.skillReadTree.mockResolvedValue(buildTree());
+    mocks.apiMock.panelOpen.mockResolvedValue({ success: true });
+    mocks.apiMock.panelSetBounds.mockResolvedValue({ success: true });
+    mocks.apiMock.panelClose.mockResolvedValue({ success: true });
+    mocks.apiMock.panelRefresh.mockResolvedValue({ success: true });
     mocks.apiMock.skillReadFile.mockImplementation(async (_skillId: string, path: string) => {
       if (path === "view.html") {
         return "<h1>Unsafe</h1><script>alert(1)</script>";
@@ -280,7 +288,7 @@ describe("skills rendering accessibility and preview safety", () => {
     expect(screen.getByRole("button", { name: "展示" })).toBeTruthy();
   });
 
-  it("hardens the web panel iframe sandbox", async () => {
+  it("opens skill HTML through the native web panel surface", async () => {
     const { default: WebPanel } = await import("../src/renderer/components/WebPanel");
     Object.assign(mocks.workspaceState, {
       webPanel: {
@@ -293,12 +301,13 @@ describe("skills rendering accessibility and preview safety", () => {
     });
 
     const { container } = render(React.createElement(WebPanel));
-    const iframe = container.querySelector("iframe");
-    const styleText = container.querySelector("style")?.textContent ?? "";
 
-    expect(iframe).not.toBeNull();
-    expect(iframe?.getAttribute("sandbox")).toBe("allow-scripts");
-    expect(styleText).toContain(".web-panel::-webkit-scrollbar");
-    expect(styleText).toContain("scrollbar-width: thin");
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector("[data-testid='web-panel-native-surface']")).not.toBeNull();
+    await waitFor(() => expect(mocks.apiMock.panelOpen).toHaveBeenCalledWith({
+      viewPath: "/tmp/view.html",
+      title: "Alpha Skill",
+      data: { ok: true },
+    }));
   });
 });

@@ -1968,19 +1968,27 @@ export class BuiltinToolExecutor {
       return { success: false, output: "", error: "未找到技能：" + skill_id };
     }
 
-    const viewPath = join(skill.path, page);
+    const normalizedPage = normalizeSep(page);
+    if (!skill.viewFiles?.includes(normalizedPage)) {
+      return { success: false, output: "", error: "页面未声明为 Skill HTML 面板：" + normalizedPage };
+    }
+
+    const viewPath = resolve(join(skill.path, normalizedPage));
+    if (!isInsideBase(skill.path, viewPath)) {
+      return { success: false, output: "", error: "页面路径越界：" + normalizedPage };
+    }
     if (!existsSync(viewPath)) {
-      return { success: false, output: "", error: "页面不存在：" + page + "（路径：" + viewPath + "）" };
+      return { success: false, output: "", error: "页面不存在：" + normalizedPage + "（路径：" + viewPath + "）" };
     }
 
     let viewData = args.data ?? {};
     const dataRef = args.dataRef ?? args.data_ref;
     if (dataRef != null) {
-      const refResult = buildSkillDataRefPayload(skill, page, dataRef);
+      const refResult = buildSkillDataRefPayload(skill, normalizedPage, dataRef);
       if (refResult.error) {
         console.warn("[skill.view] 本地 dataRef 校验失败", {
           skillId: skill.id,
-          page,
+          page: normalizedPage,
           resolvedPath: refResult.resolvedPath,
           error: refResult.error,
         });
@@ -1989,14 +1997,14 @@ export class BuiltinToolExecutor {
       viewData = refResult.data ?? {};
       console.info("[skill.view] 已向面板传递本地 dataRef 引用", {
         skillId: skill.id,
-        page,
+        page: normalizedPage,
         resolvedPath: refResult.resolvedPath,
       });
     }
 
     return {
       success: true,
-      output: "已打开 " + skill.name + " 的 " + page + " 面板",
+      output: "已打开 " + skill.name + " 的 " + normalizedPage + " 面板",
       viewMeta: {
         viewPath,
         title: skill.name,

@@ -539,6 +539,10 @@ declare global {
         error?: string;
       }>;
       onWebPanelOpen: (callback: (payload: { viewPath: string; title: string; data: unknown }) => void) => () => void;
+      panelOpen: (payload: { viewPath: string; title: string; data: unknown }) => Promise<{ success: boolean; error?: string }>;
+      panelSetBounds: (bounds: { x: number; y: number; width: number; height: number }) => Promise<{ success: boolean }>;
+      panelClose: () => Promise<{ success: boolean }>;
+      panelRefresh: () => Promise<{ success: boolean; error?: string }>;
       fileViewerOpenExternal: (path: string) => Promise<{ success: boolean }>;
       fileViewerReveal: (path: string) => Promise<{ success: boolean }>;
       fileViewerPreview: (input: { path: string; baseDirectory?: string | null }) => Promise<{

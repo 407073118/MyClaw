@@ -369,6 +369,42 @@ describe("skill.view dispatch", () => {
       dataRef: "payload.json",
     });
   });
+
+  it("rejects HTML pages that are not declared by the Skill manifest", async () => {
+    const skillDir = join(testDir, "view-skill-locked");
+    mkdirSync(skillDir);
+    writeFileSync(join(skillDir, "view.html"), "<html></html>", "utf8");
+    writeFileSync(join(skillDir, "hidden.html"), "<html></html>", "utf8");
+
+    executor.setSkills([{
+      id: "skill-locked",
+      name: "Locked Skill",
+      description: "Locked panel",
+      path: skillDir,
+      enabled: true,
+      disableModelInvocation: false,
+      hasScriptsDirectory: false,
+      hasReferencesDirectory: false,
+      hasAssetsDirectory: false,
+      hasTestsDirectory: false,
+      hasAgentsDirectory: false,
+      hasViewFile: true,
+      viewFiles: ["view.html"],
+    }]);
+
+    const result = await executor.execute(
+      "skill.view",
+      JSON.stringify({
+        skill_id: "skill-locked",
+        page: "hidden.html",
+        data: {},
+      }),
+      testDir,
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("未声明");
+  });
 });
 
 // ---------------------------------------------------------------------------
