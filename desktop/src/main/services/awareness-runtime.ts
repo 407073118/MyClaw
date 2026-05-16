@@ -9,13 +9,13 @@ import type {
   AwarenessSnapshot,
   AwarenessTickReceipt,
   AvailabilityPolicy,
-  StandingOrder,
 } from "@shared/contracts";
 import { isInQuietHours } from "@shared/contracts";
 import type { AwarenessStore } from "./awareness-store";
 import { createSignalFromRaw, type RawSignal } from "./awareness-signal-collector";
 import type { StandingOrderService } from "./standing-order-service";
 import type { LongRunLedgerService } from "./long-run-ledger";
+import { createAwarenessPolicyEngine } from "./awareness-policy-engine";
 
 export type AwarenessRuntimeDeps = {
   store: AwarenessStore;
@@ -30,6 +30,7 @@ export type AwarenessRuntimeDeps = {
 
 export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
   const now = deps.now ?? (() => new Date());
+  const policyEngine = createAwarenessPolicyEngine({ now });
 
   /** 今日每 routine 的模型调用计数（日切自动重置） */
   const modelCallCounts = new Map<string, number>();
@@ -313,7 +314,7 @@ export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
     const orders = await deps.standingOrderService.list(routine.scope);
 
     for (const action of actions) {
-      const policyCheck = checkActionPolicy(action, routine, orders);
+      const policyCheck = policyEngine.evaluateAction(action, routine, orders, signals[0]?.sourceKind);
       await deps.ledger.writeAuditEvent({
         ledgerRecordId,
         timestamp: now().toISOString(),
@@ -335,42 +336,6 @@ export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
     }
 
     return { actionsExecuted, actionsBlocked };
-  }
-
-  function checkActionPolicy(
-    action: AwarenessAction,
-    routine: AwarenessRoutine,
-    orders: StandingOrder[],
-  ): { blocked: boolean; approvalStatus: string; standingOrderId?: string; reason: string } {
-    if (routine.actionPolicy.alwaysDeny.includes(action.kind)) {
-      return { blocked: true, approvalStatus: "rejected", reason: "action in alwaysDeny list" };
-    }
-
-    if (routine.actionPolicy.autoAllow.includes(action.kind)) {
-      return { blocked: false, approvalStatus: "auto_approved", reason: "action in autoAllow list" };
-    }
-
-    if (routine.actionPolicy.requireApproval.includes(action.kind)) {
-      const auth = deps.standingOrderService.isActionAuthorized(
-        orders,
-        action.kind,
-      );
-      if (!auth.authorized) {
-        return { blocked: true, approvalStatus: "rejected", reason: "no standing order authorizes this action" };
-      }
-
-      if (auth.gate === "always") {
-        return { blocked: true, approvalStatus: "pending", reason: "standing order requires approval", standingOrderId: auth.orderId };
-      }
-
-      if (auth.gate === "risk_based" && action.riskLevel === "high") {
-        return { blocked: true, approvalStatus: "pending", reason: "high risk action requires approval", standingOrderId: auth.orderId };
-      }
-
-      return { blocked: false, approvalStatus: "auto_approved", standingOrderId: auth.orderId, reason: "authorized by standing order" };
-    }
-
-    return { blocked: false, approvalStatus: "not_required", reason: "no policy restriction" };
   }
 
   async function getSnapshot(): Promise<AwarenessSnapshot> {
