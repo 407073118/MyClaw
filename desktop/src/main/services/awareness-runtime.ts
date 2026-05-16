@@ -16,6 +16,7 @@ import { createSignalFromRaw, type RawSignal } from "./awareness-signal-collecto
 import type { StandingOrderService } from "./standing-order-service";
 import type { LongRunLedgerService } from "./long-run-ledger";
 import { createAwarenessPolicyEngine } from "./awareness-policy-engine";
+import { createAwarenessActionExecutor } from "./awareness-action-executor";
 
 export type AwarenessRuntimeDeps = {
   store: AwarenessStore;
@@ -31,6 +32,10 @@ export type AwarenessRuntimeDeps = {
 export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
   const now = deps.now ?? (() => new Date());
   const policyEngine = createAwarenessPolicyEngine({ now });
+  const actionExecutor = createAwarenessActionExecutor({
+    updateSignalStatus: deps.store.updateSignalStatus,
+    now,
+  });
 
   /** 今日每 routine 的模型调用计数（日切自动重置） */
   const modelCallCounts = new Map<string, number>();
@@ -327,7 +332,14 @@ export function createAwarenessRuntime(deps: AwarenessRuntimeDeps) {
         policyDecisionReason: policyCheck.reason,
       });
 
-      if (policyCheck.blocked) {
+      const execution = await actionExecutor.execute(action, {
+        routine,
+        signals,
+        policyDecision: policyCheck,
+        ledgerRecordId,
+      });
+
+      if (execution.status !== "executed") {
         actionsBlocked++;
         continue;
       }
