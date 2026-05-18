@@ -4,6 +4,7 @@ import { WebSocket } from "ws";
 
 type DesktopArgs = {
   wsUrl: string;
+  connectionToken: string;
   userId: string;
   deviceId: string;
   replyText: string;
@@ -21,6 +22,7 @@ function parseArgs(argv: string[]): DesktopArgs {
   }
   const args = {
     wsUrl: values.get("wsUrl") ?? process.env.REALTIME_BRIDGE_WS_URL ?? "ws://localhost:4300/v1/desktop/ws",
+    connectionToken: values.get("connectionToken") ?? process.env.REALTIME_BRIDGE_DESKTOP_TOKEN ?? "",
     userId: values.get("userId") ?? "user-1",
     deviceId: values.get("deviceId") ?? "device-1",
     replyText: values.get("replyText") ?? "已收到测试消息",
@@ -31,6 +33,19 @@ function parseArgs(argv: string[]): DesktopArgs {
     deviceId: args.deviceId,
   });
   return args;
+}
+
+/** 构建携带连接 Token 的 WebSocket 地址，避免模拟客户端绕过服务端鉴权。 */
+function buildConnectionUrl(args: DesktopArgs): string {
+  if (!args.connectionToken) {
+    console.warn("[mock-desktop] 未配置连接 Token，将使用原始 WebSocket 地址");
+    return args.wsUrl;
+  }
+  const url = new URL(args.wsUrl);
+  url.searchParams.set("token", args.connectionToken);
+  const connectionUrl = url.toString();
+  console.info("[mock-desktop] 已构建带 Token 的 WebSocket 地址", { wsUrl: args.wsUrl });
+  return connectionUrl;
 }
 
 /** 安全发送 JSON 消息，并输出中文结构化日志。 */
@@ -72,8 +87,9 @@ function handleBridgeMessage(socket: WebSocket, args: DesktopArgs, rawMessage: s
 
 /** 启动桌面端模拟客户端，持续保持 WebSocket 在线。 */
 function startMockDesktop(args: DesktopArgs): void {
+  const connectionUrl = buildConnectionUrl(args);
   console.info("[mock-desktop] 开始连接实时桥接 WebSocket", { wsUrl: args.wsUrl });
-  const socket = new WebSocket(args.wsUrl);
+  const socket = new WebSocket(connectionUrl);
   socket.on("open", () => {
     sendJson(socket, {
       type: "desktop.hello",

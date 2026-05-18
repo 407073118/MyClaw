@@ -23,6 +23,11 @@ export class AuditService {
     await this.record(messageId, "routed", "已完成路由解析", metadata);
   }
 
+  /** 记录桥接消息已下发到桌面端事件。 */
+  async recordDelivered(messageId: string, metadata?: unknown): Promise<void> {
+    await this.record(messageId, "delivered", "桥接消息已下发到桌面端", metadata);
+  }
+
   /** 记录桌面端 ACK 已确认事件。 */
   async recordDeliveryAcked(messageId: string, metadata?: unknown): Promise<void> {
     await this.record(messageId, "acked", "桌面端已确认投递", metadata);

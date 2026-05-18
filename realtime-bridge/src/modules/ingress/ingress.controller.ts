@@ -22,6 +22,10 @@ export class IngressController {
   ): Promise<{ ok: true; messageId: string }> {
     const rawBody = this.readRawBody(request, body);
     const secret = process.env.DINGTALK_RELAY_HMAC_SECRET ?? "";
+    if (!secret) {
+      console.warn("[ingress] 拒绝未配置 HMAC 密钥的钉钉中转消息");
+      throw new UnauthorizedException("relay signature secret is not configured");
+    }
     const hmacResult = verifyHmacSignature({
       body: rawBody,
       timestamp: timestamp ?? "",

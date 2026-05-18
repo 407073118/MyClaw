@@ -1,6 +1,7 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { WebSocket } from "ws";
 
+import { PrismaService } from "../../infra/prisma/prisma.service";
 import { RedisService } from "../../infra/redis/redis.service";
 
 export interface DesktopConnection {
@@ -18,7 +19,10 @@ export class DesktopConnectionRegistry {
   private readonly byConnectionId = new Map<string, DesktopConnection>();
   private readonly activeDeviceByUserId = new Map<string, string>();
 
-  constructor(@Inject(RedisService) private readonly redisService: RedisService) {}
+  constructor(
+    @Inject(RedisService) private readonly redisService: RedisService,
+    @Optional() @Inject(PrismaService) private readonly prismaService?: PrismaService,
+  ) {}
 
   /** 注册桌面端连接，并保证同一用户只有一个在线设备。 */
   async register(input: RegisterDesktopConnectionInput): Promise<void> {
@@ -48,12 +52,44 @@ export class DesktopConnectionRegistry {
       await this.removeByDeviceId(input.deviceId, true);
     }
 
+    await this.upsertDesktopDevice(input);
     this.byDeviceId.set(input.deviceId, input);
     this.byConnectionId.set(input.connectionId, input);
     this.activeDeviceByUserId.set(input.userId, input.deviceId);
     await this.redisService.setDeviceOnline(input.deviceId, input.userId, input.connectionId, 60);
     console.info("[desktop-ws] 桌面端连接注册成功", {
       connectionId: input.connectionId,
+      userId: input.userId,
+      deviceId: input.deviceId,
+    });
+  }
+
+  /** 注册连接前同步桌面设备表，避免投递记录写入时触发外键失败。 */
+  private async upsertDesktopDevice(input: RegisterDesktopConnectionInput): Promise<void> {
+    if (!this.prismaService) {
+      console.warn("[desktop-ws] Prisma 服务未注入，跳过桌面设备表同步", {
+        userId: input.userId,
+        deviceId: input.deviceId,
+      });
+      return;
+    }
+
+    const lastSeenAt = new Date();
+    await (this.prismaService as any).desktopDevice.upsert({
+      where: { id: input.deviceId },
+      create: {
+        id: input.deviceId,
+        myclawUserId: input.userId,
+        enabled: true,
+        lastSeenAt,
+      },
+      update: {
+        myclawUserId: input.userId,
+        enabled: true,
+        lastSeenAt,
+      },
+    });
+    console.info("[desktop-ws] 桌面设备表同步成功", {
       userId: input.userId,
       deviceId: input.deviceId,
     });
@@ -84,6 +120,16 @@ export class DesktopConnectionRegistry {
     const connection = this.byDeviceId.get(deviceId);
     console.info("[desktop-ws] 查询桌面端连接", {
       deviceId,
+      found: Boolean(connection),
+    });
+    return connection;
+  }
+
+  /** 根据连接编号查询当前桌面端身份，用于校验业务事件归属。 */
+  getConnectionById(connectionId: string): DesktopConnection | undefined {
+    const connection = this.byConnectionId.get(connectionId);
+    console.info("[desktop-ws] 根据连接编号查询桌面端身份", {
+      connectionId,
       found: Boolean(connection),
     });
     return connection;

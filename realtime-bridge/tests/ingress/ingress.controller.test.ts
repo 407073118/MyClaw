@@ -71,6 +71,23 @@ describe("IngressController", () => {
       .expect(401);
   });
 
+  it("rejects relay requests when HMAC secret is not configured", async () => {
+    delete process.env.DINGTALK_RELAY_HMAC_SECRET;
+    const body = JSON.stringify(validPayload);
+    const timestamp = String(Date.now());
+    const nonce = "nonce-missing-secret";
+    const signature = signHmacPayload({ body, timestamp, nonce, secret: "" });
+
+    await request(app.getHttpServer())
+      .post("/v1/ingress/dingtalk/message")
+      .set("Content-Type", "application/json")
+      .set("X-MyClaw-Signature", signature)
+      .set("X-MyClaw-Timestamp", timestamp)
+      .set("X-MyClaw-Nonce", nonce)
+      .send(body)
+      .expect(401);
+  });
+
   it("rejects invalid relay payloads", async () => {
     const invalidPayload = { ...validPayload, traceId: undefined };
     const body = JSON.stringify(invalidPayload);

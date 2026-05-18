@@ -14,7 +14,7 @@ type DesktopWsMessage =
   | { type: "desktop.hello"; userId: string; deviceId: string; connectionId?: string }
   | { type: "desktop.heartbeat"; deviceId: string }
   | { type: "desktop.ack"; deliveryId: string; messageId: string }
-  | { type: "desktop.processing_started"; deliveryId: string; messageId: string }
+  | { type: "desktop.processing_started"; deliveryId: string; messageId: string; startedAt?: string }
   | { type: "desktop.reply_created"; deliveryId: string; messageId: string; content: ChannelMessageContent }
   | { type: "desktop.processing_failed"; deliveryId: string; messageId: string; reason: string };
 
@@ -55,8 +55,19 @@ export class DesktopWsGateway implements OnModuleInit, OnModuleDestroy {
 
   /** 校验升级请求路径，只允许桌面端桥接入口。 */
   private isDesktopPath(url?: string): boolean {
-    const pathname = new URL(url ?? "/", "http://localhost").pathname;
-    const accepted = pathname === "/v1/desktop/ws";
+    const parsedUrl = new URL(url ?? "/", "http://localhost");
+    const pathname = parsedUrl.pathname;
+    const pathAccepted = pathname === "/v1/desktop/ws";
+    const expectedToken = process.env.REALTIME_BRIDGE_DESKTOP_TOKEN;
+    if (!pathAccepted) {
+      console.warn("[desktop-ws] 拒绝非桌面端 WebSocket 路径", { pathname });
+      return false;
+    }
+    if (!expectedToken) {
+      console.warn("[desktop-ws] 桌面端 WebSocket Token 未配置，拒绝升级请求", { pathname });
+      return false;
+    }
+    const accepted = parsedUrl.searchParams.get("token") === expectedToken;
     console.info("[desktop-ws] 校验桌面端 WebSocket 路径", { pathname, accepted });
     return accepted;
   }
@@ -70,7 +81,7 @@ export class DesktopWsGateway implements OnModuleInit, OnModuleDestroy {
         .catch(() => undefined)
         .then(() => this.handleSocketMessage(rawMessage.toString(), webSocket, (nextConnectionId) => {
           connectionId = nextConnectionId;
-        }))
+        }, () => connectionId))
         .catch((error) => {
           console.error("[desktop-ws] 串行处理桌面端消息失败", {
             error: error instanceof Error ? error.message : String(error),
@@ -91,6 +102,7 @@ export class DesktopWsGateway implements OnModuleInit, OnModuleDestroy {
     rawMessage: string,
     webSocket: WebSocket,
     setConnectionId: (connectionId: string) => void,
+    getConnectionId: () => string | undefined = () => undefined,
   ): Promise<void> {
     const message = this.parseMessage(rawMessage.toString());
     if (!message) {
@@ -106,7 +118,14 @@ export class DesktopWsGateway implements OnModuleInit, OnModuleDestroy {
         deviceId: message.deviceId,
         socket: webSocket,
       });
+      const deliveryService = this.resolveOptionalService(DeliveryService);
+      const recoveredCount = await deliveryService?.recoverQueuedMessagesForDevice(message.userId, message.deviceId);
       console.info("[desktop-ws] 桌面端 hello 处理成功", { connectionId });
+      console.info("[desktop-ws] 桌面端上线后离线队列恢复完成", {
+        userId: message.userId,
+        deviceId: message.deviceId,
+        recoveredCount: recoveredCount ?? 0,
+      });
       return;
     }
 
@@ -116,7 +135,7 @@ export class DesktopWsGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    await this.handleDesktopBusinessEvent(message);
+    await this.handleDesktopBusinessEvent(message, getConnectionId());
   }
 
   /** 解析桌面端消息，非法 JSON 会被安全拒绝。 */
@@ -134,8 +153,12 @@ export class DesktopWsGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 分发桌面端业务事件，接入投递、出站和审计链路。 */
-  private async handleDesktopBusinessEvent(message: DesktopWsMessage): Promise<void> {
+  private async handleDesktopBusinessEvent(message: DesktopWsMessage, connectionId?: string): Promise<void> {
     console.info("[desktop-ws] 开始处理桌面端业务事件", { type: message.type });
+    if (!await this.validateBusinessEventOwnership(message, connectionId)) {
+      return;
+    }
+
     if (message.type === "desktop.ack") {
       await this.handleAckEvent(message);
       return;
@@ -157,6 +180,58 @@ export class DesktopWsGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     console.warn("[desktop-ws] 未支持的桌面端业务事件类型", { type: message.type });
+  }
+
+  /** 校验桌面端业务事件与当前连接、投递记录是否一致，拒绝跨设备伪造事件。 */
+  private async validateBusinessEventOwnership(message: DesktopWsMessage, connectionId?: string): Promise<boolean> {
+    if (message.type === "desktop.hello" || message.type === "desktop.heartbeat") {
+      return true;
+    }
+
+    const deliveryService = this.resolveOptionalService(DeliveryService);
+    if (!connectionId || !deliveryService) {
+      console.warn("[desktop-ws] 拒绝缺少连接身份或投递服务的桌面端业务事件", {
+        type: message.type,
+        connectionId,
+        hasDeliveryService: Boolean(deliveryService),
+      });
+      return false;
+    }
+
+    const connection = this.registry.getConnectionById(connectionId);
+    const deliveryContext = await deliveryService.getDeliveryEventContext(message.deliveryId);
+    if (!connection || !deliveryContext.ok) {
+      console.warn("[desktop-ws] 拒绝无法确认归属的桌面端业务事件", {
+        type: message.type,
+        connectionId,
+        deliveryId: message.deliveryId,
+        hasConnection: Boolean(connection),
+        deliveryContextOk: deliveryContext.ok,
+      });
+      return false;
+    }
+
+    const accepted = connection.deviceId === deliveryContext.desktopDeviceId
+      && message.messageId === deliveryContext.messageId;
+    if (!accepted) {
+      console.warn("[desktop-ws] 拒绝归属不匹配的桌面端业务事件", {
+        type: message.type,
+        connectionId,
+        connectionDeviceId: connection.deviceId,
+        deliveryDeviceId: deliveryContext.desktopDeviceId,
+        messageId: message.messageId,
+        deliveryMessageId: deliveryContext.messageId,
+      });
+      return false;
+    }
+
+    console.info("[desktop-ws] 桌面端业务事件归属校验通过", {
+      type: message.type,
+      connectionId,
+      deliveryId: message.deliveryId,
+      messageId: message.messageId,
+    });
+    return true;
   }
 
   /** 处理桌面端 ACK，清理投递超时并写入审计时间线。 */
@@ -187,12 +262,35 @@ export class DesktopWsGateway implements OnModuleInit, OnModuleDestroy {
   private async handleReplyCreatedEvent(message: Extract<DesktopWsMessage, { type: "desktop.reply_created" }>): Promise<void> {
     const outboundService = this.resolveOptionalService(OutboundService);
     const auditService = this.resolveOptionalService(AuditService);
+    const deliveryService = this.resolveOptionalService(DeliveryService);
     await auditService?.recordReplyCreated(message.messageId, {
       deliveryId: message.deliveryId,
       content: message.content,
     });
-    await outboundService?.handleDesktopReplyCreated(message);
-    await auditService?.recordOutboundSent(message.messageId, { deliveryId: message.deliveryId });
+
+    const outboundResult = await outboundService?.handleDesktopReplyCreated(message);
+    if (outboundResult?.ok) {
+      await deliveryService?.markCompleted(message.messageId);
+      await auditService?.recordOutboundSent(message.messageId, { deliveryId: message.deliveryId });
+      console.info("[desktop-ws] 桌面端回复已成功回发并完成投递收口", {
+        messageId: message.messageId,
+        deliveryId: message.deliveryId,
+        outboundMessageId: outboundResult.outboundMessageId,
+      });
+      return;
+    }
+
+    const reason = outboundResult?.error ?? "outbound relay service unavailable";
+    await deliveryService?.markFailed(message.messageId, reason);
+    await auditService?.recordFailure(message.messageId, {
+      deliveryId: message.deliveryId,
+      reason,
+    });
+    console.warn("[desktop-ws] 桌面端回复回发失败，投递链路已按失败收口", {
+      messageId: message.messageId,
+      deliveryId: message.deliveryId,
+      reason,
+    });
     console.info("[desktop-ws] 桌面端回复业务事件处理完成", {
       messageId: message.messageId,
       deliveryId: message.deliveryId,

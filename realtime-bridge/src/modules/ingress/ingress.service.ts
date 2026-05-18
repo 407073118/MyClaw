@@ -99,7 +99,7 @@ export class IngressService {
       } else {
         await this.auditService?.recordFailure(messageId, { reason: route.reason });
       }
-      await this.deliveryService.deliverInboundMessage({
+      const deliveryResult = await this.deliveryService.deliverInboundMessage({
         id: messageId,
         provider: message.provider,
         externalMessageId: message.externalMessageId,
@@ -109,6 +109,9 @@ export class IngressService {
         content: message.content,
         traceId: message.traceId,
       }, route);
+      if (deliveryResult.status === "delivered") {
+        await this.auditService?.recordDelivered(messageId, { deliveryId: deliveryResult.deliveryId });
+      }
       console.info("[ingress] 入站消息异步路由投递完成", { messageId });
     } catch (error) {
       console.error("[ingress] 入站消息异步路由投递失败", {

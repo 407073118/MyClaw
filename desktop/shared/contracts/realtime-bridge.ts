@@ -2,6 +2,7 @@ export const BRIDGE_INBOUND_MESSAGE_TYPE = "bridge.message.received" as const;
 export const DESKTOP_HELLO_MESSAGE_TYPE = "desktop.hello" as const;
 export const DESKTOP_HEARTBEAT_MESSAGE_TYPE = "desktop.heartbeat" as const;
 export const DESKTOP_ACK_MESSAGE_TYPE = "desktop.ack" as const;
+export const DESKTOP_PROCESSING_STARTED_TYPE = "desktop.processing_started" as const;
 export const DESKTOP_REPLY_CREATED_TYPE = "desktop.reply_created" as const;
 export const DESKTOP_PROCESSING_FAILED_TYPE = "desktop.processing_failed" as const;
 
@@ -54,6 +55,14 @@ export interface DesktopAckMessage {
   receivedAt: string;
 }
 
+export interface DesktopProcessingStarted {
+  type: typeof DESKTOP_PROCESSING_STARTED_TYPE;
+  messageId: string;
+  deliveryId: string;
+  traceId?: string;
+  startedAt: string;
+}
+
 export interface DesktopReplyCreated {
   type: typeof DESKTOP_REPLY_CREATED_TYPE;
   messageId: string;
@@ -76,5 +85,6 @@ export type DesktopToBridgeMessage =
   | DesktopHelloMessage
   | DesktopHeartbeatMessage
   | DesktopAckMessage
+  | DesktopProcessingStarted
   | DesktopReplyCreated
   | DesktopProcessingFailed;

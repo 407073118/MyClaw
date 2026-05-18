@@ -4,7 +4,15 @@ import { OutboundService } from "../../src/modules/outbound/outbound.service";
 
 class FakePrisma {
   outboundMessages = new Map<string, any>();
-  inboundMessages = new Map<string, any>();
+  inboundMessages = new Map<string, any>([[
+    "message-1",
+    {
+      id: "message-1",
+      provider: "dingtalk",
+      externalConversationId: "cid-1",
+      rawPayloadJson: { sessionWebhook: "https://relay.example/session" },
+    },
+  ]]);
   nextOutboundId = "outbound-1";
 
   outboundMessage = {
@@ -22,6 +30,7 @@ class FakePrisma {
   };
 
   inboundMessage = {
+    findUnique: async ({ where }: any) => this.inboundMessages.get(where.id) ?? null,
     update: async ({ where, data }: any) => {
       const existing = this.inboundMessages.get(where.id) ?? { id: where.id };
       const updated = { ...existing, ...data };
@@ -50,8 +59,23 @@ describe("OutboundService", () => {
     expect(prisma.outboundMessages.get("outbound-1")).toMatchObject({
       inboundMessageId: "message-1",
       provider: "dingtalk",
+      externalConversationId: "cid-1",
       status: "sent",
     });
+  });
+
+  it("sends reply with inbound conversation context", async () => {
+    const prisma = new FakePrisma();
+    const relayClient = { sendReply: vi.fn(async () => ({ ok: true, rawResponse: { ok: true } })) };
+    const service = new OutboundService(prisma as any, relayClient as any, { retryDelaysMs: [] });
+
+    await service.handleDesktopReplyCreated(createReply());
+
+    expect(relayClient.sendReply).toHaveBeenCalledWith(expect.objectContaining({
+      provider: "dingtalk",
+      externalConversationId: "cid-1",
+      sessionWebhook: "https://relay.example/session",
+    }));
   });
 
   it("marks outbound sent and inbound completed after relay success", async () => {

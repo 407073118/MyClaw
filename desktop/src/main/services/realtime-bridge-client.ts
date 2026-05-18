@@ -6,9 +6,11 @@ import {
   DESKTOP_HEARTBEAT_MESSAGE_TYPE,
   DESKTOP_HELLO_MESSAGE_TYPE,
   DESKTOP_PROCESSING_FAILED_TYPE,
+  DESKTOP_PROCESSING_STARTED_TYPE,
   DESKTOP_REPLY_CREATED_TYPE,
   type BridgeInboundMessage,
   type DesktopProcessingFailed,
+  type DesktopProcessingStarted,
   type DesktopReplyCreated,
   type RealtimeBridgeContent,
 } from "../../../shared/contracts/realtime-bridge";
@@ -32,11 +34,12 @@ export interface RealtimeBridgeClientOptions {
   bridgeUrl: string;
   userId: string;
   deviceId: string;
+  connectionToken?: string;
   WebSocketCtor?: WebSocketCtor;
   onBridgeMessage?: (message: BridgeInboundMessage) => Promise<void> | void;
   sessionStore?: RealtimeChannelSessionStore;
   sendMessage?: SessionSendMessage;
-  createLocalSessionId?: (message: BridgeInboundMessage) => string;
+  createLocalSessionId?: (message: BridgeInboundMessage) => string | Promise<string>;
   maxConcurrentSessions?: number;
 }
 
@@ -71,8 +74,9 @@ export class RealtimeBridgeClient {
       return;
     }
 
-    console.info("[realtime-bridge] 开始连接实时桥接服务", { bridgeUrl: this.options.bridgeUrl });
-    const socket = new this.WebSocketCtor(this.options.bridgeUrl);
+    const bridgeUrl = this.buildConnectionUrl();
+    console.info("[realtime-bridge] 开始连接实时桥接服务", { bridgeUrl });
+    const socket = new this.WebSocketCtor(bridgeUrl);
     this.socket = socket;
     socket.on("open", () => {
       this.connected = true;
@@ -141,6 +145,7 @@ export class RealtimeBridgeClient {
 
     this.ackedDeliveryIds.add(message.deliveryId);
     this.sendAck(message);
+    this.sendProcessingStarted(message);
     if (this.options.sessionStore) {
       await this.enqueueSessionExecution(message);
     } else {
@@ -162,6 +167,22 @@ export class RealtimeBridgeClient {
       receivedAt: new Date().toISOString(),
     });
     console.info("[realtime-bridge] 桌面端 ACK 已发送", { deliveryId: message.deliveryId });
+  }
+
+  /** 发送桌面端开始处理事件，驱动服务端投递状态进入 processing。 */
+  sendProcessingStarted(message: Pick<BridgeInboundMessage, "messageId" | "deliveryId" | "traceId">): void {
+    const event: DesktopProcessingStarted = {
+      type: DESKTOP_PROCESSING_STARTED_TYPE,
+      messageId: message.messageId,
+      deliveryId: message.deliveryId,
+      traceId: message.traceId,
+      startedAt: new Date().toISOString(),
+    };
+    this.sendJson(event);
+    console.info("[realtime-bridge] 桌面端开始处理事件已发送", {
+      messageId: message.messageId,
+      deliveryId: message.deliveryId,
+    });
   }
 
   /** 发送桌面端回复创建事件。 */
@@ -203,6 +224,19 @@ export class RealtimeBridgeClient {
       userId: this.options.userId,
       deviceId: this.options.deviceId,
     });
+  }
+
+  /** 构建带连接 Token 的 WebSocket URL，避免在 hello 前暴露未授权连接。 */
+  private buildConnectionUrl(): string {
+    if (!this.options.connectionToken) {
+      console.warn("[realtime-bridge] 未配置实时桥接连接 Token，将使用原始连接地址");
+      return this.options.bridgeUrl;
+    }
+    const url = new URL(this.options.bridgeUrl);
+    url.searchParams.set("token", this.options.connectionToken);
+    const connectionUrl = url.toString();
+    console.info("[realtime-bridge] 已构建带 Token 的实时桥接连接地址", { bridgeUrl: this.options.bridgeUrl });
+    return connectionUrl;
   }
 
   /** 解析 WebSocket 下行消息，并交给桥接消息处理入口。 */
@@ -335,7 +369,7 @@ export class RealtimeBridgeClient {
 
     const created = await sessionStore.upsert({
       localSessionKey: message.localSessionKey,
-      localSessionId: this.createLocalSessionId(message),
+      localSessionId: await this.createLocalSessionId(message),
       provider: message.provider,
       externalConversationId: message.externalConversationId,
       conversationType: message.conversationType,
@@ -349,9 +383,9 @@ export class RealtimeBridgeClient {
   }
 
   /** 为没有映射的实时渠道会话生成稳定可读的本地 session id。 */
-  private createLocalSessionId(message: BridgeInboundMessage): string {
+  private async createLocalSessionId(message: BridgeInboundMessage): Promise<string> {
     if (this.options.createLocalSessionId) {
-      const sessionId = this.options.createLocalSessionId(message);
+      const sessionId = await this.options.createLocalSessionId(message);
       console.info("[realtime-bridge] 使用外部策略创建实时会话 session id", {
         localSessionKey: message.localSessionKey,
         sessionId,

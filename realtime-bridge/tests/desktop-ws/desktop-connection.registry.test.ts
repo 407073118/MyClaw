@@ -16,6 +16,12 @@ class FakeRedisService {
   }
 }
 
+class FakePrismaService {
+  desktopDevice = {
+    upsert: vi.fn(async () => ({})),
+  };
+}
+
 const createSocket = () => ({
   send: vi.fn(),
   close: vi.fn(),
@@ -39,6 +45,30 @@ describe("DesktopConnectionRegistry", () => {
       userId: "user-1",
       connectionId: "conn-1",
     });
+  });
+
+  it("upserts desktop device row before marking connection online", async () => {
+    const redis = new FakeRedisService();
+    const prisma = new FakePrismaService();
+    const registry = new DesktopConnectionRegistry(redis as any, prisma as any);
+
+    await registry.register({
+      connectionId: "conn-1",
+      userId: "user-1",
+      deviceId: "device-1",
+      socket: createSocket() as any,
+    });
+
+    expect(prisma.desktopDevice.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "device-1" },
+      create: expect.objectContaining({
+        id: "device-1",
+        myclawUserId: "user-1",
+      }),
+      update: expect.objectContaining({
+        myclawUserId: "user-1",
+      }),
+    }));
   });
 
   it("disconnects a device and removes online status", async () => {

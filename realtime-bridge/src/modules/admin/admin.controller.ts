@@ -1,10 +1,19 @@
-import { Controller, Get, Headers, Inject, Param, UnauthorizedException } from "@nestjs/common";
+import { Controller, Get, Header, Headers, Inject, Param, UnauthorizedException } from "@nestjs/common";
 
 import { AdminService } from "./admin.service";
+import { renderAdminConsolePage } from "./admin-console.page";
 
 @Controller("admin")
 export class AdminController {
   constructor(@Inject(AdminService) private readonly adminService: AdminService) {}
+
+  /** 返回实时桥接管理台页面，便于运维人员直接查询链路状态。 */
+  @Get()
+  @Header("Content-Type", "text/html; charset=utf-8")
+  getAdminConsole(): string {
+    console.info("[admin] 开始返回实时桥接管理台页面");
+    return renderAdminConsolePage();
+  }
 
   /** 查询消息链路时间线，使用内部管理 Token 保护。 */
   @Get("messages/:messageId/timeline")
@@ -44,7 +53,11 @@ export class AdminController {
 
   /** 校验内部管理 Token，拒绝未授权排障查询。 */
   private assertAdminToken(token?: string): void {
-    const expectedToken = process.env.MYCLAW_ADMIN_TOKEN ?? "admin-token";
+    const expectedToken = process.env.MYCLAW_ADMIN_TOKEN;
+    if (!expectedToken) {
+      console.warn("[admin] 管理接口 Token 未配置，拒绝管理请求");
+      throw new UnauthorizedException("admin token is not configured");
+    }
     if (!token || token !== expectedToken) {
       console.warn("[admin] 拒绝未授权管理接口请求");
       throw new UnauthorizedException("invalid admin token");

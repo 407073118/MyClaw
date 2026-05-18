@@ -52,6 +52,26 @@ export class LocalSessionLockService {
     return {};
   }
 
+  /** 替换当前运行投递编号，用于 ACK 超时后的同一消息重试继续占用会话锁。 */
+  replaceRunning(localSessionKey: string, currentDeliveryId: string, nextDeliveryId: string): boolean {
+    if (this.runningBySession.get(localSessionKey) !== currentDeliveryId) {
+      console.warn("[delivery-lock] 替换运行投递时发现投递编号不匹配", {
+        localSessionKey,
+        currentDeliveryId,
+        nextDeliveryId,
+      });
+      return false;
+    }
+
+    this.runningBySession.set(localSessionKey, nextDeliveryId);
+    console.info("[delivery-lock] 运行投递编号已替换为重试投递", {
+      localSessionKey,
+      currentDeliveryId,
+      nextDeliveryId,
+    });
+    return true;
+  }
+
   /** 判断指定投递是否为当前会话正在运行的投递。 */
   isRunning(localSessionKey: string, deliveryId: string): boolean {
     const running = this.runningBySession.get(localSessionKey) === deliveryId;

@@ -47,6 +47,11 @@ class FakePrisma {
       this.inboundMessages.set(where.id, row);
       return row;
     },
+    findUnique: async ({ where }: any) => this.inboundMessages.get(where.id) ?? null,
+    findMany: async ({ where }: any) => Array.from(this.inboundMessages.values()).filter((row) => {
+      const deviceMatches = row.desktopDeviceId === "device-1" || row.desktopDeviceId == null;
+      return row.status === where.status && row.myclawUserId === where.myclawUserId && deviceMatches;
+    }),
   };
 
   channelConversation = {
@@ -179,6 +184,7 @@ describe("mock relay to desktop e2e", () => {
   beforeEach(async () => {
     process.env.DINGTALK_RELAY_HMAC_SECRET = "test-secret";
     process.env.MYCLAW_ADMIN_TOKEN = "admin-token";
+    process.env.REALTIME_BRIDGE_DESKTOP_TOKEN = "desktop-token";
     relayClient.sendReply.mockClear();
     prisma = new FakePrisma();
     const redis = {
@@ -221,7 +227,7 @@ describe("mock relay to desktop e2e", () => {
     app = await NestFactory.create(TestBridgeModule, { logger: false });
     await app.listen(0);
     const appUrl = new URL(await app.getUrl());
-    desktopSocket = new WebSocket(`ws://127.0.0.1:${appUrl.port}/v1/desktop/ws`);
+    desktopSocket = new WebSocket(`ws://127.0.0.1:${appUrl.port}/v1/desktop/ws?token=desktop-token`);
     await waitForWsOpen(desktopSocket);
     desktopSocket.send(JSON.stringify({
       type: "desktop.hello",
@@ -239,6 +245,7 @@ describe("mock relay to desktop e2e", () => {
     await app.close();
     delete process.env.DINGTALK_RELAY_HMAC_SECRET;
     delete process.env.MYCLAW_ADMIN_TOKEN;
+    delete process.env.REALTIME_BRIDGE_DESKTOP_TOKEN;
   });
 
   it("delivers a DingTalk relay message to Desktop reply and exposes completed admin timeline", async () => {
@@ -299,6 +306,7 @@ describe("mock relay to desktop e2e", () => {
     expect(timeline.body.events.map((event: any) => event.eventType)).toEqual([
       "received",
       "routed",
+      "delivered",
       "acked",
       "processing",
       "reply_created",

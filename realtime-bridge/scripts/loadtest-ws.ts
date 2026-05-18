@@ -4,6 +4,7 @@ import { WebSocket } from "ws";
 
 type LoadTestArgs = {
   wsUrl: string;
+  connectionToken: string;
   connections: number;
   durationSeconds: number;
   userPrefix: string;
@@ -21,12 +22,26 @@ function parseArgs(argv: string[]): LoadTestArgs {
   }
   const args = {
     wsUrl: values.get("wsUrl") ?? process.env.REALTIME_BRIDGE_WS_URL ?? "ws://localhost:4300/v1/desktop/ws",
+    connectionToken: values.get("connectionToken") ?? process.env.REALTIME_BRIDGE_DESKTOP_TOKEN ?? "",
     connections: Number(values.get("connections") ?? "500"),
     durationSeconds: Number(values.get("duration") ?? "60"),
     userPrefix: values.get("userPrefix") ?? "load-user",
   };
   console.info("[loadtest-ws] 压测参数解析完成", args);
   return args;
+}
+
+/** 构建压测连接地址，统一追加桌面端连接 Token。 */
+function buildConnectionUrl(args: LoadTestArgs): string {
+  if (!args.connectionToken) {
+    console.warn("[loadtest-ws] 未配置连接 Token，将使用原始 WebSocket 地址");
+    return args.wsUrl;
+  }
+  const url = new URL(args.wsUrl);
+  url.searchParams.set("token", args.connectionToken);
+  const connectionUrl = url.toString();
+  console.info("[loadtest-ws] 已构建带 Token 的压测连接地址", { wsUrl: args.wsUrl });
+  return connectionUrl;
 }
 
 /** 发送 JSON 消息，并统计发送次数。 */
@@ -42,7 +57,7 @@ function sendJson(socket: WebSocket, payload: Record<string, unknown>, stats: { 
 
 /** 创建单条压测连接，连接成功后持续发送心跳。 */
 function createConnection(index: number, args: LoadTestArgs, stats: { opened: number; closed: number; errors: number; sent: number }): WebSocket {
-  const socket = new WebSocket(args.wsUrl);
+  const socket = new WebSocket(buildConnectionUrl(args));
   const userId = `${args.userPrefix}-${index}`;
   const deviceId = `load-device-${index}`;
   socket.on("open", () => {

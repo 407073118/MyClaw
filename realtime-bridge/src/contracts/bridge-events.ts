@@ -7,6 +7,7 @@ import type {
 
 export const BRIDGE_INBOUND_MESSAGE_TYPE = "bridge.message.received" as const;
 export const DESKTOP_ACK_MESSAGE_TYPE = "desktop.ack" as const;
+export const DESKTOP_PROCESSING_STARTED_TYPE = "desktop.processing_started" as const;
 export const DESKTOP_REPLY_CREATED_TYPE = "desktop.reply_created" as const;
 export const DESKTOP_PROCESSING_FAILED_TYPE = "desktop.processing_failed" as const;
 
@@ -28,6 +29,14 @@ export interface DesktopAckMessage {
   deliveryId: string;
   traceId?: string;
   receivedAt: string;
+}
+
+export interface DesktopProcessingStarted {
+  type: typeof DESKTOP_PROCESSING_STARTED_TYPE;
+  messageId: string;
+  deliveryId: string;
+  traceId?: string;
+  startedAt: string;
 }
 
 export interface DesktopReplyCreated {
@@ -52,6 +61,7 @@ export type BridgeToDesktopEvent = BridgeInboundMessage;
 
 export type DesktopToBridgeEvent =
   | DesktopAckMessage
+  | DesktopProcessingStarted
   | DesktopReplyCreated
   | DesktopProcessingFailed;
 

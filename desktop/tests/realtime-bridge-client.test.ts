@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { BRIDGE_INBOUND_MESSAGE_TYPE } from "../shared/contracts/realtime-bridge";
+import { BRIDGE_INBOUND_MESSAGE_TYPE, DESKTOP_PROCESSING_STARTED_TYPE } from "../shared/contracts/realtime-bridge";
 import { RealtimeBridgeClient } from "../src/main/services/realtime-bridge-client";
 
 class MockWebSocket {
@@ -75,6 +75,21 @@ describe("RealtimeBridgeClient", () => {
     });
   });
 
+  it("adds connection token to websocket url", () => {
+    MockWebSocket.instances = [];
+    const client = new RealtimeBridgeClient({
+      bridgeUrl: "ws://localhost:4300/v1/desktop/ws?existing=1",
+      userId: "user-1",
+      deviceId: "device-1",
+      connectionToken: "token with spaces",
+      WebSocketCtor: MockWebSocket as any,
+    });
+
+    client.connect();
+
+    expect(MockWebSocket.instances[0].url).toBe("ws://localhost:4300/v1/desktop/ws?existing=1&token=token+with+spaces");
+  });
+
   it("sends desktop.heartbeat", () => {
     MockWebSocket.instances = [];
     const client = new RealtimeBridgeClient({
@@ -115,6 +130,30 @@ describe("RealtimeBridgeClient", () => {
       .filter((item) => item.type === "desktop.ack");
     expect(ackMessages).toHaveLength(1);
     expect(ackMessages[0]).toMatchObject({ deliveryId: "delivery-1", messageId: "message-1" });
+    expect(onBridgeMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends desktop.processing_started after ACK before local handling", async () => {
+    MockWebSocket.instances = [];
+    const onBridgeMessage = vi.fn(async () => undefined);
+    const client = new RealtimeBridgeClient({
+      bridgeUrl: "ws://localhost:4300/v1/desktop/ws",
+      userId: "user-1",
+      deviceId: "device-1",
+      WebSocketCtor: MockWebSocket as any,
+      onBridgeMessage,
+    });
+    client.connect();
+    MockWebSocket.instances[0].emit("open");
+
+    await client.handleBridgeMessage(createBridgeMessage());
+
+    const sentTypes = MockWebSocket.instances[0].sent.map((item) => JSON.parse(item).type);
+    expect(sentTypes).toEqual([
+      "desktop.hello",
+      "desktop.ack",
+      DESKTOP_PROCESSING_STARTED_TYPE,
+    ]);
     expect(onBridgeMessage).toHaveBeenCalledTimes(1);
   });
 });

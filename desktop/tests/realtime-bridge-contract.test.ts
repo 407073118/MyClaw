@@ -4,6 +4,7 @@ import {
   BRIDGE_INBOUND_MESSAGE_TYPE,
   DESKTOP_ACK_MESSAGE_TYPE,
   DESKTOP_HELLO_MESSAGE_TYPE,
+  DESKTOP_PROCESSING_STARTED_TYPE,
   type BridgeInboundMessage,
 } from "../shared/contracts/realtime-bridge";
 
@@ -29,5 +30,6 @@ describe("realtime bridge desktop contract", () => {
     expect(message.type).toBe("bridge.message.received");
     expect(DESKTOP_HELLO_MESSAGE_TYPE).toBe("desktop.hello");
     expect(DESKTOP_ACK_MESSAGE_TYPE).toBe("desktop.ack");
+    expect(DESKTOP_PROCESSING_STARTED_TYPE).toBe("desktop.processing_started");
   });
 });

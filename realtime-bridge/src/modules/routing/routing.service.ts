@@ -20,7 +20,15 @@ export type RouteResult =
       localSessionKey: string;
       routeSource: "conversation-binding" | "sender-binding";
     }
-  | { ok: false; reason: "unbound_sender" | "disabled_sender" | "device_offline" | "binding_disabled" };
+  | {
+      ok: false;
+      reason: "device_offline";
+      myclawUserId?: string;
+      desktopDeviceId?: string;
+      localSessionKey?: string;
+      routeSource?: "conversation-binding" | "sender-binding";
+    }
+  | { ok: false; reason: "unbound_sender" | "disabled_sender" | "binding_disabled" };
 
 @Injectable()
 export class RoutingService {
@@ -77,7 +85,19 @@ export class RoutingService {
       console.warn("[routing] 显式会话绑定设备不在线，消息进入离线队列", {
         desktopDeviceId: binding.desktopDeviceId,
       });
-      return { ok: false, reason: "device_offline" };
+      return {
+        ok: false,
+        reason: "device_offline",
+        myclawUserId: binding.myclawUserId,
+        desktopDeviceId: binding.desktopDeviceId,
+        localSessionKey: buildLocalSessionKey({
+          provider: input.provider,
+          conversationType: input.conversationType,
+          externalConversationId: input.externalConversationId,
+          myclawUserId: binding.myclawUserId,
+        }),
+        routeSource: "conversation-binding",
+      };
     }
 
     console.info("[routing] 显式会话绑定路由成功", {
@@ -124,7 +144,18 @@ export class RoutingService {
       console.warn("[routing] 发送人绑定用户没有在线桌面设备，消息进入离线队列", {
         myclawUserId: account.myclawUserId,
       });
-      return { ok: false, reason: "device_offline" };
+      return {
+        ok: false,
+        reason: "device_offline",
+        myclawUserId: account.myclawUserId,
+        localSessionKey: buildLocalSessionKey({
+          provider: input.provider,
+          conversationType: input.conversationType,
+          externalConversationId: input.externalConversationId,
+          myclawUserId: account.myclawUserId,
+        }),
+        routeSource: "sender-binding",
+      };
     }
 
     console.info("[routing] 发送人绑定路由成功", {

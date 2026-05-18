@@ -8,7 +8,8 @@ Realtime Bridge 负责把钉钉中转服务收到的企业消息投递到在线 
 - `REDIS_URL`: Redis 连接串，默认 `redis://localhost:6379`。
 - `DINGTALK_RELAY_HMAC_SECRET`: 钉钉中转入站和出站签名密钥。
 - `DINGTALK_RELAY_BASE_URL`: 钉钉中转回发地址，例如 `http://localhost:5100`。
-- `MYCLAW_ADMIN_TOKEN`: 内部排障接口 Token，默认开发值为 `admin-token`。
+- `REALTIME_BRIDGE_DESKTOP_TOKEN`: Desktop WebSocket 建连 Token，服务端必须配置；Desktop 使用同值作为连接参数。
+- `MYCLAW_ADMIN_TOKEN`: 内部排障接口 Token，服务端必须配置。
 - `PORT`: HTTP 和 WebSocket 服务端口，默认由启动脚本或 Nest 配置决定。
 
 ## 本地 MySQL/Redis
@@ -57,7 +58,7 @@ pnpm --dir realtime-bridge tsx scripts/mock-dingtalk-relay.ts --senderStaffId st
 Desktop 连接：
 
 ```text
-ws://localhost:4300/v1/desktop/ws
+ws://localhost:4300/v1/desktop/ws?token=<REALTIME_BRIDGE_DESKTOP_TOKEN>
 ```
 
 Desktop 上行：
@@ -76,7 +77,7 @@ Bridge 下行：
 本地 Desktop 模拟：
 
 ```powershell
-pnpm --dir realtime-bridge tsx scripts/mock-desktop-client.ts --userId user-1 --deviceId device-1
+pnpm --dir realtime-bridge tsx scripts/mock-desktop-client.ts --connectionToken desktop-token --userId user-1 --deviceId device-1
 ```
 
 ## 管理排障
@@ -84,19 +85,19 @@ pnpm --dir realtime-bridge tsx scripts/mock-desktop-client.ts --userId user-1 --
 消息时间线：
 
 ```powershell
-curl -H "X-MyClaw-Admin-Token: admin-token" http://localhost:4300/admin/messages/<messageId>/timeline
+curl -H "X-MyClaw-Admin-Token: <MYCLAW_ADMIN_TOKEN>" http://localhost:4300/admin/messages/<messageId>/timeline
 ```
 
 在线设备：
 
 ```powershell
-curl -H "X-MyClaw-Admin-Token: admin-token" http://localhost:4300/admin/users/<userId>/online-device
+curl -H "X-MyClaw-Admin-Token: <MYCLAW_ADMIN_TOKEN>" http://localhost:4300/admin/users/<userId>/online-device
 ```
 
 发送人绑定：
 
 ```powershell
-curl -H "X-MyClaw-Admin-Token: admin-token" http://localhost:4300/admin/bindings/sender/<senderStaffId>
+curl -H "X-MyClaw-Admin-Token: <MYCLAW_ADMIN_TOKEN>" http://localhost:4300/admin/bindings/sender/<senderStaffId>
 ```
 
 ## 压测
@@ -104,7 +105,7 @@ curl -H "X-MyClaw-Admin-Token: admin-token" http://localhost:4300/admin/bindings
 模拟 500 条 Desktop 长连接并持续 60 秒：
 
 ```powershell
-pnpm --dir realtime-bridge tsx scripts/loadtest-ws.ts --connections 500 --duration 60
+pnpm --dir realtime-bridge tsx scripts/loadtest-ws.ts --connectionToken desktop-token --connections 500 --duration 60
 ```
 
 压测脚本会输出成功打开连接数、关闭数、错误数和发送消息数。压测前请确认 Redis、系统文件句柄和服务端口容量足够。

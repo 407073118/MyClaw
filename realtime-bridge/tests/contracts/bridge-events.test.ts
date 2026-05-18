@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { DESKTOP_PROCESSING_STARTED_TYPE } from "../../src/contracts/bridge-events";
 import { buildLocalSessionKey, INBOUND_MESSAGE_STATUS_VALUES } from "../../src/contracts/status";
 
 describe("realtime bridge contracts", () => {
@@ -30,5 +31,9 @@ describe("realtime bridge contracts", () => {
       externalConversationId: "gid-1",
       myclawUserId: "user-1",
     })).toBe("dingtalk:group:gid-1:user:user-1");
+  });
+
+  it("keeps desktop processing event type aligned", () => {
+    expect(DESKTOP_PROCESSING_STARTED_TYPE).toBe("desktop.processing_started");
   });
 });

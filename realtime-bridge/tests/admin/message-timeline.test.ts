@@ -49,6 +49,7 @@ describe("message timeline admin endpoint", () => {
     const auditService = new AuditService(prisma as any);
     await auditService.recordIngressReceived("message-1");
     await auditService.recordRouteResolved("message-1");
+    await auditService.recordDelivered("message-1");
     await auditService.recordDeliveryAcked("message-1");
     await auditService.recordProcessingStarted("message-1");
     await auditService.recordReplyCreated("message-1");
@@ -68,7 +69,7 @@ describe("message timeline admin endpoint", () => {
   });
 
   afterEach(async () => {
-    await app.close();
+    await app?.close();
     delete process.env.MYCLAW_ADMIN_TOKEN;
   });
 
@@ -81,10 +82,35 @@ describe("message timeline admin endpoint", () => {
     expect(response.body.events.map((event: any) => event.eventType)).toEqual([
       "received",
       "routed",
+      "delivered",
       "acked",
       "processing",
       "reply_created",
       "outbound_sent",
     ]);
+  });
+
+  it("serves the realtime bridge admin console page", async () => {
+    const response = await request(app.getHttpServer())
+      .get("/admin")
+      .expect(200);
+
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.text).toContain("实时桥接控制台");
+    expect(response.text).toContain("管理令牌");
+    expect(response.text).toContain("消息时间线");
+    expect(response.text).toContain("在线设备");
+    expect(response.text).toContain("发送人绑定");
+    expect(response.text).not.toContain("Realtime Bridge Console");
+    expect(response.text).not.toContain("MYCLAW_ADMIN_TOKEN");
+  });
+
+  it("rejects admin requests when admin token is not configured", async () => {
+    delete process.env.MYCLAW_ADMIN_TOKEN;
+
+    await request(app.getHttpServer())
+      .get("/admin/messages/message-1/timeline")
+      .set("X-MyClaw-Admin-Token", "admin-token")
+      .expect(401);
   });
 });

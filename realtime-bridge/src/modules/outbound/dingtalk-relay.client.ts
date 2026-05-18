@@ -7,6 +7,11 @@ import type { ChannelMessageContent } from "../../contracts/channel-message";
 export interface RelayReplyInput {
   messageId: string;
   deliveryId: string;
+  provider: "dingtalk";
+  externalConversationId: string;
+  conversationType?: "direct" | "group";
+  sessionWebhook?: string;
+  traceId?: string;
   content: ChannelMessageContent;
 }
 
@@ -31,6 +36,11 @@ export class DingTalkRelayClient {
     const body = JSON.stringify({
       messageId: input.messageId,
       deliveryId: input.deliveryId,
+      provider: input.provider,
+      externalConversationId: input.externalConversationId,
+      conversationType: input.conversationType,
+      sessionWebhook: input.sessionWebhook,
+      traceId: input.traceId,
       content: input.content,
     });
     const timestamp = String(Date.now());
