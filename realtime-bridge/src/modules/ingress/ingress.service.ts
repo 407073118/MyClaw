@@ -1,6 +1,7 @@
 import { Inject, Injectable, Optional } from "@nestjs/common";
 
 import { PrismaService } from "../../infra/prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
 import { ConversationService } from "../conversation/conversation.service";
 import { DeliveryService } from "../delivery/delivery.service";
 import { RoutingService } from "../routing/routing.service";
@@ -13,6 +14,7 @@ export class IngressService {
     @Optional() @Inject(ConversationService) private readonly conversationService?: ConversationService,
     @Optional() @Inject(RoutingService) private readonly routingService?: RoutingService,
     @Optional() @Inject(DeliveryService) private readonly deliveryService?: DeliveryService,
+    @Optional() @Inject(AuditService) private readonly auditService?: AuditService,
   ) {}
 
   /** 持久化钉钉中转消息，重复消息直接返回已有入站消息编号。 */
@@ -52,6 +54,10 @@ export class IngressService {
         messageId: inboundMessage.id,
         externalMessageId: message.externalMessageId,
       });
+      await this.auditService?.recordIngressReceived(inboundMessage.id, {
+        externalMessageId: message.externalMessageId,
+        traceId: message.traceId,
+      });
       void this.dispatchMessage(inboundMessage.id, message);
       return { messageId: inboundMessage.id };
     } catch (error) {
@@ -84,6 +90,15 @@ export class IngressService {
         externalConversationId: message.externalConversationId,
         conversationType: message.conversationType,
       });
+      if (route.ok) {
+        await this.auditService?.recordRouteResolved(messageId, {
+          myclawUserId: route.myclawUserId,
+          desktopDeviceId: route.desktopDeviceId,
+          routeSource: route.routeSource,
+        });
+      } else {
+        await this.auditService?.recordFailure(messageId, { reason: route.reason });
+      }
       await this.deliveryService.deliverInboundMessage({
         id: messageId,
         provider: message.provider,
