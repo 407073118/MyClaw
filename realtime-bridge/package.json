@@ -1,0 +1,33 @@
+{
+  "name": "myclaw-realtime-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.11.0",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/platform-express": "^11.0.1",
+    "@prisma/client": "^6.5.0",
+    "ioredis": "^5.4.2",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "ws": "^8.20.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/ws": "^8.5.13",
+    "prisma": "^6.5.0",
+    "supertest": "^7.0.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.8"
+  }
+}
