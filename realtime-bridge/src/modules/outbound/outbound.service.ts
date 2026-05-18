@@ -1,0 +1,182 @@
+import { Inject, Injectable, Optional } from "@nestjs/common";
+
+import type { DesktopReplyCreated } from "../../contracts/bridge-events";
+import { PrismaService } from "../../infra/prisma/prisma.service";
+import { DingTalkRelayClient } from "./dingtalk-relay.client";
+
+export interface OutboundServiceOptions {
+  retryDelaysMs?: number[];
+}
+
+export type OutboundRelayResult =
+  | { ok: true; outboundMessageId: string }
+  | { ok: false; outboundMessageId: string; error: string };
+
+type InboundReplyContext = {
+  provider: "dingtalk";
+  externalConversationId: string;
+  conversationType?: "direct" | "group";
+  sessionWebhook?: string;
+  traceId?: string;
+};
+
+@Injectable()
+export class OutboundService {
+  private readonly retryDelaysMs: number[];
+
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(DingTalkRelayClient) private readonly relayClient: DingTalkRelayClient,
+    @Optional() @Inject("OUTBOUND_SERVICE_OPTIONS") options: OutboundServiceOptions = {},
+  ) {
+    this.retryDelaysMs = options.retryDelaysMs ?? [1000, 5000, 30000];
+  }
+
+  /** 处理桌面端回复事件，创建出站消息并返回最终回发结果，供上游收口投递状态。 */
+  async handleDesktopReplyCreated(
+    event: Pick<DesktopReplyCreated, "messageId" | "deliveryId" | "content">,
+  ): Promise<OutboundRelayResult> {
+    console.info("[outbound] 开始处理桌面端回复事件", {
+      messageId: event.messageId,
+      deliveryId: event.deliveryId,
+    });
+    const context = await this.resolveInboundReplyContext(event.messageId);
+    const outboundMessage = await (this.prisma as any).outboundMessage.create({
+      data: {
+        inboundMessageId: event.messageId,
+        provider: context.provider,
+        externalConversationId: context.externalConversationId,
+        contentJson: event.content,
+        status: "pending",
+        retryCount: 0,
+      },
+    });
+
+    const result = await this.sendWithRetry(outboundMessage.id, event, context);
+    console.info("[outbound] 桌面端回复事件处理完成", {
+      messageId: event.messageId,
+      outboundMessageId: result.outboundMessageId,
+      ok: result.ok,
+    });
+    return result;
+  }
+
+  /** 按 1s、5s、30s 默认节奏重试回发，最终失败时返回原因给调用方。 */
+  private async sendWithRetry(
+    outboundMessageId: string,
+    event: Pick<DesktopReplyCreated, "messageId" | "deliveryId" | "content">,
+    context: InboundReplyContext,
+  ): Promise<OutboundRelayResult> {
+    for (let attempt = 0; attempt <= this.retryDelaysMs.length; attempt += 1) {
+      console.info("[outbound] 开始尝试回发钉钉中转服务", {
+        outboundMessageId,
+        attempt: attempt + 1,
+      });
+      await (this.prisma as any).outboundMessage.update({
+        where: { id: outboundMessageId },
+        data: { status: "sending", retryCount: attempt },
+      });
+
+      const result = await this.relayClient.sendReply({
+        messageId: event.messageId,
+        deliveryId: event.deliveryId,
+        provider: context.provider,
+        externalConversationId: context.externalConversationId,
+        conversationType: context.conversationType,
+        sessionWebhook: context.sessionWebhook,
+        traceId: context.traceId,
+        content: event.content,
+      });
+      if (result.ok) {
+        await (this.prisma as any).outboundMessage.update({
+          where: { id: outboundMessageId },
+          data: {
+            status: "sent",
+            rawResponseJson: result.rawResponse,
+            sentAt: new Date(),
+            retryCount: attempt,
+          },
+        });
+        await this.markInboundStatus(event.messageId, "completed");
+        console.info("[outbound] 出站消息回发成功", { outboundMessageId, attempt: attempt + 1 });
+        return { ok: true, outboundMessageId };
+      }
+
+      if (attempt < this.retryDelaysMs.length) {
+        await (this.prisma as any).outboundMessage.update({
+          where: { id: outboundMessageId },
+          data: { retryCount: attempt + 1 },
+        });
+        console.warn("[outbound] 出站消息回发失败，准备重试", {
+          outboundMessageId,
+          attempt: attempt + 1,
+          error: result.error,
+        });
+        await this.sleep(this.retryDelaysMs[attempt]);
+        continue;
+      }
+
+      await (this.prisma as any).outboundMessage.update({
+        where: { id: outboundMessageId },
+        data: { status: "failed", retryCount: attempt },
+      });
+      await this.markInboundStatus(event.messageId, "failed");
+      console.error("[outbound] 出站消息最终回发失败", {
+        outboundMessageId,
+        error: result.error,
+      });
+      return { ok: false, outboundMessageId, error: result.error };
+    }
+
+    console.error("[outbound] 出站消息回发循环异常结束", { outboundMessageId });
+    return { ok: false, outboundMessageId, error: "outbound retry loop ended unexpectedly" };
+  }
+
+  /** 更新入站消息状态，避免将内部异常堆栈暴露给钉钉侧。 */
+  private async markInboundStatus(messageId: string, status: "completed" | "failed"): Promise<void> {
+    await (this.prisma as any).inboundMessage.update({
+      where: { id: messageId },
+      data: { status },
+    });
+    console.info("[outbound] 入站消息状态更新成功", { messageId, status });
+  }
+
+  /** 查询入站消息上下文，保证回发钉钉中转服务时携带会话定位信息。 */
+  private async resolveInboundReplyContext(messageId: string): Promise<InboundReplyContext> {
+    const inboundMessage = await (this.prisma as any).inboundMessage.findUnique({
+      where: { id: messageId },
+    });
+    const rawPayload = inboundMessage?.rawPayloadJson as Record<string, unknown> | undefined;
+    const provider = inboundMessage?.provider === "dingtalk" ? "dingtalk" : "dingtalk";
+    const externalConversationId = typeof inboundMessage?.externalConversationId === "string"
+      ? inboundMessage.externalConversationId
+      : "";
+    const conversationType = inboundMessage?.conversationType === "direct" || inboundMessage?.conversationType === "group"
+      ? inboundMessage.conversationType
+      : undefined;
+    const sessionWebhook = typeof rawPayload?.sessionWebhook === "string" ? rawPayload.sessionWebhook : undefined;
+    const traceId = typeof inboundMessage?.traceId === "string" ? inboundMessage.traceId : undefined;
+    console.info("[outbound] 入站回复上下文解析完成", {
+      messageId,
+      provider,
+      externalConversationId,
+      conversationType,
+      hasSessionWebhook: Boolean(sessionWebhook),
+      hasTraceId: Boolean(traceId),
+    });
+    return {
+      provider,
+      externalConversationId,
+      conversationType,
+      sessionWebhook,
+      traceId,
+    };
+  }
+
+  /** 等待下一次重试窗口，测试可通过短延迟覆盖。 */
+  private async sleep(delayMs: number): Promise<void> {
+    console.info("[outbound] 等待出站消息重试窗口", { delayMs });
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    console.info("[outbound] 出站消息重试等待结束", { delayMs });
+  }
+}
