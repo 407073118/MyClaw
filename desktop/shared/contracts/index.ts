@@ -28,3 +28,4 @@ export * from "./file-tree";
 export * from "./file-viewer";
 export * from "./meeting";
 export * from "./memory";
+export * from "./realtime-bridge";

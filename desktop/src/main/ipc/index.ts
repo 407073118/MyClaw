@@ -11,6 +11,7 @@ import { registerMeetingHandlers } from "./meetings";
 import { registerMemoryHandlers } from "./memory";
 import { registerModelHandlers } from "./models";
 import { registerPersonalPromptHandlers } from "./personal-prompt";
+import { registerRealtimeBridgeHandlers } from "./realtime-bridge";
 import { registerSessionHandlers } from "./sessions";
 import { registerSiliconPersonHandlers } from "./silicon-persons";
 import { registerToolHandlers } from "./tools";
@@ -46,4 +47,5 @@ export function registerAllIpcHandlers(ctx: RuntimeContext, panelViewManager?: P
   registerMemoryHandlers(ctx);
   registerTimeOrchestrationHandlers(ctx);
   registerAwarenessHandlers(ctx);
+  registerRealtimeBridgeHandlers(ctx);
 }
