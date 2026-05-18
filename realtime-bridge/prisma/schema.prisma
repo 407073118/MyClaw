@@ -1,0 +1,169 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model ChannelBot {
+  id            String   @id @default(cuid()) @db.VarChar(191)
+  provider      String   @db.VarChar(32)
+  externalBotId String   @db.VarChar(191)
+  name          String?  @db.VarChar(191)
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([provider, externalBotId])
+  @@map("channel_bot")
+}
+
+model ChannelAccount {
+  id            String   @id @default(cuid()) @db.VarChar(191)
+  provider      String   @db.VarChar(32)
+  senderStaffId String   @db.VarChar(191)
+  myclawUserId  String   @db.VarChar(191)
+  displayName   String?  @db.VarChar(191)
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([provider, senderStaffId])
+  @@index([myclawUserId])
+  @@map("channel_account")
+}
+
+model ChannelConversation {
+  id                     String   @id @default(cuid()) @db.VarChar(191)
+  provider               String   @db.VarChar(32)
+  externalConversationId String   @db.VarChar(191)
+  conversationType       String   @db.VarChar(32)
+  title                  String?  @db.VarChar(191)
+  rawPayloadJson         Json?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@unique([provider, externalConversationId])
+  @@index([conversationType])
+  @@map("channel_conversation")
+}
+
+model ChannelBinding {
+  id                     String   @id @default(cuid()) @db.VarChar(191)
+  provider               String   @db.VarChar(32)
+  externalConversationId String   @db.VarChar(191)
+  myclawUserId           String   @db.VarChar(191)
+  desktopDeviceId        String   @db.VarChar(191)
+  enabled                Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  @@unique([provider, externalConversationId])
+  @@index([myclawUserId])
+  @@index([desktopDeviceId])
+  @@map("channel_binding")
+}
+
+model DesktopDevice {
+  id            String    @id @db.VarChar(191)
+  myclawUserId  String    @db.VarChar(191)
+  deviceName    String?   @db.VarChar(191)
+  enabled       Boolean   @default(true)
+  lastSeenAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  deliveryAttempts DeliveryAttempt[]
+
+  @@index([myclawUserId, enabled])
+  @@map("desktop_device")
+}
+
+model InboundMessage {
+  id                     String   @id @default(cuid()) @db.VarChar(191)
+  provider               String   @db.VarChar(32)
+  externalMessageId      String   @db.VarChar(191)
+  senderStaffId          String   @db.VarChar(191)
+  senderNick             String?  @db.VarChar(191)
+  externalConversationId String   @db.VarChar(191)
+  conversationType       String   @db.VarChar(32)
+  contentJson            Json
+  rawPayloadJson         Json
+  status                 String   @db.VarChar(32)
+  myclawUserId           String?  @db.VarChar(191)
+  desktopDeviceId        String?  @db.VarChar(191)
+  localSessionKey        String?  @db.VarChar(191)
+  traceId                String   @db.VarChar(191)
+  receivedAt             DateTime @default(now())
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  deliveryAttempts DeliveryAttempt[]
+  outboundMessages  OutboundMessage[]
+  auditLogs         AuditLog[]
+
+  @@unique([provider, externalMessageId])
+  @@index([status, createdAt])
+  @@index([senderStaffId])
+  @@index([externalConversationId])
+  @@map("inbound_message")
+}
+
+model DeliveryAttempt {
+  id              String    @id @default(cuid()) @db.VarChar(191)
+  inboundMessageId String   @db.VarChar(191)
+  deliveryId      String    @unique @db.VarChar(191)
+  desktopDeviceId String    @db.VarChar(191)
+  status          String    @db.VarChar(32)
+  attemptNumber   Int
+  errorCode       String?   @db.VarChar(64)
+  errorMessage    String?   @db.VarChar(1024)
+  sentAt          DateTime?
+  ackedAt         DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  inboundMessage InboundMessage @relation(fields: [inboundMessageId], references: [id])
+  desktopDevice  DesktopDevice  @relation(fields: [desktopDeviceId], references: [id])
+
+  @@index([inboundMessageId, status])
+  @@index([desktopDeviceId, status])
+  @@map("delivery_attempt")
+}
+
+model OutboundMessage {
+  id                     String    @id @default(cuid()) @db.VarChar(191)
+  inboundMessageId       String    @db.VarChar(191)
+  provider               String    @db.VarChar(32)
+  externalConversationId String    @db.VarChar(191)
+  contentJson            Json
+  rawResponseJson        Json?
+  status                 String    @db.VarChar(32)
+  retryCount             Int       @default(0)
+  sentAt                 DateTime?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+
+  inboundMessage InboundMessage @relation(fields: [inboundMessageId], references: [id])
+
+  @@index([status, createdAt])
+  @@index([inboundMessageId])
+  @@map("outbound_message")
+}
+
+model AuditLog {
+  id               String   @id @default(cuid()) @db.VarChar(191)
+  inboundMessageId String?  @db.VarChar(191)
+  eventType        String   @db.VarChar(64)
+  message          String   @db.VarChar(512)
+  metadataJson     Json?
+  createdAt        DateTime @default(now())
+
+  inboundMessage InboundMessage? @relation(fields: [inboundMessageId], references: [id])
+
+  @@index([inboundMessageId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("audit_log")
+}
