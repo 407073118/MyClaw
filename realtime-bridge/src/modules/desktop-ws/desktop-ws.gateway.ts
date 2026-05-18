@@ -10,6 +10,7 @@ type DesktopWsMessage =
   | { type: "desktop.hello"; userId: string; deviceId: string; connectionId?: string }
   | { type: "desktop.heartbeat"; deviceId: string }
   | { type: "desktop.ack"; deliveryId: string; messageId: string }
+  | { type: "desktop.processing_started"; deliveryId: string; messageId: string }
   | { type: "desktop.reply_created"; deliveryId: string; messageId: string; content: unknown }
   | { type: "desktop.processing_failed"; deliveryId: string; messageId: string; reason: string };
 
