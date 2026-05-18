@@ -12,6 +12,7 @@ import {
   type DesktopReplyCreated,
   type RealtimeBridgeContent,
 } from "../../../shared/contracts/realtime-bridge";
+import type { RealtimeChannelSessionStore } from "./realtime-channel-session-store";
 
 type WebSocketLike = {
   readyState: number;
@@ -24,6 +25,8 @@ type WebSocketLike = {
 };
 
 type WebSocketCtor = new (url: string) => WebSocketLike;
+type SessionSendMessageInput = { content: string };
+type SessionSendMessage = (sessionId: string, input: SessionSendMessageInput) => Promise<unknown>;
 
 export interface RealtimeBridgeClientOptions {
   bridgeUrl: string;
@@ -31,6 +34,10 @@ export interface RealtimeBridgeClientOptions {
   deviceId: string;
   WebSocketCtor?: WebSocketCtor;
   onBridgeMessage?: (message: BridgeInboundMessage) => Promise<void> | void;
+  sessionStore?: RealtimeChannelSessionStore;
+  sendMessage?: SessionSendMessage;
+  createLocalSessionId?: (message: BridgeInboundMessage) => string;
+  maxConcurrentSessions?: number;
 }
 
 export interface RealtimeBridgeStatus {
@@ -42,12 +49,19 @@ export interface RealtimeBridgeStatus {
 
 export class RealtimeBridgeClient {
   private readonly WebSocketCtor: WebSocketCtor;
+  private readonly sendMessageBridge: SessionSendMessage;
+  private readonly maxConcurrentSessions: number;
   private socket: WebSocketLike | null = null;
   private connected = false;
   private readonly ackedDeliveryIds = new Set<string>();
+  private readonly sessionQueues = new Map<string, Promise<void>>();
+  private readonly globalExecutionQueue: Array<() => void> = [];
+  private activeExecutionCount = 0;
 
   constructor(private readonly options: RealtimeBridgeClientOptions) {
     this.WebSocketCtor = options.WebSocketCtor ?? (WebSocket as unknown as WebSocketCtor);
+    this.sendMessageBridge = options.sendMessage ?? defaultSessionSendMessage;
+    this.maxConcurrentSessions = options.maxConcurrentSessions ?? 2;
   }
 
   /** 建立 realtime-bridge WebSocket 连接，并在打开后发送 hello。 */
@@ -127,7 +141,11 @@ export class RealtimeBridgeClient {
 
     this.ackedDeliveryIds.add(message.deliveryId);
     this.sendAck(message);
-    await this.options.onBridgeMessage?.(message);
+    if (this.options.sessionStore) {
+      await this.enqueueSessionExecution(message);
+    } else {
+      await this.options.onBridgeMessage?.(message);
+    }
     console.info("[realtime-bridge] 桥接消息处理入口完成", {
       messageId: message.messageId,
       deliveryId: message.deliveryId,
@@ -201,6 +219,186 @@ export class RealtimeBridgeClient {
     }
   }
 
+  /** 按 localSessionKey 将实时消息排队，确保同一会话严格串行执行。 */
+  private async enqueueSessionExecution(message: BridgeInboundMessage): Promise<void> {
+    const previous = this.sessionQueues.get(message.localSessionKey) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(async () => {
+        await this.acquireGlobalExecutionSlot(message.localSessionKey);
+        try {
+          await this.executeBridgeMessage(message);
+        } finally {
+          this.releaseGlobalExecutionSlot(message.localSessionKey);
+        }
+      });
+    this.sessionQueues.set(
+      message.localSessionKey,
+      next.finally(() => {
+        if (this.sessionQueues.get(message.localSessionKey) === next) {
+          this.sessionQueues.delete(message.localSessionKey);
+        }
+      }),
+    );
+    await next;
+  }
+
+  /** 获取全局执行槽位，限制不同实时会话同时运行数量。 */
+  private async acquireGlobalExecutionSlot(localSessionKey: string): Promise<void> {
+    if (this.activeExecutionCount < this.maxConcurrentSessions) {
+      this.activeExecutionCount += 1;
+      console.info("[realtime-bridge] 已获取实时会话执行槽位", {
+        localSessionKey,
+        activeExecutionCount: this.activeExecutionCount,
+      });
+      return;
+    }
+
+    console.info("[realtime-bridge] 实时会话执行达到并发上限，进入等待队列", {
+      localSessionKey,
+      maxConcurrentSessions: this.maxConcurrentSessions,
+    });
+    await new Promise<void>((resolve) => {
+      this.globalExecutionQueue.push(resolve);
+    });
+    this.activeExecutionCount += 1;
+    console.info("[realtime-bridge] 等待中的实时会话已获取执行槽位", {
+      localSessionKey,
+      activeExecutionCount: this.activeExecutionCount,
+    });
+  }
+
+  /** 释放全局执行槽位，并唤醒下一个等待的实时会话。 */
+  private releaseGlobalExecutionSlot(localSessionKey: string): void {
+    this.activeExecutionCount = Math.max(0, this.activeExecutionCount - 1);
+    const next = this.globalExecutionQueue.shift();
+    next?.();
+    console.info("[realtime-bridge] 已释放实时会话执行槽位", {
+      localSessionKey,
+      activeExecutionCount: this.activeExecutionCount,
+      waitingCount: this.globalExecutionQueue.length,
+    });
+  }
+
+  /** 将桥接消息送入本地 session 执行链路，并按结果回发状态事件。 */
+  private async executeBridgeMessage(message: BridgeInboundMessage): Promise<void> {
+    try {
+      const mapping = await this.resolveSessionMapping(message);
+      const result = await this.sendMessageBridge(mapping.localSessionId, {
+        content: this.extractUserContent(message.content),
+      });
+      const replyText = this.extractAssistantReplyText(result);
+      if (replyText) {
+        this.sendReplyCreated({
+          messageId: message.messageId,
+          deliveryId: message.deliveryId,
+          traceId: message.traceId,
+          content: { type: "text", text: replyText },
+        });
+      }
+      await this.options.onBridgeMessage?.(message);
+      console.info("[realtime-bridge] 桥接消息已完成本地 session 执行", {
+        messageId: message.messageId,
+        localSessionId: mapping.localSessionId,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.sendProcessingFailed({
+        messageId: message.messageId,
+        deliveryId: message.deliveryId,
+        traceId: message.traceId,
+        reason,
+      });
+      console.error("[realtime-bridge] 桥接消息执行失败", {
+        messageId: message.messageId,
+        deliveryId: message.deliveryId,
+        reason,
+      });
+    }
+  }
+
+  /** 查询或创建渠道会话映射，避免同一外部会话重复创建本地 session。 */
+  private async resolveSessionMapping(message: BridgeInboundMessage) {
+    const sessionStore = this.options.sessionStore;
+    if (!sessionStore) {
+      throw new Error("realtime channel session store is not configured");
+    }
+
+    const existing = await sessionStore.get(message.localSessionKey);
+    if (existing) {
+      console.info("[realtime-bridge] 复用已有实时渠道会话映射", {
+        localSessionKey: message.localSessionKey,
+        localSessionId: existing.localSessionId,
+      });
+      return existing;
+    }
+
+    const created = await sessionStore.upsert({
+      localSessionKey: message.localSessionKey,
+      localSessionId: this.createLocalSessionId(message),
+      provider: message.provider,
+      externalConversationId: message.externalConversationId,
+      conversationType: message.conversationType,
+      updatedAt: new Date().toISOString(),
+    });
+    console.info("[realtime-bridge] 已创建实时渠道会话映射", {
+      localSessionKey: message.localSessionKey,
+      localSessionId: created.localSessionId,
+    });
+    return created;
+  }
+
+  /** 为没有映射的实时渠道会话生成稳定可读的本地 session id。 */
+  private createLocalSessionId(message: BridgeInboundMessage): string {
+    if (this.options.createLocalSessionId) {
+      const sessionId = this.options.createLocalSessionId(message);
+      console.info("[realtime-bridge] 使用外部策略创建实时会话 session id", {
+        localSessionKey: message.localSessionKey,
+        sessionId,
+      });
+      return sessionId;
+    }
+
+    const safeKey = message.localSessionKey.replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
+    const sessionId = `realtime-${safeKey}-${Date.now().toString(36)}`;
+    console.info("[realtime-bridge] 使用默认策略创建实时会话 session id", {
+      localSessionKey: message.localSessionKey,
+      sessionId,
+    });
+    return sessionId;
+  }
+
+  /** 提取企业消息中的用户文本，非文本载荷按 JSON 形式进入本地 session。 */
+  private extractUserContent(content: RealtimeBridgeContent): string {
+    if (typeof content.text === "string") {
+      console.info("[realtime-bridge] 已提取实时消息文本内容", { type: content.type });
+      return content.text;
+    }
+    const serialized = JSON.stringify(content);
+    console.info("[realtime-bridge] 实时消息非文本内容已序列化", { type: content.type });
+    return serialized;
+  }
+
+  /** 从本地 session 执行结果中提取助手最终文本，用于回发钉钉中转服务。 */
+  private extractAssistantReplyText(result: unknown): string | null {
+    const candidates = [
+      result,
+      (result as { finalText?: unknown } | null)?.finalText,
+      (result as { text?: unknown } | null)?.text,
+      (result as { content?: unknown } | null)?.content,
+      (result as { assistantMessage?: { content?: unknown } } | null)?.assistantMessage?.content,
+      (result as { message?: { content?: unknown } } | null)?.message?.content,
+    ];
+    for (const candidate of candidates) {
+      if (typeof candidate === "string" && candidate.trim()) {
+        console.info("[realtime-bridge] 已提取本地 session 助手回复文本");
+        return candidate;
+      }
+    }
+    console.warn("[realtime-bridge] 本地 session 未返回可回发文本，跳过回复事件");
+    return null;
+  }
+
   /** 序列化并发送 WebSocket 消息，未连接时安全拒绝。 */
   private sendJson(payload: unknown): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
@@ -213,4 +411,11 @@ export class RealtimeBridgeClient {
       type: (payload as { type?: string }).type,
     });
   }
+}
+
+/** 默认复用 session:send-message IPC 主链路，避免创建第二套模型执行运行时。 */
+async function defaultSessionSendMessage(sessionId: string, input: SessionSendMessageInput): Promise<unknown> {
+  const { invokeRegisteredSessionSendMessage } = await import("../ipc/sessions");
+  console.info("[realtime-bridge] 调用已注册 session:send-message 主链路", { sessionId });
+  return invokeRegisteredSessionSendMessage(sessionId, input);
 }
