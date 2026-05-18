@@ -592,6 +592,25 @@ describe("ModelDetailPage route probe", () => {
     expect(screen.getAllByText(/推荐路线：OpenAI Compatible/).length).toBeGreaterThan(0);
   });
 
+  it("keeps the DeepSeek preset selected when the saved base URL points at the DeepSeek Anthropic-compatible route", () => {
+    mocks.workspace.models = [buildProfile({
+      name: "DeepSeek Anthropic Route",
+      provider: "openai-compatible",
+      providerFlavor: "deepseek",
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      baseUrl: "https://api.deepseek.com/anthropic/v1",
+      model: "deepseek-v4-pro",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages", "openai-chat-compatible"],
+      protocolSelectionSource: "saved",
+    })];
+
+    renderModelDetail("/settings/models/profile-1");
+
+    expect((screen.getByTestId("model-preset-select") as HTMLSelectElement).value).toBe("deepseek");
+  });
+
   it("invalidates a probed route after model changes and re-probes on save", async () => {
     renderModelDetail("/settings/models/profile-1");
 

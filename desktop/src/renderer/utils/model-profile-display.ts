@@ -55,12 +55,12 @@ export function getModelVendorLabel(profile: ModelProfileDisplayInput | null | u
   }
 
   if (providerFlavor === "br-minimax" || providerFamily === "br-minimax") return "BR MiniMax";
-  if (vendorFamily === "openai" || providerFlavor === "openai" || baseUrl.includes("openai")) return "OpenAI";
-  if (vendorFamily === "anthropic" || profile.provider === "anthropic" || baseUrl.includes("anthropic")) return "Anthropic";
   if (vendorFamily === "deepseek" || providerFlavor === "deepseek" || providerFamily === "deepseek" || baseUrl.includes("deepseek")) return "DeepSeek";
-  if (vendorFamily === "minimax" || baseUrl.includes("minimax") || baseUrl.includes("minimaxi") || model.startsWith("minimax")) return "MiniMax";
+  if (vendorFamily === "minimax" || providerFlavor === "minimax-anthropic" || baseUrl.includes("minimax") || baseUrl.includes("minimaxi") || model.startsWith("minimax")) return "MiniMax";
   if (providerFlavor === "moonshot" || providerFamily === "moonshot-native" || baseUrl.includes("moonshot")) return "Moonshot";
   if (vendorFamily === "volcengine-ark" || providerFlavor === "volcengine-ark" || providerFamily === "volcengine-ark" || baseUrl.includes("volces.com") || baseUrl.includes("volcengine")) return "Volcengine Ark";
+  if (vendorFamily === "openai" || providerFlavor === "openai" || baseUrl.includes("openai")) return "OpenAI";
+  if (vendorFamily === "anthropic" || providerFlavor === "anthropic" || providerFamily === "anthropic-native" || profile.provider === "anthropic" || baseUrl.includes("anthropic.com")) return "Anthropic";
   if (baseUrl.includes("azure")) return "Azure";
   if (baseUrl.includes("mistral")) return "Mistral";
   return profile.provider ?? "Other";
@@ -76,7 +76,7 @@ export function getThinkingModeLabel(profile: Pick<ModelProfile, "discoveredCapa
   return "Reasoning Effort";
 }
 
-/** 灏嗗師鐢?tool stack 鏍囪瘑鏍煎紡鍖栨垚 renderer 鍙洿鎺ュ睍绀虹殑绠€鐭爣绛俱€?*/
+/** 将原生 tool stack 标识格式化成 renderer 可直接展示的简短标签。 */
 export function formatNativeToolStackLabel(
   profile: Pick<ModelProfile, "discoveredCapabilities"> | null | undefined,
 ): string | null {
@@ -84,7 +84,7 @@ export function formatNativeToolStackLabel(
   return nativeToolStackId ? `tool-stack:${nativeToolStackId}` : null;
 }
 
-/** 缁熶竴鏋勫缓 vendor / model / protocol / thinking / tool stack 鐨勮繍琛屾€佹爣绛撅紝渚夸簬澶氫釜椤甸潰鍏变韩銆?*/
+/** 统一构建 vendor / model / protocol / thinking / tool stack 的运行态标签，便于多个页面共享。 */
 export function buildModelRuntimeStatusItems(
   profile: (ModelProfileDisplayInput & Pick<ModelProfile, "protocolTarget">) | null | undefined,
 ): ModelRuntimeStatusItem[] {

@@ -68,19 +68,19 @@ function resolveRouteSelectionSourceFromProfile(
   return "saved";
 }
 
-/** 根据模型配置推断应该命中的供应商预设。 */
-function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "model">): string {
+/** 根据模型配置推断应该命中的供应商预设，显式身份优先于兼容路线 URL。 */
+function resolveProviderPresetId(profile: Pick<ModelProfile, "provider" | "providerFlavor" | "providerFamily" | "vendorFamily" | "baseUrl" | "model">): string {
   if (isBrMiniMaxProfile({ ...profile, providerFlavor: profile.providerFlavor })) return "br-minimax";
   const normalizedBaseUrl = profile.baseUrl.trim().toLowerCase();
   const normalizedModel = profile.model.trim().toLowerCase();
 
-  if (normalizedBaseUrl.includes("minimax") || normalizedBaseUrl.includes("minimaxi") || normalizedModel.startsWith("minimax")) return "minimax";
-  if (profile.provider === "anthropic" || normalizedBaseUrl.includes("anthropic")) return "anthropic";
-  if (profile.providerFlavor === "deepseek" || normalizedBaseUrl.includes("api.deepseek.com") || normalizedModel.startsWith("deepseek")) return "deepseek";
-  if (normalizedBaseUrl.includes("dashscope.aliyuncs.com") || normalizedModel.startsWith("qwen")) return "qwen";
-  if (normalizedBaseUrl.includes("moonshot")) return "moonshot";
-  if (normalizedBaseUrl.includes("openai.com")) return "openai";
-  if (normalizedBaseUrl.includes("volces.com") || normalizedBaseUrl.includes("volcengine")) return "volcengine-ark";
+  if (profile.vendorFamily === "deepseek" || profile.providerFlavor === "deepseek" || profile.providerFamily === "deepseek" || normalizedBaseUrl.includes("api.deepseek.com") || normalizedModel.startsWith("deepseek")) return "deepseek";
+  if (profile.vendorFamily === "qwen" || profile.providerFlavor === "qwen" || profile.providerFamily === "qwen-native" || profile.providerFamily === "qwen-dashscope" || normalizedBaseUrl.includes("dashscope.aliyuncs.com") || normalizedModel.startsWith("qwen")) return "qwen";
+  if (profile.vendorFamily === "kimi" || profile.providerFlavor === "moonshot" || profile.providerFamily === "moonshot-native" || normalizedBaseUrl.includes("moonshot")) return "moonshot";
+  if (profile.vendorFamily === "volcengine-ark" || profile.providerFlavor === "volcengine-ark" || profile.providerFamily === "volcengine-ark" || normalizedBaseUrl.includes("volces.com") || normalizedBaseUrl.includes("volcengine")) return "volcengine-ark";
+  if (profile.vendorFamily === "minimax" || profile.providerFlavor === "minimax-anthropic" || normalizedBaseUrl.includes("minimax") || normalizedBaseUrl.includes("minimaxi") || normalizedModel.startsWith("minimax")) return "minimax";
+  if (profile.vendorFamily === "openai" || profile.providerFlavor === "openai" || normalizedBaseUrl.includes("openai.com")) return "openai";
+  if (profile.vendorFamily === "anthropic" || profile.providerFlavor === "anthropic" || profile.providerFamily === "anthropic-native" || profile.provider === "anthropic" || normalizedBaseUrl.includes("anthropic.com")) return "anthropic";
   return "custom";
 }
 
