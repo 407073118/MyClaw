@@ -13,6 +13,7 @@ import type {
   TurnOutcome,
 } from "@shared/contracts";
 import type { ModelCallResult, ResolvedToolCall } from "../../model-client";
+import { sortPromptSectionsForCache } from "../prompt-composer";
 import type { CompiledToolBundle } from "../tool-middleware";
 
 export type ProtocolExecutionInput = {
@@ -61,7 +62,7 @@ export type ProtocolDriver = {
 
 /** 将 prompt sections 渲染为协议无关的系统提示。 */
 export function renderPromptSectionText(sections: CanonicalTurnContent["systemSections"]): string {
-  return sections
+  return sortPromptSectionsForCache(sections)
     .map((section) => (section.title ? `# ${section.title}\n${section.content}` : section.content))
     .join("\n\n")
     .trim();

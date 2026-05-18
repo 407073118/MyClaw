@@ -204,4 +204,26 @@ describe("phase1 provider adapter contracts", () => {
       fallbackReason: "qwen_vendor_patch_unsupported",
     });
   });
+
+  it("keeps include_usage enabled for cache observability on compatible vendor routes and fallbacks", () => {
+    for (const profile of [
+      makeProfile({ providerFlavor: "moonshot", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k2" }),
+      makeProfile({ providerFlavor: "volcengine-ark", baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-seed-code" }),
+      makeProfile({ providerFlavor: "minimax-anthropic", baseUrl: "https://api.minimax.chat/v1", model: "minimax-text-01" }),
+    ]) {
+      const adapter = getProviderAdapter(profile);
+      const variants = adapter.prepareRequest({ profile, reasoningEffort: "high" }, {
+        messages: [{ role: "user", content: "hello" }],
+      });
+
+      expect(variants[0]?.body).toMatchObject({
+        stream_options: {
+          include_usage: true,
+        },
+      });
+      for (const variant of variants) {
+        expect(variant.body.stream_options).toMatchObject({ include_usage: true });
+      }
+    }
+  });
 });

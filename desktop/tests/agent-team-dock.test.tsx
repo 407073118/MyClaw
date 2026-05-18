@@ -83,6 +83,11 @@ const mocks = vi.hoisted(() => {
         updatedAt: "2026-04-15T00:04:00.000Z",
       },
     ],
+    time: {
+      awarenessSnapshot: {
+        activeSignals: [],
+      },
+    },
     webPanel: { isOpen: false },
     setActiveSiliconPersonId: vi.fn(),
     switchSiliconPersonSession: vi.fn().mockResolvedValue(undefined),

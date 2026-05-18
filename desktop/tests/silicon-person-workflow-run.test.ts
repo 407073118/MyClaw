@@ -9,6 +9,15 @@ const saveWorkflowRunMock = vi.fn();
 const saveSessionMock = vi.fn();
 
 type WorkflowListener = (event: WorkflowStreamEvent) => void;
+type FakeWorkflowResult = {
+  status: "succeeded" | "failed" | "canceled" | "waiting-input";
+  totalSteps: number;
+  durationMs: number;
+  error?: string;
+  finalState?: {
+    outputs?: Record<string, unknown>;
+  };
+};
 
 class FakeWorkflowEmitter {
   private listeners = new Set<WorkflowListener>();
@@ -29,18 +38,8 @@ class FakeWorkflowEmitter {
 class FakePregelRunner {
   public readonly runId = "workflow-run-1";
   public readonly emitter = new FakeWorkflowEmitter();
-  private runPromise: Promise<{
-    status: "succeeded" | "failed" | "canceled" | "waiting-input";
-    totalSteps: number;
-    durationMs: number;
-    error?: string;
-  }>;
-  private resolveRunPromise!: (value: {
-    status: "succeeded" | "failed" | "canceled" | "waiting-input";
-    totalSteps: number;
-    durationMs: number;
-    error?: string;
-  }) => void;
+  private runPromise: Promise<FakeWorkflowResult>;
+  private resolveRunPromise!: (value: FakeWorkflowResult) => void;
 
   constructor() {
     /** 让测试自己控制 run 的最终结束时机，便于在中途注入 stream 事件。 */
@@ -50,33 +49,21 @@ class FakePregelRunner {
   }
 
   /** 返回悬挂中的 run promise，直到测试显式结束运行。 */
-  run(): Promise<{
-    status: "succeeded" | "failed" | "canceled" | "waiting-input";
-    totalSteps: number;
-    durationMs: number;
-    error?: string;
-  }> {
-    return this.runPromise;
+  run(): Promise<FakeWorkflowResult & { finalState: { outputs?: Record<string, unknown> } }> {
+    return this.runPromise.then((result) => ({
+      ...result,
+      finalState: result.finalState ?? { outputs: {} },
+    }));
   }
 
   /** 测试专用：手动结束 workflow 运行。 */
-  finish(result: {
-    status: "succeeded" | "failed" | "canceled" | "waiting-input";
-    totalSteps: number;
-    durationMs: number;
-    error?: string;
-  }): void {
+  finish(result: FakeWorkflowResult): void {
     this.resolveRunPromise(result);
   }
 
   /** 保持与真实 runner 接口兼容，当前用例不需要额外行为。 */
-  resume(): Promise<{
-    status: "succeeded" | "failed" | "canceled" | "waiting-input";
-    totalSteps: number;
-    durationMs: number;
-    error?: string;
-  }> {
-    return this.runPromise;
+  resume(): Promise<FakeWorkflowResult & { finalState: { outputs?: Record<string, unknown> } }> {
+    return this.run();
   }
 
   /** 保持与真实 runner 接口兼容，当前用例不需要额外行为。 */
@@ -280,6 +267,7 @@ vi.mock("../src/main/services/workflow-engine", () => ({
   ConditionNodeExecutor: class {},
   LlmNodeExecutor: class {},
   ToolNodeExecutor: class {},
+  HttpRequestNodeExecutor: class {},
   HumanInputNodeExecutor: class {},
   JoinNodeExecutor: class {},
 }));

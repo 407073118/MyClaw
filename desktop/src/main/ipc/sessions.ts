@@ -3296,7 +3296,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               role: "assistant" as const,
               content: result.content || "",
               ...(result.reasoning ? { reasoning: result.reasoning } : {}),
-              ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
+              ...(result.usage ? { usage: result.usage } : {}),
               tool_calls: result.toolCalls.map((tc: ResolvedToolCall) => ({
                 id: tc.id,
                 type: "function" as const,
@@ -3937,7 +3937,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 role: "assistant",
                 content: result.content,
                 ...(result.reasoning ? { reasoning: result.reasoning } : {}),
-                ...(result.usage ? { usage: { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, totalTokens: result.usage.totalTokens } } : {}),
+                ...(result.usage ? { usage: result.usage } : {}),
                 createdAt: new Date().toISOString(),
               });
             }

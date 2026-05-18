@@ -43,9 +43,23 @@ async function loadMarked(): Promise<MarkedModule> {
   try {
     return (await dynamicEsmImport("marked")) as MarkedModule;
   } catch (err) {
+    const firstErrorMessage = String((err as Error)?.message ?? err);
+    if (firstErrorMessage.includes("dynamic import callback was not specified")) {
+      try {
+        console.info("[md-txt-parser] Vitest VM 动态导入回调缺失，改用原生 import 加载 marked", {
+          reason: firstErrorMessage,
+        });
+        return (await import("marked")) as MarkedModule;
+      } catch (fallbackError) {
+        throw new Error(
+          "[E_DOC_DEP_MISSING] 无法加载 marked 依赖，请确认 desktop/package.json 中 marked 已声明。原始错误：" +
+            String((fallbackError as Error)?.message ?? fallbackError),
+        );
+      }
+    }
     throw new Error(
       "[E_DOC_DEP_MISSING] 无法加载 marked 依赖，请确认 desktop/package.json 中 marked 已声明。原始错误：" +
-        String((err as Error)?.message ?? err),
+        firstErrorMessage,
     );
   }
 }

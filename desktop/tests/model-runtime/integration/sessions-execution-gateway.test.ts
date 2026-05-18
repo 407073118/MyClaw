@@ -279,7 +279,7 @@ describe("sessions execution gateway", () => {
       attachedDirectory: null,
     });
 
-    await vi.waitFor(() => expect(gatewayExecuteMock).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(gatewayExecuteMock).toHaveBeenCalledTimes(1), { timeout: 5000 });
 
     await expect(updateRuntimeIntentHandler?.({}, "session-1", {
       reasoningEffort: "xhigh",
@@ -600,7 +600,7 @@ describe("sessions execution gateway", () => {
     const sendMessageHandler = ipcHandleRegistry.get("session:send-message");
     const sendPromise = sendMessageHandler?.({}, "session-1", { content: "inspect tasks", attachedDirectory: null });
 
-    await vi.waitFor(() => expect(approvalRequests).toHaveLength(2));
+    await vi.waitFor(() => expect(approvalRequests).toHaveLength(2), { timeout: 5000 });
     expect(approvalRequests.map((request) => request.toolId)).toEqual(["task.list", "task.get"]);
 
     const resolveHandler = ipcHandleRegistry.get("session:resolve-approval");

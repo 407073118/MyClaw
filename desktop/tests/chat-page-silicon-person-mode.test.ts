@@ -133,15 +133,24 @@ const mocks = vi.hoisted(() => {
       getState: () => workspace,
     },
   );
+  const bufferStreamingDeltaMock = vi.fn();
+  const getCachedMarkdownMock = vi.fn((_id: string, content: string, renderMarkdown: (value: string) => string) => renderMarkdown(content));
+  const flushStreamingBufferNowMock = vi.fn();
 
   return {
     workspace,
     useWorkspaceStoreMock,
+    bufferStreamingDeltaMock,
+    getCachedMarkdownMock,
+    flushStreamingBufferNowMock,
   };
 });
 
 vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
+  bufferStreamingDelta: mocks.bufferStreamingDeltaMock,
+  getCachedMarkdown: mocks.getCachedMarkdownMock,
+  flushStreamingBufferNow: mocks.flushStreamingBufferNowMock,
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -174,6 +183,10 @@ describe("ChatPage silicon person mode", () => {
     mocks.workspace.loadSiliconPersonById.mockReset();
     mocks.workspace.applySessionUpdate.mockReset();
     mocks.workspace.resolveApproval.mockReset();
+    mocks.bufferStreamingDeltaMock.mockReset();
+    mocks.getCachedMarkdownMock.mockReset();
+    mocks.getCachedMarkdownMock.mockImplementation((_id: string, content: string, renderMarkdown: (value: string) => string) => renderMarkdown(content));
+    mocks.flushStreamingBufferNowMock.mockReset();
     window.sessionStorage.clear();
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });

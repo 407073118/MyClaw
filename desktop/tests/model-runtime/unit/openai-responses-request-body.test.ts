@@ -50,6 +50,21 @@ describe("openai responses request body", () => {
     });
   });
 
+  it("adds prompt_cache_key for OpenAI Responses cache routing", () => {
+    const body = buildOpenAiResponsesRequestBody(
+      "gpt-5.4",
+      [{ role: "user", content: "hello" }],
+      [],
+      "medium",
+      { promptCacheKey: "myclaw:p:h:t", promptCacheRetention: "24h" },
+    );
+
+    expect(body).toMatchObject({
+      prompt_cache_key: "myclaw:p:h:t",
+      prompt_cache_retention: "24h",
+    });
+  });
+
   it("injects native web_search and removes the duplicate local web_search function when vendor-native routing is enabled", () => {
     const body = buildOpenAiResponsesRequestBody(
       "gpt-5.4",

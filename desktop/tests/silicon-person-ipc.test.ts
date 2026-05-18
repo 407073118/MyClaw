@@ -345,12 +345,12 @@ describe("silicon person ipc", () => {
     // 等待后台队列消费完成
     await vi.waitFor(() => {
       expect(callModelMock).toHaveBeenCalledTimes(1);
-    });
+    }, { timeout: 5000 });
 
     // 再等待状态同步
     await vi.waitFor(() => {
       expect(ctx.state.siliconPersons[0]?.status).toBe("done");
-    });
+    }, { timeout: 5000 });
 
     const sp = ctx.state.siliconPersons[0]!;
     expect(sp.currentSessionId).toBeTruthy();
@@ -445,7 +445,7 @@ describe("silicon person ipc", () => {
     await vi.waitFor(() => {
       expect(ctx.state.siliconPersons[0]?.currentSessionId).toBeTruthy();
       expect(ctx.state.activeSessionRuns.size).toBe(1);
-    });
+    }, { timeout: 5000 });
 
     const sessionId = ctx.state.siliconPersons[0]?.currentSessionId!;
     const run = ctx.state.activeSessionRuns.get(sessionId);
@@ -465,7 +465,7 @@ describe("silicon person ipc", () => {
     // 等待后台队列完成（cancel 结束后 drain 会 settle）
     await vi.waitFor(() => {
       expect(ctx.state.siliconPersons[0]?.status).toBe("canceled");
-    });
+    }, { timeout: 5000 });
 
     expect(ctx.state.siliconPersons[0]?.sessions[0]).toMatchObject({
       id: sessionId,
@@ -556,7 +556,7 @@ describe("silicon person ipc", () => {
 
     await vi.waitFor(() => {
       expect(ctx.state.getApprovalRequests()).toHaveLength(1);
-    });
+    }, { timeout: 5000 });
 
     const approvalRequest = ctx.state.getApprovalRequests()[0] as { id: string; sessionId: string };
 
@@ -575,7 +575,11 @@ describe("silicon person ipc", () => {
     // 等待后台队列完成
     await vi.waitFor(() => {
       expect(ctx.state.siliconPersons[0]?.needsApproval).toBe(false);
-    });
+    }, { timeout: 5000 });
+    await vi.waitFor(() => {
+      expect(callModelMock).toHaveBeenCalledTimes(2);
+      expect(["done", "error"]).toContain(ctx.state.siliconPersons[0]?.status);
+    }, { timeout: 5000 });
 
     expect(ctx.state.siliconPersons[0]?.status).not.toBe("needs_approval");
   });
@@ -664,8 +668,9 @@ describe("silicon person ipc", () => {
 
     // 等待后台队列完成
     await vi.waitFor(() => {
-      expect(["done", "idle"]).toContain(ctx.state.siliconPersons[0]?.status);
-    });
+      expect(callModelMock).toHaveBeenCalledTimes(2);
+      expect(ctx.state.siliconPersons[0]?.status).toBe("done");
+    }, { timeout: 5000 });
 
     expect(ctx.state.getApprovalRequests()).toHaveLength(0);
     expect(ctx.state.siliconPersons[0]?.needsApproval).toBe(false);

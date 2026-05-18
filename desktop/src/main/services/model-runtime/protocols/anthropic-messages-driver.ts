@@ -1,6 +1,7 @@
 import { buildRequestHeaders, resolveModelEndpointUrl, callModel } from "../../model-client";
 import { executeRequestVariants } from "../../model-transport";
 import { canonicalTurnContentToLegacyMessages } from "../canonical-turn-content";
+import { normalizeProviderCacheUsage } from "../provider-cache-orchestrator";
 
 import type { ProtocolDriver, ProtocolExecutionOutput } from "./shared";
 import { buildCanonicalRequestMessages, buildLegacyShimTransportMetadata } from "./shared";
@@ -27,6 +28,44 @@ type AnthropicStreamState = {
   usage: ProtocolExecutionOutput["usage"];
 };
 
+/** 判断当前 Anthropic Messages 路线是否应该注入 cache_control。 */
+function shouldUseAnthropicCacheControl(input: Parameters<NonNullable<ProtocolDriver["buildRequestBody"]>>[0]): boolean {
+  const providerIdentity = `${input.plan.vendorFamily ?? ""}:${input.plan.providerFamily ?? ""}:${input.profile.providerFlavor ?? ""}`.toLowerCase();
+  if (providerIdentity.includes("deepseek")) {
+    console.info("[anthropic-messages-driver] 已跳过 cache_control，DeepSeek Anthropic 兼容路线依赖官方自动前缀缓存");
+    return false;
+  }
+  return true;
+}
+
+/** 给 Anthropic system 稳定块增加缓存断点。 */
+function buildAnthropicSystem(systemText: string, enableCacheControl: boolean): string | Array<Record<string, unknown>> {
+  if (!enableCacheControl || !systemText.trim()) {
+    return systemText;
+  }
+  return [{
+    type: "text",
+    text: systemText,
+    cache_control: { type: "ephemeral" },
+  }];
+}
+
+/** 给最后一个工具增加缓存断点，避免每轮重复写入完整工具列表。 */
+function buildAnthropicTools(tools: unknown[], enableCacheControl: boolean): unknown[] {
+  if (!enableCacheControl || tools.length === 0) {
+    return tools;
+  }
+  return tools.map((tool, index) => {
+    if (index !== tools.length - 1 || !tool || typeof tool !== "object" || Array.isArray(tool)) {
+      return tool;
+    }
+    return {
+      ...(tool as Record<string, unknown>),
+      cache_control: { type: "ephemeral" },
+    };
+  });
+}
+
 /** 构造 Anthropic Messages 原生请求体。 */
 export function buildAnthropicMessagesRequestBody(input: Parameters<NonNullable<ProtocolDriver["buildRequestBody"]>>[0]): Record<string, unknown> {
   const messages = buildCanonicalRequestMessages(input.content);
@@ -36,11 +75,19 @@ export function buildAnthropicMessagesRequestBody(input: Parameters<NonNullable<
     .join("\n\n");
   const reasoningEffort = (input.plan.legacyExecutionPlan as { reasoningEffort?: "low" | "medium" | "high" | "xhigh" } | null)?.reasoningEffort
     ?? input.profile.defaultReasoningEffort;
+  const enableCacheControl = shouldUseAnthropicCacheControl(input);
+  const tools = buildAnthropicTools(input.toolBundle.tools, enableCacheControl);
+  if (enableCacheControl) {
+    console.info("[anthropic-messages-driver] 已注入 Anthropic 缓存断点", {
+      systemBreakpointCount: system.trim() ? 1 : 0,
+      toolBreakpointCount: tools.length > 0 ? 1 : 0,
+    });
+  }
   return {
     model: input.profile.model,
-    system,
+    system: buildAnthropicSystem(system, enableCacheControl),
     messages: messages.filter((message) => message.role !== "system"),
-    tools: input.toolBundle.tools,
+    tools,
     stream: true,
     ...(reasoningEffort
       ? {
@@ -91,6 +138,7 @@ function applyAnthropicEvent(
   event: string,
   data: unknown,
   state: AnthropicStreamState,
+  providerIdentity: string,
   onDelta?: (delta: { content?: string; reasoning?: string }) => void,
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void,
 ): void {
@@ -212,13 +260,7 @@ function applyAnthropicEvent(
       ? payload.usage as Record<string, unknown>
       : null;
     if (usage) {
-      const promptTokens = Number(usage.input_tokens ?? 0);
-      const completionTokens = Number(usage.output_tokens ?? 0);
-      state.usage = {
-        promptTokens,
-        completionTokens,
-        totalTokens: promptTokens + completionTokens,
-      };
+      state.usage = normalizeProviderCacheUsage(providerIdentity, usage);
     }
   }
 
@@ -230,6 +272,7 @@ function applyAnthropicEvent(
 /** 逐条读取 Anthropic SSE 事件，兼容标准 `event:` / `data:` 帧。 */
 async function consumeAnthropicStream(
   response: Response,
+  providerIdentity: string,
   onDelta?: (delta: { content?: string; reasoning?: string }) => void,
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void,
 ): Promise<ProtocolExecutionOutput> {
@@ -270,7 +313,7 @@ async function consumeAnthropicStream(
 
     try {
       const payload = JSON.parse(currentData.join("\n"));
-      applyAnthropicEvent(currentEvent, payload, state, onDelta, onToolCallDelta);
+      applyAnthropicEvent(currentEvent, payload, state, providerIdentity, onDelta, onToolCallDelta);
     } catch {
       // 忽略无法解析的事件，避免脏包中断原生流。
     }
@@ -376,6 +419,7 @@ export const anthropicMessagesDriver: ProtocolDriver = {
     });
     const parsed = await consumeAnthropicStream(
       transportResult.response,
+      input.plan.vendorFamily ?? input.plan.providerFamily ?? input.profile.providerFlavor ?? "anthropic",
       input.onDelta,
       input.onToolCallDelta,
     );

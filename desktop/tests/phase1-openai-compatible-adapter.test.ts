@@ -50,8 +50,11 @@ describe("phase1 openai-compatible adapter", () => {
       fallbackReason: null,
       body: {
         model: "gpt-test",
-        messages: [{ role: "user", content: "hello" }],
+        messages: [{ role: "user", content: "hello", tool_calls: undefined }],
         stream: true,
+        stream_options: {
+          include_usage: true,
+        },
         tools: [{
           type: "function",
           function: {

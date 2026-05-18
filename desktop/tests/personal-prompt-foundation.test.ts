@@ -80,6 +80,10 @@ describe("personal prompt IPC handlers", () => {
           autoApproveSkills: true,
           alwaysAllowedTools: [],
         }),
+        getAsrConfig: () => ({
+          enabled: false,
+          provider: "none",
+        }),
       },
       runtime: {
         paths: {},

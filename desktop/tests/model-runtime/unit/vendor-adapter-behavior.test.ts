@@ -327,7 +327,11 @@ describe("vendor adapter behavior", () => {
     expect(variants[1]).toMatchObject({
       fallbackReason: "ark_vendor_patch_unsupported",
     });
-    expect(variants[1]?.body).not.toHaveProperty("stream_options");
+    expect(variants[1]?.body).toMatchObject({
+      stream_options: {
+        include_usage: true,
+      },
+    });
   });
 
   it("keeps Ark runtime function tools when custom requestBody contains native tools", () => {

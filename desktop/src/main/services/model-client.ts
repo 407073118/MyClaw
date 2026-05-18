@@ -8,6 +8,7 @@ import type {
   ModelProfile,
   ProtocolTarget,
   SessionReplayPolicy,
+  TurnOutcomeUsage,
 } from "@shared/contracts";
 import { isBrMiniMaxProfile } from "@shared/br-minimax";
 
@@ -67,12 +68,8 @@ export type ModelCallOptions = {
   timeoutMs?: number;
 };
 
-/** API 响应中的 Token 使用量。 */
-export type TokenUsage = {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-};
+/** API 响应中的 Token 使用量，包含各厂商缓存命中与写入信息。 */
+export type TokenUsage = TurnOutcomeUsage;
 
 /** 单次流式模型调用完成后返回的结果。 */
 export type ModelCallResult = {
@@ -407,15 +404,20 @@ export function buildProtocolRequestHeaders(
   if (usesAnthropicNativeHeaders) {
     base["x-api-key"] = profile.apiKey;
     base["anthropic-version"] = "2023-06-01";
+    if (profile.provider === "anthropic" || flavor === "anthropic") {
+      base["anthropic-beta"] = "prompt-caching-2024-07-31";
+    }
   } else {
     base["authorization"] = `Bearer ${profile.apiKey}`;
   }
   if (
     protocolTarget === "openai-responses"
     && (flavor === "qwen" || flavor === "qwen-coding")
-    && (profile.responsesApiConfig?.sessionCache === "enable" || profile.responsesApiConfig?.sessionCache === "disable")
   ) {
-    base["x-dashscope-session-cache"] = profile.responsesApiConfig.sessionCache;
+    const sessionCache = profile.responsesApiConfig?.sessionCache ?? "enable";
+    if (sessionCache === "enable" || sessionCache === "disable") {
+      base["x-dashscope-session-cache"] = sessionCache;
+    }
   }
 
   // 允许通过 profile 覆盖请求头（例如自定义认证方案）。
@@ -736,6 +738,11 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
             attemptEmittedOutput = true;
           }
           onToolCallDelta?.(delta);
+        },
+        {
+          providerFamily: profile.providerFamily,
+          vendorFamily: profile.vendorFamily ?? (adapter.id === "deepseek" ? "deepseek" : undefined),
+          source: adapter.id,
         },
       );
 

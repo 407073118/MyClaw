@@ -161,7 +161,7 @@ export type SessionListItem = {
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 // ─── Schema SQL ──────────────────────────────────────────────────────────────
 
@@ -221,6 +221,7 @@ CREATE TABLE IF NOT EXISTS messages (
   usage_prompt     INTEGER DEFAULT 0,
   usage_completion INTEGER DEFAULT 0,
   usage_total      INTEGER DEFAULT 0,
+  usage_json       TEXT,
   created_at    TEXT NOT NULL
 );
 
@@ -371,11 +372,11 @@ const INSERT_MESSAGE_SQL = `
   INSERT INTO messages (
     id, session_id, seq, role, content, content_text,
     reasoning, tool_calls, tool_call_id, ui_payload,
-    usage_prompt, usage_completion, usage_total, created_at
+    usage_prompt, usage_completion, usage_total, usage_json, created_at
   ) VALUES (
     @id, @session_id, @seq, @role, @content, @content_text,
     @reasoning, @tool_calls, @tool_call_id, @ui_payload,
-    @usage_prompt, @usage_completion, @usage_total, @created_at
+    @usage_prompt, @usage_completion, @usage_total, @usage_json, @created_at
   )
 `;
 
@@ -509,6 +510,7 @@ export class SessionDatabase {
 
   private initSchema(): void {
     this.db.exec(SCHEMA_SQL);
+    this.ensureMessageUsageJsonColumn();
 
     // FTS5 全文搜索：sql.js 默认 WASM 构建不含 fts5 模块。
     // 检测 fts5 是否可用；不可用时必须清理旧数据库中可能残留的 FTS 触发器和虚拟表，
@@ -557,6 +559,16 @@ export class SessionDatabase {
     );
 
     this.flush();
+  }
+
+  /** 确保旧库也有完整 usage JSON 列，用于保留缓存命中、写入和原始厂商 usage。 */
+  private ensureMessageUsageJsonColumn(): void {
+    const columns = this.queryAll("PRAGMA table_info(messages)");
+    const hasUsageJson = columns.some((column) => column.name === "usage_json");
+    if (!hasUsageJson) {
+      this.db.exec("ALTER TABLE messages ADD COLUMN usage_json TEXT");
+      console.info("[session-database] 已为消息表增加 usage_json 列，用于保存完整模型缓存用量");
+    }
   }
 
   // ─── 会话总数（用于迁移判断） ──────────────────────────────────────────────
@@ -623,6 +635,7 @@ export class SessionDatabase {
         usage_prompt: msg.usage?.promptTokens ?? 0,
         usage_completion: msg.usage?.completionTokens ?? 0,
         usage_total: msg.usage?.totalTokens ?? 0,
+        usage_json: jsonOrNull(msg.usage),
         created_at: msg.createdAt,
       });
     }
@@ -701,12 +714,11 @@ export class SessionDatabase {
     const promptTokens = row.usage_prompt as number;
     const completionTokens = row.usage_completion as number;
     const totalTokens = row.usage_total as number;
-    if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
-      msg.usage = {
-        promptTokens,
-        completionTokens,
-        totalTokens,
-      } as MessageTokenUsage;
+    const usageJson = parseJsonOrUndef<MessageTokenUsage>(row.usage_json as string | null);
+    if (usageJson) {
+      msg.usage = usageJson;
+    } else if (totalTokens > 0 || promptTokens > 0 || completionTokens > 0) {
+      msg.usage = { promptTokens, completionTokens, totalTokens } as MessageTokenUsage;
     }
     return msg;
   }

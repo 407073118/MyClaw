@@ -58,4 +58,20 @@ describe("phase1 model sse parser", () => {
     }]);
     expect(result.finishReason).toBe("tool_calls");
   });
+
+  it("parses DeepSeek prompt cache usage from SSE usage frames", async () => {
+    const result = await consumeSseStream(
+      buildSseResponse([
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":80,"total_tokens":1080,"prompt_cache_hit_tokens":750,"prompt_cache_miss_tokens":250}}',
+        "data: [DONE]",
+        "",
+      ]),
+      undefined,
+      undefined,
+      { vendorFamily: "deepseek" },
+    );
+
+    expect(result.usage?.cacheHitInputTokens).toBe(750);
+    expect(result.usage?.cacheMissInputTokens).toBe(250);
+  });
 });

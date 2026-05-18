@@ -1,4 +1,5 @@
-import type { ModelProfile, SessionReasoningEffort } from "@shared/contracts";
+import type { ModelProfile, SessionReasoningEffort, TurnOutcomeUsage } from "@shared/contracts";
+import { normalizeProviderCacheUsage } from "../model-runtime/provider-cache-orchestrator";
 
 export type ProviderAdapterId =
   | "openai-compatible"
@@ -71,11 +72,7 @@ export type ProviderAdapterNormalizedResponse = {
     input: Record<string, unknown>;
   }>;
   finishReason?: string | null;
-  usage?: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-  };
+  usage?: TurnOutcomeUsage;
   raw?: unknown;
 };
 
@@ -171,12 +168,16 @@ export function buildOpenAiCompatibleBody(
 ): Record<string, unknown> {
   const hasTools = !!(input.tools && input.tools.length > 0);
   const requestBody = sanitizeProfileRequestBody(profile.requestBody, hasTools);
+  const requestStreamOptions = requestBody.stream_options && typeof requestBody.stream_options === "object"
+    ? requestBody.stream_options as Record<string, unknown>
+    : {};
   return {
     model: profile.model,
     messages: input.messages,
     stream: true,
     ...(hasTools ? { tools: input.tools, tool_choice: "auto" } : {}),
     ...requestBody,
+    stream_options: { include_usage: true, ...requestStreamOptions },
   };
 }
 
@@ -352,13 +353,7 @@ export function normalizeAdapterResponse(payload: unknown): ProviderAdapterNorma
         : typeof record.stop_reason === "string"
           ? { finishReason: record.stop_reason === "tool_use" ? "tool_calls" : record.stop_reason }
           : {}),
-    ...(usage ? {
-      usage: {
-        promptTokens: Number(usage.prompt_tokens ?? usage.input_tokens ?? 0),
-        completionTokens: Number(usage.completion_tokens ?? usage.output_tokens ?? 0),
-        totalTokens: Number(usage.total_tokens ?? ((Number(usage.prompt_tokens ?? usage.input_tokens ?? 0)) + (Number(usage.completion_tokens ?? usage.output_tokens ?? 0)))),
-      },
-    } : {}),
+    ...(usage ? { usage: normalizeProviderCacheUsage("generic-openai-compatible", usage) } : {}),
     raw: payload,
   };
 }

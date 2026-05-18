@@ -24,6 +24,13 @@ const mocks = vi.hoisted(() => {
     requiresInitialSetup: false,
     models: [{ id: "model-1", name: "GPT Desktop" }],
     defaultModelProfileId: "model-1",
+    time: {
+      calendarEvents: [],
+      reminders: [],
+      availabilityPolicy: null,
+    },
+    activeSiliconPersonId: null,
+    setActiveSiliconPersonId: vi.fn(),
     personalPrompt: {
       prompt: "我是测试工程师，希望你先帮我补齐测试思路。",
       summary: "测试工程师，偏好先整理测试思路。",
@@ -96,7 +103,8 @@ describe("personal prompt desktop layout regressions", () => {
       ),
     );
 
-    expect(screen.getByTestId("nav-personal-prompt")).toBeTruthy();
+    expect(screen.getByTestId("app-sidebar")).toBeTruthy();
+    expect(screen.getByText("My Prompt")).toBeTruthy();
     expect(container.querySelector(".prompt-link-dot")).toBeNull();
   });
 

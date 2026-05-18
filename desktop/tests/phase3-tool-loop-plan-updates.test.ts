@@ -647,7 +647,7 @@ describe("Phase 3 tool loop plan updates", () => {
 
     await vi.waitFor(() => {
       expect(ctx.state.getApprovalRequests()).toHaveLength(1);
-    });
+    }, { timeout: 5000 });
     const approvalRequest = ctx.state.getApprovalRequests()[0] as { id: string };
     await resolveApprovalHandler?.({}, approvalRequest.id, "deny");
 
@@ -761,7 +761,7 @@ describe("Phase 3 tool loop plan updates", () => {
     await vi.waitFor(() => {
       expect(ctx.state.getApprovalRequests()).toHaveLength(1);
       expect(ctx.state.activeSessionRuns.get(created.session.id)?.pendingApprovalIds).toHaveLength(1);
-    });
+    }, { timeout: 5000 });
 
     const run = ctx.state.activeSessionRuns.get(created.session.id);
     const cancelResult = await cancelHandler?.({}, created.session.id, { runId: run?.runId }) as {

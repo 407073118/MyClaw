@@ -215,12 +215,15 @@ export type PromptSectionLayer =
   | "family-overlay"
   | (string & {});
 
+export type PromptCacheTier = "stable-prefix" | "semi-stable" | "volatile-tail";
+
 export type PromptSection = {
   id: string;
   layer: PromptSectionLayer;
   title: string | null;
   content: string;
   kind?: string;
+  cacheTier?: PromptCacheTier;
 };
 
 export type CanonicalMessagePart =
@@ -385,6 +388,13 @@ export type TurnOutcomeUsage = {
   totalTokens: number;
   reasoningTokens?: number;
   cachedInputTokens?: number;
+  cacheHitInputTokens?: number;
+  cacheMissInputTokens?: number;
+  cacheReadInputTokens?: number;
+  cacheWriteInputTokens?: number;
+  effectiveBillableInputTokens?: number;
+  cacheEfficiency?: number;
+  rawProviderUsage?: Record<string, unknown>;
 };
 
 export type TurnTelemetryTags = Record<string, string>;
@@ -411,6 +421,10 @@ export type TurnTelemetryEvent = {
   nativeToolStackId?: string | null;
   toolStackSource?: ToolStackSource;
   actualExecutionPath?: TurnActualExecutionPath;
+  stablePrefixHash?: string;
+  toolBundleHash?: string;
+  promptCacheKey?: string | null;
+  cacheEfficiency?: number;
   fallbackEvents: TurnFallbackEvent[];
   createdAt: string;
 };
@@ -447,6 +461,9 @@ export type TurnOutcome = {
   usage?: TurnOutcomeUsage;
   responseId?: string | null;
   actualExecutionPath?: TurnActualExecutionPath;
+  stablePrefixHash?: string;
+  toolBundleHash?: string;
+  promptCacheKey?: string | null;
   fallbackEvents?: TurnFallbackEvent[];
   toolCallCount?: number;
   toolSuccessCount?: number;
@@ -466,6 +483,8 @@ export type ProviderFamilyScorecard = {
   fallbackRate: number;
   p95Latency: number;
   contextStabilityRate: number;
+  cacheHitRate?: number;
+  cacheWriteRate?: number;
   sampleSize: number;
 };
 
@@ -477,6 +496,9 @@ export type VendorProtocolScorecard = {
   fallbackRate: number;
   p95Latency: number;
   contextStabilityRate: number;
+  cacheHitRate?: number;
+  cacheWriteRate?: number;
+  routeScore?: number;
   vendorNativeToolRate?: number;
   activeNativeToolStackIds?: string[];
   thinkingControlKinds?: ThinkingControlKind[];

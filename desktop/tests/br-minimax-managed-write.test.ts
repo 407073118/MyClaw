@@ -158,6 +158,37 @@ describe("coerceManagedProfileWrite", () => {
       protocolTarget: "openai-responses",
       savedProtocolPreferences: ["openai-responses"],
       protocolSelectionSource: "registry-default",
+      responsesApiConfig: {
+        useServerState: true,
+        sessionCache: "enable",
+      },
+    });
+  });
+
+  it("preserves explicit Qwen cache opt-out while filling missing cache defaults", () => {
+    const normalized = normalizeFirstClassVendorRoute({
+      name: "Qwen",
+      provider: "openai-compatible",
+      providerFlavor: "qwen",
+      providerFamily: "qwen-dashscope",
+      vendorFamily: "qwen",
+      baseUrl: "https://dashscope.aliyuncs.com",
+      apiKey: "qwen-key",
+      model: "qwen-max",
+      protocolTarget: "openai-responses",
+      protocolSelectionSource: "saved",
+      responsesApiConfig: {
+        sessionCache: "disable",
+      },
+    });
+
+    expect(normalized).toMatchObject({
+      providerFamily: "qwen-native",
+      vendorFamily: "qwen",
+      responsesApiConfig: {
+        useServerState: true,
+        sessionCache: "disable",
+      },
     });
   });
 

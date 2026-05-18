@@ -99,9 +99,35 @@ describe("anthropic messages driver", () => {
 
     expect(request.model).toBe("claude-3-7-sonnet");
     expect(request.stream).toBe(true);
-    expect(request.system).toContain("Be helpful");
+    expect(JSON.stringify(request.system)).toContain("Be helpful");
+    expect(JSON.stringify(request.system)).toContain("cache_control");
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({ role: "user" });
+  });
+
+  it("does not add cache_control to the DeepSeek Anthropic-compatible route", () => {
+    const request = buildAnthropicMessagesRequestBody({
+      profile: {
+        id: "profile-deepseek",
+        name: "DeepSeek",
+        provider: "openai-compatible",
+        providerFlavor: "deepseek",
+        baseUrl: "https://api.deepseek.com",
+        apiKey: "key",
+        model: "deepseek-chat",
+      },
+      plan: {
+        providerFamily: "deepseek",
+        vendorFamily: "deepseek",
+        legacyExecutionPlan: {},
+      },
+      content,
+      toolBundle: { target: "anthropic-native", compileMode: "anthropic-detailed-description", tools: [] },
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    } as never);
+
+    expect(request.system).toContain("Be helpful");
+    expect(JSON.stringify(request)).not.toContain("cache_control");
   });
 
   it("maps reasoning effort into Anthropic thinking config", () => {

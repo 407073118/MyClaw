@@ -9,17 +9,14 @@ import type {
   SessionRuntimeIntent,
   SessionRuntimeVersion,
   TurnExecutionPlan,
+  TurnOutcomeUsage,
 } from "./session-runtime";
 import type { Task } from "./task";
 import type { A2UiPayload } from "./ui";
 
 export type ChatMessageRole = "system" | "user" | "assistant" | "tool";
 
-export type MessageTokenUsage = {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-};
+export type MessageTokenUsage = TurnOutcomeUsage;
 
 export type ChatMessageToolCall = {
   id: string;

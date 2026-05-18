@@ -21,6 +21,42 @@ const PROVIDER_FAMILY_ROLLOUT_ORDER = [
 ];
 
 /**
+ * 汇总 outcome 中的缓存命中率，按输入 token 加权。
+ */
+function calculateCacheHitRate(outcomes) {
+  const totals = outcomes.reduce((acc, outcome) => {
+    const usage = outcome.usage ?? {};
+    acc.promptTokens += usage.promptTokens ?? 0;
+    acc.cacheHitTokens += usage.cacheHitInputTokens ?? usage.cacheReadInputTokens ?? usage.cachedInputTokens ?? 0;
+    return acc;
+  }, { promptTokens: 0, cacheHitTokens: 0 });
+  return totals.promptTokens > 0 ? totals.cacheHitTokens / totals.promptTokens : 0;
+}
+
+/**
+ * 汇总 provider 缓存写入率，用于识别只写不读的路线。
+ */
+function calculateCacheWriteRate(outcomes) {
+  const totals = outcomes.reduce((acc, outcome) => {
+    const usage = outcome.usage ?? {};
+    acc.promptTokens += usage.promptTokens ?? 0;
+    acc.cacheWriteTokens += usage.cacheWriteInputTokens ?? 0;
+    return acc;
+  }, { promptTokens: 0, cacheWriteTokens: 0 });
+  return totals.promptTokens > 0 ? totals.cacheWriteTokens / totals.promptTokens : 0;
+}
+
+/**
+ * 使用缓存感知公式计算路线分数，和桌面端运行时保持一致。
+ */
+function scoreProviderRoute(input) {
+  return (input.successRate * 0.4)
+    + (input.cacheHitRate * 0.3)
+    + (input.latencyScore * 0.15)
+    + (input.estimatedCostScore * 0.15);
+}
+
+/**
  * 解析 CLI 参数，保持脚本可在 CI 与本地验证场景复用。
  */
 function parseArgs(argv) {
@@ -119,6 +155,7 @@ function buildScorecards(outcomes) {
     const stableCount = familyOutcomes.filter((outcome) => outcome.contextStability !== false).length;
     const sortedLatency = familyOutcomes.map((outcome) => outcome.latencyMs).sort((left, right) => left - right);
     const p95Index = totalTurns === 0 ? 0 : Math.max(0, Math.ceil(sortedLatency.length * 0.95) - 1);
+    const p95Latency = sortedLatency[p95Index] ?? 0;
 
     return {
       providerFamily,
@@ -126,8 +163,10 @@ function buildScorecards(outcomes) {
       completionRate: totalTurns === 0 ? 0 : successCount / totalTurns,
       toolSuccessRate: totalToolCalls > 0 ? successfulToolCalls / totalToolCalls : 1,
       fallbackRate: totalTurns === 0 ? 0 : fallbackCount / totalTurns,
-      p95Latency: sortedLatency[p95Index] ?? 0,
+      p95Latency,
       contextStabilityRate: totalTurns === 0 ? 0 : stableCount / totalTurns,
+      cacheHitRate: calculateCacheHitRate(familyOutcomes),
+      cacheWriteRate: calculateCacheWriteRate(familyOutcomes),
     };
   }).sort((left, right) => {
     return PROVIDER_FAMILY_ROLLOUT_ORDER.indexOf(left.providerFamily)
@@ -151,16 +190,28 @@ function buildVendorProtocolScorecards(outcomes) {
     const stableCount = scopedOutcomes.filter((outcome) => outcome.contextStability !== false).length;
     const sortedLatency = scopedOutcomes.map((outcome) => outcome.latencyMs).sort((left, right) => left - right);
     const p95Index = totalTurns === 0 ? 0 : Math.max(0, Math.ceil(sortedLatency.length * 0.95) - 1);
+    const p95Latency = sortedLatency[p95Index] ?? 0;
+    const cacheHitRate = calculateCacheHitRate(scopedOutcomes);
+    const completionRate = totalTurns === 0 ? 0 : successCount / totalTurns;
+    const latencyScore = p95Latency > 0 ? Math.max(0, 1 - (p95Latency / 120000)) : 0;
 
     return {
       vendorFamily,
       protocolTarget,
       sampleSize: totalTurns,
-      completionRate: totalTurns === 0 ? 0 : successCount / totalTurns,
+      completionRate,
       toolSuccessRate: totalToolCalls > 0 ? successfulToolCalls / totalToolCalls : 1,
       fallbackRate: totalTurns === 0 ? 0 : fallbackCount / totalTurns,
-      p95Latency: sortedLatency[p95Index] ?? 0,
+      p95Latency,
       contextStabilityRate: totalTurns === 0 ? 0 : stableCount / totalTurns,
+      cacheHitRate,
+      cacheWriteRate: calculateCacheWriteRate(scopedOutcomes),
+      routeScore: totalTurns < 3 ? undefined : scoreProviderRoute({
+        successRate: completionRate,
+        cacheHitRate,
+        latencyScore,
+        estimatedCostScore: cacheHitRate,
+      }),
     };
   }).sort((left, right) => {
     const vendorOrder = String(left.vendorFamily).localeCompare(String(right.vendorFamily));
@@ -209,6 +260,9 @@ module.exports = {
   parseArgs,
   loadTurnOutcomes,
   loadTelemetryCount,
+  calculateCacheHitRate,
+  calculateCacheWriteRate,
+  scoreProviderRoute,
   resolveDefaultDataRoot,
   resolveMyClawDir,
   buildScorecards,
