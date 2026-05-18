@@ -60,12 +60,18 @@ export type AwarenessSignal = {
   sourceId: string;
   scope: AwarenessScope;
   severity: AwarenessSignalSeverity;
+  title?: string;
   summary: string;
   recommendedAction?: string;
   status: AwarenessSignalStatus;
   cooldownUntil?: string;
   resolvedAt?: string;
   dismissedAt?: string;
+  firstSeenAt?: string;
+  lastSeenAt?: string;
+  occurrenceCount?: number;
+  resolvedBySourceState?: boolean;
+  relatedLedgerRecordId?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -89,16 +95,21 @@ export type AwarenessRoutine = {
   cadenceMinutes: number;
   activeHours?: Array<{ weekday: number; start: string; end: string }>;
   signalSources: AwarenessSignalSourceKind[];
+  contextPolicy?: AwarenessContextPolicy;
   decisionPolicy: AwarenessDecisionPolicy;
   actionPolicy: AwarenessActionPolicy;
   deliveryPolicy: AwarenessDeliveryPolicy;
   budgetPolicy: AwarenessBudgetPolicy;
+  quietHoursPolicy?: AwarenessQuietHoursPolicy;
+  catchUpPolicy?: AwarenessCatchUpPolicy;
   standingOrderIds: string[];
   status: AwarenessRoutineStatus;
   consecutiveFailures: number;
   lastRunAt?: string;
   nextRunAt?: string;
   lastReceipt?: AwarenessTickReceipt;
+  lastSkippedReason?: AwarenessDecisionSkipReason;
+  lastDecisionSummary?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -170,6 +181,9 @@ export type AwarenessDecision = {
   requiresApproval: boolean;
   reason: string;
   confidence: number;
+  skipReason?: AwarenessDecisionSkipReason;
+  modelUsed?: boolean;
+  modelProfileId?: string;
 };
 
 // ─── Long Run Ledger ───
@@ -214,6 +228,8 @@ export type LongRunRecord = {
   id: string;
   kind: LongRunKind;
   sourceId: string;
+  sourceTitle?: string;
+  parentRecordId?: string;
   scope: AwarenessScope;
   status: LongRunStatus;
   startedAt: string;
@@ -221,6 +237,8 @@ export type LongRunRecord = {
   lastHeartbeatAt?: string;
   resultSummary?: string;
   error?: string;
+  notifyPolicy?: "done_only" | "state_changes" | "silent";
+  deliveryTarget?: "today_catchup" | "dock_badge" | "chat_card" | "system_notification" | "silent";
   deliveryStatus: "not_required" | "pending" | "delivered" | "failed";
   createdAt: string;
   updatedAt: string;
@@ -248,6 +266,23 @@ export type AwarenessAuditEvent = {
 
 // ─── Policy Sub-types ───
 
+export type AwarenessDecisionSkipReason =
+  | "no_signal"
+  | "no_due_task"
+  | "outside_active_hours"
+  | "budget_exceeded"
+  | "queue_busy";
+
+export type AwarenessContextPolicy = {
+  includeScheduleJobs: boolean;
+  includeAgentTasks: boolean;
+  includeWorkflowRuns: boolean;
+  includeBackgroundTasks: boolean;
+  includeApprovalRequests: boolean;
+  includeSiliconPersons: boolean;
+  maxSignalContextItems: number;
+};
+
 export type AwarenessDecisionPolicy = {
   modelProfileId?: string;
   useModelForCrossSource: boolean;
@@ -267,6 +302,16 @@ export type AwarenessDeliveryPolicy = {
   deliveryChannel: "chat_card" | "dock_badge" | "today_catchup" | "silent";
   quietHoursRespected: boolean;
   criticalOverridesQuietHours: boolean;
+};
+
+export type AwarenessQuietHoursPolicy = {
+  respectAvailabilityPolicy: boolean;
+  criticalOverridesQuietHours: boolean;
+};
+
+export type AwarenessCatchUpPolicy = {
+  mode: "once" | "skip_missed" | "run_all_due";
+  maxMissedRuns: number;
 };
 
 export type AwarenessBudgetPolicy = {
@@ -314,10 +359,13 @@ export type AwarenessRoutineCreateInput = {
   cadenceMinutes?: number;
   activeHours?: Array<{ weekday: number; start: string; end: string }>;
   signalSources?: AwarenessSignalSourceKind[];
+  contextPolicy?: Partial<AwarenessContextPolicy>;
   decisionPolicy?: Partial<AwarenessDecisionPolicy>;
   actionPolicy?: Partial<AwarenessActionPolicy>;
   deliveryPolicy?: Partial<AwarenessDeliveryPolicy>;
   budgetPolicy?: Partial<AwarenessBudgetPolicy>;
+  quietHoursPolicy?: Partial<AwarenessQuietHoursPolicy>;
+  catchUpPolicy?: Partial<AwarenessCatchUpPolicy>;
   standingOrderIds?: string[];
 };
 
@@ -341,6 +389,19 @@ export type StandingOrderUpdateInput = Partial<StandingOrderCreateInput> & {
 };
 
 // ─── Factory Functions ───
+
+/** 创建默认值守上下文策略，限制巡检读取范围与上下文体积。 */
+export function createDefaultContextPolicy(): AwarenessContextPolicy {
+  return {
+    includeScheduleJobs: true,
+    includeAgentTasks: true,
+    includeWorkflowRuns: true,
+    includeBackgroundTasks: true,
+    includeApprovalRequests: true,
+    includeSiliconPersons: true,
+    maxSignalContextItems: 50,
+  };
+}
 
 export function createDefaultDecisionPolicy(): AwarenessDecisionPolicy {
   return {
@@ -370,6 +431,22 @@ export function createDefaultDeliveryPolicy(): AwarenessDeliveryPolicy {
     deliveryChannel: "today_catchup",
     quietHoursRespected: true,
     criticalOverridesQuietHours: true,
+  };
+}
+
+/** 创建默认静默时间策略，保证普通值守尊重用户时间但关键问题可升级。 */
+export function createDefaultQuietHoursPolicy(): AwarenessQuietHoursPolicy {
+  return {
+    respectAvailabilityPolicy: true,
+    criticalOverridesQuietHours: true,
+  };
+}
+
+/** 创建默认补偿策略，桌面端休眠恢复后只补跑一次，避免堆积打扰。 */
+export function createDefaultCatchUpPolicy(): AwarenessCatchUpPolicy {
+  return {
+    mode: "once",
+    maxMissedRuns: 1,
   };
 }
 

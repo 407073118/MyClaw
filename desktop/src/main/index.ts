@@ -58,6 +58,7 @@ import { createAwarenessDecisionEngine } from "./services/awareness-decision-eng
 import { createStandingOrderService } from "./services/standing-order-service";
 import { createLongRunLedger } from "./services/long-run-ledger";
 import { createAwarenessRuntime } from "./services/awareness-runtime";
+import { createAwarenessSourceAdapter, type AwarenessSourceSnapshot } from "./services/awareness-source-adapter";
 
 const log = createLogger("main");
 
@@ -479,28 +480,44 @@ async function buildRuntimeContext(
     db: awarenessDb,
     getAvailabilityPolicy: () => timeStore.getAvailabilityPolicy(),
   });
+  const awarenessSourceAdapter = createAwarenessSourceAdapter({
+    timeStore,
+    getSessions: () => sessions,
+    getWorkflowRuns: () => workflowRuns,
+    getApprovalRequests: () => approvalRequests,
+    getSiliconPersons: () => siliconPersons,
+    getActiveSessionRuns: () => runtimeCtxRef?.state.activeSessionRuns ?? new Map(),
+  });
+  let latestAwarenessSourceSnapshot: AwarenessSourceSnapshot | null = null;
   const awarenessSignalCollector = createAwarenessSignalCollector({
     getActiveSessionRuns: () => {
-      // activeSessionRuns 在 ctx 创建后才有值，先用空 Map
-      return runtimeCtxRef?.state.activeSessionRuns ?? new Map();
+      // 优先使用 tick 前统一采集的快照，避免同一轮值守读取到前后不一致的运行态。
+      return latestAwarenessSourceSnapshot?.activeSessionRuns ?? runtimeCtxRef?.state.activeSessionRuns ?? new Map();
     },
     getAgentTasks: () => {
       try { return (require("./ipc/agent-tasks") as any).getCachedAgentTasks() ?? []; }
       catch { return []; }
     },
-    getScheduleJobs: () => { return []; },
+    getScheduleJobs: () => (latestAwarenessSourceSnapshot?.scheduleJobs ?? []).map((job) => {
+      const latestRun = latestAwarenessSourceSnapshot?.latestExecutionRunsByScheduleJobId.get(job.id);
+      return latestRun ? { ...job, executionRuns: [latestRun] } : job;
+    }),
     getWorkflowRuns: () => {
-      const summaries: Array<{ id: string; status: string; workflowId: string; interruptRequested?: boolean }> = [];
-      return summaries;
+      return (latestAwarenessSourceSnapshot?.workflowRuns ?? []).map((run) => ({
+        id: run.id,
+        status: run.status,
+        workflowId: run.workflowId,
+        interruptRequested: run.status === "waiting-input",
+      }));
     },
     getBackgroundTasks: () => {
-      return sessions.filter((s) => s.backgroundTask).map((s) => ({
+      return (latestAwarenessSourceSnapshot?.sessions ?? sessions).filter((s) => s.backgroundTask).map((s) => ({
         sessionId: s.id,
         backgroundTask: s.backgroundTask ? { status: s.backgroundTask.status } : undefined,
       }));
     },
-    getApprovalRequests: () => approvalRequests,
-    getSiliconPersons: () => siliconPersons,
+    getApprovalRequests: () => latestAwarenessSourceSnapshot?.approvalRequests ?? approvalRequests,
+    getSiliconPersons: () => latestAwarenessSourceSnapshot?.siliconPersons ?? siliconPersons,
     getAvailabilityPolicy: () => approvalPolicy,
   });
   const standingOrderService = createStandingOrderService(awarenessDb);
@@ -559,7 +576,30 @@ async function buildRuntimeContext(
     runScheduleJob: async (job) => {
       return await timeJobExecutor.execute(job);
     },
+    recordScheduleJobLedger: async (event) => {
+      if (!longRunLedger) return {};
+      if (event.phase === "started") {
+        const record = longRunLedger.createRecord("schedule_job", event.job.id, {
+          kind: event.job.ownerScope as any,
+          ownerId: event.job.ownerId,
+        }, "running", {
+          sourceTitle: event.job.title,
+          notifyPolicy: "state_changes",
+          deliveryTarget: "today_catchup",
+        });
+        await longRunLedger.upsertRecord(record);
+        return { ledgerRecordId: record.id };
+      }
+      if (event.ledgerRecordId && event.status) {
+        await longRunLedger.finishRecord(event.ledgerRecordId, event.status, {
+          summary: event.summary,
+          error: event.error,
+        });
+      }
+      return {};
+    },
     awarenessTick: async () => {
+      latestAwarenessSourceSnapshot = await awarenessSourceAdapter.snapshot();
       await awarenessRuntime.tick();
     },
   });
@@ -736,7 +776,11 @@ app.whenReady().then(async () => {
   if (ledgerService) {
     setAgentTaskStatusChangedHook((task: { id: string; status: string }) => {
       if (task.status === "failed" || task.status === "succeeded" || task.status === "waiting_user") {
-        const record = ledgerService.createRecord("agent_task", task.id, { kind: "personal" });
+        const record = ledgerService.createRecord("agent_task", task.id, { kind: "personal" }, "queued", {
+          sourceTitle: `Agent Task ${task.id}`,
+          notifyPolicy: "state_changes",
+          deliveryTarget: task.status === "waiting_user" ? "dock_badge" : "today_catchup",
+        });
         record.status = task.status === "succeeded" ? "succeeded" : task.status === "failed" ? "failed" : "waiting_user";
         record.startedAt = new Date().toISOString();
         ledgerService.upsertRecord(record).catch(() => {});

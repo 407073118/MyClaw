@@ -34,6 +34,14 @@ export type TimeSchedulerDeps = {
   getAvailabilityPolicy: () => Promise<AvailabilityPolicy | null>;
   saveScheduleJob: (job: ScheduleJob) => Promise<void>;
   runScheduleJob?: (job: DueScheduleJob) => Promise<TimeScheduleJobRunResult | void>;
+  recordScheduleJobLedger?: (event: {
+    phase: "started" | "finished";
+    job: DueScheduleJob;
+    ledgerRecordId?: string;
+    status?: "running" | "succeeded" | "failed";
+    summary?: string;
+    error?: string;
+  }) => Promise<{ ledgerRecordId?: string } | void>;
   /** 心跳感知 tick，可选。不传则跳过。 */
   awarenessTick?: () => Promise<void>;
 };
@@ -106,11 +114,18 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
     let failureNote: string | undefined;
     let outputSummary: string | undefined;
     let sessionId: string | undefined;
+    let ledgerRecordId: string | undefined;
 
     try {
       if (!deps.runScheduleJob) {
         throw new Error("runScheduleJob dependency is not available");
       }
+      const ledgerStart = await deps.recordScheduleJobLedger?.({
+        phase: "started",
+        job,
+        status: "running",
+      });
+      ledgerRecordId = ledgerStart?.ledgerRecordId;
       const result = await deps.runScheduleJob(job);
       outputSummary = result?.outputSummary;
       sessionId = result?.sessionId;
@@ -131,6 +146,14 @@ export function createTimeScheduler(deps: TimeSchedulerDeps) {
       outputSummary,
       errorMessage: failureNote,
       sessionId,
+    });
+    await deps.recordScheduleJobLedger?.({
+      phase: "finished",
+      job,
+      ledgerRecordId,
+      status: succeeded ? "succeeded" : "failed",
+      summary: outputSummary,
+      error: failureNote,
     });
     const nextState = buildNextScheduleJobState(job, finishedAt, succeeded);
     try {

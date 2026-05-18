@@ -708,6 +708,10 @@ const myClawAPI = {
       onChannel("session:stream", (event: Record<string, unknown>) => {
         if (event.type === "awareness.changed") callback(event);
       }),
+    onAwarenessDelivery: (callback: (payload: Record<string, unknown>) => void): UnsubscribeFn =>
+      onChannel("session:stream", (event: Record<string, unknown>) => {
+        if (event.type === "awareness.delivery") callback((event.payload ?? event) as Record<string, unknown>);
+      }),
   },
 
   standingOrders: {

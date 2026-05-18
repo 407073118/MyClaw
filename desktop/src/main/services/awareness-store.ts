@@ -1,5 +1,6 @@
 import type {
   AwarenessActionKind,
+  AwarenessDecisionSkipReason,
   AwarenessRoutine,
   AwarenessRoutineCreateInput,
   AwarenessRoutineStatus,
@@ -14,8 +15,11 @@ import type {
 import {
   createDefaultActionPolicy,
   createDefaultBudgetPolicy,
+  createDefaultCatchUpPolicy,
+  createDefaultContextPolicy,
   createDefaultDecisionPolicy,
   createDefaultDeliveryPolicy,
+  createDefaultQuietHoursPolicy,
   isInQuietHours,
 } from "@shared/contracts";
 import { randomUUID } from "node:crypto";
@@ -78,10 +82,13 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
         "session_stuck",
         "approval_pending",
       ],
+      contextPolicy: { ...createDefaultContextPolicy(), ...input.contextPolicy },
       decisionPolicy: { ...createDefaultDecisionPolicy(), ...input.decisionPolicy },
       actionPolicy: { ...createDefaultActionPolicy(), ...input.actionPolicy },
       deliveryPolicy: { ...createDefaultDeliveryPolicy(), ...input.deliveryPolicy },
       budgetPolicy: { ...createDefaultBudgetPolicy(), ...input.budgetPolicy },
+      quietHoursPolicy: { ...createDefaultQuietHoursPolicy(), ...input.quietHoursPolicy },
+      catchUpPolicy: { ...createDefaultCatchUpPolicy(), ...input.catchUpPolicy },
       standingOrderIds: input.standingOrderIds ?? [],
       status: "enabled",
       consecutiveFailures: 0,
@@ -91,9 +98,9 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
     };
     db.run(
       `INSERT INTO awareness_routines (
-        id, scope_kind, owner_id, name, status, cadence_minutes, payload_json, created_at, updated_at
+        id, scope_kind, owner_id, name, status, cadence_minutes, next_run_at, payload_json, created_at, updated_at
       ) VALUES (
-        @id, @scope_kind, @owner_id, @name, @status, @cadence_minutes, @payload_json, @created_at, @updated_at
+        @id, @scope_kind, @owner_id, @name, @status, @cadence_minutes, @next_run_at, @payload_json, @created_at, @updated_at
       )`,
       {
         id: routine.id,
@@ -102,6 +109,7 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
         name: routine.name,
         status: routine.status,
         cadence_minutes: routine.cadenceMinutes,
+        next_run_at: routine.nextRunAt ?? null,
         payload_json: JSON.stringify(routine),
         created_at: nowIso,
         updated_at: nowIso,
@@ -122,21 +130,31 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
       cadenceMinutes: input.cadenceMinutes ?? existing.cadenceMinutes,
       activeHours: input.activeHours ?? existing.activeHours,
       signalSources: input.signalSources ?? existing.signalSources,
+      contextPolicy: input.contextPolicy
+        ? { ...createDefaultContextPolicy(), ...existing.contextPolicy, ...input.contextPolicy }
+        : existing.contextPolicy,
       decisionPolicy: input.decisionPolicy ? { ...existing.decisionPolicy, ...input.decisionPolicy } : existing.decisionPolicy,
       actionPolicy: input.actionPolicy ? { ...existing.actionPolicy, ...input.actionPolicy } : existing.actionPolicy,
       deliveryPolicy: input.deliveryPolicy ? { ...existing.deliveryPolicy, ...input.deliveryPolicy } : existing.deliveryPolicy,
       budgetPolicy: input.budgetPolicy ? { ...existing.budgetPolicy, ...input.budgetPolicy } : existing.budgetPolicy,
+      quietHoursPolicy: input.quietHoursPolicy
+        ? { ...createDefaultQuietHoursPolicy(), ...existing.quietHoursPolicy, ...input.quietHoursPolicy }
+        : existing.quietHoursPolicy,
+      catchUpPolicy: input.catchUpPolicy
+        ? { ...createDefaultCatchUpPolicy(), ...existing.catchUpPolicy, ...input.catchUpPolicy }
+        : existing.catchUpPolicy,
       standingOrderIds: input.standingOrderIds ?? existing.standingOrderIds,
       status: input.status ?? existing.status,
       updatedAt: nowIso,
     };
     db.run(
-      `UPDATE awareness_routines SET name = @name, status = @status, cadence_minutes = @cadence_minutes, payload_json = @payload_json, updated_at = @updated_at WHERE id = @id`,
+      `UPDATE awareness_routines SET name = @name, status = @status, cadence_minutes = @cadence_minutes, next_run_at = @next_run_at, payload_json = @payload_json, updated_at = @updated_at WHERE id = @id`,
       {
         id,
         name: updated.name,
         status: updated.status,
         cadence_minutes: updated.cadenceMinutes,
+        next_run_at: updated.nextRunAt ?? null,
         payload_json: JSON.stringify(updated),
         updated_at: nowIso,
       },
@@ -152,6 +170,11 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
     id: string,
     succeeded: boolean,
     receipt: AwarenessTickReceipt,
+    patch?: {
+      lastSkippedReason?: AwarenessDecisionSkipReason;
+      lastDecisionSummary?: string;
+      nextRunAt?: string;
+    },
   ): Promise<AwarenessRoutine | null> {
     const routine = await getRoutine(id);
     if (!routine) return null;
@@ -166,15 +189,18 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
       status,
       consecutiveFailures,
       lastRunAt: nowIso,
-      nextRunAt: new Date(now().getTime() + routine.cadenceMinutes * 60_000).toISOString(),
+      nextRunAt: patch?.nextRunAt ?? new Date(now().getTime() + routine.cadenceMinutes * 60_000).toISOString(),
       lastReceipt: receipt,
+      lastSkippedReason: patch?.lastSkippedReason,
+      lastDecisionSummary: patch?.lastDecisionSummary ?? routine.lastDecisionSummary,
       updatedAt: nowIso,
     };
     db.run(
-      `UPDATE awareness_routines SET status = @status, payload_json = @payload_json, updated_at = @updated_at WHERE id = @id`,
+      `UPDATE awareness_routines SET status = @status, next_run_at = @next_run_at, payload_json = @payload_json, updated_at = @updated_at WHERE id = @id`,
       {
         id,
         status: updated.status,
+        next_run_at: updated.nextRunAt ?? null,
         payload_json: JSON.stringify(updated),
         updated_at: nowIso,
       },
@@ -199,6 +225,39 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
   }
 
   async function upsertSignal(signal: AwarenessSignal): Promise<void> {
+    const existing = await findSignalByFingerprint(signal.fingerprint);
+    if (existing && existing.id !== signal.id) {
+      if (
+        (existing.status === "dismissed" || existing.status === "suppressed")
+        && existing.cooldownUntil
+        && new Date(existing.cooldownUntil) > now()
+      ) {
+        console.info("[awareness-store] 信号仍在冷却期，跳过重复写入", {
+          fingerprint: signal.fingerprint,
+          cooldownUntil: existing.cooldownUntil,
+        });
+        return;
+      }
+      const nowIso = now().toISOString();
+      const updated: AwarenessSignal = {
+        ...existing,
+        status: existing.status === "resolved" ? "active" : existing.status,
+        severity: signal.severity,
+        title: signal.title ?? existing.title,
+        summary: signal.summary,
+        recommendedAction: signal.recommendedAction,
+        lastSeenAt: signal.lastSeenAt ?? signal.updatedAt ?? nowIso,
+        occurrenceCount: (existing.occurrenceCount ?? 1) + 1,
+        cooldownUntil: signal.cooldownUntil,
+        updatedAt: nowIso,
+      };
+      await upsertSignalRow(updated);
+      return;
+    }
+    await upsertSignalRow(signal);
+  }
+
+  async function upsertSignalRow(signal: AwarenessSignal): Promise<void> {
     db.run(
       `INSERT INTO awareness_signals (
         id, fingerprint, source_kind, source_id, scope_kind, owner_id,
@@ -240,7 +299,7 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
   async function updateSignalStatus(
     id: string,
     status: AwarenessSignalStatus,
-    extra?: { cooldownUntil?: string; resolvedAt?: string; dismissedAt?: string },
+    extra?: { cooldownUntil?: string; resolvedAt?: string; dismissedAt?: string; resolvedBySourceState?: boolean },
   ): Promise<void> {
     const row = db.queryOne("SELECT payload_json FROM awareness_signals WHERE id = @id", { id });
     if (!row) return;
@@ -252,6 +311,7 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
       cooldownUntil: extra?.cooldownUntil,
       resolvedAt: extra?.resolvedAt,
       dismissedAt: extra?.dismissedAt,
+      resolvedBySourceState: extra?.resolvedBySourceState ?? existing.resolvedBySourceState,
       updatedAt: nowIso,
     };
     db.run(
@@ -267,15 +327,14 @@ export function createAwarenessStore(deps: AwarenessStoreDeps) {
   }
 
   async function cleanupStaleSignals(): Promise<number> {
-    const nowIso = now().toISOString();
     const resolved = db.queryAll(
-      "SELECT id, payload_json FROM awareness_signals WHERE status = 'active'",
+      "SELECT id, payload_json FROM awareness_signals WHERE status IN ('dismissed', 'suppressed')",
     );
     let cleaned = 0;
     for (const row of resolved) {
       const signal = parseSignal(row);
       if (signal.cooldownUntil && new Date(signal.cooldownUntil) < now()) {
-        await updateSignalStatus(signal.id, "suppressed");
+        await updateSignalStatus(signal.id, "suppressed", { cooldownUntil: undefined });
         cleaned++;
       }
     }

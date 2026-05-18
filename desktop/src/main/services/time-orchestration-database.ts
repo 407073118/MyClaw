@@ -227,104 +227,36 @@ export class TimeOrchestrationDatabase {
   }
 
   /**
-   * 确保感知相关新表的 payload_json 列存在。
-   * 旧 time.db 可能在之前某次开发运行中创建了空表但缺 payload_json 列，
-   * 此方法检测并重建这些表。表内无用户数据，直接 DROP + CREATE 是安全的。
+   * 确保感知相关表结构完整，并保留旧库中的用户数据。
+   * 旧 time.db 可能缺少后续版本新增列；这里只做按列迁移和索引补齐，禁止重建有数据的表。
    */
   private migrateAwarenessTables(): void {
-    const tables = [
-      "awareness_routines",
-      "awareness_signals",
-      "standing_orders",
-      "long_run_ledger",
-      "awareness_audit_events",
-    ];
-    for (const table of tables) {
-      try {
-        const result = this.db.exec(`PRAGMA table_info(${table})`);
-        if (result.length > 0) {
-          const columns = new Set((result[0]?.values ?? []).map((row) => String(row[1])));
-          if (!columns.has("payload_json") || (table === "awareness_routines" && !columns.has("next_run_at"))) {
-            const missing = [];
-            if (!columns.has("payload_json")) missing.push("payload_json");
-            if (table === "awareness_routines" && !columns.has("next_run_at")) missing.push("next_run_at");
-            console.info("[time-db] 感知表缺列，重建", { table, missing });
-            this.db.exec(`DROP TABLE IF EXISTS ${table}`);
-          }
-        }
-      } catch {
-        // 表不存在，忽略
-      }
-    }
-    // 重建被 DROP 的表
+    const ensureColumn = (table: string, column: string, definition: string): void => {
+      const result = this.db.exec(`PRAGMA table_info(${table})`);
+      const columns = new Set((result[0]?.values ?? []).map((row) => String(row[1])));
+      if (columns.has(column)) return;
+      console.info("[time-db] 补齐感知表缺失列", { table, column });
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
+      this.dirty = true;
+    };
+
+    ensureColumn("awareness_routines", "next_run_at", "TEXT");
+    ensureColumn("awareness_routines", "payload_json", "TEXT");
+    ensureColumn("awareness_signals", "payload_json", "TEXT");
+    ensureColumn("standing_orders", "payload_json", "TEXT");
+    ensureColumn("long_run_ledger", "payload_json", "TEXT");
+    ensureColumn("awareness_audit_events", "payload_json", "TEXT");
+
+    console.info("[time-db] 补齐感知表查询索引", { dbPath: this.dbPath });
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS awareness_routines (
-        id TEXT PRIMARY KEY,
-        scope_kind TEXT NOT NULL,
-        owner_id TEXT,
-        name TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'enabled',
-        cadence_minutes INTEGER NOT NULL DEFAULT 30,
-        next_run_at TEXT,
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS awareness_signals (
-        id TEXT PRIMARY KEY,
-        fingerprint TEXT NOT NULL,
-        source_kind TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        scope_kind TEXT NOT NULL,
-        owner_id TEXT,
-        severity TEXT NOT NULL DEFAULT 'info',
-        status TEXT NOT NULL DEFAULT 'active',
-        cooldown_until TEXT,
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
+      CREATE INDEX IF NOT EXISTS idx_awareness_routines_status_next_run ON awareness_routines(status, next_run_at);
+      CREATE INDEX IF NOT EXISTS idx_awareness_signals_fingerprint_status ON awareness_signals(fingerprint, status);
+      CREATE INDEX IF NOT EXISTS idx_awareness_signals_source_status ON awareness_signals(status, source_kind, source_id);
       CREATE INDEX IF NOT EXISTS idx_signals_fingerprint ON awareness_signals(fingerprint);
       CREATE INDEX IF NOT EXISTS idx_signals_status ON awareness_signals(status);
-      CREATE TABLE IF NOT EXISTS standing_orders (
-        id TEXT PRIMARY KEY,
-        scope_kind TEXT NOT NULL,
-        owner_id TEXT,
-        name TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'active',
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS long_run_ledger (
-        id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL,
-        source_id TEXT NOT NULL,
-        scope_kind TEXT NOT NULL,
-        owner_id TEXT,
-        status TEXT NOT NULL DEFAULT 'queued',
-        started_at TEXT NOT NULL,
-        finished_at TEXT,
-        last_heartbeat_at TEXT,
-        delivery_status TEXT NOT NULL DEFAULT 'not_required',
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
       CREATE INDEX IF NOT EXISTS idx_ledger_kind_status ON long_run_ledger(kind, status);
       CREATE INDEX IF NOT EXISTS idx_ledger_source ON long_run_ledger(kind, source_id);
-      CREATE TABLE IF NOT EXISTS awareness_audit_events (
-        id TEXT PRIMARY KEY,
-        ledger_record_id TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        action TEXT NOT NULL,
-        actor TEXT NOT NULL,
-        risk_level TEXT NOT NULL,
-        approval_status TEXT NOT NULL,
-        detail TEXT NOT NULL,
-        standing_order_id TEXT,
-        payload_json TEXT
-      );
+      CREATE INDEX IF NOT EXISTS idx_long_run_ledger_status_updated ON long_run_ledger(status, updated_at);
       CREATE INDEX IF NOT EXISTS idx_audit_ledger ON awareness_audit_events(ledger_record_id);
       CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON awareness_audit_events(timestamp);
     `);

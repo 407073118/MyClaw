@@ -1,4 +1,5 @@
 import type { RuntimeContext } from "../services/runtime-context";
+import { createAwarenessPolicyEngine } from "../services/awareness-policy-engine";
 
 export function registerAwarenessHandlers(ctx: RuntimeContext): void {
   const { ipcMain } = require("electron") as { ipcMain: Electron.IpcMain };
@@ -91,6 +92,21 @@ export function registerAwarenessHandlers(ctx: RuntimeContext): void {
   ipcMain.handle("standing-order:list", async (_event, scope?: { kind: string; ownerId?: string }) => {
     const orders = await standingOrders.list(scope as any);
     return { items: orders };
+  });
+
+  ipcMain.handle("standing-order:evaluate-action", async (_event, input: Record<string, unknown>) => {
+    const routineId = String(input.routineId ?? "");
+    const routine = await store.getRoutine(routineId);
+    if (!routine) return { ok: false, error: "routine not found" };
+    const orders = await standingOrders.list(routine.scope);
+    const policyEngine = createAwarenessPolicyEngine();
+    const decision = policyEngine.evaluateAction(
+      input.action as any,
+      routine,
+      orders,
+      input.signalSource as any,
+    );
+    return { ok: true, decision };
   });
 
   ipcMain.handle("standing-order:create", async (_event, input: Record<string, unknown>) => {

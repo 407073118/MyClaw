@@ -27,6 +27,8 @@ import ReminderEditor, {
 import ScheduleJobEditor, {
   type ScheduleJobEditorSubmitInput,
 } from "../components/time/ScheduleJobEditor";
+import TimeAwarenessCatchUp from "../components/time/AwarenessCatchUp";
+import TimeAwarenessRoutineManager from "../components/time/AwarenessRoutineManager";
 import TaskCommitmentEditor, {
   type TaskCommitmentEditorSubmitInput,
 } from "../components/time/TaskCommitmentEditor";
@@ -650,7 +652,7 @@ export default function TimeCenterPage() {
 
       <ScheduleSummaryBar model={planningModel} feedback={feedback} />
 
-      <AwarenessCatchUp />
+      <TimeAwarenessCatchUp />
 
       <PlanningViewSwitcher activeView={activeView} onChange={setActiveView} />
 
@@ -731,7 +733,7 @@ export default function TimeCenterPage() {
         ) : null}
 
         {activeView === "awareness" ? (
-          <AwarenessRoutineManager />
+          <TimeAwarenessRoutineManager />
         ) : null}
 
         <aside className="schedule-resource-rail" data-testid="schedule-resource-rail">

@@ -723,7 +723,7 @@ export default function AgentTeamDock() {
 
 /** 硅基员工值守信号数量 badge */
 function AwarenessBadge({ personId }: { personId: string }) {
-  const snapshot = useWorkspaceStore((s) => s.time.awarenessSnapshot) as {
+  const snapshot = useWorkspaceStore((s) => s.time?.awarenessSnapshot) as {
     activeSignals?: Array<{
       scope: { kind: string; ownerId?: string };
       severity: string;
@@ -734,11 +734,14 @@ function AwarenessBadge({ personId }: { personId: string }) {
   const count = (snapshot?.activeSignals ?? []).filter(
     (s) => s.status === "active" && s.scope.kind === "silicon_person" && s.scope.ownerId === personId,
   ).length;
+  const hasCritical = (snapshot?.activeSignals ?? []).some(
+    (s) => s.status === "active" && s.scope.kind === "silicon_person" && s.scope.ownerId === personId && s.severity === "critical",
+  );
 
   if (count === 0) return null;
 
   return (
-    <span className="awareness-badge" style={{
+    <span className="awareness-badge" title="值守信号" aria-label={`${count} 个值守信号`} style={{
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
@@ -746,8 +749,8 @@ function AwarenessBadge({ personId }: { personId: string }) {
       height: 16,
       padding: "0 4px",
       borderRadius: 999,
-      background: "var(--status-yellow, #f59e0b)",
-      color: "#000",
+      background: hasCritical ? "var(--status-red, #ef4444)" : "var(--status-yellow, #f59e0b)",
+      color: hasCritical ? "#fff" : "#000",
       fontSize: 10,
       fontWeight: 600,
     }}>

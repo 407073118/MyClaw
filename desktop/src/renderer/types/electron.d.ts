@@ -614,6 +614,7 @@ declare global {
         dismissSignal: (id: string) => Promise<{ ok: boolean }>;
         acknowledgeSignal: (id: string) => Promise<{ ok: boolean }>;
         onAwarenessChanged: (callback: (payload: Record<string, unknown>) => void) => () => void;
+        onAwarenessDelivery: (callback: (payload: Record<string, unknown>) => void) => () => void;
       };
 
       // --- Standing Orders ---

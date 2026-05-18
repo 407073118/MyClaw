@@ -108,6 +108,19 @@ function scheduleJobExecutorLabel(executor: ScheduleJob["executor"]): string {
 }
 
 /** 生成最近一次运行的短回执，优先展示失败原因。 */
+/** 将值守信号来源映射成员工工作台可读标签。 */
+function siliconAwarenessSourceLabel(kind: string): string {
+  return ({
+    agent_task: "员工任务",
+    schedule_job: "定时任务",
+    workflow_run: "工作流",
+    background_task: "后台任务",
+    session_stuck: "会话",
+    approval_pending: "审批",
+    system_health: "系统",
+  } as Record<string, string>)[kind] ?? kind;
+}
+
 function latestScheduleRunLabel(run?: ExecutionRun): string {
   if (!run) return "上次运行：尚未运行";
   if (run.status === "failed") return `上次失败${run.errorMessage ? ` · ${run.errorMessage}` : ""}`;
@@ -226,6 +239,24 @@ export default function SiliconPersonWorkspacePage() {
     () => workspace.approvalRequests.filter((request) => request.sessionId === currentSessionSummary?.id),
     [workspace.approvalRequests, currentSessionSummary?.id, viewVersion],
   );
+  const personAwarenessSignals = useMemo(() => {
+    const snapshot = workspace.time.awarenessSnapshot as {
+      activeSignals?: Array<{
+        id: string;
+        scope: { kind: string; ownerId?: string };
+        sourceKind: string;
+        severity: string;
+        summary: string;
+        status: string;
+        createdAt: string;
+      }>;
+    } | null;
+    return (snapshot?.activeSignals ?? []).filter(
+      (signal) => signal.status === "active"
+        && signal.scope.kind === "silicon_person"
+        && signal.scope.ownerId === siliconPersonId,
+    );
+  }, [workspace.time.awarenessSnapshot, siliconPersonId, viewVersion]);
 
   const [isSaving, setIsSaving] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
@@ -945,6 +976,30 @@ export default function SiliconPersonWorkspacePage() {
               </div>
             )}
           </div>
+        )}
+
+        {siliconPerson && personAwarenessSignals.length > 0 && (
+          <section className="ws-awareness-panel" aria-label="硅基员工值守">
+            <div className="ws-awareness-panel__header">
+              <Activity size={14} aria-hidden />
+              <strong>值守信号</strong>
+              <span>{personAwarenessSignals.length}</span>
+            </div>
+            <div className="ws-awareness-panel__list">
+              {personAwarenessSignals.slice(0, 4).map((signal) => (
+                <div key={signal.id} className="ws-awareness-panel__item">
+                  <span className={`status-dot status-dot--${signal.severity === "critical" ? "red" : signal.severity === "warning" ? "yellow" : "green"}`} />
+                  <div>
+                    <b>{siliconAwarenessSourceLabel(signal.sourceKind)}</b>
+                    <p>{signal.summary}</p>
+                  </div>
+                  <button type="button" className="btn-toolbar" onClick={() => void workspace.acknowledgeAwarenessSignal(signal.id)}>
+                    知晓
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
         )}
 
         <section className="ws-body">
@@ -1715,6 +1770,50 @@ export default function SiliconPersonWorkspacePage() {
         .ws-meta-row--inline .ws-meta-alert { margin-left: auto; }
 
         /* ── Body Grid ── */
+        .ws-awareness-panel {
+          margin: -4px 0 16px;
+          border: 1px solid var(--glass-border);
+          border-radius: 8px;
+          background: var(--bg-card);
+          overflow: hidden;
+        }
+        .ws-awareness-panel__header {
+          display: flex; align-items: center; gap: 8px;
+          padding: 9px 12px;
+          border-bottom: 1px solid var(--glass-border);
+          color: var(--text-primary);
+          font-size: 13px;
+        }
+        .ws-awareness-panel__header span {
+          margin-left: auto;
+          min-width: 20px;
+          height: 20px;
+          border-radius: 999px;
+          background: var(--status-yellow);
+          color: #000;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-weight: 700;
+        }
+        .ws-awareness-panel__list { display: flex; flex-direction: column; }
+        .ws-awareness-panel__item {
+          display: grid;
+          grid-template-columns: 10px minmax(0, 1fr) auto;
+          gap: 10px;
+          align-items: center;
+          padding: 9px 12px;
+          border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .ws-awareness-panel__item:last-child { border-bottom: 0; }
+        .ws-awareness-panel__item b { display: block; color: var(--text-secondary); font-size: 11px; }
+        .ws-awareness-panel__item p {
+          margin: 2px 0 0;
+          color: var(--text-primary);
+          font-size: 12px;
+          overflow-wrap: anywhere;
+        }
         .ws-body { display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; }
         .ws-col { display: flex; flex-direction: column; gap: 14px; }
 

@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 export type SignalCollectorDeps = {
   getActiveSessionRuns: () => Map<string, { status: string; currentMessageId: string; phase: string; startedAt?: string }>;
   getAgentTasks: () => Array<{ id: string; status: string; assignees?: Array<{ siliconPersonId: string; status: string }> }>;
-  getScheduleJobs: () => Array<{ id: string; status: string; lastRunAt?: string; nextRunAt?: string; executionRuns?: Array<{ status: string; finishedAt?: string }> }>;
+  getScheduleJobs: () => Array<{ id: string; status: string; ownerScope?: string; ownerId?: string; lastRunAt?: string; nextRunAt?: string; executionRuns?: Array<{ status: string; finishedAt?: string }> }>;
   getWorkflowRuns: () => Array<{ id: string; status: string; workflowId: string; interruptRequested?: boolean }>;
   getBackgroundTasks: () => Array<{ sessionId: string; status?: string; backgroundTask?: { status?: string } }>;
   getApprovalRequests: () => Array<{ id: string; createdAt?: string; resolved?: boolean }>;
@@ -29,7 +29,6 @@ export type RawSignal = {
 };
 
 const STUCK_THRESHOLD_MS = 30 * 60 * 1000;
-const WAITING_USER_THRESHOLD_MS = 15 * 60 * 1000;
 const STALE_JOB_THRESHOLD_MS = 2 * 60 * 60 * 1000;
 const PENDING_APPROVAL_THRESHOLD_MS = 10 * 60 * 1000;
 
@@ -54,11 +53,12 @@ export function createAwarenessSignalCollector(deps: SignalCollectorDeps) {
   function collectFromAgentTasks(signals: RawSignal[], _now: Date): void {
     const tasks = deps.getAgentTasks();
     for (const task of tasks) {
+      const scope = resolveAgentTaskScope(task);
       if (task.status === "failed") {
         signals.push({
           sourceKind: "agent_task",
           sourceId: task.id,
-          scope: { kind: "personal" },
+          scope,
           severity: "warning",
           summary: `员工任务失败: ${task.id}`,
           recommendedAction: "重试或检查任务配置",
@@ -69,7 +69,7 @@ export function createAwarenessSignalCollector(deps: SignalCollectorDeps) {
         signals.push({
           sourceKind: "agent_task",
           sourceId: task.id,
-          scope: { kind: "personal" },
+          scope,
           severity: "info",
           summary: `员工任务等待用户: ${task.id}`,
           recommendedAction: "前往查看并处理",
@@ -82,11 +82,12 @@ export function createAwarenessSignalCollector(deps: SignalCollectorDeps) {
   function collectFromScheduleJobs(signals: RawSignal[], currentTime: Date): void {
     const jobs = deps.getScheduleJobs();
     for (const job of jobs) {
+      const scope = resolveJobScope(job);
       if (job.status === "failed") {
         signals.push({
           sourceKind: "schedule_job",
           sourceId: job.id,
-          scope: { kind: "personal" },
+          scope,
           severity: "warning",
           summary: `定时任务失败: ${job.id}`,
           recommendedAction: "检查任务配置或手动重试",
@@ -100,7 +101,7 @@ export function createAwarenessSignalCollector(deps: SignalCollectorDeps) {
           signals.push({
             sourceKind: "schedule_job",
             sourceId: job.id,
-            scope: { kind: "personal" },
+            scope,
             severity: "critical",
             summary: `定时任务严重滞后: ${job.id}，预期 ${job.nextRunAt}`,
             recommendedAction: "检查调度器是否正常",
@@ -213,10 +214,28 @@ export function createAwarenessSignalCollector(deps: SignalCollectorDeps) {
     }
   }
 
+  /** 根据计划任务归属推导值守 scope，确保员工任务不会落到个人总览里。 */
+  function resolveJobScope(job: { ownerScope?: string; ownerId?: string }): AwarenessScope {
+    if (job.ownerScope === "silicon_person" && job.ownerId) {
+      return { kind: "silicon_person", ownerId: job.ownerId };
+    }
+    if (job.ownerScope === "workspace") {
+      return { kind: "workspace", ownerId: job.ownerId };
+    }
+    return { kind: "personal" };
+  }
+
+  /** 根据员工任务 assignee 推导值守 scope，单员工任务直接归属该员工。 */
+  function resolveAgentTaskScope(task: { assignees?: Array<{ siliconPersonId: string; status: string }> }): AwarenessScope {
+    const assignee = task.assignees?.find((item) => item.siliconPersonId);
+    return assignee ? { kind: "silicon_person", ownerId: assignee.siliconPersonId } : { kind: "personal" };
+  }
+
   return { collect };
 }
 
-export function createSignalFromRaw(raw: RawSignal): AwarenessSignal {  const now = new Date().toISOString();
+export function createSignalFromRaw(raw: RawSignal): AwarenessSignal {
+  const now = new Date().toISOString();
   const cooldownMs = 2 * 60 * 60 * 1000;
   return {
     id: randomUUID(),
@@ -225,10 +244,14 @@ export function createSignalFromRaw(raw: RawSignal): AwarenessSignal {  const no
     sourceId: raw.sourceId,
     scope: raw.scope,
     severity: raw.severity,
+    title: raw.summary,
     summary: raw.summary,
     recommendedAction: raw.recommendedAction,
     status: "active",
     cooldownUntil: new Date(Date.now() + cooldownMs).toISOString(),
+    firstSeenAt: now,
+    lastSeenAt: now,
+    occurrenceCount: 1,
     createdAt: now,
     updatedAt: now,
   };
