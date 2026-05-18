@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildProviderScorecards } from "../../../src/main/services/model-runtime/provider-scorecard";
+import { buildProviderScorecards, scoreProviderRoute } from "../../../src/main/services/model-runtime/provider-scorecard";
 import type { TurnOutcome } from "@shared/contracts";
 
 describe("provider scorecard", () => {
@@ -93,5 +93,22 @@ describe("provider scorecard", () => {
       "generic-openai-compatible",
       "openai-native",
     ]);
+  });
+
+  it("prefers a route with better cache efficiency when success is equal", () => {
+    const score = scoreProviderRoute({
+      successRate: 1,
+      cacheHitRate: 0.8,
+      latencyScore: 0.5,
+      estimatedCostScore: 0.8,
+    });
+    const lower = scoreProviderRoute({
+      successRate: 1,
+      cacheHitRate: 0.1,
+      latencyScore: 0.5,
+      estimatedCostScore: 0.8,
+    });
+
+    expect(score).toBeGreaterThan(lower);
   });
 });

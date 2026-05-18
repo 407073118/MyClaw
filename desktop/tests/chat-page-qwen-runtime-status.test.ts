@@ -62,15 +62,24 @@ const mocks = vi.hoisted(() => {
       getState: () => workspace,
     },
   );
+  const bufferStreamingDeltaMock = vi.fn();
+  const getCachedMarkdownMock = vi.fn((_id: string, content: string, renderMarkdown: (value: string) => string) => renderMarkdown(content));
+  const flushStreamingBufferNowMock = vi.fn();
 
   return {
     workspace,
     useWorkspaceStoreMock,
+    bufferStreamingDeltaMock,
+    getCachedMarkdownMock,
+    flushStreamingBufferNowMock,
   };
 });
 
 vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
+  bufferStreamingDelta: mocks.bufferStreamingDeltaMock,
+  getCachedMarkdown: mocks.getCachedMarkdownMock,
+  flushStreamingBufferNow: mocks.flushStreamingBufferNowMock,
 }));
 
 vi.mock("react-router-dom", () => ({
@@ -81,6 +90,10 @@ vi.mock("react-router-dom", () => ({
 describe("ChatPage Qwen runtime status", () => {
   afterEach(() => {
     cleanup();
+    mocks.bufferStreamingDeltaMock.mockReset();
+    mocks.getCachedMarkdownMock.mockReset();
+    mocks.getCachedMarkdownMock.mockImplementation((_id: string, content: string, renderMarkdown: (value: string) => string) => renderMarkdown(content));
+    mocks.flushStreamingBufferNowMock.mockReset();
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });
 

@@ -21,6 +21,48 @@ function compareProviderFamilies(left: ProviderFamily, right: ProviderFamily): n
     - (PROVIDER_FAMILY_ORDER.get(right) ?? Number.MAX_SAFE_INTEGER);
 }
 
+/** 汇总 outcome 中的缓存命中率，按输入 token 加权避免短请求放大影响。 */
+function calculateCacheHitRate(outcomes: TurnOutcome[]): number {
+  const totals = outcomes.reduce(
+    (acc, outcome) => {
+      acc.promptTokens += outcome.usage?.promptTokens ?? 0;
+      acc.cacheHitTokens += outcome.usage?.cacheHitInputTokens
+        ?? outcome.usage?.cacheReadInputTokens
+        ?? outcome.usage?.cachedInputTokens
+        ?? 0;
+      return acc;
+    },
+    { promptTokens: 0, cacheHitTokens: 0 },
+  );
+  return totals.promptTokens > 0 ? totals.cacheHitTokens / totals.promptTokens : 0;
+}
+
+/** 汇总缓存写入占比，用于识别只写不读的高成本路线。 */
+function calculateCacheWriteRate(outcomes: TurnOutcome[]): number {
+  const totals = outcomes.reduce(
+    (acc, outcome) => {
+      acc.promptTokens += outcome.usage?.promptTokens ?? 0;
+      acc.cacheWriteTokens += outcome.usage?.cacheWriteInputTokens ?? 0;
+      return acc;
+    },
+    { promptTokens: 0, cacheWriteTokens: 0 },
+  );
+  return totals.promptTokens > 0 ? totals.cacheWriteTokens / totals.promptTokens : 0;
+}
+
+/** 对 vendor route 做缓存感知评分；样本不足时由调用方决定是否应用推荐。 */
+export function scoreProviderRoute(input: {
+  successRate: number;
+  cacheHitRate: number;
+  latencyScore: number;
+  estimatedCostScore: number;
+}): number {
+  return (input.successRate * 0.4)
+    + (input.cacheHitRate * 0.3)
+    + (input.latencyScore * 0.15)
+    + (input.estimatedCostScore * 0.15);
+}
+
 /** 根据 TurnOutcome 聚合 family scorecard。 */
 export function buildProviderScorecard(
   providerFamily: ProviderFamily,
@@ -36,6 +78,8 @@ export function buildProviderScorecard(
       fallbackRate: 0,
       p95Latency: 0,
       contextStabilityRate: 0,
+      cacheHitRate: 0,
+      cacheWriteRate: 0,
       sampleSize: 0,
     };
   }
@@ -57,6 +101,8 @@ export function buildProviderScorecard(
     fallbackRate: fallbackCount / totalTurns,
     p95Latency: sortedLatency[p95Index] ?? 0,
     contextStabilityRate: stableCount / totalTurns,
+    cacheHitRate: calculateCacheHitRate(familyOutcomes),
+    cacheWriteRate: calculateCacheWriteRate(familyOutcomes),
     sampleSize: totalTurns,
   };
 }
@@ -113,16 +159,30 @@ export function buildVendorProtocolScorecards(
       )];
       const sortedLatency = scopedOutcomes.map((outcome) => outcome.latencyMs).sort((left, right) => left - right);
       const p95Index = totalTurns === 0 ? 0 : Math.max(0, Math.ceil(sortedLatency.length * 0.95) - 1);
+      const p95Latency = sortedLatency[p95Index] ?? 0;
+      const cacheHitRate = calculateCacheHitRate(scopedOutcomes);
+      const completionRate = totalTurns === 0 ? 0 : successCount / totalTurns;
+      const latencyScore = p95Latency > 0 ? Math.max(0, 1 - (p95Latency / 120_000)) : 0;
 
       return {
         vendorFamily,
         protocolTarget,
         sampleSize: totalTurns,
-        completionRate: totalTurns === 0 ? 0 : successCount / totalTurns,
+        completionRate,
         toolSuccessRate: totalToolCalls > 0 ? successfulToolCalls / totalToolCalls : 1,
         fallbackRate: totalTurns === 0 ? 0 : fallbackCount / totalTurns,
-        p95Latency: sortedLatency[p95Index] ?? 0,
+        p95Latency,
         contextStabilityRate: totalTurns === 0 ? 0 : stableCount / totalTurns,
+        cacheHitRate,
+        cacheWriteRate: calculateCacheWriteRate(scopedOutcomes),
+        routeScore: totalTurns < 3
+          ? undefined
+          : scoreProviderRoute({
+              successRate: completionRate,
+              cacheHitRate,
+              latencyScore,
+              estimatedCostScore: cacheHitRate,
+            }),
         vendorNativeToolRate: totalTurns === 0 ? 0 : vendorNativeCount / totalTurns,
         activeNativeToolStackIds,
         thinkingControlKinds,

@@ -179,17 +179,39 @@ function resolveFirstClassVendorDefaultRoutePatch(
   return null;
 }
 
+/** 为一等厂商补齐缓存相关默认配置，用户显式关闭的选项保持优先。 */
+function resolveFirstClassVendorCacheConfigPatch(
+  vendorFamily: VendorFamily,
+  profile: Partial<ModelProfile>,
+): Pick<ModelProfile, "responsesApiConfig"> | null {
+  if (vendorFamily !== "qwen") {
+    return null;
+  }
+
+  return {
+    responsesApiConfig: {
+      useServerState: true,
+      sessionCache: "enable",
+      ...(profile.responsesApiConfig ?? {}),
+    },
+  };
+}
+
 /** 对已识别的一等供应商模型做路线归一化，自动修复历史兼容路线。 */
 export function normalizeFirstClassVendorRoute<T extends Partial<ModelProfile>>(profile: T): T {
   const identityPatch = resolveFirstClassVendorIdentityPatch(profile);
   if (!identityPatch) {
     return profile;
   }
+  const cacheConfigPatch = identityPatch.vendorFamily
+    ? resolveFirstClassVendorCacheConfigPatch(identityPatch.vendorFamily, profile)
+    : null;
 
   if (hasExplicitProtocolSelection(profile, identityPatch.vendorFamily)) {
     return {
       ...profile,
       ...identityPatch,
+      ...(cacheConfigPatch ?? {}),
     };
   }
 
@@ -197,6 +219,7 @@ export function normalizeFirstClassVendorRoute<T extends Partial<ModelProfile>>(
     return {
       ...profile,
       ...identityPatch,
+      ...(cacheConfigPatch ?? {}),
     };
   }
 
@@ -205,6 +228,7 @@ export function normalizeFirstClassVendorRoute<T extends Partial<ModelProfile>>(
     ...profile,
     ...identityPatch,
     ...(defaultRoutePatch ?? {}),
+    ...(cacheConfigPatch ?? {}),
   };
 }
 
@@ -236,6 +260,7 @@ export function coerceManagedProfileWrite(
       ...(mergedCandidate.protocolTarget ? { protocolTarget: mergedCandidate.protocolTarget } : {}),
       ...(mergedCandidate.savedProtocolPreferences ? { savedProtocolPreferences: mergedCandidate.savedProtocolPreferences } : {}),
       ...(mergedCandidate.protocolSelectionSource ? { protocolSelectionSource: mergedCandidate.protocolSelectionSource } : {}),
+      ...(mergedCandidate.responsesApiConfig ? { responsesApiConfig: mergedCandidate.responsesApiConfig } : {}),
     };
   }
 

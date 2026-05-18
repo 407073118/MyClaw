@@ -172,7 +172,7 @@ describe("directory service path resolution", () => {
     expect(paths.myClawDir).toBe(join(userDataRoot, "myClaw"));
   });
 
-  it("falls back to default userData when dev cwd has no .worktrees segment", async () => {
+  it("resolves dev data root when cwd has no .worktrees segment", async () => {
     electronAppMock.isPackaged = false;
     const plainDir = join(worktreeBase, "regular-checkout", "desktop");
     mkdirSync(plainDir, { recursive: true });
@@ -183,7 +183,12 @@ describe("directory service path resolution", () => {
     redirectUserData();
     const paths = await initializeDirectories();
 
-    expect(electronAppMock.setPath).not.toHaveBeenCalled();
-    expect(paths.rootDir).toBe(userDataRoot);
+    if (/[\\/]\.worktrees[\\/]/.test(originalCwd)) {
+      expect(electronAppMock.setPath).toHaveBeenCalledWith("userData", expect.stringMatching(/[\\/]\.userdata[\\/]electron$/));
+      expect(paths.rootDir).toMatch(/[\\/]\.userdata$/);
+    } else {
+      expect(electronAppMock.setPath).not.toHaveBeenCalled();
+      expect(paths.rootDir).toBe(userDataRoot);
+    }
   });
 });

@@ -32,6 +32,7 @@ import type {
 } from "@shared/contracts";
 import { ToolRiskCategory, resolveSiliconPersonCurrentSessionId } from "@shared/contracts";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
+import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
 
 const AGENT_TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
   queued: "排队中",
@@ -274,6 +275,34 @@ function formatToolArgs(argsJson: string): string {
   } catch {
     return argsJson;
   }
+}
+
+/** 格式化模型 token 与缓存用量，便于在消息徽标中快速判断缓存是否命中。 */
+function formatTokenUsageBadge(usage: NonNullable<ChatMessage["usage"]>): { label: string; title: string } {
+  const cacheHitTokens = readCacheHitInputTokens(usage);
+  const parts = [
+    `输入 ${usage.promptTokens}`,
+    `输出 ${usage.completionTokens}`,
+    `总计 ${usage.totalTokens} tokens`,
+    cacheHitTokens !== undefined ? `命中 ${cacheHitTokens}` : null,
+    usage.cacheMissInputTokens !== undefined ? `未命中 ${usage.cacheMissInputTokens}` : null,
+    usage.cacheWriteInputTokens !== undefined ? `写入 ${usage.cacheWriteInputTokens}` : null,
+  ].filter((value): value is string => !!value);
+  const title = [
+    `输入: ${usage.promptTokens}`,
+    `输出: ${usage.completionTokens}`,
+    usage.reasoningTokens !== undefined ? `推理: ${usage.reasoningTokens}` : null,
+    cacheHitTokens !== undefined ? `缓存命中: ${cacheHitTokens}` : null,
+    usage.cacheMissInputTokens !== undefined ? `缓存未命中: ${usage.cacheMissInputTokens}` : null,
+    usage.cacheWriteInputTokens !== undefined ? `缓存写入: ${usage.cacheWriteInputTokens}` : null,
+    usage.cacheEfficiency !== undefined ? `命中率: ${(usage.cacheEfficiency * 100).toFixed(1)}%` : null,
+  ].filter((value): value is string => !!value).join(" | ");
+  return { label: parts.join(" · "), title };
+}
+
+/** 统一读取各厂商的缓存命中 token，避免 UI 和会话汇总漏掉 cache_read/cached 字段。 */
+function readCacheHitInputTokens(usage: NonNullable<ChatMessage["usage"]>): number | undefined {
+  return usage.cacheHitInputTokens ?? usage.cacheReadInputTokens ?? usage.cachedInputTokens;
 }
 
 /** 规范化 Slash 指令中的标识符，避免生成非法 toolId。 */
@@ -610,9 +639,17 @@ export default function ChatPage() {
   const activeModelProfile = useMemo(() => {
     const models = workspace.models as Array<Record<string, unknown>> | undefined;
     const defaultId = workspace.defaultModelProfileId as string | null | undefined;
+    const sessionModelProfileId = (session as { modelProfileId?: string | null } | null)?.modelProfileId ?? null;
     if (!models || models.length === 0) return null;
-    return models.find((m) => m.id === defaultId) ?? models[0] ?? null;
-  }, [workspace.models, workspace.defaultModelProfileId]);
+    return models.find((m) => m.id === sessionModelProfileId)
+      ?? models.find((m) => m.id === defaultId)
+      ?? models[0]
+      ?? null;
+  }, [session, workspace.models, workspace.defaultModelProfileId]);
+  const runtimeStatusItems = useMemo(
+    () => buildModelRuntimeStatusItems(activeModelProfile as any),
+    [activeModelProfile],
+  );
 
   /** 当前硅基员工是否缺少有效 modelProfileId（空或不在已配置模型列表里）。 */
   const siliconPersonModelMissing = useMemo(() => {
@@ -801,9 +838,32 @@ export default function ChatPage() {
 
   const sessionMessages = session?.messages;
 
-  const sessionTokenTotal = useMemo(() => {
-    if (!sessionMessages) return 0;
-    return sessionMessages.reduce((sum, msg) => sum + (msg.usage?.totalTokens ?? 0), 0);
+  const sessionUsageSummary = useMemo(() => {
+    const empty = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      cacheHitInputTokens: 0,
+      cacheMissInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      hasCacheUsage: false,
+    };
+    if (!sessionMessages) return empty;
+    return sessionMessages.reduce((summary, msg) => {
+      if (!msg.usage) return summary;
+      const cacheHitTokens = readCacheHitInputTokens(msg.usage);
+      summary.promptTokens += msg.usage.promptTokens;
+      summary.completionTokens += msg.usage.completionTokens;
+      summary.totalTokens += msg.usage.totalTokens;
+      summary.cacheHitInputTokens += cacheHitTokens ?? 0;
+      summary.cacheMissInputTokens += msg.usage.cacheMissInputTokens ?? 0;
+      summary.cacheWriteInputTokens += msg.usage.cacheWriteInputTokens ?? 0;
+      summary.hasCacheUsage = summary.hasCacheUsage
+        || cacheHitTokens !== undefined
+        || msg.usage.cacheMissInputTokens !== undefined
+        || msg.usage.cacheWriteInputTokens !== undefined;
+      return summary;
+    }, empty);
   }, [sessionMessages]);
 
   const parsedMessages = useMemo(() => {
@@ -2157,8 +2217,8 @@ export default function ChatPage() {
                         )}
 
                         {message.role === "assistant" && message.usage && (
-                          <span className="token-usage-badge" title={`输入: ${message.usage.promptTokens} | 输出: ${message.usage.completionTokens}`}>
-                            {message.usage.totalTokens} tokens
+                          <span className="token-usage-badge" title={formatTokenUsageBadge(message.usage).title}>
+                            {formatTokenUsageBadge(message.usage).label}
                           </span>
                         )}
 
@@ -2708,6 +2768,22 @@ export default function ChatPage() {
                 ) : (
                   <span className="composer-hints"></span>
                 )}
+                {runtimeStatusItems.length > 0 && (
+                  <div
+                    className="chat-runtime-model-status"
+                    data-testid="chat-runtime-model-status"
+                    title={runtimeStatusItems.map((item) => item.label).join(" · ")}
+                  >
+                    {runtimeStatusItems.map((item) => (
+                      <span
+                        key={item.key}
+                        className={`chat-runtime-model-status__pill chat-runtime-model-status__pill--${item.tone}`}
+                      >
+                        {item.label}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {!isSiliconPersonView && (
                   <>
                     <div className="effort-selector" data-testid="effort-selector">
@@ -2747,9 +2823,11 @@ export default function ChatPage() {
                 </button>
               )}
             </div>
-            {sessionTokenTotal > 0 && (
+            {sessionUsageSummary.totalTokens > 0 && (
               <div className="session-token-total">
-                会话总计: {sessionTokenTotal.toLocaleString()} tokens
+                {sessionUsageSummary.hasCacheUsage
+                  ? `会话总计: 输入 ${sessionUsageSummary.promptTokens.toLocaleString()} · 输出 ${sessionUsageSummary.completionTokens.toLocaleString()} · 命中 ${sessionUsageSummary.cacheHitInputTokens.toLocaleString()} · 未命中 ${sessionUsageSummary.cacheMissInputTokens.toLocaleString()} · 写入 ${sessionUsageSummary.cacheWriteInputTokens.toLocaleString()} · 总计 ${sessionUsageSummary.totalTokens.toLocaleString()} tokens`
+                  : `会话总计: ${sessionUsageSummary.totalTokens.toLocaleString()} tokens`}
               </div>
             )}
           </div>
@@ -3023,6 +3101,11 @@ export default function ChatPage() {
         .composer-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 16px 16px; }
         .composer-toolbar-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
         .composer-hints { font-size: 12px; color: var(--text-muted); }
+        .chat-runtime-model-status { display: flex; align-items: center; gap: 5px; min-width: 0; flex-wrap: wrap; }
+        .chat-runtime-model-status__pill { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.035); color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
+        .chat-runtime-model-status__pill--vendor { color: var(--accent-cyan); border-color: rgba(16,163,127,0.28); background: rgba(16,163,127,0.08); }
+        .chat-runtime-model-status__pill--protocol { color: #93c5fd; border-color: rgba(147,197,253,0.22); background: rgba(59,130,246,0.08); }
+        .chat-runtime-model-status__pill--thinking { color: #facc15; border-color: rgba(250,204,21,0.22); background: rgba(250,204,21,0.08); }
         .effort-selector { display: flex; gap: 2px; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 2px; border: 1px solid var(--glass-border); }
         .effort-btn { font-size: 11px; font-weight: 500; padding: 3px 10px; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.15s; white-space: nowrap; }
         .effort-btn:hover { color: var(--text-secondary); background: rgba(255,255,255,0.04); }

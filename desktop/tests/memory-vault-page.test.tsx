@@ -231,6 +231,7 @@ describe("MemoryWorkspacePage", () => {
 
     const editor = await screen.findByTestId("memory-document-editor");
     expect((editor as HTMLTextAreaElement).value).toContain("Initial note");
+    fireEvent.click(screen.getByTitle("显示预览"));
     const preview = await screen.findByTestId("memory-markdown-preview");
     expect(preview.querySelector("h1")?.textContent).toBe("Roadmap");
     expect(preview.textContent).toContain("Initial note");
@@ -289,7 +290,7 @@ describe("MemoryWorkspacePage", () => {
       expect(memoryApi.createFile).toHaveBeenCalledWith({
         rootId: "root-managed",
         parentRelativePath: "notes",
-        title: "decision",
+        title: "decision.md",
         content: "",
       });
     });

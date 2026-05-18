@@ -35,6 +35,13 @@ describe("model runtime scorecard script", () => {
       finishedAt: "2026-04-10T00:00:01.000Z",
       success: true,
       latencyMs: 100,
+      usage: {
+        promptTokens: 1000,
+        completionTokens: 100,
+        totalTokens: 1100,
+        cacheHitInputTokens: 800,
+        cacheMissInputTokens: 200,
+      },
     }), "utf-8");
     writeFileSync(join(myClawDir, "turn-telemetry.jsonl"), "{\"event\":\"turn\"}\n", "utf-8");
 
@@ -55,8 +62,8 @@ describe("model runtime scorecard script", () => {
       myClawDir: string;
       outcomeCount: number;
       telemetryCount: number;
-      scorecards: Array<{ providerFamily: string; sampleSize: number }>;
-      vendorProtocolScorecards: Array<{ vendorFamily: string; protocolTarget: string; sampleSize: number }>;
+      scorecards: Array<{ providerFamily: string; sampleSize: number; cacheHitRate?: number }>;
+      vendorProtocolScorecards: Array<{ vendorFamily: string; protocolTarget: string; sampleSize: number; cacheHitRate?: number }>;
     };
     expect(report.myClawDir).toBe(myClawDir);
     expect(report.outcomeCount).toBe(1);
@@ -65,6 +72,7 @@ describe("model runtime scorecard script", () => {
       expect.objectContaining({
         providerFamily: "generic-openai-compatible",
         sampleSize: 1,
+        cacheHitRate: 0.8,
       }),
     ]);
     expect(report.vendorProtocolScorecards).toEqual([
@@ -72,6 +80,7 @@ describe("model runtime scorecard script", () => {
         vendorFamily: "generic-openai-compatible",
         protocolTarget: "openai-chat-compatible",
         sampleSize: 1,
+        cacheHitRate: 0.8,
       }),
     ]);
   });

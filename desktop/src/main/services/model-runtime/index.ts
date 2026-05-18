@@ -4,6 +4,7 @@ export * from "./experience-profile-resolver";
 export * from "./family-policy-resolver";
 export * from "./prompt-composer";
 export * from "./provider-scorecard";
+export * from "./provider-cache-orchestrator";
 export * from "./role-model-router";
 export * from "./rollout-gates";
 export * from "./telemetry";

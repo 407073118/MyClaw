@@ -45,11 +45,17 @@ const mocks = vi.hoisted(() => {
   return {
     workspace,
     useWorkspaceStoreMock,
+    bufferStreamingDeltaMock: vi.fn(),
+    getCachedMarkdownMock: vi.fn((_id: string, content: string, renderMarkdown: (value: string) => string) => renderMarkdown(content)),
+    flushStreamingBufferNowMock: vi.fn(),
   };
 });
 
 vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
+  bufferStreamingDelta: mocks.bufferStreamingDeltaMock,
+  getCachedMarkdown: mocks.getCachedMarkdownMock,
+  flushStreamingBufferNow: mocks.flushStreamingBufferNowMock,
 }));
 
 // ChatPage 现在用 useNavigate/useSearchParams，但本测试用 render() 直接挂载组件，
@@ -57,6 +63,26 @@ vi.mock("../src/renderer/stores/workspace", () => ({
 vi.mock("react-router-dom", () => ({
   useNavigate: () => vi.fn(),
   useSearchParams: () => [new URLSearchParams(), vi.fn()] as const,
+}));
+
+// JSDOM 没有真实滚动视口，这里让虚拟列表稳定渲染全部消息，避免布局测量影响交互断言。
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count, estimateSize }: { count: number; estimateSize?: (index: number) => number }) => {
+    const items = Array.from({ length: count }, (_, index) => {
+      const size = estimateSize?.(index) ?? 120;
+      return {
+        index,
+        key: index,
+        start: index * size,
+        size,
+      };
+    });
+    return {
+      getTotalSize: () => items.reduce((sum, item) => sum + item.size, 0),
+      getVirtualItems: () => items,
+      measureElement: () => undefined,
+    };
+  },
 }));
 
 describe("ChatPage", () => {
@@ -80,6 +106,10 @@ describe("ChatPage", () => {
     mocks.workspace.setActiveSiliconPersonId.mockReset();
     mocks.workspace.dismissModelSwitchNotice.mockReset();
     mocks.workspace.resolveApproval.mockReset();
+    mocks.bufferStreamingDeltaMock.mockReset();
+    mocks.getCachedMarkdownMock.mockReset();
+    mocks.getCachedMarkdownMock.mockImplementation((_id: string, content: string, renderMarkdown: (value: string) => string) => renderMarkdown(content));
+    mocks.flushStreamingBufferNowMock.mockReset();
     mocks.workspace.modelSwitchNotice = null;
     mocks.workspace.approvalRequests.splice(0, mocks.workspace.approvalRequests.length);
     window.sessionStorage.clear();

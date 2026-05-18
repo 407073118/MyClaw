@@ -20,10 +20,13 @@ export const volcengineArkAdapter: ProviderAdapter = {
     if (context.reasoningEffort) {
       primaryBody["reasoning"] = { effort: context.reasoningEffort };
     }
-    primaryBody["stream_options"] = { include_usage: true };
+    const streamOptions = primaryBody["stream_options"] && typeof primaryBody["stream_options"] === "object"
+      ? primaryBody["stream_options"] as Record<string, unknown>
+      : {};
+    primaryBody["stream_options"] = { include_usage: true, ...streamOptions };
     console.info("[volcengine-ark-adapter] 已生成 Ark 增强请求，并准备兼容回退。");
 
-    const fallbackBody = omitBodyKeys(primaryBody, ["stream_options", "reasoning"]);
+    const fallbackBody = omitBodyKeys(primaryBody, ["reasoning"]);
     return [
       createRequestVariant("primary", primaryBody),
       createRequestVariant(

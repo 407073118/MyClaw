@@ -12,6 +12,7 @@ import type {
   Task,
 } from "@shared/contracts";
 import type { ChatMessage as ModelChatMessage, ResolvedToolCall } from "../model-client";
+import { sortPromptSectionsForCache } from "./prompt-composer";
 
 type LegacyMessageLike = Pick<
   ModelChatMessage,
@@ -178,7 +179,7 @@ function renderPromptSections(sections: PromptSection[]): string | null {
     return null;
   }
 
-  return sections
+  return sortPromptSectionsForCache(sections)
     .map((section) => section.title ? `# ${section.title}\n${section.content}` : section.content)
     .join("\n\n");
 }

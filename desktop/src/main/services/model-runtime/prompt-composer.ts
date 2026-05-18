@@ -21,8 +21,27 @@ function createSection(
   title: string,
   layer: PromptSection["layer"],
   content: string,
+  cacheTier: PromptSection["cacheTier"] = "stable-prefix",
 ): PromptSection {
-  return { id, title, layer, content };
+  return { id, title, layer, content, cacheTier };
+}
+
+const PROMPT_CACHE_TIER_ORDER: Record<NonNullable<PromptSection["cacheTier"]>, number> = {
+  "stable-prefix": 0,
+  "semi-stable": 1,
+  "volatile-tail": 2,
+};
+
+/** 按缓存分层稳定排序，确保动态尾部不会污染 provider 的前缀缓存。 */
+export function sortPromptSectionsForCache(sections: PromptSection[]): PromptSection[] {
+  return [...sections].sort((left, right) => {
+    const leftOrder = PROMPT_CACHE_TIER_ORDER[left.cacheTier ?? "stable-prefix"];
+    const rightOrder = PROMPT_CACHE_TIER_ORDER[right.cacheTier ?? "stable-prefix"];
+    if (leftOrder !== rightOrder) {
+      return leftOrder - rightOrder;
+    }
+    return 0;
+  });
 }
 
 function buildPersonalPromptContext(profile?: PersonalPromptProfile | null): string | null {
@@ -368,15 +387,23 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
   ));
 
   sections.push(createSection(
-    "environment",
+    "environment-runtime",
     "Environment",
     "environment",
     [
       `Working directory: ${input.workingDir}`,
       `Platform: ${process.platform} (${process.arch})`,
-      `Date: ${now.toISOString().split("T")[0]} ${now.toTimeString().split(" ")[0]}`,
       input.gitBranch ? `Git branch: ${input.gitBranch}` : null,
     ].filter((value): value is string => !!value).join("\n"),
+    "semi-stable",
+  ));
+
+  sections.push(createSection(
+    "environment-time",
+    "Current Time",
+    "environment",
+    `Date: ${now.toISOString().split("T")[0]} ${now.toTimeString().split(" ")[0]}`,
+    "volatile-tail",
   ));
 
   if (input.enrichedContextBlock) {
@@ -385,6 +412,7 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
       "Session Context",
       "context",
       input.enrichedContextBlock,
+      "volatile-tail",
     ));
   }
 
@@ -394,6 +422,7 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
       "Work Files",
       "context",
       input.artifactContextBlock,
+      "volatile-tail",
     ));
   }
 
@@ -403,6 +432,7 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
       "Meeting Context",
       "context",
       input.meetingContextBlock,
+      "volatile-tail",
     ));
   }
 
@@ -521,6 +551,7 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
       "User Profile",
       "other",
       personalPromptContext,
+      "semi-stable",
     ));
   }
 
@@ -531,9 +562,38 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
  * 将 canonical prompt sections 渲染成当前主链可消费的 system prompt 字符串。
  */
 export function renderPromptSections(sections: PromptSection[]): string {
-  return sections
+  return renderPromptSectionsByCacheTier(sections).fullText;
+}
+
+/** 分别渲染稳定前缀、半稳定前缀和动态尾部，供缓存 key 与协议请求复用。 */
+export function renderPromptSectionsByCacheTier(sections: PromptSection[]): {
+  stablePrefixText: string;
+  semiStableText: string;
+  volatileTailText: string;
+  fullText: string;
+} {
+  const sorted = sortPromptSectionsForCache(sections);
+  const render = (items: PromptSection[]): string => items
     .map((section) => `# ${section.title}\n${section.content}`)
     .join("\n\n");
+  const stableSections = sorted.filter((section) => (section.cacheTier ?? "stable-prefix") === "stable-prefix");
+  const semiStableSections = sorted.filter((section) => section.cacheTier === "semi-stable");
+  const volatileSections = sorted.filter((section) => section.cacheTier === "volatile-tail");
+
+  if (volatileSections.length > 0) {
+    console.info("[prompt-composer] 已将动态上下文移动到缓存尾部", {
+      stableSectionCount: stableSections.length,
+      semiStableSectionCount: semiStableSections.length,
+      volatileSectionCount: volatileSections.length,
+    });
+  }
+
+  return {
+    stablePrefixText: render(stableSections).trim(),
+    semiStableText: render(semiStableSections).trim(),
+    volatileTailText: render(volatileSections).trim(),
+    fullText: render(sorted).trim(),
+  };
 }
 
 /**

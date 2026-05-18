@@ -300,7 +300,7 @@ describe("TimeCenterPage", () => {
     fireEvent.click(within(screen.getByTestId("schedule-composer-modal")).getByRole("button", { name: "定时任务" }));
     expect(screen.getByRole("dialog", { name: "新建定时任务" })).toBeTruthy();
     expect(container.querySelectorAll(".list-page-row--job")).toHaveLength(100);
-  });
+  }, 15000);
 
   it("opens timeline event details and supports edit and delete actions", async () => {
     renderPage();

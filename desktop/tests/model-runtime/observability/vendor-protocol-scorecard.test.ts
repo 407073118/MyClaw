@@ -63,4 +63,33 @@ describe("vendor protocol scorecard", () => {
       }),
     ]);
   });
+
+  it("adds route scores only after enough cache samples exist", () => {
+    const outcomes: TurnOutcome[] = Array.from({ length: 3 }, (_, index) => ({
+      id: `deepseek-${index}`,
+      providerFamily: "deepseek",
+      vendorFamily: "deepseek",
+      protocolTarget: "openai-chat-compatible",
+      modelProfileId: "profile-deepseek",
+      experienceProfileId: "balanced",
+      retryCount: 0,
+      toolCompileMode: "openai-compatible-conservative",
+      replayMode: "none",
+      startedAt: "2026-05-16T00:00:00.000Z",
+      finishedAt: "2026-05-16T00:00:01.000Z",
+      success: true,
+      latencyMs: 100,
+      usage: {
+        promptTokens: 1000,
+        completionTokens: 100,
+        totalTokens: 1100,
+        cacheHitInputTokens: 800,
+        cacheMissInputTokens: 200,
+      },
+    }));
+
+    const [scorecard] = buildVendorProtocolScorecards(outcomes);
+    expect(scorecard.cacheHitRate).toBeCloseTo(0.8);
+    expect(scorecard.routeScore).toBeGreaterThan(0.7);
+  });
 });

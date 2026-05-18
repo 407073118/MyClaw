@@ -20,6 +20,8 @@ import {
   buildCanonicalTurnContent,
   canonicalTurnContentToLegacyMessages,
 } from "./canonical-turn-content";
+import { buildPromptCacheKey, hashCacheStableValue } from "./provider-cache-orchestrator";
+import { renderPromptSectionsByCacheTier } from "./prompt-composer";
 import { resolveProtocolDriver, type ProtocolExecutionOutput } from "./protocols";
 import type { ProviderRolloutFlags, VendorProtocolRolloutFlags } from "./rollout-gates";
 import { resolveEffectiveExecutionRolloutGate } from "./rollout-gates";
@@ -205,6 +207,7 @@ function buildOutcome(input: {
   plan: TurnExecutionPlan;
   profile: ModelProfile;
   result: ProtocolExecutionOutput;
+  content: CanonicalTurnContent;
   latencyMs: number;
   sessionId?: string | null;
   workflowRunId?: string | null;
@@ -214,6 +217,11 @@ function buildOutcome(input: {
   fallbackEvents: TurnFallbackEvent[];
   actualExecutionPath: TurnActualExecutionPath;
 }): TurnOutcome {
+  const cachePlan = buildOutcomeCachePlanSnapshot({
+    content: input.content,
+    profile: input.profile,
+    toolBundle: input.toolBundle,
+  });
   const outcome: TurnOutcome = {
     id: input.outcomeId,
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -247,6 +255,9 @@ function buildOutcome(input: {
     usage: input.result.usage,
     responseId: input.result.responseId ?? null,
     actualExecutionPath: input.actualExecutionPath,
+    stablePrefixHash: cachePlan.stablePrefixHash,
+    toolBundleHash: cachePlan.toolBundleHash,
+    promptCacheKey: cachePlan.promptCacheKey,
     toolCallCount: input.result.toolCalls.length,
     toolSuccessCount: 0,
     contextStability: (input.result.fallbackEvents?.length ?? 0) === 0 && !input.result.fallbackReason,
@@ -264,6 +275,35 @@ function buildOutcome(input: {
   });
 
   return outcome;
+}
+
+/** 生成 outcome 中的缓存计划快照，方便事后核对缓存是否因为前缀或工具变化失效。 */
+function buildOutcomeCachePlanSnapshot(input: {
+  content: CanonicalTurnContent;
+  profile: ModelProfile;
+  toolBundle: CompiledToolBundle;
+}): {
+  stablePrefixHash: string;
+  toolBundleHash: string;
+  promptCacheKey: string;
+} {
+  const rendered = renderPromptSectionsByCacheTier(input.content.systemSections);
+  const stablePrefixHash = hashCacheStableValue(rendered.stablePrefixText);
+  const toolBundleHash = input.toolBundle.toolBundleHash ?? hashCacheStableValue(input.toolBundle.tools);
+  const promptCacheKey = buildPromptCacheKey({
+    profileId: input.profile.id,
+    stablePrefixHash,
+    toolBundleHash,
+  });
+
+  console.info("[execution-gateway] 已记录模型缓存计划快照", {
+    profileId: input.profile.id,
+    stablePrefixHash,
+    toolBundleHash,
+    promptCacheKey,
+  });
+
+  return { stablePrefixHash, toolBundleHash, promptCacheKey };
 }
 
 /** 创建共享执行网关：先收敛 legacy shim，再承接 canonical plan / family / protocol 层。 */
@@ -383,6 +423,7 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
         plan,
         profile: input.profile,
         result,
+        content: canonicalContent,
         latencyMs,
         sessionId: input.sessionId,
         workflowRunId: input.workflowRunId,

@@ -75,6 +75,22 @@ describe("Phase 2 session persistence", () => {
           content: "persist this session",
           createdAt: "2026-04-06T00:00:01.000Z",
         },
+        {
+          id: "message-2",
+          role: "assistant",
+          content: "persisted",
+          createdAt: "2026-04-06T00:00:02.000Z",
+          usage: {
+            promptTokens: 1000,
+            completionTokens: 100,
+            totalTokens: 1100,
+            cacheHitInputTokens: 700,
+            cacheMissInputTokens: 300,
+            rawProviderUsage: {
+              prompt_cache_hit_tokens: 700,
+            },
+          },
+        },
       ],
     };
 
@@ -100,6 +116,13 @@ describe("Phase 2 session persistence", () => {
       },
     });
     expect(persisted.sessions[0].messages).toEqual(session.messages);
+    expect(persisted.sessions[0].messages.at(-1)?.usage).toMatchObject({
+      cacheHitInputTokens: 700,
+      cacheMissInputTokens: 300,
+      rawProviderUsage: {
+        prompt_cache_hit_tokens: 700,
+      },
+    });
   });
 
   it("keeps older persisted sessions loadable when phase 2 metadata is absent", async () => {

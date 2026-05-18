@@ -5,25 +5,46 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  createBrMiniMaxProfile,
-  withBrMiniMaxRuntimeDiagnostics,
-} from "@shared/br-minimax";
-
 const mocks = vi.hoisted(() => {
   const workspace = {
     models: [
-      withBrMiniMaxRuntimeDiagnostics(
-        createBrMiniMaxProfile({
-          id: "br-profile",
-          apiKey: "br-key",
-        }),
-        {
+      {
+        id: "br-profile",
+        name: "BR MiniMax",
+        provider: "openai-compatible",
+        providerFlavor: "br-minimax",
+        vendorFamily: "minimax",
+        deploymentProfile: "br-private",
+        baseUrl: "http://api-cybotforge-pre.brapp.com",
+        baseUrlMode: "provider-root",
+        apiKey: "br-key",
+        model: "minimax-m2-5",
+        headers: {},
+        requestBody: {
+          temperature: 1.0,
+          top_p: 0.95,
+          top_k: 40,
+          chat_template_kwargs: {
+            enable_thinking: true,
+          },
+        },
+        discoveredCapabilities: {
+          source: "provider-detail",
+          lastValidatedAt: "2026-04-04T12:00:00.000Z",
+          raw: {
+            brMiniMaxRuntime: {
+              reasoningSplitSupported: false,
+              thinkingPath: "reasoning_content",
+              lastCheckedAt: "2026-04-04T12:00:00.000Z",
+            },
+          },
+        },
+        runtimeDiagnostics: {
           reasoningSplitSupported: false,
           thinkingPath: "reasoning_content",
           lastCheckedAt: "2026-04-04T12:00:00.000Z",
         },
-      ),
+      },
     ],
     deleteModelProfile: vi.fn(),
     createModelProfile: vi.fn(),
@@ -74,7 +95,7 @@ describe("ModelDetailPage BR MiniMax diagnostics", () => {
     );
 
     expect(screen.getByText("托管参数")).toBeTruthy();
-    expect(screen.getByText(/Thinking 路径：/)).toBeTruthy();
+    expect(screen.getByText("Thinking 路径")).toBeTruthy();
     expect(screen.getByText(/reasoning_content/)).toBeTruthy();
     expect(screen.getByText(/已验证/)).toBeTruthy();
   });

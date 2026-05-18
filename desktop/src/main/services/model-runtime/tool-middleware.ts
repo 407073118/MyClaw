@@ -7,12 +7,14 @@ import type {
 } from "@shared/contracts";
 
 import { resolveToolCompileMode } from "./turn-execution-plan-resolver";
+import { hashCacheStableValue } from "./provider-cache-orchestrator";
 
 export type CompiledToolBundle = {
   target: ProviderFamily;
   compileMode: string;
   tools: unknown[];
   registry: CanonicalToolSpec[];
+  toolBundleHash?: string;
 };
 
 export type NativeFileSearchConfig = {
@@ -32,13 +34,18 @@ export class ToolMiddleware {
   /** 按 provider family 编译工具定义，输出协议需要的 wire shape。 */
   compile(specs: CanonicalToolSpec[], target: ProviderFamily): CompiledToolBundle {
     const compileMode = resolveToolCompileMode(target);
+    const stableSpecs = [...specs].sort((left, right) => {
+      const leftKey = `${left.source}:${left.id}:${left.name}:${left.description}`;
+      const rightKey = `${right.source}:${right.id}:${right.name}:${right.description}`;
+      return leftKey.localeCompare(rightKey);
+    });
     const tools = target === "anthropic-native"
-      ? specs.map((spec) => ({
+      ? stableSpecs.map((spec) => ({
           name: spec.name,
           description: spec.description,
           input_schema: ensureSchema(spec.parameters),
         }))
-      : specs.map((spec) => ({
+      : stableSpecs.map((spec) => ({
           type: "function",
           function: {
             name: spec.name,
@@ -48,12 +55,21 @@ export class ToolMiddleware {
               : ensureSchema(spec.parameters),
           },
         }));
+    const toolBundleHash = hashCacheStableValue(tools);
+    console.info("[tool-middleware] 已生成稳定工具缓存签名", {
+      target,
+      compileMode,
+      toolCount: tools.length,
+      toolBundleHash,
+      sorted: specs.length > 1,
+    });
 
     return {
       target,
       compileMode,
       tools,
       registry: specs,
+      toolBundleHash,
     };
   }
 

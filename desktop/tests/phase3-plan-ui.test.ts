@@ -77,6 +77,9 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
+  bufferStreamingDelta: vi.fn(),
+  getCachedMarkdown: (_messageId: string, content: string, renderer: (value: string) => string) => renderer(content),
+  flushStreamingBufferNow: vi.fn(),
 }));
 
 vi.mock("react-router-dom", () => ({

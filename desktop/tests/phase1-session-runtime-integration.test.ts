@@ -417,4 +417,91 @@ describe("phase1 session runtime integration", () => {
     });
   });
 
+  it("preserves cache-aware usage on assistant messages returned from execution gateway", async () => {
+    const { registerSessionHandlers } = await import("../src/main/ipc/sessions");
+    const ctx = buildContext();
+    resolveSessionRuntimeIntentMock.mockReturnValue({
+      reasoningMode: "auto",
+      reasoningEnabled: true,
+      reasoningEffort: "medium",
+      adapterHint: "auto",
+      replayPolicy: "assistant-turn",
+      toolStrategy: "auto",
+    });
+    resolveModelCapabilityMock.mockReturnValue({
+      effective: {
+        supportsReasoning: true,
+        source: "registry",
+      },
+    });
+    assembleContextMock.mockReturnValue({
+      messages: [{ role: "user", content: "hello" }],
+      budgetUsed: 1,
+      wasCompacted: false,
+      compactionReason: null,
+      removedCount: 0,
+    });
+    buildExecutionPlanMock.mockReturnValue({
+      runtimeVersion: 1,
+      adapterId: "br-minimax",
+      adapterSelectionSource: "profile",
+      reasoningMode: "auto",
+      reasoningEffort: "medium",
+      replayPolicy: "assistant-turn",
+      fallbackAdapterIds: [],
+      planSource: "profile",
+      degradationReason: null,
+    });
+    executeTurnMock.mockResolvedValue({
+      content: "done",
+      toolCalls: [],
+      finishReason: "stop",
+      reasoning: null,
+      citations: [],
+      capabilityEvents: [],
+      computerCalls: [],
+      backgroundTask: null,
+      usage: {
+        promptTokens: 1000,
+        completionTokens: 100,
+        totalTokens: 1100,
+        cacheHitInputTokens: 700,
+        cacheMissInputTokens: 300,
+        cacheEfficiency: 0.7,
+      },
+      plan: { providerFamily: "br-minimax", protocolTarget: "openai-chat-compatible" },
+      providerFamily: "br-minimax",
+      protocolTarget: "openai-chat-compatible",
+      capabilityRoutes: [],
+      actualExecutionPath: "canonical-driver",
+      toolBundle: { specs: [] },
+      latencyMs: 100,
+      outcome: { id: "outcome-cache", finishReason: "stop" },
+      outcomeId: "outcome-cache",
+      requestShape: {},
+    });
+
+    registerSessionHandlers(ctx);
+    const createHandler = ipcHandleRegistry.get("session:create");
+    const sendHandler = ipcHandleRegistry.get("session:send-message");
+    const created = await createHandler?.({}, { title: "Cache Usage" }) as {
+      session: { id: string };
+    };
+    const response = await sendHandler?.({}, created.session.id, { content: "hello" }) as {
+      session: { messages: Array<{ role: string; usage?: Record<string, unknown> }> };
+    };
+
+    expect(response.session.messages.at(-1)).toMatchObject({
+      role: "assistant",
+      usage: {
+        promptTokens: 1000,
+        completionTokens: 100,
+        totalTokens: 1100,
+        cacheHitInputTokens: 700,
+        cacheMissInputTokens: 300,
+        cacheEfficiency: 0.7,
+      },
+    });
+  });
+
 });

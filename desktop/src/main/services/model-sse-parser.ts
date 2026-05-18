@@ -1,9 +1,8 @@
+import type { TurnOutcomeUsage } from "@shared/contracts";
+import { normalizeProviderCacheUsage } from "./model-runtime/provider-cache-orchestrator";
+
 /** SSE 解析阶段输出的 Token 用量。 */
-export type ParsedTokenUsage = {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-};
+export type ParsedTokenUsage = TurnOutcomeUsage;
 
 /** SSE 累积完成后得到的完整工具调用对象。 */
 export type ParsedToolCall = {
@@ -27,6 +26,12 @@ type SseState = {
   usage: ParsedTokenUsage | null;
   /** 是否收到了 [DONE] 信号或有效的 finish_reason，标记流正常结束。 */
   streamCompleted: boolean;
+};
+
+type UsageParseContext = {
+  providerFamily?: string | null;
+  vendorFamily?: string | null;
+  source?: string | null;
 };
 
 /** 为指定 index 准备工具调用累积器，确保并行工具调用可以稳定拼装。 */
@@ -84,6 +89,7 @@ function applySseChunk(
   state: SseState,
   onDelta?: (delta: { content?: string; reasoning?: string }) => void,
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void,
+  usageContext?: UsageParseContext,
 ): void {
   if (!payload || typeof payload !== "object") return;
 
@@ -173,10 +179,17 @@ function applySseChunk(
   const rawUsage = (payload as Record<string, unknown>)["usage"];
   if (rawUsage && typeof rawUsage === "object") {
     const usage = rawUsage as Record<string, unknown>;
-    state.usage = {
+    state.usage = normalizeProviderCacheUsage(
+      usageContext?.vendorFamily
+        ?? usageContext?.providerFamily
+        ?? usageContext?.source
+        ?? "generic-openai-compatible",
+      usage,
+    ) ?? {
       promptTokens: Number(usage["prompt_tokens"] ?? usage["input_tokens"] ?? 0),
       completionTokens: Number(usage["completion_tokens"] ?? usage["output_tokens"] ?? 0),
       totalTokens: Number(usage["total_tokens"] ?? 0),
+      rawProviderUsage: usage,
     };
     if (state.usage.totalTokens === 0) {
       state.usage.totalTokens = state.usage.promptTokens + state.usage.completionTokens;
@@ -264,6 +277,7 @@ export async function consumeSseStream(
   response: Response,
   onDelta?: (delta: { content?: string; reasoning?: string }) => void,
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void,
+  usageContext?: UsageParseContext,
 ): Promise<{
   content: string;
   reasoning: string;
@@ -291,7 +305,7 @@ export async function consumeSseStream(
       if (!payload) continue;
       if (payload === "[DONE]") { state.streamCompleted = true; continue; }
       const parsed = tryParseJson(payload);
-      if (parsed !== null) applySseChunk(parsed, state, onDelta, onToolCallDelta);
+      if (parsed !== null) applySseChunk(parsed, state, onDelta, onToolCallDelta, usageContext);
     }
     // finish_reason 存在也视为正常完成（部分 provider 不发 [DONE]）
     if (state.finishReason) state.streamCompleted = true;
@@ -310,7 +324,7 @@ export async function consumeSseStream(
     if (!payload) return;
     if (payload === "[DONE]") { state.streamCompleted = true; return; }
     const parsed = tryParseJson(payload);
-    if (parsed !== null) applySseChunk(parsed, state, onDelta, onToolCallDelta);
+    if (parsed !== null) applySseChunk(parsed, state, onDelta, onToolCallDelta, usageContext);
   };
 
   while (true) {

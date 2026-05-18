@@ -149,6 +149,23 @@ describe("deepseek adapter V4 thinking request", () => {
     });
   });
 
+  it("adds usage streaming but never sends Anthropic cache_control on the compatible route", () => {
+    const adapter = getProviderAdapter("deepseek");
+    const profile = makeDeepSeekProfile({ model: "deepseek-chat" });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEnabled: true, reasoningEffort: "high" },
+      { messages: [{ role: "user", content: "hi" }] },
+    );
+
+    expect(variants[0]?.body).toMatchObject({
+      stream_options: {
+        include_usage: true,
+      },
+    });
+    expect(JSON.stringify(variants[0]?.body)).not.toContain("cache_control");
+  });
+
   it("deepseek-v4-flash: disables thinking when the execution plan turns reasoning off", () => {
     const adapter = getProviderAdapter("deepseek");
     const profile = makeDeepSeekProfile({ model: "deepseek-v4-flash" });

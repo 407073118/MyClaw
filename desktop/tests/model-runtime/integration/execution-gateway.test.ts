@@ -142,6 +142,11 @@ describe("execution gateway", () => {
 
     expect(result.plan.providerFamily).toBe("generic-openai-compatible");
     expect(result.outcome.sessionId).toBe("session-1");
+    expect(result.outcome.stablePrefixHash).toMatch(/^[a-f0-9]{24}$/);
+    expect(result.outcome.toolBundleHash).toMatch(/^[a-f0-9]{24}$/);
+    expect(result.outcome.promptCacheKey).toBe(`myclaw:profile-1:${result.outcome.stablePrefixHash}:${result.outcome.toolBundleHash}`);
+    expect(result.outcome.telemetry?.stablePrefixHash).toBe(result.outcome.stablePrefixHash);
+    expect(result.outcome.telemetry?.promptCacheKey).toBe(result.outcome.promptCacheKey);
     expect(result.actualExecutionPath).toBe("legacy-shim");
     expect(result.requestShape).toMatchObject({
       model: "gpt-4.1-mini",

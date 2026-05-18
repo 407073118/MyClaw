@@ -29,6 +29,10 @@ export function buildTurnTelemetryEvent(input: {
     nativeToolStackId: input.outcome.nativeToolStackId ?? null,
     toolStackSource: input.outcome.toolStackSource ?? "none",
     actualExecutionPath: input.outcome.actualExecutionPath,
+    stablePrefixHash: input.outcome.stablePrefixHash,
+    toolBundleHash: input.outcome.toolBundleHash,
+    promptCacheKey: input.outcome.promptCacheKey ?? null,
+    cacheEfficiency: input.outcome.usage?.cacheEfficiency,
     fallbackEvents,
     createdAt: input.outcome.finishedAt,
   };

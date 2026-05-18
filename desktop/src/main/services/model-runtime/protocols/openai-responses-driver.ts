@@ -15,6 +15,12 @@ import { canonicalTurnContentToLegacyMessages } from "../canonical-turn-content"
 import { normalizeVendorCitation } from "../citation-normalizer";
 import { normalizeVendorTraceEvent } from "../trace-normalizer";
 import { resolveNativeFileSearchConfig } from "../tool-middleware";
+import {
+  buildPromptCacheKey,
+  hashCacheStableValue,
+  normalizeProviderCacheUsage,
+} from "../provider-cache-orchestrator";
+import { renderPromptSectionsByCacheTier } from "../prompt-composer";
 import type { ProtocolDriver, ProtocolExecutionOutput } from "./shared";
 import { buildCanonicalRequestMessages, buildLegacyShimTransportMetadata } from "./shared";
 
@@ -598,6 +604,8 @@ export function buildOpenAiResponsesRequestBody(
       maxNumResults?: number;
       includeSearchResults?: boolean;
     } | null;
+    promptCacheKey?: string | null;
+    promptCacheRetention?: "in_memory" | "24h" | null;
     backgroundMode?: {
       enabled: boolean;
       reason: string;
@@ -654,9 +662,30 @@ export function buildOpenAiResponsesRequestBody(
     ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     ...(store !== undefined ? { store } : {}),
     ...(options?.previousResponseId ? { previous_response_id: options.previousResponseId } : {}),
+    ...(options?.promptCacheKey ? { prompt_cache_key: options.promptCacheKey } : {}),
+    ...(options?.promptCacheRetention ? { prompt_cache_retention: options.promptCacheRetention } : {}),
     ...(options?.nativeFileSearch?.includeSearchResults ? { include: ["output[*].file_search_call.search_results"] } : {}),
     ...(instructions ? { instructions } : {}),
   };
+}
+
+/** 根据 canonical prompt 稳定前缀和工具定义构造 Responses 缓存 key。 */
+function buildResponsesPromptCacheKey(input: Parameters<NonNullable<ProtocolDriver["buildRequestBody"]>>[0]): string {
+  const rendered = renderPromptSectionsByCacheTier(input.content.systemSections);
+  const stablePrefixHash = hashCacheStableValue(rendered.stablePrefixText);
+  const toolBundleHash = input.toolBundle.toolBundleHash ?? hashCacheStableValue(input.toolBundle.tools);
+  const promptCacheKey = buildPromptCacheKey({
+    profileId: input.profile.id,
+    stablePrefixHash,
+    toolBundleHash,
+  });
+  console.info("[openai-responses-driver] 已构造 Responses prompt cache key", {
+    profileId: input.profile.id,
+    stablePrefixHash,
+    toolBundleHash,
+    promptCacheKey,
+  });
+  return promptCacheKey;
 }
 
 /** 解析后台 JSON 响应，抽取统一的长任务句柄与 capability 事件。 */
@@ -842,21 +871,7 @@ function applyResponsesEvent(
         ? "computer_calls"
         : "stop";
     if (usage) {
-      const promptTokens = Number(usage.input_tokens ?? 0);
-      const completionTokens = Number(usage.output_tokens ?? 0);
-      state.usage = {
-        promptTokens,
-        completionTokens,
-        totalTokens: Number(usage.total_tokens ?? (promptTokens + completionTokens)),
-        ...(usage.reasoning_tokens !== undefined
-          ? { reasoningTokens: Number(usage.reasoning_tokens ?? 0) }
-          : {}),
-        ...(usage.input_tokens_details
-          && typeof usage.input_tokens_details === "object"
-          && (usage.input_tokens_details as Record<string, unknown>).cached_tokens !== undefined
-          ? { cachedInputTokens: Number((usage.input_tokens_details as Record<string, unknown>).cached_tokens ?? 0) }
-          : {}),
-      };
+      state.usage = normalizeProviderCacheUsage(vendor ?? "openai", usage);
     }
 
     const completedOutputItems = Array.isArray(payload.output)
@@ -1012,6 +1027,8 @@ export const openAiResponsesDriver: ProtocolDriver = {
         toolRegistry: input.toolBundle.registry,
         rawInputItems: input.responseInputItems ?? null,
         nativeFileSearch: resolveNativeFileSearchConfig(input.profile),
+        promptCacheKey: input.plan.providerFamily === "qwen-native" ? null : buildResponsesPromptCacheKey(input),
+        promptCacheRetention: input.profile.responsesApiConfig?.useServerState === false ? "in_memory" : "24h",
         backgroundMode,
       },
     );
@@ -1066,6 +1083,8 @@ export const openAiResponsesDriver: ProtocolDriver = {
         toolRegistry: input.toolBundle.registry,
         rawInputItems: input.responseInputItems ?? null,
         nativeFileSearch: resolveNativeFileSearchConfig(input.profile),
+        promptCacheKey: input.plan.providerFamily === "qwen-native" ? null : buildResponsesPromptCacheKey(input),
+        promptCacheRetention: input.profile.responsesApiConfig?.useServerState === false ? "in_memory" : "24h",
         backgroundMode: resolveBackgroundModePolicy({
           profile: input.profile,
           protocolTarget: input.plan.protocolTarget,
