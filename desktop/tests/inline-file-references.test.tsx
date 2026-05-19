@@ -5,7 +5,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import InlineFileReferenceContent from "../src/renderer/components/InlineFileReferenceContent";
-import { findInlineFileReferences } from "../src/renderer/utils/inline-file-references";
+import {
+  findInlineFileCandidateBaseDirectories,
+  findInlineFileReferences,
+} from "../src/renderer/utils/inline-file-references";
 
 describe("inline file references", () => {
   beforeEach(() => {
@@ -41,6 +44,14 @@ describe("inline file references", () => {
     ]);
   });
 
+  it("extracts absolute directories from the same message as preview candidates", () => {
+    const dirs = findInlineFileCandidateBaseDirectories(
+      "E:\\skill 文件夹内容如下：Skill表单开发规范.md；另见 https://example.test/remote.md",
+    );
+
+    expect(dirs).toEqual(["E:\\skill"]);
+  });
+
   it("turns message text file names into preview buttons", async () => {
     const openWebPanel = vi.fn();
 
@@ -68,6 +79,24 @@ describe("inline file references", () => {
         title: "README.md",
         data: { panelKind: "file-viewer" },
       });
+    });
+  });
+
+  it("passes directories mentioned in the same message when opening bare file names", async () => {
+    render(
+      <InlineFileReferenceContent
+        className="message-content"
+        html={"<p><code>E:\\skill</code> 文件夹内容如下：</p><p>Skill表单开发规范.md</p>"}
+        baseDirectory="F:/MyClaw"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Skill表单开发规范.md" }));
+
+    expect(window.myClawAPI.fileViewerPreview).toHaveBeenCalledWith({
+      path: "Skill表单开发规范.md",
+      baseDirectory: "F:/MyClaw",
+      candidateBaseDirectories: ["E:\\skill"],
     });
   });
 

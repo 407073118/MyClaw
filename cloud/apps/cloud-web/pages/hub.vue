@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { DownloadTokenResponse, HubItem, HubItemDetail, HubItemType } from "@myclaw-cloud/shared";
+import type { DownloadTokenResponse, HubItem, HubItemDetail, HubItemType, ProjectSummary } from "@myclaw-cloud/shared";
 
 type HubFilterType = "all" | HubItemType;
 
@@ -31,7 +31,12 @@ const { data, pending } = useLazyFetch<{ items: HubItem[] }>("/api/hub/items", {
   watch: [query]
 });
 
+const { data: projectsData } = useLazyFetch<{ items: ProjectSummary[] }>("/api/projects", {
+  default: () => ({ items: [] })
+});
+
 const items = computed(() => data.value.items);
+const projectCount = computed(() => projectsData.value.items.length);
 
 watchEffect(() => {
   if (!items.value.some((item) => item.id === selectedItemId.value)) {
@@ -96,7 +101,7 @@ useHead({
         <div>
           <p class="eyebrow">Hub</p>
           <h1>云端资源总览</h1>
-          <p class="summary">统一查看 MCP、员工包和工作流包。</p>
+          <p class="summary">统一查看 MCP、员工包、工作流包和项目接入。</p>
         </div>
         <div class="stats-grid">
           <div class="stat-card">
@@ -111,6 +116,10 @@ useHead({
             <span class="stat-label">工作流包</span>
             <strong>{{ workflowPackageCount }}</strong>
           </div>
+          <NuxtLink class="stat-card project-stat" to="/projects">
+            <span class="stat-label">项目</span>
+            <strong>{{ projectCount }}</strong>
+          </NuxtLink>
         </div>
       </header>
 
@@ -128,6 +137,7 @@ useHead({
               >
                 {{ HUB_TYPE_LABELS[type] }}
               </button>
+              <NuxtLink class="filter-pill filter-link" to="/projects">项目</NuxtLink>
             </div>
           </div>
 
@@ -236,7 +246,7 @@ useHead({
 
 .stats-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
 }
 
@@ -254,6 +264,19 @@ useHead({
   display: flex;
   flex-direction: column;
   gap: 8px;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.2s, background 0.2s, transform 0.2s;
+}
+
+.stat-card:hover {
+  border-color: rgba(var(--nuxt-green-rgb), 0.35);
+  background: rgba(var(--nuxt-green-rgb), 0.08);
+  transform: translateY(-1px);
+}
+
+.project-stat {
+  border-color: rgba(var(--nuxt-green-rgb), 0.24);
 }
 
 .hub-body {
@@ -301,6 +324,13 @@ useHead({
   color: var(--text-dim);
   border-radius: 999px;
   padding: 8px 12px;
+  font: inherit;
+}
+
+.filter-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
 }
 
 .filter-pill.active,

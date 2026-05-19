@@ -14,6 +14,7 @@ import type {
   AuthLoginRequest,
   AvailabilityPolicy,
   CalendarEvent,
+  CloudProjectBinding,
   ExecutionRun,
   MeetingEvent,
   MeetingRecord,
@@ -38,6 +39,8 @@ import type {
   McpServerConfig,
   ModelProfile,
   PersonalPromptProfile,
+  ProjectCapabilityDetail,
+  ProjectCapabilityLocalState,
   Reminder,
   ScheduleJob,
   SuggestedTimebox,
@@ -210,11 +213,48 @@ const myClawAPI = {
       ipcRenderer.invoke("cloud:auth-introspect", accessToken),
   },
 
+  // ---- 项目能力 ------------------------------------------------------------
+  projects: {
+    /** 列出本机已绑定项目。 */
+    listLocal: () =>
+      ipcRenderer.invoke("projects:list-local") as Promise<{ items: CloudProjectBinding[] }>,
+    /** 读取项目能力详情。 */
+    getDetail: (localProjectId: string) =>
+      ipcRenderer.invoke("projects:get-detail", localProjectId) as Promise<ProjectCapabilityDetail>,
+    /** 绑定当前会话到项目。 */
+    bindSession: (input: { sessionId: string; localProjectId: string | null }) =>
+      ipcRenderer.invoke("projects:bind-session", input) as Promise<{ ok: boolean; localProjectId: string | null }>,
+    /** 查询会话当前绑定的项目。 */
+    getSessionBinding: (sessionId: string) =>
+      ipcRenderer.invoke("projects:get-session-binding", sessionId) as Promise<{ localProjectId: string | null }>,
+    /** 设置项目能力本地状态。 */
+    setCapabilityState: (input: { capabilityRefId: string; localState: ProjectCapabilityLocalState }) =>
+      ipcRenderer.invoke("projects:set-capability-state", input) as Promise<ProjectCapabilityDetail>,
+    /** 绑定 Cloud 项目并同步到本地。 */
+    bindCloudProject: (input: { cloudProjectId: string; sessionId?: string; accessToken?: string; accountId?: string }) =>
+      ipcRenderer.invoke("projects:bind-cloud-project", input) as Promise<ProjectCapabilityDetail>,
+    /** 手动同步本地绑定项目。 */
+    sync: (input: { localProjectId: string; accessToken?: string; accountId?: string }) =>
+      ipcRenderer.invoke("projects:sync", input) as Promise<ProjectCapabilityDetail>,
+    /** 安装项目能力工件。 */
+    installCapability: (input: { capabilityRefId: string }) =>
+      ipcRenderer.invoke("projects:install-capability", input) as Promise<{ installation: unknown }>,
+    /** 本地确认项目 MCP 暴露策略。 */
+    confirmMcpCapability: (input: {
+      capabilityRefId: string;
+      localConfirmed: boolean;
+      secretsConfigured: boolean;
+      allowExposeToModel: boolean;
+    }) => ipcRenderer.invoke("projects:confirm-mcp-capability", input) as Promise<ProjectCapabilityDetail>,
+  },
+
   // ---- 会话 ----------------------------------------------------------------
   createSession: (data?: { title?: string; modelProfileId?: string; attachedDirectory?: string | null }) =>
     ipcRenderer.invoke("session:create", data ?? {}),
 
   deleteSession: (id: string) => ipcRenderer.invoke("session:delete", id),
+
+  taskResume: (input: unknown) => ipcRenderer.invoke("task:resume", input),
 
   sendMessage: (
     sessionId: string,
@@ -257,6 +297,12 @@ const myClawAPI = {
 
   listRecentArtifacts: (input?: { limit?: number }) =>
     ipcRenderer.invoke("artifact:list-recent", input ?? {}) as Promise<ArtifactRecord[]>,
+
+  updateArtifactsRootPath: (path: string) =>
+    ipcRenderer.invoke("artifact:update-root", { path }) as Promise<{ artifactsRootPath: string }>,
+
+  openLocalDirectory: (path: string) =>
+    ipcRenderer.invoke("artifact:open-local-directory", { path }) as Promise<{ success: boolean }>,
 
   markArtifactFinal: (artifactId: string, scope?: ArtifactScopeRef) =>
     ipcRenderer.invoke("artifact:mark-final", artifactId, scope ?? null) as Promise<ArtifactRecord>,
@@ -336,19 +382,17 @@ const myClawAPI = {
     toolId: string,
     input: { enabled: boolean; exposedToModel: boolean; approvalModeOverride: unknown },
   ) => ipcRenderer.invoke("tool:update-builtin-pref", toolId, input)
-    .then((tool: unknown) => ({ tool }))
-    .catch(() => ({ tool: { id: toolId, ...input } })),
+    .then((tool: unknown) => ({ tool })),
 
   // ---- MCP 工具 ------------------------------------------------------------
   fetchMcpTools: () =>
-    ipcRenderer.invoke("tool:list-mcp").then((items: unknown[]) => ({ items })).catch(() => ({ items: [] })),
+    ipcRenderer.invoke("tool:list-mcp").then((items: unknown[]) => ({ items })),
 
   updateMcpToolPreference: (
     toolId: string,
     input: { enabled: boolean; exposedToModel: boolean; approvalModeOverride: unknown },
   ) => ipcRenderer.invoke("tool:update-mcp-pref", toolId, input)
-    .then((tool: unknown) => ({ tool }))
-    .catch(() => ({ tool: { id: toolId, ...input } })),
+    .then((tool: unknown) => ({ tool })),
 
   executeBuiltinTool: (input: {
     toolId: string;
@@ -482,11 +526,14 @@ const myClawAPI = {
 
   fetchCloudSkillDetail: (skillId: string) => ipcRenderer.invoke("cloud:skill-detail", skillId),
 
+  // ---- 云端项目 ------------------------------------------------------------
+  fetchCloudProjects: () => ipcRenderer.invoke("cloud:projects"),
+
   // ---- 云端导入 ------------------------------------------------------------
-  importCloudSkill: (input: { releaseId: string; skillName: string }) =>
+  importCloudSkill: (input: { releaseId: string; skillName: string; siliconPersonId?: string }) =>
     ipcRenderer.invoke("cloud:import-skill", input),
 
-  importCloudMcp: (input: { releaseId?: string; servers?: McpServerConfig[]; manifest?: unknown }) =>
+  importCloudMcp: (input: { releaseId?: string; servers?: McpServerConfig[]; manifest?: unknown; siliconPersonId?: string }) =>
     ipcRenderer.invoke("cloud:import-mcp", input),
 
   importSiliconPersonPackage: (input: Record<string, unknown>) =>
@@ -588,7 +635,7 @@ const myClawAPI = {
 
   // ---- 发布草稿 ------------------------------------------------------------
   createPublishDraft: (input: Record<string, unknown>) =>
-    ipcRenderer.invoke("publish:create-draft", input).catch(() => null),
+    ipcRenderer.invoke("publish:create-draft", input),
 
   // ---- Web 面板 ------------------------------------------------------------
   webPanelResolvePage: (skillId: string, relativePath: string): Promise<string | null> =>
@@ -616,7 +663,7 @@ const myClawAPI = {
   fileViewerReveal: (path: string): Promise<{ success: boolean }> =>
     ipcRenderer.invoke("file-viewer:reveal", path),
 
-  fileViewerPreview: (input: { path: string; baseDirectory?: string | null }): Promise<{
+  fileViewerPreview: (input: { path: string; baseDirectory?: string | null; candidateBaseDirectories?: string[] | null }): Promise<{
     success: boolean;
     error?: string;
     resolvedPath?: string;

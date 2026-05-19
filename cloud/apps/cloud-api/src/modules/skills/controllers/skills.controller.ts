@@ -9,23 +9,15 @@ import {
   Post,
   Put,
   Query,
-  UploadedFile,
+  UploadedFiles,
   UseInterceptors
 } from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
+import { AnyFilesInterceptor } from "@nestjs/platform-express";
 
+import { prepareSkillPackageUpload, type UploadedSkillPackageFile } from "../skill-package";
 import { SkillsService } from "../services/skills.service";
 
-type UploadedZipFile = {
-  buffer: Buffer;
-  mimetype: string;
-  originalname: string;
-  size: number;
-};
-
 type PublishSkillReleaseBody = {
-  entryFile?: string;
-  readme?: string;
   releaseNotes?: string;
   version?: string;
 };
@@ -81,23 +73,29 @@ export class SkillsController {
     };
   }
 
+  /** 校验上传的 Skill 包结构，并从 SKILL.md 自动补齐发布元数据。 */
   @Post(":id/releases")
-  @UseInterceptors(FileInterceptor("file"))
+  @UseInterceptors(AnyFilesInterceptor())
   async publishRelease(
     @Param("id") id: string,
     @Body() body: PublishSkillReleaseBody,
-    @UploadedFile() file?: UploadedZipFile
+    @UploadedFiles() files?: UploadedSkillPackageFile[]
   ) {
-    this.assertReleaseBody(body);
-    const checkedFile = this.requireReleaseZip(file);
+    console.info("[skills-controller] 开始处理 Skill 发布上传", {
+      id,
+      fileCount: files?.length ?? 0,
+      hasReleaseNotes: Boolean(body.releaseNotes?.trim()),
+      versionMode: body.version?.trim() ? "manual" : "auto"
+    });
+    const preparedPackage = prepareSkillPackageUpload(this.requireReleaseFiles(files));
 
     return this.skillsService.publishRelease(id, {
-      version: body.version!,
-      releaseNotes: body.releaseNotes!,
-      entryFile: body.entryFile!,
-      readme: body.readme!,
-      fileName: checkedFile.originalname,
-      fileBytes: checkedFile.buffer
+      version: body.version?.trim() || undefined,
+      releaseNotes: body.releaseNotes?.trim() || "从 SKILL.md 自动发布",
+      entryFile: preparedPackage.entryFile,
+      readme: preparedPackage.skillMarkdown,
+      fileName: preparedPackage.fileName,
+      fileBytes: preparedPackage.fileBytes
     });
   }
 
@@ -119,33 +117,18 @@ export class SkillsController {
     }
   }
 
-  private assertReleaseBody(body: PublishSkillReleaseBody) {
-    if (!body.version?.trim()) {
-      throw new BadRequestException("release_version_required");
-    }
-
-    if (!body.releaseNotes?.trim()) {
-      throw new BadRequestException("release_notes_required");
-    }
-
-    if (!body.entryFile?.trim()) {
-      throw new BadRequestException("skill_entry_file_required");
-    }
-
-    if (!body.readme?.trim()) {
-      throw new BadRequestException("skill_readme_required");
-    }
-  }
-
-  private requireReleaseZip(file: UploadedZipFile | undefined) {
-    if (!file?.buffer || !file.originalname) {
+  /** 确保发布请求至少带有一个上传文件。 */
+  private requireReleaseFiles(files: UploadedSkillPackageFile[] | undefined) {
+    console.info("[skills-controller] 校验 Skill 发布文件列表", { fileCount: files?.length ?? 0 });
+    if (!files?.length) {
       throw new BadRequestException("skill_zip_required");
     }
 
-    if (!file.originalname.toLowerCase().endsWith(".zip")) {
-      throw new BadRequestException("skill_package_must_be_zip");
+    const validFiles = files.filter((file) => file.buffer?.length && file.originalname);
+    if (!validFiles.length) {
+      throw new BadRequestException("skill_zip_required");
     }
 
-    return file;
+    return validFiles;
   }
 }

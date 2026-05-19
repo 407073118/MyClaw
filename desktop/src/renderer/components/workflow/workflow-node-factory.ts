@@ -34,6 +34,18 @@ export const WORKFLOW_NODE_KIND_LABELS: Record<WorkflowNodeKind, string> = {
   end: "结束",
 };
 
+/** 当前画布允许用户新建的节点类型；subgraph 仍保留兼容渲染，但运行器未开放新建。*/
+export const WORKFLOW_CREATABLE_NODE_KINDS: WorkflowNodeKind[] = [
+  "start",
+  "llm",
+  "tool",
+  "http-request",
+  "human-input",
+  "condition",
+  "join",
+  "end",
+];
+
 export const WORKFLOW_HUMAN_FORM_TEMPLATES = [
   {
     key: "human.approval",

@@ -22,6 +22,8 @@ import type { McpTool } from "../shared/contracts/mcp";
 import { ToolRiskCategory } from "../shared/contracts/events";
 import { EXPECTED_BUILTIN_TOOL_NAMES } from "./shared/builtin-tool-contract";
 
+const EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES = EXPECTED_BUILTIN_TOOL_NAMES.filter((name) => name !== "skill_view");
+
 // ---------------------------------------------------------------------------
 // Test directory setup
 // ---------------------------------------------------------------------------
@@ -183,7 +185,7 @@ describe("Phase 2: MCP tool schema generation", () => {
 
     const tools = buildToolSchemas("/test", undefined, mcpTools);
     expect(tools.map((tool) => tool.function.name)).toEqual([
-      ...EXPECTED_BUILTIN_TOOL_NAMES,
+      ...EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES,
       "mcp__test-server__read_file",
       "mcp__test-server__write_file",
     ]);
@@ -219,7 +221,7 @@ describe("Phase 2: MCP tool schema generation", () => {
 
     const tools = buildToolSchemas("/test", skills, mcpTools);
     expect(tools.map((tool) => tool.function.name)).toEqual([
-      ...EXPECTED_BUILTIN_TOOL_NAMES,
+      ...EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES,
       "mcp__s1__tool1",
       "skill_invoke__skill-1",
     ]);

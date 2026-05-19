@@ -28,6 +28,7 @@ import { resolveEffectiveExecutionRolloutGate } from "./rollout-gates";
 import { buildTurnTelemetryEvent } from "./telemetry";
 import { filterRegistryForMoonshotFormula, isMoonshotFormulaToolStackActive } from "./moonshot-formula-tools";
 import { createToolMiddleware, type CompiledToolBundle, type ToolMiddleware } from "./tool-middleware";
+import { resolveProviderToolPolicy } from "./provider-tool-policy";
 import {
   buildCanonicalToolRegistry,
   hydrateCanonicalToolRegistryFromLegacyTools,
@@ -199,7 +200,22 @@ function buildToolBundle(
         ? buildCanonicalToolRegistry(input.workingDir, undefined, undefined, plan.toolPolicyId)
         : []), plan.capabilityRoutes);
 
-  return toolMiddleware.compile(registry, plan.toolCompileTarget);
+  const capability = input.profile.discoveredCapabilities || input.profile.capabilityOverrides
+    ? {
+        source: input.profile.discoveredCapabilities?.source ?? "manual-override" as const,
+        ...(input.profile.discoveredCapabilities ?? {}),
+        ...(input.profile.capabilityOverrides ?? {}),
+      }
+    : null;
+  const providerToolPolicy = resolveProviderToolPolicy({
+    providerFamily: plan.providerFamily,
+    protocolTarget: plan.protocolTarget,
+    vendorFamily: plan.vendorFamily,
+    capability,
+    deploymentProfile: plan.deploymentProfile ?? input.profile.deploymentProfile ?? null,
+  });
+
+  return toolMiddleware.compileForPolicy(registry, plan.toolCompileTarget, providerToolPolicy);
 }
 
 function buildOutcome(input: {
@@ -307,6 +323,27 @@ function buildOutcomeCachePlanSnapshot(input: {
 }
 
 /** 创建共享执行网关：先收敛 legacy shim，再承接 canonical plan / family / protocol 层。 */
+/** 解析 legacy shim 实际发给兼容客户端的工具，确保无工具模型不能被原始入参绕过。 */
+function resolveLegacyShimTools(
+  input: ExecutionGatewayInput,
+  toolBundle: CompiledToolBundle,
+): Array<{
+  type: "function";
+  function: { name: string; description: string; parameters: Record<string, unknown> };
+}> {
+  const policy = toolBundle.providerToolPolicy;
+  if (policy?.fallbackBehavior === "disable-tools" || policy?.unsupportedFields.includes("tools")) {
+    return [];
+  }
+  if (policy?.toolDefinitionShape === "openaiChatFunction") {
+    return toolBundle.tools as Array<{
+      type: "function";
+      function: { name: string; description: string; parameters: Record<string, unknown> };
+    }>;
+  }
+  return input.tools ?? [];
+}
+
 export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
   const toolMiddleware = deps.toolMiddleware ?? createToolMiddleware();
 
@@ -364,10 +401,7 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
             return callModel({
               profile: input.profile,
               messages: legacyMessages,
-              tools: (input.tools ?? toolBundle.tools) as Array<{
-                type: "function";
-                function: { name: string; description: string; parameters: Record<string, unknown> };
-              }>,
+              tools: resolveLegacyShimTools(input, toolBundle),
               executionPlan: plan.legacyExecutionPlan,
               signal: input.signal,
               onDelta: input.onDelta,

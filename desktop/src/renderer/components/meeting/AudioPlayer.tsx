@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Pause, Play } from "lucide-react";
 
 /**
  * 会议音频回放组件。
@@ -80,7 +81,7 @@ export function AudioPlayer({ src, seekToMs, onTimeUpdate }: AudioPlayerProps) {
   };
 
   return (
-    <div className="meeting-audio-player">
+    <section className="meeting-audio-player meeting-audio-player--compact" data-testid="meeting-audio-player" aria-label="会议录音播放器">
       <audio
         ref={audioRef}
         src={src}
@@ -90,45 +91,55 @@ export function AudioPlayer({ src, seekToMs, onTimeUpdate }: AudioPlayerProps) {
         onEnded={() => setPlaying(false)}
       />
 
-      <button
-        type="button"
-        className="btn-primary meeting-audio-player__play-btn"
-        onClick={togglePlay}
-      >
-        {playing ? "暂停" : "播放"}
-      </button>
+      <div className="meeting-audio-player__transport" data-testid="meeting-audio-transport">
+        <button
+          type="button"
+          className="meeting-audio-player__play-btn"
+          onClick={togglePlay}
+          aria-label={playing ? "暂停录音回放" : "播放录音回放"}
+        >
+          {playing ? <Pause size={15} aria-hidden="true" /> : <Play size={15} aria-hidden="true" />}
+          <span>{playing ? "暂停" : "播放"}</span>
+        </button>
 
-      <span className="meeting-audio-player__time meeting-audio-player__time--current">
-        {formatSeconds(currentSec)}
-      </span>
-
-      <input
-        type="range"
-        min={0}
-        max={durationSec || 0}
-        step={0.1}
-        value={currentSec}
-        onChange={handleSeek}
-        className="meeting-audio-player__slider"
-      />
-
-      <span className="meeting-audio-player__time">
-        {formatSeconds(durationSec)}
-      </span>
-
-      <div className="meeting-audio-player__speed-group">
-        {SPEED_OPTIONS.map((s) => (
-          <button
-            key={s}
-            type="button"
-            className={`btn-toolbar meeting-audio-player__speed-btn${s === speed ? " is-active" : ""}`}
-            onClick={() => setSpeed(s)}
-          >
-            {s}x
-          </button>
-        ))}
+        <div className="meeting-audio-player__timeline">
+          <div className="meeting-audio-player__time-row">
+            <span className="meeting-audio-player__time meeting-audio-player__time--current">
+              {formatSeconds(currentSec)}
+            </span>
+            <span className="meeting-audio-player__time">
+              {formatSeconds(durationSec)}
+            </span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={durationSec || 0}
+            step={0.1}
+            value={currentSec}
+            onChange={handleSeek}
+            className="meeting-audio-player__slider"
+            aria-label="播放进度"
+          />
+        </div>
       </div>
-    </div>
+
+      <div className="meeting-audio-player__speed-panel">
+        <span className="meeting-audio-player__speed-label">倍速</span>
+        <div className="meeting-audio-player__speed-segmented" data-testid="meeting-speed-segmented" role="group" aria-label="播放倍速">
+          {SPEED_OPTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={`meeting-audio-player__speed-btn${s === speed ? " is-active" : ""}`}
+              onClick={() => setSpeed(s)}
+            >
+              {s}x
+            </button>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 

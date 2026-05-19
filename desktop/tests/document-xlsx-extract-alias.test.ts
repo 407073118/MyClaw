@@ -21,7 +21,6 @@ import {
   listRegisteredFormats,
 } from "../src/main/services/document/parser-registry";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const XLSX = require("xlsx") as typeof import("xlsx");
 
 async function writeXlsxFixture(

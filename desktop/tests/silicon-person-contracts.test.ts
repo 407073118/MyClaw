@@ -54,6 +54,7 @@ describe("Silicon person contracts", () => {
       hasUnread: true,
       needsApproval: false,
       workflowIds: ["wf-1"],
+      avatarDataUrl: "data:image/png;base64,QUJD",
       updatedAt: "2026-04-08T00:01:00.000Z",
     };
 
@@ -63,5 +64,6 @@ describe("Silicon person contracts", () => {
     expect(parsed.sessions).toHaveLength(2);
     expect(parsed.sessions[0]?.status).toBe("done");
     expect(parsed.approvalMode).toBe("inherit");
+    expect(parsed.avatarDataUrl).toBe("data:image/png;base64,QUJD");
   });
 });

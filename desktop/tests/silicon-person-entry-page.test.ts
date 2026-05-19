@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => {
         unreadCount: 2,
         hasUnread: true,
         needsApproval: false,
+        avatarDataUrl: "data:image/png;base64,QUJD",
         updatedAt: "2026-04-08T00:00:00.000Z",
         workflowIds: [],
       },
@@ -91,6 +92,9 @@ describe("Silicon person entry page", () => {
     expect(screen.getByText("硅基员工")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-create-btn")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-card-sp-1")).toBeTruthy();
+    expect(
+      screen.getByTestId("silicon-person-card-sp-1").querySelector(".list-row__avatar img")?.getAttribute("src"),
+    ).toBe("data:image/png;base64,QUJD");
     expect(screen.getByTestId("silicon-person-open-sp-1")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-manage-sp-1")).toBeTruthy();
   });

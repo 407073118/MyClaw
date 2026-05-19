@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { FolderKanban } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 
 import TitleBar from "../components/TitleBar";
+import FallbackAvatar from "../components/FallbackAvatar";
 import WebPanel from "../components/WebPanel";
 import AgentTeamDock from "../components/AgentTeamDock";
 import TimeAssistantCapsule from "../components/time/TimeAssistantCapsule";
@@ -10,6 +12,7 @@ import { useAuthStore } from "../stores/auth";
 import { useWorkspaceStore } from "../stores/workspace";
 import { useWorkflowRunsStore } from "../stores/workflow-runs";
 import { sidebarBranding } from "../utils/app-shell-branding";
+import { getAccountAvatarBackground, resolveAccountAvatarInitials } from "../utils/account-avatar";
 import { buildTimeAssistantSnapshot } from "../utils/time-assistant-presence";
 
 // ---------------------------------------------------------------------------
@@ -28,6 +31,9 @@ const IconHub = () => (
     <path fill="currentColor" d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3zm0 2.3L6 8.4v6.2l6 3.1 6-3.1V8.4l-6-3.1z" />
   </svg>
 );
+
+/** 渲染项目导航图标。 */
+const IconProjects = () => <FolderKanban size={20} strokeWidth={2} />;
 
 const IconMcp = () => (
   <svg viewBox="0 0 24 24" width="20" height="20">
@@ -141,6 +147,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { to: "/chat", label: "Chat", icon: IconChat, testId: "nav-chat" },
   { to: "/hub", label: "Hub", icon: IconHub, testId: "nav-hub" },
+  { to: "/projects", label: "Projects", icon: IconProjects, testId: "nav-projects" },
   { to: "/tools", label: "Tools", icon: IconSkills, testId: "nav-tools" },
   { to: "/mcp", label: "MCP", icon: IconMcp, testId: "nav-mcp" },
   { to: "/skills", label: "Skills", icon: IconSkills, testId: "nav-skills" },
@@ -241,7 +248,19 @@ export default function AppShell() {
     ? (error ?? "Unable to load startup data from the local runtime.")
     : "Preparing the local runtime, restoring workspace state, and opening your last session.";
 
-  const currentUserDisplayName = auth.session.user?.displayName ?? "未登录用户";
+  const currentUser = auth.session.user ?? null;
+  const currentUserDisplayName = currentUser?.displayName ?? "未登录用户";
+  const currentUserAvatarDataUrl = typeof currentUser?.avatarDataUrl === "string" && currentUser.avatarDataUrl
+    ? currentUser.avatarDataUrl
+    : null;
+  const currentUserAvatarBackground = getAccountAvatarBackground({
+    account: currentUser?.account ?? null,
+    displayName: currentUserDisplayName,
+  });
+  const currentUserAvatarInitials = resolveAccountAvatarInitials({
+    account: currentUser?.account ?? null,
+    displayName: currentUserDisplayName,
+  });
   const runtimeStatusLabel = !ready ? (error ? "异常" : loading ? "连接中" : "未就绪") : "";
   const [timeAssistantExpanded, setTimeAssistantExpanded] = useState(false);
   const [timeAssistantNowIso, setTimeAssistantNowIso] = useState(() => new Date().toISOString());
@@ -396,9 +415,15 @@ export default function AppShell() {
         <footer className="sidebar-footer">
           <div className="user-card">
             <div className="user-card-top">
-              <div className="user-avatar">
-                {currentUserDisplayName.charAt(0).toUpperCase()}
-              </div>
+              <FallbackAvatar
+                data-testid="app-shell-user-avatar"
+                className="user-avatar"
+                name={currentUserDisplayName}
+                background={currentUserAvatarBackground}
+                src={currentUserAvatarDataUrl}
+                initials={currentUserAvatarInitials}
+                alt={`${currentUserDisplayName} 头像`}
+              />
               <div className="user-info">
                 <strong className="user-name">{currentUserDisplayName}</strong>
                 <span className="user-model">
@@ -588,7 +613,6 @@ export default function AppShell() {
           width: 32px;
           height: 32px;
           border-radius: 8px;
-          background: linear-gradient(135deg, var(--accent-cyan), #0d9668);
           color: #fff;
           display: flex;
           align-items: center;
@@ -596,6 +620,9 @@ export default function AppShell() {
           font-size: 14px;
           font-weight: 700;
           flex-shrink: 0;
+          overflow: hidden;
+          border: 1px solid rgba(255, 255, 255, 0.14);
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
         }
 
         .user-info {

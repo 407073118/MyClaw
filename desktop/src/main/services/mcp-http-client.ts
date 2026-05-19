@@ -257,22 +257,41 @@ export class McpHttpClient extends EventEmitter {
   }
 
   private async listTools(): Promise<McpToolInfo[]> {
-    const result = (await this.sendRequest("tools/list")) as {
-      tools?: Array<{
-        name: string;
-        description?: string;
-        inputSchema?: Record<string, unknown>;
-      }>;
-    };
+    const tools: McpToolInfo[] = [];
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
 
-    if (!result?.tools || !Array.isArray(result.tools)) {
-      return [];
-    }
+    do {
+      const result = (await this.sendRequest("tools/list", cursor ? { cursor } : undefined)) as {
+        tools?: Array<{
+          name: string;
+          description?: string;
+          inputSchema?: Record<string, unknown>;
+        }>;
+        nextCursor?: unknown;
+      };
 
-    return result.tools.map((t) => ({
-      name: t.name,
-      description: t.description ?? "",
-      inputSchema: t.inputSchema ?? null,
-    }));
+      if (Array.isArray(result?.tools)) {
+        tools.push(...result.tools.map((t) => ({
+          name: t.name,
+          description: t.description ?? "",
+          inputSchema: t.inputSchema ?? null,
+        })));
+      }
+
+      const nextCursor = typeof result?.nextCursor === "string" && result.nextCursor.trim()
+        ? result.nextCursor
+        : undefined;
+      if (nextCursor && seenCursors.has(nextCursor)) {
+        log.warn("tools/list pagination returned a repeated cursor; stopping pagination", { cursor: nextCursor });
+        break;
+      }
+      if (nextCursor) {
+        seenCursors.add(nextCursor);
+      }
+      cursor = nextCursor;
+    } while (cursor);
+
+    return tools;
   }
 }

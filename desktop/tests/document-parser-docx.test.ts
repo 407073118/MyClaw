@@ -25,7 +25,6 @@ import type {
   ImageNode,
 } from "@shared/contracts";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const JSZip = require("jszip");
 
 const DESKTOP_DIR = new URL("../", import.meta.url).pathname.replace(/^\//, "").replace(/\/$/, "");

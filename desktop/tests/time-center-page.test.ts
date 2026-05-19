@@ -178,6 +178,22 @@ describe("TimeCenterPage", () => {
     expect(resourceRail.getByText("有异常")).toBeTruthy();
   });
 
+  it("uses the shared sticky page header layout", () => {
+    const { container } = renderPage();
+
+    const heading = screen.getByRole("heading", { name: "日程规划" });
+    const header = heading.closest("header");
+
+    expect(container.querySelector(".page-shell.schedule-planning-page")).toBeTruthy();
+    expect(header?.classList.contains("page-header")).toBe(true);
+    expect(header?.classList.contains("page-header--sticky")).toBe(true);
+    expect(header?.querySelector(".page-header__lead")).toBeTruthy();
+    expect(header?.querySelector(".page-header__eyebrow span")?.textContent).toBe("统一时间轴");
+    expect(header?.querySelector(".page-header__subtitle")?.textContent).toContain("统一管理会议");
+    expect(header?.querySelector(".page-header__actions")).toBeTruthy();
+    expect(container.querySelector("main.page-content.schedule-planning-content")).toBeTruthy();
+  });
+
   it("switches between timeline, calendar event, reminder, and schedule job lists", () => {
     renderPage();
 
@@ -197,6 +213,38 @@ describe("TimeCenterPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "定时任务" }));
     expect(screen.getByRole("heading", { name: "定时任务" })).toBeTruthy();
     expect(screen.getByText("日报汇总")).toBeTruthy();
+  });
+
+  it("marks delivered reminders in the reminder list", () => {
+    useWorkspaceStore.setState((state) => ({
+      time: {
+        ...state.time,
+        reminders: [
+          ...(state.time.reminders ?? []),
+          {
+            id: "rem-delivered",
+            kind: "reminder",
+            title: "已经提醒过的事项",
+            triggerAt: "2026-05-07T00:30:00.000Z",
+            timezone: "Asia/Shanghai",
+            ownerScope: "personal",
+            status: "delivered",
+            source: "manual",
+            createdAt: "2026-05-07T00:00:00.000Z",
+            updatedAt: "2026-05-07T00:31:00.000Z",
+          },
+        ],
+      },
+    }) as any);
+
+    const { container } = renderPage([{ pathname: "/time", state: { activeView: "reminders" } }]);
+
+    expect(screen.getByText("1 个待触发 · 1 个已提醒")).toBeTruthy();
+    const deliveredRow = screen.getByTestId("reminder-row-rem-delivered");
+    expect(within(deliveredRow).getByText("已提醒")).toBeTruthy();
+    expect(within(deliveredRow).getByText("已通过系统通知提醒")).toBeTruthy();
+    expect(deliveredRow.classList.contains("list-page-row--delivered")).toBe(true);
+    expect(container.querySelector(".reminder-status-badge--delivered")).toBeTruthy();
   });
 
   it("opens the schedule job list when navigation state requests it", () => {

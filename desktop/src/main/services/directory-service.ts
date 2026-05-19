@@ -1,5 +1,5 @@
 import { app } from "electron";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, parse, resolve } from "node:path";
 
 /** 安装器写入到安装目录旁的数据目录配置文件名。 */
@@ -12,6 +12,10 @@ export type MyClawPaths = {
   myClawDir: string;
   /** `<rootDir>/myClaw/skills` 全局技能目录。 */
   skillsDir: string;
+  /** `<rootDir>/myClaw/project-capabilities` 项目能力缓存目录。 */
+  projectCapabilitiesDir: string;
+  /** `<rootDir>/myClaw/project-capabilities.db` 项目能力本地数据库。 */
+  projectCapabilitiesDbFile: string;
   /** `<rootDir>/myClaw/workspace` 全局受控工作目录。 */
   workspaceDir: string;
   /** `<rootDir>/myClaw/artifacts` 全局稳定产物目录。 */
@@ -218,6 +222,65 @@ function resolveDataRoot(): string {
   return app.getPath("userData");
 }
 
+/** 安全读取 settings.json，目录服务只关心其中的路径覆盖配置。 */
+function readSettingsObject(settingsFile: string): Record<string, unknown> {
+  if (!existsSync(settingsFile)) {
+    return {};
+  }
+
+  try {
+    const raw = readFileSync(settingsFile, "utf8").trim();
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch (error) {
+    console.warn("[directory-service] 读取 settings.json 失败，忽略产物目录覆盖配置", {
+      settingsFile,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {};
+  }
+}
+
+/** 读取用户持久化的产物目录覆盖路径，未配置时返回 null。 */
+function readArtifactsRootPathOverride(settingsFile: string): string | null {
+  const settings = readSettingsObject(settingsFile);
+  const rawPath = typeof settings.artifactsRootPath === "string"
+    ? settings.artifactsRootPath.trim()
+    : "";
+  if (!rawPath) {
+    return null;
+  }
+  return resolve(rawPath);
+}
+
+/** 持久化产物目录覆盖路径，并同步更新当前运行时路径对象。 */
+export function persistArtifactsRootPath(paths: MyClawPaths, artifactsRootPath: string): string {
+  const rawPath = artifactsRootPath.trim();
+  if (!rawPath) {
+    throw new Error("产物目录路径不能为空。");
+  }
+
+  const nextArtifactsDir = resolve(rawPath);
+  mkdirSync(nextArtifactsDir, { recursive: true });
+  mkdirSync(dirname(paths.settingsFile), { recursive: true });
+
+  const settings = readSettingsObject(paths.settingsFile);
+  settings.artifactsRootPath = nextArtifactsDir;
+  writeFileSync(paths.settingsFile, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+  paths.artifactsDir = nextArtifactsDir;
+
+  console.info("[directory-service] 已更新产物目录覆盖路径", {
+    artifactsRootPath: nextArtifactsDir,
+    settingsFile: paths.settingsFile,
+  });
+  return nextArtifactsDir;
+}
+
 /** 根据根目录推导全局路径。 */
 export function derivePaths(rootDir: string): MyClawPaths {
   const myClawDir = join(rootDir, "myClaw");
@@ -225,6 +288,8 @@ export function derivePaths(rootDir: string): MyClawPaths {
     rootDir,
     myClawDir,
     skillsDir: join(myClawDir, "skills"),
+    projectCapabilitiesDir: join(myClawDir, "project-capabilities"),
+    projectCapabilitiesDbFile: join(myClawDir, "project-capabilities.db"),
     workspaceDir: join(myClawDir, "workspace"),
     artifactsDir: join(myClawDir, "artifacts"),
     cacheDir: join(myClawDir, "cache"),
@@ -288,6 +353,7 @@ function ensureDirectories(paths: MyClawPaths): void {
   for (const dir of [
     paths.myClawDir,
     paths.skillsDir,
+    paths.projectCapabilitiesDir,
     paths.workspaceDir,
     paths.artifactsDir,
     paths.cacheDir,
@@ -328,6 +394,10 @@ export function redirectUserData(): void {
 export async function initializeDirectories(): Promise<MyClawPaths> {
   const rootDir = resolveDataRoot();
   const paths = derivePaths(rootDir);
+  const artifactsRootOverride = readArtifactsRootPathOverride(paths.settingsFile);
+  if (artifactsRootOverride) {
+    paths.artifactsDir = artifactsRootOverride;
+  }
   ensureDirectories(paths);
 
   console.info("[directory-service] MyClaw 数据目录已初始化", {
@@ -336,6 +406,7 @@ export async function initializeDirectories(): Promise<MyClawPaths> {
     userData: app.getPath("userData"),
     rootDir: paths.rootDir,
     myClawDir: paths.myClawDir,
+    artifactsDir: paths.artifactsDir,
   });
 
   return paths;

@@ -9,6 +9,7 @@ export const EXPECTED_BUILTIN_TOOL_NAMES = [
   "fs_search",
   "fs_find",
   "fs_edit",
+  "artifact_register",
   "exec_command",
   "git_status",
   "git_diff",
@@ -22,6 +23,7 @@ export const EXPECTED_BUILTIN_TOOL_NAMES = [
   "task_list",
   "task_get",
   "task_update",
+  "task_wait_for_user",
   "calendar_event_create",
   "calendar_event_list",
   "reminder_create",
@@ -42,4 +44,5 @@ export const EXPECTED_BUILTIN_TOOL_NAMES = [
   "browser_wait",
   "browser_scroll",
   "browser_press_key",
+  "skill_view",
 ] as const;

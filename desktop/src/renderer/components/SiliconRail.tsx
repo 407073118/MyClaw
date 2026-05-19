@@ -2,6 +2,7 @@ import React from "react";
 import { useNavigate } from "react-router-dom";
 import type { SiliconPerson, SiliconPersonStatus } from "@shared/contracts";
 import { useWorkspaceStore } from "../stores/workspace";
+import SiliconPersonAvatar from "./SiliconPersonAvatar";
 
 // ---------------------------------------------------------------------------
 // 状态灯颜色映射
@@ -38,7 +39,6 @@ function SiliconRailAvatar({
   person: SiliconPerson;
   onClick: () => void;
 }) {
-  const initial = (person.name || person.title || "?").charAt(0).toUpperCase();
   const statusColor = STATUS_COLOR[person.status] ?? "var(--text-muted)";
   const statusLabel = STATUS_LABEL[person.status] ?? person.status;
 
@@ -83,13 +83,12 @@ function SiliconRailAvatar({
       type="button"
     >
       {showCornerDot && <span className="attention-dot" aria-hidden="true" />}
-      <div className="avatar-circle">
-        <span className="avatar-initial">{initial}</span>
+      <SiliconPersonAvatar person={person} className="avatar-circle">
         <span
           className="status-dot"
           style={{ background: statusColor }}
         />
-      </div>
+      </SiliconPersonAvatar>
     </button>
   );
 }
@@ -232,7 +231,8 @@ export default function SiliconRail() {
           border-color: var(--glass-border-hover);
         }
 
-        .avatar-initial {
+        .avatar-initial,
+        .avatar-circle .fallback-avatar__initials {
           font-size: 14px;
           font-weight: 700;
           color: var(--text-primary);

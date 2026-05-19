@@ -172,6 +172,7 @@ describe("WorkFilesPanel stream filtering", () => {
       expect(window.myClawAPI.fileViewerPreview).toHaveBeenCalledWith({
         path: "silicon-persons/sp-1/workspace/report.md",
         baseDirectory: "F:/MyClaw",
+        candidateBaseDirectories: ["F:/MyClaw"],
       }),
     );
     expect(mocks.openWebPanel).toHaveBeenCalledWith(
@@ -200,6 +201,7 @@ describe("WorkFilesPanel stream filtering", () => {
     expect(window.myClawAPI.fileViewerPreview).toHaveBeenCalledWith({
       path: "silicon-persons/sp-1/workspace/report.md",
       baseDirectory: "F:/MyClaw",
+      candidateBaseDirectories: ["F:/MyClaw"],
     });
   });
 });

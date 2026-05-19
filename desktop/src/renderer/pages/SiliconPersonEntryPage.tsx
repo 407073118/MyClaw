@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
 import { MessageSquare, Plus, Settings2, Users } from "lucide-react";
+import SiliconPersonAvatar from "../components/SiliconPersonAvatar";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "空闲",
@@ -28,13 +29,6 @@ const SOURCE_LABEL: Record<string, string> = {
   hub: "Hub",
   personal: "个人",
 };
-
-function getAvatarColor(name: string): string {
-  const colors = ["#10b981", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#ec4899", "#06b6d4", "#84cc16"];
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return colors[Math.abs(hash) % colors.length];
-}
 
 export default function SiliconPersonEntryPage() {
   const workspace = useWorkspaceStore();
@@ -129,13 +123,11 @@ export default function SiliconPersonEntryPage() {
                   data-testid={`silicon-person-card-${person.id}`}
                 >
                   <div className="list-row__lead">
-                    <div
+                    <SiliconPersonAvatar
+                      person={person}
                       className="list-row__avatar"
-                      style={{ background: getAvatarColor(person.name) }}
-                      aria-hidden="true"
-                    >
-                      {person.name[0]}
-                    </div>
+                      aria-hidden={true}
+                    />
                   </div>
 
                   <div className="list-row__main">

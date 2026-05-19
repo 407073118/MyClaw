@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -41,15 +41,21 @@ const mocks = vi.hoisted(() => {
     },
   );
 
-  const auth = {
+  const auth: any = {
     session: {
       user: {
         displayName: "测试用户",
         account: "tester@example.com",
+        roles: ["user"],
+        avatarDataUrl: null,
       },
     },
+    updateCurrentUserAvatar: vi.fn(),
     logout: vi.fn().mockResolvedValue(undefined),
   };
+  auth.updateCurrentUserAvatar = vi.fn((avatarDataUrl: string | null) => {
+    auth.session.user.avatarDataUrl = avatarDataUrl;
+  });
 
   return {
     workspace,
@@ -82,6 +88,8 @@ describe("SettingsPage update actions", () => {
     mocks.workspace.downloadAppUpdate.mockReset();
     mocks.workspace.quitAndInstallAppUpdate.mockReset();
     mocks.workspace.openAppUpdateDownloadPage.mockReset();
+    mocks.auth.session.user.avatarDataUrl = null;
+    mocks.auth.updateCurrentUserAvatar.mockClear();
     mocks.workspace.appUpdate.stage = "available";
     mocks.workspace.appUpdate.progressPercent = null;
     mocks.workspace.appUpdate.message = "发现新版本 0.2.0，可立即下载。";
@@ -137,5 +145,39 @@ describe("SettingsPage update actions", () => {
 
     fireEvent.click(screen.getByTestId("app-update-install"));
     expect(mocks.workspace.quitAndInstallAppUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the current account upload and preview a local avatar", async () => {
+    const { default: SettingsPage } = await import("../src/renderer/pages/SettingsPage");
+    render(
+      React.createElement(
+        MemoryRouter,
+        {
+          initialEntries: [{
+            pathname: "/settings",
+            state: { activeTab: "账户" },
+          } as any],
+        },
+        React.createElement(SettingsPage),
+      ),
+    );
+
+    expect(screen.getByTestId("settings-account-avatar-upload")).toBeTruthy();
+
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "me.png", { type: "image/png" });
+    fireEvent.change(screen.getByTestId("settings-account-avatar-upload"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(mocks.auth.updateCurrentUserAvatar).toHaveBeenCalledWith(expect.stringMatching(/^data:image\/png;base64,/));
+      const image = screen.getByTestId("settings-account-avatar-preview").querySelector("img");
+      expect(image?.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+    });
+
+    fireEvent.click(screen.getByTestId("settings-account-avatar-remove"));
+
+    expect(mocks.auth.updateCurrentUserAvatar).toHaveBeenLastCalledWith(null);
+    expect(screen.getByTestId("settings-account-avatar-preview").querySelector("img")).toBeNull();
   });
 });

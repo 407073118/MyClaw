@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useWorkspaceStore } from "../stores/workspace";
-import type { McpServer, McpServerConfig, McpSource, McpTool } from "@shared/contracts";
+import type { McpServer, McpServerConfig, McpSource, McpTool, McpTransport } from "@shared/contracts";
 import { ToolRiskCategory } from "@shared/contracts";
 import {
   Activity,
@@ -25,20 +25,24 @@ interface McpServerFormProps {
   isCreate: boolean;
   submitting: boolean;
   submitLabel: string;
+  formId?: string;
+  showActions?: boolean;
   onSubmit: (config: McpServerConfig) => void;
   onCancel: () => void;
 }
 
-/** 渲染 MCP 服务表单，并兼容 stdio/http 两种传输方式。 */
+/** 渲染 MCP 服务表单，并兼容 stdio、HTTP、SSE 与 Streamable HTTP 传输方式。 */
 function McpServerForm({
   initialValue,
   isCreate,
   submitting,
   submitLabel,
+  formId,
+  showActions = true,
   onSubmit,
   onCancel,
 }: McpServerFormProps) {
-  const [transport, setTransport] = useState<"stdio" | "http">(
+  const [transport, setTransport] = useState<McpTransport>(
     initialValue?.transport ?? "stdio",
   );
   const [id, setId] = useState(initialValue?.id ?? "");
@@ -62,10 +66,10 @@ function McpServerForm({
       : "",
   );
   const [url, setUrl] = useState(
-    initialValue?.transport === "http" ? initialValue.url ?? "" : "",
+    initialValue && initialValue.transport !== "stdio" ? initialValue.url ?? "" : "",
   );
   const [headersText, setHeadersText] = useState(
-    initialValue?.transport === "http"
+    initialValue && initialValue.transport !== "stdio"
       ? initialValue.headers ? JSON.stringify(initialValue.headers, null, 2) : ""
       : "",
   );
@@ -103,7 +107,7 @@ function McpServerForm({
           name: name.trim(),
           source,
           enabled,
-          transport: "http",
+          transport,
           url: url.trim(),
           ...(headers ? { headers } : {}),
         });
@@ -114,7 +118,11 @@ function McpServerForm({
   }
 
   return (
-    <form className="mcp-form" onSubmit={handleSubmit}>
+    <form
+      id={formId}
+      className={`mcp-form${isCreate ? " mcp-form--create" : ""}`}
+      onSubmit={handleSubmit}
+    >
       <div className="mcp-form-grid">
         <label className="mcp-form-field">
           <span>服务 ID</span>
@@ -142,11 +150,13 @@ function McpServerForm({
           <span>传输方式</span>
           <select
             value={transport}
-            onChange={(e) => setTransport(e.target.value as "stdio" | "http")}
+            onChange={(e) => setTransport(e.target.value as McpTransport)}
             disabled={submitting}
           >
             <option value="stdio">STDIO</option>
             <option value="http">HTTP</option>
+            <option value="sse">SSE</option>
+            <option value="streamable-http">Streamable HTTP</option>
           </select>
         </label>
 
@@ -245,14 +255,16 @@ function McpServerForm({
 
       {formError && <p className="mcp-form-error">{formError}</p>}
 
-      <div className="mcp-form-actions">
-        <button type="button" className="btn-toolbar" onClick={onCancel} disabled={submitting}>
-          取消
-        </button>
-        <button type="submit" className="btn-primary" disabled={submitting}>
-          {submitLabel}
-        </button>
-      </div>
+      {showActions && (
+        <div className="mcp-form-actions">
+          <button type="button" className="btn-toolbar" onClick={onCancel} disabled={submitting}>
+            取消
+          </button>
+          <button type="submit" className="btn-primary" disabled={submitting}>
+            {submitLabel}
+          </button>
+        </div>
+      )}
     </form>
   );
 }
@@ -328,13 +340,13 @@ function resolveParamDesc(def: unknown): string {
 
 /** 把 MCP 服务对象重新组装成可编辑的配置结构。 */
 function toServerConfig(server: McpServer, enabled = server.enabled): McpServerConfig {
-  if (server.transport === "http") {
+  if (server.transport !== "stdio") {
     return {
       id: server.id,
       name: server.name,
       source: server.source,
       enabled,
-      transport: "http",
+      transport: server.transport,
       url: server.url,
       ...(server.headers ? { headers: server.headers } : {}),
     };
@@ -566,6 +578,17 @@ export default function McpDetailPage() {
             <ChevronLeft size={14} />
             返回列表
           </Link>
+          {isCreate && (
+            <button
+              type="submit"
+              form="mcp-create-form"
+              className="btn-primary"
+              disabled={isSaving}
+            >
+              <Settings2 size={14} />
+              {isSaving ? "保存中..." : "创建服务"}
+            </button>
+          )}
           {currentServer && !isEditing && (
             <>
               <button
@@ -618,7 +641,56 @@ export default function McpDetailPage() {
             </div>
           )}
 
-          {isCreate || isEditing ? (
+          {isCreate ? (
+            <div className="mcp-create-layout">
+              <section className="mcp-create-main-panel">
+                <div className="mcp-section-head">
+                  <h3 className="mcp-section-title">
+                    <Settings2 size={14} />
+                    连接配置
+                  </h3>
+                  <span className="tag tag--accent">MANUAL</span>
+                </div>
+                <McpServerForm
+                  formId="mcp-create-form"
+                  initialValue={formValue}
+                  isCreate={isCreate}
+                  submitting={isSaving}
+                  submitLabel={isSaving ? "保存中..." : "创建服务"}
+                  showActions={false}
+                  onSubmit={handleSave}
+                  onCancel={handleCancelEdit}
+                />
+              </section>
+
+              <aside className="mcp-create-side-panel">
+                <h3 className="mcp-section-title">
+                  <Plug size={14} />
+                  创建摘要
+                </h3>
+                <dl className="mcp-info-list mcp-create-summary-list">
+                  <div>
+                    <dt>来源</dt>
+                    <dd>
+                      <span className="tag tag--muted">manual</span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>初始状态</dt>
+                    <dd>
+                      <span className="tag tag--green">已启用</span>
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>连接类型</dt>
+                    <dd>
+                      <span className="tag tag--accent">stdio / http</span>
+                    </dd>
+                  </div>
+                </dl>
+              </aside>
+            </div>
+          ) : isEditing ? (
             <article className="glass-card glass-card--flat mcp-info-card">
               <h3 className="mcp-section-title">
                 <Settings2 size={14} />
@@ -861,6 +933,41 @@ export default function McpDetailPage() {
           display: flex;
           flex-direction: column;
           gap: 16px;
+        }
+
+        .mcp-create-layout {
+          width: min(1180px, 100%);
+          margin: 0 auto;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+          gap: 16px;
+          align-items: start;
+        }
+
+        .mcp-create-main-panel,
+        .mcp-create-side-panel {
+          min-width: 0;
+          background: var(--bg-surface);
+          border: 1px solid var(--row-border);
+          border-radius: var(--radius-lg);
+        }
+
+        .mcp-create-main-panel {
+          padding: 18px 20px 20px;
+        }
+
+        .mcp-create-side-panel {
+          padding: 16px;
+          position: sticky;
+          top: 0;
+        }
+
+        .mcp-create-side-panel .mcp-section-title {
+          margin-bottom: 12px;
+        }
+
+        .mcp-create-summary-list > div {
+          grid-template-columns: 78px 1fr;
         }
 
         .mcp-detail-grid {
@@ -1109,6 +1216,8 @@ export default function McpDetailPage() {
         }
 
         @media (max-width: 900px) {
+          .mcp-create-layout { grid-template-columns: 1fr; }
+          .mcp-create-side-panel { position: static; }
           .mcp-detail-grid { grid-template-columns: 1fr; }
           .mcp-form-grid { grid-template-columns: 1fr; }
           .mcp-info-list > div { grid-template-columns: 80px 1fr; }

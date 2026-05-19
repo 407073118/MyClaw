@@ -3,8 +3,9 @@ import { StartNodeExecutor } from "../src/main/services/workflow-engine/executor
 import { EndNodeExecutor } from "../src/main/services/workflow-engine/executors/end";
 import { ConditionNodeExecutor } from "../src/main/services/workflow-engine/executors/condition";
 import { LlmNodeExecutor } from "../src/main/services/workflow-engine/executors/llm";
+import { ToolNodeExecutor, parseMcpToolId } from "../src/main/services/workflow-engine/executors/tool";
 import { WorkflowEventEmitter } from "../src/main/services/workflow-engine/event-emitter";
-import type { WorkflowConditionNode, WorkflowLlmNode } from "@shared/contracts";
+import type { WorkflowConditionNode, WorkflowLlmNode, WorkflowToolNode } from "@shared/contracts";
 
 function makeCtx(node: any, state: Record<string, unknown> = {}, resolvedInputs: Record<string, unknown> = {}) {
   return {
@@ -182,5 +183,37 @@ describe("LlmNodeExecutor", () => {
     expect(modelCaller).toHaveBeenCalledWith(expect.objectContaining({
       messages: [{ role: "user", content: "主题 季度复盘；上游 接口返回；跟踪 trace-1" }],
     }));
+  });
+});
+
+describe("ToolNodeExecutor", () => {
+  it("passes structured args to builtin tool executors instead of label strings", async () => {
+    const toolExecutor = vi.fn(async () => ({ success: true, output: "ok" }));
+    const exec = new ToolNodeExecutor(toolExecutor, null);
+    const node: WorkflowToolNode = {
+      id: "tool-1",
+      kind: "tool",
+      label: "Read file",
+      tool: {
+        toolId: "fs.read",
+        args: {},
+        outputKey: "fileText",
+      },
+      inputBindings: {
+        path: "inputs.path",
+      },
+    };
+
+    const result = await exec.execute(makeCtx(node, { inputs: { path: "README.md" } }, { maxChars: 2000 }));
+
+    expect(toolExecutor).toHaveBeenCalledWith("fs.read", { path: "README.md", maxChars: 2000 }, "/tmp");
+    expect(result.writes).toEqual([{ channelName: "fileText", value: "ok" }]);
+  });
+
+  it("parses MCP ids with double underscores inside the tool name", () => {
+    expect(parseMcpToolId("mcp__server_one__search__docs")).toEqual({
+      serverId: "server_one",
+      toolName: "search__docs",
+    });
   });
 });

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, BellRing, Boxes, FolderKanban, PanelRightClose, PanelRightOpen, Plug, Square, Wrench, X } from "lucide-react";
 import { marked } from "marked";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore, bufferStreamingDelta, getCachedMarkdown, flushStreamingBufferNow } from "../stores/workspace";
@@ -15,12 +15,14 @@ import { PlanStatePanel } from "../components/plan-state-panel";
 import { PlanSidePanel } from "../components/PlanSidePanel";
 import WorkFilesPanel from "../components/WorkFilesPanel";
 import InlineFileReferenceContent from "../components/InlineFileReferenceContent";
+import { GlassSelect } from "../components/ui/GlassSelect";
 import { useDialogA11y } from "../hooks/useDialogA11y";
 import type {
   A2UiForm,
   A2UiPayload,
   A2UiFormField,
   ApprovalDecision,
+  ApprovalRequest,
   AgentTask,
   ArtifactScopeRef,
   ChatMessage,
@@ -28,11 +30,17 @@ import type {
   ChatRunRuntimeStatusPayload,
   ChatRunStatus,
   ChatSession,
+  ProjectCapabilityDetail,
+  ProjectCapabilityPref,
+  ProjectCapabilityRef,
+  ResolvedMcpTool,
+  SkillDefinition,
+  TaskResumeInput,
   ExecutionIntent,
+  McpServer,
 } from "@shared/contracts";
 import { ToolRiskCategory, resolveSiliconPersonCurrentSessionId } from "@shared/contracts";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
-import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
 
 const AGENT_TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
   queued: "排队中",
@@ -45,6 +53,31 @@ const AGENT_TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
 
 const TASK_PANEL_DISMISS_PREFIX = "myclaw:task-panel-dismissed:";
 const AGENT_TASK_CARD_DISMISS_PREFIX = "myclaw:agent-task-card-dismissed:";
+
+const APPROVAL_SOURCE_LABELS: Record<string, string> = {
+  "builtin-tool": "内置工具",
+  "mcp-tool": "MCP 工具",
+  skill: "技能",
+  "shell-command": "Shell 命令",
+  "network-request": "网络请求",
+};
+
+const APPROVAL_RISK_LABELS: Record<string, string> = {
+  [ToolRiskCategory.Read]: "只读",
+  [ToolRiskCategory.Write]: "写入",
+  [ToolRiskCategory.Exec]: "执行",
+  [ToolRiskCategory.Install]: "安装",
+  [ToolRiskCategory.Network]: "联网",
+};
+
+type ApprovalCardViewModel = {
+  sourceLabel: string;
+  riskLabel: string;
+  targetLabel: string;
+  targetText: string;
+  detailTitle: string;
+  detailText: string;
+};
 
 // 配置 `marked`，统一启用 GFM 和换行转 `<br>`。
 marked.setOptions({ gfm: true, breaks: true });
@@ -65,10 +98,18 @@ function escapeHtml(text: string): string {
 }
 
 /** 生成任务面板关闭状态的任务签名，新任务加入时签名变化会重新展示面板。 */
-function buildTaskPanelSignature(tasks: ChatSession["tasks"] | undefined): string {
-  return (tasks ?? [])
-    .map((task) => task.id)
+function buildTaskPanelSignature(
+  tasks: ChatSession["tasks"] | undefined,
+  interrupts: ChatSession["taskInterrupts"] | undefined,
+): string {
+  const taskPart = (tasks ?? [])
+    .map((task) => `${task.id}:${task.status}:${String(task.metadata?.interruptRequestId ?? "")}`)
     .join("|");
+  const interruptPart = (interrupts ?? [])
+    .filter((request) => request.status === "active")
+    .map((request) => `${request.requestId}:${request.taskId}:${request.status}`)
+    .join("|");
+  return [taskPart, interruptPart].filter(Boolean).join("::");
 }
 
 /** 生成任务面板关闭状态的会话级缓存键。 */
@@ -120,6 +161,95 @@ function writeAgentTaskCardDismissed(key: string): void {
   } catch {
     // 存储不可用时仍依赖组件内状态立即隐藏。
   }
+}
+
+/** 把审批参数转成稳定文本，避免渲染层直接展示对象时变成不可读内容。 */
+function stringifyApprovalValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null) return "";
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+/** 尝试从 JSON 文本里读取字段，解析失败时返回空对象给展示层继续降级。 */
+function parseApprovalJsonObject(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
+/** 将 fs.write 的旧 label 契约拆成文件目标与写入内容预览。 */
+function splitFsWriteLabel(label: string): { targetText: string; detailText: string } {
+  const match = label.match(/^([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+  if (!match) return { targetText: label.trim(), detailText: "" };
+  return {
+    targetText: match[1]?.trim() ?? "",
+    detailText: match[2]?.trim() ?? "",
+  };
+}
+
+/** 为审批卡片生成展示模型，确保工具身份优先于长参数展示。 */
+function buildApprovalCardViewModel(approval: ApprovalRequest): ApprovalCardViewModel {
+  const labelText = stringifyApprovalValue(approval.label).trim();
+  const detailText = stringifyApprovalValue(approval.detail).trim();
+  const viewModel: ApprovalCardViewModel = {
+    sourceLabel: APPROVAL_SOURCE_LABELS[approval.source] ?? approval.source,
+    riskLabel: APPROVAL_RISK_LABELS[approval.risk] ?? approval.risk,
+    targetLabel: "操作",
+    targetText: "",
+    detailTitle: "参数预览",
+    detailText,
+  };
+
+  if (approval.toolId === "fs.write") {
+    const split = splitFsWriteLabel(labelText);
+    viewModel.targetLabel = "目标";
+    viewModel.targetText = split.targetText;
+    viewModel.detailTitle = "写入内容预览";
+    viewModel.detailText = split.detailText || detailText;
+    return viewModel;
+  }
+
+  if (approval.toolId === "fs.edit") {
+    const parsed = parseApprovalJsonObject(labelText);
+    viewModel.targetLabel = "目标";
+    viewModel.targetText = stringifyApprovalValue(parsed.path).trim();
+    viewModel.detailTitle = "修改内容预览";
+    viewModel.detailText = JSON.stringify({
+      old_string: parsed.old_string ?? "",
+      new_string: parsed.new_string ?? "",
+    }, null, 2);
+    return viewModel;
+  }
+
+  if (approval.toolId === "exec.command") {
+    const parsed = parseApprovalJsonObject(labelText);
+    viewModel.targetLabel = "命令";
+    viewModel.targetText = stringifyApprovalValue(parsed.command ?? labelText).trim();
+    viewModel.detailText = detailText || labelText;
+    return viewModel;
+  }
+
+  if (approval.toolId.startsWith("fs.") || approval.toolId === "artifact.register") {
+    viewModel.targetLabel = "目标";
+    viewModel.targetText = labelText;
+    return viewModel;
+  }
+
+  if (approval.toolName && approval.toolName !== approval.toolId) {
+    viewModel.targetLabel = "调用";
+    viewModel.targetText = approval.toolName;
+  } else if (labelText && labelText !== approval.toolId) {
+    viewModel.targetText = labelText;
+  }
+
+  return viewModel;
 }
 
 // ─── ToolLogContent 内联组件辅助类型 ─────────────────────────────────────────
@@ -368,7 +498,147 @@ function parseExecutionIntentCommand(input: string): ExecutionIntent | null {
 
 /** 判断消息中的 A2UI 载荷是否适合以内联表单方式展示。 */
 function shouldRenderInlineA2UiForm(payload: A2UiPayload | null | undefined): payload is A2UiForm {
-  return payload?.kind === "form" && Array.isArray((payload as A2UiForm).fields) && (payload as A2UiForm).fields.length >= 2;
+  return payload?.kind === "form" && Array.isArray((payload as A2UiForm).fields) && (payload as A2UiForm).fields.length >= 1;
+}
+
+type CapabilityPanelItem = {
+  id: string;
+  label: string;
+  description: string;
+  status: string;
+};
+
+/** 判断 unknown 是否是可读取字段的普通对象。 */
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/** 在项目详情中查找能力偏好。 */
+function findProjectPref(detail: ProjectCapabilityDetail | null, refId: string): ProjectCapabilityPref | null {
+  return detail?.prefs.find((pref) => pref.capabilityRefId === refId) ?? null;
+}
+
+/** 读取项目 MCP 的本地确认策略。 */
+function readProjectMcpPolicy(pref: ProjectCapabilityPref | null): { localConfirmed: boolean; secretsConfigured: boolean; allowExposeToModel: boolean } {
+  const policy = isPlainRecord(pref?.localPolicyJson) ? pref.localPolicyJson : {};
+  return {
+    localConfirmed: policy.localConfirmed === true,
+    secretsConfigured: policy.secretsConfigured === true,
+    allowExposeToModel: policy.allowExposeToModel === true,
+  };
+}
+
+/** 判断项目能力按本地偏好是否应被纳入可见运行能力。 */
+function isProjectCapabilityEnabled(ref: ProjectCapabilityRef, pref: ProjectCapabilityPref | null): boolean {
+  const state = pref?.localState ?? "inherit";
+  if (state === "enabled") return true;
+  if (state === "disabled" || state === "hidden") return false;
+  return ref.defaultEnabled;
+}
+
+/** 读取项目能力安装状态，缺失记录视为未安装。 */
+function readProjectInstallStatus(detail: ProjectCapabilityDetail | null, ref: ProjectCapabilityRef): string {
+  if (ref.kind !== "skill") return "ready";
+  return detail?.installations.find((item) => item.capabilityRefId === ref.id)?.installStatus ?? "missing";
+}
+
+/** 查找项目 Skill 的安装记录，用于判断 slash 是否可直接调用。 */
+function findProjectInstallation(detail: ProjectCapabilityDetail | null, ref: ProjectCapabilityRef) {
+  return detail?.installations.find((item) => item.capabilityRefId === ref.id) ?? null;
+}
+
+/** 判断项目 Skill 是否已同步、已安装且具备本地目录，可进入 slash 可调用列表。 */
+function isProjectSkillCallable(detail: ProjectCapabilityDetail | null, ref: ProjectCapabilityRef): boolean {
+  const pref = findProjectPref(detail, ref.id);
+  const installation = findProjectInstallation(detail, ref);
+  return ref.kind === "skill"
+    && ref.syncStatus === "synced"
+    && isProjectCapabilityEnabled(ref, pref)
+    && installation?.installStatus === "ready"
+    && Boolean(installation.installDir);
+}
+
+/** 计算项目 MCP 是否已经满足本机暴露条件。 */
+function canExposeProjectMcp(ref: ProjectCapabilityRef, pref: ProjectCapabilityPref | null): boolean {
+  const policy = readProjectMcpPolicy(pref);
+  const runtimePolicy = isPlainRecord(ref.runtimePolicyJson) ? ref.runtimePolicyJson : {};
+  return policy.localConfirmed
+    && policy.secretsConfigured
+    && policy.allowExposeToModel
+    && runtimePolicy.allowAutoExposeToModel === true;
+}
+
+/** 统计当前项目能力中需要用户注意的项。 */
+function countChatProjectWarnings(detail: ProjectCapabilityDetail | null): number {
+  if (!detail) return 0;
+  let count = detail.project.lastSyncStatus === "synced" ? 0 : 1;
+  for (const ref of detail.refs) {
+    if (ref.syncStatus !== "synced") count += 1;
+    if (ref.kind === "skill" && readProjectInstallStatus(detail, ref) !== "ready") count += 1;
+    if (ref.kind === "mcp" && !canExposeProjectMcp(ref, findProjectPref(detail, ref.id))) count += 1;
+  }
+  return count;
+}
+
+/** 把项目、我的 Skill 和全局 MCP 整理成 Chat 侧边可扫描分组。 */
+function buildCapabilityPanelGroups(input: {
+  detail: ProjectCapabilityDetail | null;
+  skills: SkillDefinition[];
+  mcpTools: ResolvedMcpTool[];
+  mcpServers: McpServer[];
+}): Array<{ id: string; title: string; icon: "boxes" | "wrench" | "plug"; items: CapabilityPanelItem[] }> {
+  const projectSkills = (input.detail?.refs ?? [])
+    .filter((ref) => ref.kind === "skill")
+    .map((ref) => {
+      const pref = findProjectPref(input.detail, ref.id);
+      const enabled = isProjectCapabilityEnabled(ref, pref);
+      const installStatus = readProjectInstallStatus(input.detail, ref);
+      return {
+        id: ref.id,
+        label: ref.displayName,
+        description: ref.description ?? ref.cloudCapabilityId,
+        status: enabled && installStatus === "ready" ? "可用" : enabled ? "待安装" : "已停用",
+      };
+    });
+  const userSkills = input.skills
+    .filter((skill) => skill.enabled)
+    .map((skill) => ({
+      id: skill.id,
+      label: skill.name,
+      description: skill.description || skill.id,
+      status: "可用",
+    }));
+  const projectMcps = (input.detail?.refs ?? [])
+    .filter((ref) => ref.kind === "mcp")
+    .map((ref) => {
+      const pref = findProjectPref(input.detail, ref.id);
+      const enabled = isProjectCapabilityEnabled(ref, pref);
+      return {
+        id: ref.id,
+        label: ref.displayName,
+        description: ref.description ?? ref.cloudCapabilityId,
+        status: enabled && canExposeProjectMcp(ref, pref) ? "可暴露" : enabled ? "待确认" : "已停用",
+      };
+    });
+  const globalMcpItems = input.mcpTools.length > 0
+    ? input.mcpTools.map((tool) => ({
+      id: tool.id,
+      label: tool.name,
+      description: tool.description ?? tool.serverId ?? tool.id,
+      status: tool.enabled ? "可用" : "已停用",
+    }))
+    : input.mcpServers.map((server) => ({
+      id: server.id,
+      label: server.name,
+      description: server.transport,
+      status: server.enabled ? "可用" : "已停用",
+    }));
+  return [
+    { id: "project-skills", title: "项目 Skills", icon: "boxes", items: projectSkills },
+    { id: "user-skills", title: "我的 Skills", icon: "wrench", items: userSkills },
+    { id: "project-mcp", title: "项目 MCP", icon: "plug", items: projectMcps },
+    { id: "global-mcp", title: "全局 MCP", icon: "plug", items: globalMcpItems },
+  ];
 }
 
 type ComposerRunState = {
@@ -436,7 +706,14 @@ export default function ChatPage() {
     workspaceRootPath: s.workspaceRootPath,
     time: s.time,
     modelSwitchNotice: s.modelSwitchNotice,
+    webPanel: s.webPanel,
+    mcpTools: s.mcpTools,
+    mcpServers: s.mcpServers,
+    projectDetails: s.projectDetails,
+    currentProjectBinding: s.currentProjectBinding,
     // Actions (stable references, never trigger re-render by themselves)
+    loadSessionProjectBinding: s.loadSessionProjectBinding,
+    loadProjectDetail: s.loadProjectDetail,
     loadSiliconPersonById: s.loadSiliconPersonById,
     markSiliconPersonSessionRead: s.markSiliconPersonSessionRead,
     updateSessionRuntimeIntent: s.updateSessionRuntimeIntent,
@@ -447,6 +724,8 @@ export default function ChatPage() {
     pushAssistantMessage: s.pushAssistantMessage,
     createSiliconPersonSession: s.createSiliconPersonSession,
     createSession: s.createSession,
+    createWebPanelTab: s.createWebPanelTab,
+    closeWebPanel: s.closeWebPanel,
     dismissModelSwitchNotice: s.dismissModelSwitchNotice,
     switchSiliconPersonSession: s.switchSiliconPersonSession,
     selectSession: s.selectSession,
@@ -488,6 +767,7 @@ export default function ChatPage() {
   const [currentRound, setCurrentRound] = useState(0);
   const [dismissedTaskPanelKey, setDismissedTaskPanelKey] = useState<string | null>(null);
   const [showWorkFiles, setShowWorkFiles] = useState(false);
+  const [projectPanelOpen, setProjectPanelOpen] = useState(false);
   const [showContextWarning, setShowContextWarning] = useState(false);
   const prevTaskCountRef = React.useRef(0);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
@@ -503,6 +783,7 @@ export default function ChatPage() {
   const [autoExpandedReasoningMessageId, setAutoExpandedReasoningMessageId] = useState<string | null>(null);
   const [reasoningPanelOverrides, setReasoningPanelOverrides] = useState<Record<string, boolean>>({});
   const [activeReminderBanner, setActiveReminderBanner] = useState<ChatReminderBannerPayload | null>(null);
+  const webPanelIsOpen = Boolean(workspace.webPanel?.isOpen);
 
   const siliconPersons = workspace.siliconPersons ?? [];
   const activeSiliconPersonId = workspace.activeSiliconPersonId;
@@ -547,7 +828,10 @@ export default function ChatPage() {
 
   const isSiliconPersonView = Boolean(selectedSiliconPerson);
   const session = isSiliconPersonView ? selectedSiliconSession : workspace.currentSession;
-  const taskPanelSignature = useMemo(() => buildTaskPanelSignature(session?.tasks), [session?.tasks]);
+  const taskPanelSignature = useMemo(
+    () => buildTaskPanelSignature(session?.tasks, session?.taskInterrupts),
+    [session?.tasks, session?.taskInterrupts],
+  );
   const taskPanelDismissKey = useMemo(
     () => buildTaskPanelDismissKey(session?.id, taskPanelSignature),
     [session?.id, taskPanelSignature],
@@ -583,6 +867,23 @@ export default function ChatPage() {
     ?? workspace.myClawRootPath
     ?? workspace.workspaceRootPath
     ?? null;
+  const currentProjectDetail = workspace.currentProjectBinding
+    ? workspace.projectDetails?.[workspace.currentProjectBinding.id] ?? null
+    : null;
+  const projectWarningCount = countChatProjectWarnings(currentProjectDetail);
+  const capabilityPanelGroups = useMemo(() => buildCapabilityPanelGroups({
+    detail: currentProjectDetail,
+    skills: workspace.skills ?? [],
+    mcpTools: workspace.mcpTools ?? [],
+    mcpServers: workspace.mcpServers ?? [],
+  }), [currentProjectDetail, workspace.skills, workspace.mcpTools, workspace.mcpServers]);
+
+  /** 渲染 Chat 项目能力面板中的单个分组图标。 */
+  function renderCapabilityGroupIcon(icon: "boxes" | "wrench" | "plug") {
+    if (icon === "boxes") return <Boxes size={14} aria-hidden />;
+    if (icon === "wrench") return <Wrench size={14} aria-hidden />;
+    return <Plug size={14} aria-hidden />;
+  }
 
   /** 统一会话列表来源：主聊天看主 session，硅基员工聊天看该员工自己的私域 session。 */
   const displaySessions = useMemo(() => {
@@ -635,22 +936,6 @@ export default function ChatPage() {
   const activeViewSessionIdRef = useRef<string | null>(session?.id ?? null);
   const activeViewSiliconPersonIdRef = useRef<string | null>(selectedSiliconPerson?.id ?? null);
 
-  /** 当前默认模型配置，用于显示运行时状态。 */
-  const activeModelProfile = useMemo(() => {
-    const models = workspace.models as Array<Record<string, unknown>> | undefined;
-    const defaultId = workspace.defaultModelProfileId as string | null | undefined;
-    const sessionModelProfileId = (session as { modelProfileId?: string | null } | null)?.modelProfileId ?? null;
-    if (!models || models.length === 0) return null;
-    return models.find((m) => m.id === sessionModelProfileId)
-      ?? models.find((m) => m.id === defaultId)
-      ?? models[0]
-      ?? null;
-  }, [session, workspace.models, workspace.defaultModelProfileId]);
-  const runtimeStatusItems = useMemo(
-    () => buildModelRuntimeStatusItems(activeModelProfile as any),
-    [activeModelProfile],
-  );
-
   /** 当前硅基员工是否缺少有效 modelProfileId（空或不在已配置模型列表里）。 */
   const siliconPersonModelMissing = useMemo(() => {
     if (!isSiliconPersonView) return false;
@@ -663,7 +948,6 @@ export default function ChatPage() {
     const models = workspace.models as Array<Record<string, unknown>> | undefined;
     if (!models || models.length === 0) return true;
     return !models.find((m) => m.id === profileId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSiliconPersonView, session, siliconPersons, workspace.models]);
 
   activeViewSessionIdRef.current = session?.id ?? null;
@@ -673,6 +957,41 @@ export default function ChatPage() {
   useEffect(() => {
     setMentionTargetSiliconPersonId(null);
   }, [activeSiliconPersonId]);
+
+  /** 会话切换后同步查询当前项目绑定，保证顶部 pill 不依赖临时页面状态。 */
+  useEffect(() => {
+    if (typeof workspace.loadSessionProjectBinding !== "function") return;
+    void workspace.loadSessionProjectBinding(session?.id ?? null).catch((error: unknown) => {
+      console.warn("[chat-page] 查询会话项目绑定失败", {
+        sessionId: session?.id ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [session?.id, workspace.loadSessionProjectBinding]);
+
+  /** 已知会话绑定项目后，懒加载项目能力详情用于 Chat 运行能力面板。 */
+  useEffect(() => {
+    const projectId = workspace.currentProjectBinding?.id ?? null;
+    if (!projectId || workspace.projectDetails?.[projectId]) return;
+    if (typeof workspace.loadProjectDetail !== "function") return;
+    void workspace.loadProjectDetail(projectId).catch((error: unknown) => {
+      console.warn("[chat-page] 加载会话项目能力详情失败", {
+        localProjectId: projectId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, [workspace.currentProjectBinding?.id, workspace.projectDetails, workspace.loadProjectDetail]);
+
+  /** 项目能力面板打开后允许 Esc 收起，保持键盘用户的关闭路径。 */
+  useEffect(() => {
+    if (!projectPanelOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setProjectPanelOpen(false);
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [projectPanelOpen]);
 
   /** 组件 unmount 时清理所有挂起的 5s 投递痕迹定时器，避免 React state-on-unmounted 警告。 */
   useEffect(() => {
@@ -974,7 +1293,7 @@ export default function ChatPage() {
   const sessionApprovalRequests = useMemo(() => {
     if (!session) return [];
     // 后端 shouldRequestApproval 已判断是否需要审批，前端只需展示所有待审批请求
-    return workspace.approvalRequests.filter((item: any) => item.sessionId === session.id);
+    return workspace.approvalRequests.filter((item: ApprovalRequest) => item.sessionId === session.id);
   }, [session, workspace.approvalRequests]);
 
   const isAwaitingModelResponse = useMemo(() => {
@@ -1004,8 +1323,18 @@ export default function ChatPage() {
       description: s.description || "自定义技能",
       category: "skill" as const,
     }));
-    return [...builtins, ...skillEntries];
-  }, [workspace.skills]);
+    const projectSkillEntries = (currentProjectDetail?.refs ?? [])
+      .filter((ref) => ref.kind === "skill")
+      .filter((ref) => isProjectSkillCallable(currentProjectDetail, ref))
+      .map((ref) => ({
+        id: `ps-${ref.id}`,
+        command: `/skill ${ref.alias ?? ref.cloudCapabilityId} `,
+        label: ref.displayName,
+        description: ref.description || "项目技能",
+        category: "project-skill" as const,
+      }));
+    return [...builtins, ...projectSkillEntries, ...skillEntries];
+  }, [currentProjectDetail, workspace.skills]);
 
   const slashMenuOpen = /^\/[^\s]*$/.test(composerDraft) && !isRunBusy;
   const slashFilter = composerDraft.slice(1).toLowerCase();
@@ -1334,6 +1663,19 @@ export default function ChatPage() {
     }
   }
 
+  /** 切换 Chat 顶部右侧 WebPanel 入口，让新对话旁的图标按钮直接控制右侧 Web 栏。 */
+  function handleToggleWebPanel() {
+    console.info("[chat-page] 用户切换 Chat 顶部 WebPanel 图标按钮", {
+      sessionId: session?.id ?? null,
+      open: !webPanelIsOpen,
+    });
+    if (webPanelIsOpen) {
+      workspace.closeWebPanel();
+      return;
+    }
+    workspace.createWebPanelTab();
+  }
+
   /** 切换当前下拉列表中的会话；硅基员工模式下切的是该员工的 currentSession。 */
   async function handleSelectDisplaySession(sessionId: string) {
     if (selectedSiliconPerson) {
@@ -1516,6 +1858,20 @@ export default function ChatPage() {
   function handleDismissTaskPanel() {
     writeTaskPanelDismissed(taskPanelDismissKey);
     setDismissedTaskPanelKey(taskPanelDismissKey);
+  }
+
+  /** 提交 Task V2 等待卡片的结构化恢复输入。 */
+  async function handleResumeTaskInterrupt(input: TaskResumeInput) {
+    try {
+      await window.myClawAPI.taskResume(input);
+      console.info("[chat-page] 已提交 Task V2 恢复输入", {
+        taskId: input.taskId,
+        requestId: input.requestId,
+        action: input.action,
+      });
+    } catch (error) {
+      reportChatError(error);
+    }
   }
 
   /** 把输入内容发送给运行时，统一处理发送态和异常展示。 */
@@ -1802,16 +2158,18 @@ export default function ChatPage() {
                   {field.required && <em className="required-mark"> *</em>}
                 </span>
                 {field.input === "select" ? (
-                  <select
+                  <GlassSelect
                     data-testid={`ui-field-${message.id}-${field.name}`}
                     value={readFormFieldValue(message.id, field.name)}
-                    onChange={(e) => writeFormFieldValue(message.id, field.name, e.target.value)}
-                  >
-                    <option value="">请选择</option>
-                    {(field.options ?? []).map((opt: any) => (
-                      <option key={`${message.id}-${field.name}-${opt.value}`} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
+                    placeholder="请选择"
+                    ariaLabel={field.label}
+                    disabled={isSubmitted || isRunBusy}
+                    options={(field.options ?? []).map((opt: any) => ({
+                      label: String(opt.label ?? opt.value ?? ""),
+                      value: String(opt.value ?? ""),
+                    }))}
+                    onChange={(nextValue) => writeFormFieldValue(message.id, field.name, nextValue)}
+                  />
                 ) : field.input === "textarea" ? (
                   <textarea
                     data-testid={`ui-field-${message.id}-${field.name}`}
@@ -2001,6 +2359,65 @@ export default function ChatPage() {
                 </button>
               </div>
             )}
+            <div className={`chat-project-runtime${projectPanelOpen ? " is-open" : ""}`} data-testid="chat-project-runtime">
+              <button
+                type="button"
+                className={`chat-project-pill${workspace.currentProjectBinding ? " chat-project-pill--bound" : ""}`}
+                data-testid="chat-project-pill"
+                aria-haspopup="dialog"
+                aria-expanded={projectPanelOpen ? "true" : "false"}
+                aria-controls="chat-project-capability-panel"
+                title={workspace.currentProjectBinding ? `当前项目：${workspace.currentProjectBinding.name}` : "当前会话未绑定项目"}
+                onClick={() => setProjectPanelOpen((current) => !current)}
+              >
+                <FolderKanban size={14} aria-hidden />
+                <span>{workspace.currentProjectBinding?.name ?? "无项目"}</span>
+                {workspace.currentProjectBinding && (
+                  <span className={`chat-project-state${projectWarningCount > 0 ? " chat-project-state--warn" : ""}`}>
+                    {projectWarningCount > 0 ? `警告 ${projectWarningCount}` : "已就绪"}
+                  </span>
+                )}
+              </button>
+              <div
+                id="chat-project-capability-panel"
+                className="chat-project-panel"
+                data-testid="chat-project-capability-panel"
+                role="dialog"
+                aria-label="会话项目能力"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setProjectPanelOpen(false);
+                }}
+              >
+                <header className="chat-project-panel-header">
+                  <strong>{workspace.currentProjectBinding?.name ?? "无项目"}</strong>
+                  <span>{workspace.currentProjectBinding ? "当前会话能力包来源" : "当前会话只使用我的全局能力"}</span>
+                </header>
+                <div className="chat-project-panel-groups">
+                  {capabilityPanelGroups.map((group) => (
+                    <section key={group.id} className="chat-project-panel-group" data-testid={`chat-capability-group-${group.id}`}>
+                      <div className="chat-project-panel-group-title">
+                        {renderCapabilityGroupIcon(group.icon)}
+                        <strong>{group.title}</strong>
+                        <span>{group.items.length}</span>
+                      </div>
+                      {group.items.length > 0 ? (
+                        <ul className="chat-project-capability-list">
+                          {group.items.slice(0, 6).map((item) => (
+                            <li key={item.id}>
+                              <span className="chat-project-capability-name">{item.label}</span>
+                              <span className="chat-project-capability-status">{item.status}</span>
+                              <span className="chat-project-capability-desc">{item.description}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="chat-project-panel-empty">暂无</p>
+                      )}
+                    </section>
+                  ))}
+                </div>
+              </div>
+            </div>
             <button
               type="button"
               data-testid="work-files-toggle"
@@ -2028,16 +2445,33 @@ export default function ChatPage() {
               </svg>
               <span>新对话</span>
             </button>
+            <button
+              type="button"
+              data-testid="chat-web-panel-toggle"
+              className={`chat-header-action-btn chat-header-icon-btn${webPanelIsOpen ? " chat-header-icon-btn--active" : ""}`}
+              aria-label={webPanelIsOpen ? "收起 WebPanel" : "打开 WebPanel"}
+              aria-pressed={webPanelIsOpen}
+              onClick={handleToggleWebPanel}
+              title={webPanelIsOpen ? "收起 WebPanel" : "打开 WebPanel"}
+            >
+              {webPanelIsOpen ? <PanelRightClose size={15} aria-hidden /> : <PanelRightOpen size={15} aria-hidden />}
+            </button>
           </div>
         </header>
 
         {/* 时间线区域 */}
         {activeReminderBanner && (
           <div className="chat-reminder-banner" data-testid="chat-reminder-banner" role="status">
+            <div className="chat-reminder-banner__accent" aria-hidden />
+            <div className="chat-reminder-banner__icon" data-testid="chat-reminder-banner-icon" aria-hidden>
+              <BellRing size={15} strokeWidth={2} />
+            </div>
             <div className="chat-reminder-banner__main">
-              <span className="chat-reminder-banner__label">提醒</span>
-              <strong>{activeReminderBanner.title}</strong>
-              {activeReminderBanner.body ? <span>{activeReminderBanner.body}</span> : null}
+              <div className="chat-reminder-banner__title-row">
+                <span className="chat-reminder-banner__label">系统提醒</span>
+                <strong>{activeReminderBanner.title}</strong>
+              </div>
+              {activeReminderBanner.body ? <span className="chat-reminder-banner__body">{activeReminderBanner.body}</span> : null}
             </div>
             <button
               type="button"
@@ -2045,7 +2479,7 @@ export default function ChatPage() {
               aria-label="关闭提醒提示"
               onClick={() => setActiveReminderBanner(null)}
             >
-              ×
+              <X size={14} strokeWidth={2} aria-hidden />
             </button>
           </div>
         )}
@@ -2373,8 +2807,10 @@ export default function ChatPage() {
               )}
 
               {/* 审批请求列表 */}
-              {sessionApprovalRequests.map((approval: any) => {
-                const isExternalPath = approval.source === "external-path" && approval.pathMeta;
+              {sessionApprovalRequests.map((approval: ApprovalRequest) => {
+                const externalPathMeta = approval.source === "external-path" ? approval.pathMeta : undefined;
+                const isExternalPath = !!externalPathMeta;
+                const approvalView = buildApprovalCardViewModel(approval);
                 return (
                 <div key={approval.id} className="message-row role-system">
                   <div className="message-avatar">
@@ -2388,15 +2824,15 @@ export default function ChatPage() {
                       {isExternalPath ? (
                         <>
                           <h3>
-                            {approval.pathMeta.operation === "read" ? "读取" : approval.pathMeta.operation === "write" ? "写入" : approval.pathMeta.operation === "delete" ? "删除" : "执行"}{" "}
+                            {externalPathMeta.operation === "read" ? "读取" : externalPathMeta.operation === "write" ? "写入" : externalPathMeta.operation === "delete" ? "删除" : "执行"}{" "}
                             <code style={{ background: "var(--color-bg-subtle,#1c1d22)", padding: "2px 6px", borderRadius: 4, fontSize: 12 }}>
-                              {approval.pathMeta.path}
+                              {externalPathMeta.path}
                             </code>
                           </h3>
                           <p style={{ fontSize: 12, color: "var(--color-text-secondary,#9ca3af)" }}>
                             工具 <strong>{approval.toolId}</strong>
-                            {typeof approval.pathMeta.size === "number" ? ` · ${(approval.pathMeta.size / 1024).toFixed(1)} KB` : ""}
-                            {approval.pathMeta.isBinary ? " · 二进制" : ""}
+                            {typeof externalPathMeta.size === "number" ? ` · ${(externalPathMeta.size / 1024).toFixed(1)} KB` : ""}
+                            {externalPathMeta.isBinary ? " · 二进制" : ""}
                           </p>
                           {isResolvingApproval(approval.id) ? (
                             <div className="approval-loading">
@@ -2404,19 +2840,39 @@ export default function ChatPage() {
                               <span>正在提交决策...</span>
                             </div>
                           ) : (
-                            <div className="approval-actions" style={{ flexWrap: "wrap" }}>
-                              <button data-testid="approval-action-allow-once" className="primary" onClick={() => void handleApproval(approval.id, "allow-once")}>仅此次</button>
-                              <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>本会话</button>
-                              <button data-testid="approval-action-allow-directory" className="secondary" onClick={() => void handleApproval(approval.id, "allow-directory")}>本目录（始终）</button>
-                              <button data-testid="approval-action-deny" className="secondary" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
-                              <button data-testid="approval-action-deny-persistent" className="secondary" onClick={() => void handleApproval(approval.id, "deny-persistent")}>永久拒绝此路径</button>
+                            <div className="approval-actions">
+                              <div className="approval-actions__reject">
+                                <button data-testid="approval-action-deny" className="secondary approval-action--danger" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
+                                <button data-testid="approval-action-deny-persistent" className="secondary approval-action--danger" onClick={() => void handleApproval(approval.id, "deny-persistent")}>永久拒绝此路径</button>
+                              </div>
+                              <div className="approval-actions__allow">
+                                <button data-testid="approval-action-allow-directory" className="secondary" onClick={() => void handleApproval(approval.id, "allow-directory")}>本目录（始终）</button>
+                                <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>本会话</button>
+                                <button data-testid="approval-action-allow-once" className="primary" onClick={() => void handleApproval(approval.id, "allow-once")}>仅此次</button>
+                              </div>
                             </div>
                           )}
                         </>
                       ) : (
                         <>
-                          <h3>是否允许执行 {approval.label}？</h3>
-                          <p>{approval.detail}</p>
+                          <h3>是否允许工具 <code>{approval.toolId}</code> 执行？</h3>
+                          <div className="approval-meta" aria-label="审批工具信息">
+                            <span><b>工具</b><code>{approval.toolId}</code></span>
+                            <span><b>来源</b>{approvalView.sourceLabel}</span>
+                            <span><b>风险</b>{approvalView.riskLabel}</span>
+                          </div>
+                          {approvalView.targetText && (
+                            <dl className="approval-summary">
+                              <dt>{approvalView.targetLabel}</dt>
+                              <dd><code>{approvalView.targetText}</code></dd>
+                            </dl>
+                          )}
+                          {approvalView.detailText && (
+                            <details className="approval-detail" open>
+                              <summary>{approvalView.detailTitle}</summary>
+                              <pre>{approvalView.detailText}</pre>
+                            </details>
+                          )}
                           {isResolvingApproval(approval.id) ? (
                             <div className="approval-loading">
                               <div className="typing-dots"><span></span><span></span><span></span></div>
@@ -2424,10 +2880,14 @@ export default function ChatPage() {
                             </div>
                           ) : (
                             <div className="approval-actions">
-                              <button data-testid="approval-action-deny" className="secondary" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
-                              <button data-testid="approval-action-allow-once" className="secondary" onClick={() => void handleApproval(approval.id, "allow-once")}>允许一次</button>
-                              <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>允许本次运行</button>
-                              <button data-testid="approval-action-always-allow-tool" className="primary" onClick={() => void handleApproval(approval.id, "always-allow-tool")}>始终允许此工具</button>
+                              <div className="approval-actions__reject">
+                                <button data-testid="approval-action-deny" className="secondary approval-action--danger" onClick={() => void handleApproval(approval.id, "deny")}>拒绝</button>
+                              </div>
+                              <div className="approval-actions__allow">
+                                <button data-testid="approval-action-always-allow-tool" className="secondary" onClick={() => void handleApproval(approval.id, "always-allow-tool")}>始终允许此工具</button>
+                                <button data-testid="approval-action-allow-session" className="secondary" onClick={() => void handleApproval(approval.id, "allow-session")}>允许本次运行</button>
+                                <button data-testid="approval-action-allow-once" className="primary" onClick={() => void handleApproval(approval.id, "allow-once")}>允许一次</button>
+                              </div>
                             </div>
                           )}
                         </>
@@ -2606,7 +3066,12 @@ export default function ChatPage() {
 
         {/* 计划面板 - Codex 风格，紧贴输入框上方 */}
         {!taskPanelDismissed && (
-          <PlanStatePanel tasks={session?.tasks ?? []} onDismiss={handleDismissTaskPanel} />
+          <PlanStatePanel
+            tasks={session?.tasks ?? []}
+            interrupts={session?.taskInterrupts ?? []}
+            onDismiss={handleDismissTaskPanel}
+            onResumeInterrupt={handleResumeTaskInterrupt}
+          />
         )}
 
         {/* ── 后台研究面板 ── */}
@@ -2721,7 +3186,8 @@ export default function ChatPage() {
                       >
                         <span className="slash-cmd">{item.label}</span>
                         <span className="slash-desc">{item.description}</span>
-                        {item.category === "skill" && <span className="slash-badge">技能</span>}
+                        {item.category === "project-skill" && <span className="slash-badge slash-badge--project">项目技能</span>}
+                        {item.category === "skill" && <span className="slash-badge">我的技能</span>}
                       </div>
                     </React.Fragment>
                   );
@@ -2767,22 +3233,6 @@ export default function ChatPage() {
                   <span className="composer-hints">可用命令: /skill, /cmd, /read, /mcp</span>
                 ) : (
                   <span className="composer-hints"></span>
-                )}
-                {runtimeStatusItems.length > 0 && (
-                  <div
-                    className="chat-runtime-model-status"
-                    data-testid="chat-runtime-model-status"
-                    title={runtimeStatusItems.map((item) => item.label).join(" · ")}
-                  >
-                    {runtimeStatusItems.map((item) => (
-                      <span
-                        key={item.key}
-                        className={`chat-runtime-model-status__pill chat-runtime-model-status__pill--${item.tone}`}
-                      >
-                        {item.label}
-                      </span>
-                    ))}
-                  </div>
                 )}
                 {!isSiliconPersonView && (
                   <>
@@ -2849,13 +3299,30 @@ export default function ChatPage() {
       {confirmDialog && (
         <div className="confirm-overlay" onClick={closeConfirmDialog}>
           <div
-            className="confirm-dialog"
+            className="confirm-dialog confirm-dialog--danger"
+            data-testid="chat-confirm-dialog"
+            data-variant="danger"
             role="dialog"
             aria-modal="true"
-            aria-labelledby="chat-confirm-message"
+            aria-labelledby="chat-confirm-title"
+            aria-describedby="chat-confirm-message chat-confirm-detail"
             onClick={(e) => e.stopPropagation()}
           >
-            <p id="chat-confirm-message" className="confirm-message">{confirmDialog.message}</p>
+            <div className="confirm-dialog__header">
+              <div className="confirm-dialog__icon" data-testid="chat-confirm-dialog-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                </svg>
+              </div>
+              <div className="confirm-dialog__copy">
+                <h3 id="chat-confirm-title" className="confirm-title" data-testid="chat-confirm-dialog-title">删除会话</h3>
+                <p id="chat-confirm-message" className="confirm-message">{confirmDialog.message}</p>
+                <p id="chat-confirm-detail" className="confirm-detail" data-testid="chat-confirm-dialog-detail">
+                  删除后将移除本地会话记录和消息内容，此操作不可撤销。
+                </p>
+              </div>
+            </div>
             <div className="confirm-actions">
               <button
                 ref={confirmCancelRef}
@@ -2891,6 +3358,9 @@ export default function ChatPage() {
         .chat-header-action-btn--primary { border-color: var(--accent-cyan); color: var(--accent-cyan); background: rgba(16,163,127,0.06); }
         .chat-header-action-btn--primary:hover:not(:disabled) { background: rgba(16,163,127,0.12); border-color: var(--accent-cyan); color: var(--accent-cyan); }
         .chat-header-action-btn--active { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.3); color: #60a5fa; }
+        .chat-header-icon-btn { width: 28px; padding: 0; justify-content: center; color: var(--text-muted); }
+        .chat-header-icon-btn--active { color: var(--accent-cyan); border-color: rgba(16,163,127,0.34); background: rgba(16,163,127,0.12); }
+        .chat-header-icon-btn:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 2px; }
         .agent-task-append-state { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(34,197,94,0.24); background: rgba(34,197,94,0.08); color: var(--status-green); font-size: 12px; font-weight: 600; }
         .model-switch-inline-notice { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 360px; height: 28px; padding: 0 8px; border: 1px solid rgba(16,163,127,0.28); border-radius: 8px; background: rgba(16,163,127,0.08); color: var(--text-secondary); font-size: 12px; line-height: 1; box-sizing: border-box; }
         .model-switch-inline-notice > svg { flex-shrink: 0; color: var(--accent-cyan); }
@@ -2900,15 +3370,174 @@ export default function ChatPage() {
         .model-switch-inline-dismiss { background: transparent; border-color: rgba(148,163,184,0.22); color: var(--text-muted); }
         .model-switch-inline-action:hover { opacity: 0.86; }
         .model-switch-inline-dismiss:hover { color: var(--text-primary); border-color: var(--glass-border-hover); background: rgba(255,255,255,0.04); }
+        .chat-project-runtime { position: relative; display: inline-flex; }
+        .chat-project-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          max-width: 230px;
+          height: 28px;
+          padding: 0 10px;
+          border: 1px solid var(--glass-border);
+          border-radius: 8px;
+          background: rgba(255,255,255,0.025);
+          color: var(--text-secondary);
+          font-size: 12px;
+          font-weight: 650;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+        .chat-project-pill > span:first-of-type {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .chat-project-pill--bound {
+          color: var(--accent-cyan);
+          border-color: rgba(16,163,127,0.28);
+          background: rgba(16,163,127,0.08);
+        }
+        .chat-project-state {
+          flex-shrink: 0;
+          padding: 1px 5px;
+          border-radius: 6px;
+          background: rgba(34,197,94,0.12);
+          color: var(--status-green);
+          font-size: 10px;
+          line-height: 1.4;
+        }
+        .chat-project-state--warn {
+          background: rgba(245,158,11,0.12);
+          color: #fbbf24;
+        }
+        .chat-project-panel {
+          position: absolute;
+          top: calc(100% + 8px);
+          right: 0;
+          z-index: 80;
+          width: min(480px, calc(100vw - 32px));
+          max-height: min(68vh, 620px);
+          overflow: auto;
+          display: grid;
+          gap: 12px;
+          padding: 14px;
+          border: 1px solid var(--glass-border);
+          border-radius: 10px;
+          background: var(--bg-card);
+          box-shadow: 0 18px 54px rgba(0,0,0,0.42);
+          opacity: 0;
+          visibility: hidden;
+          transform: translateY(-6px);
+          transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s ease;
+        }
+        .chat-project-runtime:hover .chat-project-panel,
+        .chat-project-runtime:focus-within .chat-project-panel,
+        .chat-project-runtime.is-open .chat-project-panel {
+          opacity: 1;
+          visibility: visible;
+          transform: translateY(0);
+        }
+        .chat-project-panel-header {
+          display: grid;
+          gap: 3px;
+          padding-bottom: 10px;
+          border-bottom: 1px solid var(--glass-border);
+        }
+        .chat-project-panel-header strong {
+          color: var(--text-primary);
+          font-size: 13px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .chat-project-panel-header span {
+          color: var(--text-muted);
+          font-size: 11px;
+        }
+        .chat-project-panel-groups {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .chat-project-panel-group {
+          min-width: 0;
+          display: grid;
+          gap: 8px;
+          padding: 10px;
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 8px;
+          background: rgba(255,255,255,0.025);
+        }
+        .chat-project-panel-group-title {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          color: var(--text-primary);
+          font-size: 12px;
+        }
+        .chat-project-panel-group-title span {
+          margin-left: auto;
+          color: var(--text-muted);
+          font-size: 11px;
+        }
+        .chat-project-capability-list {
+          list-style: none;
+          display: grid;
+          gap: 7px;
+          padding: 0;
+          margin: 0;
+        }
+        .chat-project-capability-list li {
+          min-width: 0;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          gap: 2px 8px;
+        }
+        .chat-project-capability-name {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: var(--text-primary);
+          font-size: 12px;
+        }
+        .chat-project-capability-status {
+          color: var(--accent-cyan);
+          font-size: 11px;
+          white-space: nowrap;
+        }
+        .chat-project-capability-desc {
+          grid-column: 1 / -1;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          color: var(--text-muted);
+          font-size: 11px;
+        }
+        .chat-project-panel-empty {
+          margin: 0;
+          color: var(--text-muted);
+          font-size: 11px;
+        }
+        .slash-badge--project {
+          color: #93c5fd;
+          border-color: rgba(147,197,253,0.24);
+          background: rgba(59,130,246,0.08);
+        }
 
         /* ── 时间线容器 (支持文件侧边栏) ── */
-        .chat-reminder-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 32px; border-bottom: 1px solid rgba(245,158,11,0.22); background: rgba(245,158,11,0.10); color: var(--text-primary); }
-        .chat-reminder-banner__main { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 13px; }
-        .chat-reminder-banner__main strong { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px; }
-        .chat-reminder-banner__main span:last-child { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .chat-reminder-banner__label { padding: 2px 7px; border-radius: 999px; background: rgba(245,158,11,0.16); color: #fbbf24; font-size: 11px; font-weight: 700; }
-        .chat-reminder-banner__close { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 18px; line-height: 1; }
-        .chat-reminder-banner__close:hover { border-color: rgba(245,158,11,0.25); color: var(--text-primary); background: rgba(255,255,255,0.05); }
+        .chat-reminder-banner { display: grid; grid-template-columns: 4px 28px minmax(0, 1fr) 28px; align-items: center; gap: 12px; padding: 10px 28px 10px 0; border-bottom: 1px solid var(--glass-border); background: rgba(16,163,127,0.07); color: var(--text-primary); box-shadow: inset 0 1px 0 rgba(255,255,255,0.04); }
+        .chat-reminder-banner__accent { align-self: stretch; width: 4px; background: var(--accent-cyan); box-shadow: 0 0 12px rgba(16,163,127,0.35); }
+        .chat-reminder-banner__icon { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(16,163,127,0.28); border-radius: var(--radius-md); background: rgba(16,163,127,0.10); color: var(--accent-cyan); }
+        .chat-reminder-banner__main { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 13px; }
+        .chat-reminder-banner__title-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .chat-reminder-banner__main strong { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .chat-reminder-banner__label { flex-shrink: 0; color: var(--accent-cyan); font-size: 11px; font-weight: 700; }
+        .chat-reminder-banner__body { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .chat-reminder-banner__close { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); cursor: pointer; line-height: 1; }
+        .chat-reminder-banner__close:hover { border-color: var(--glass-border-hover); color: var(--text-primary); background: rgba(255,255,255,0.06); }
+        .chat-reminder-banner__close:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: -2px; }
         .chat-timeline-container { display: flex; flex: 1; overflow: hidden; min-height: 0; }
         .chat-timeline-container--with-sidebar .timeline-panel { border-right: 1px solid var(--glass-border); }
         .chat-work-files-drawer { width: 340px; min-width: 320px; background: color-mix(in srgb, var(--bg-card) 94%, transparent); display: flex; flex-direction: column; flex-shrink: 0; min-height: 0; position: relative; z-index: 5; overflow-y: auto; }
@@ -3003,6 +3632,12 @@ export default function ChatPage() {
           background: rgba(248, 113, 113, 0.08);
           color: #fca5a5;
         }
+        .message-content .inline-file-ref[data-state="missing"]::after {
+          content: attr(data-error);
+          margin-left: 2px;
+          font-size: 0.78em;
+          color: #fecaca;
+        }
         .message-content h1, .message-content h2, .message-content h3 { margin: 24px 0 12px; color: var(--text-primary); font-weight: 600; }
         .message-content blockquote { border-left: 4px solid var(--accent-cyan); margin: 16px 0; padding: 8px 0 8px 16px; color: var(--text-secondary); background: var(--glass-reflection); border-radius: 0 var(--radius-md) var(--radius-md) 0; }
         .message-details { background: rgba(255,255,255,0.02); border: 1px solid transparent; border-radius: var(--radius-md); overflow: hidden; margin-bottom: 12px; transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
@@ -3066,7 +3701,23 @@ export default function ChatPage() {
         .execution-chain-output-body { margin-top: 10px; }
         .approval-card { display: grid; gap: 12px; padding: 20px; border-radius: var(--radius-lg); border: 1px solid var(--glass-border); background: var(--bg-card); margin-top: 8px; }
         .approval-card h3 { font-size: 15px; font-weight: 600; margin: 0; }
-        .approval-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+        .approval-card h3 code { font-size: 13px; color: var(--accent-cyan); background: rgba(45,212,191,0.1); border: 1px solid rgba(45,212,191,0.18); border-radius: 6px; padding: 2px 7px; }
+        .approval-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .approval-meta span { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.04); color: var(--text-secondary); font-size: 12px; }
+        .approval-meta b { color: var(--text-primary); font-weight: 600; }
+        .approval-meta code { color: var(--accent-cyan); font-size: 12px; }
+        .approval-summary { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; margin: 0; padding: 10px 12px; border-radius: var(--radius-md); border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03); }
+        .approval-summary dt { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+        .approval-summary dd { min-width: 0; margin: 0; color: var(--text-primary); font-size: 13px; line-height: 1.5; }
+        .approval-summary code { white-space: pre-wrap; word-break: break-word; }
+        .approval-detail { border-radius: var(--radius-md); border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03); overflow: hidden; }
+        .approval-detail summary { cursor: pointer; padding: 9px 12px; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+        .approval-detail pre { margin: 0; max-height: 180px; overflow: auto; padding: 10px 12px; border-top: 1px solid var(--glass-border); color: var(--text-secondary); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+        .approval-actions { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; margin-top: 4px; }
+        .approval-actions__reject, .approval-actions__allow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .approval-actions__allow { justify-content: flex-end; margin-left: auto; }
+        .approval-action--danger { color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }
+        .approval-action--danger:hover:not(:disabled) { background: rgba(248, 113, 113, 0.09); color: #fecaca; }
         .approval-loading { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: rgba(255,255,255,0.05); border-radius: var(--radius-md); color: var(--text-secondary); font-size: 13px; font-weight: 500; }
         .message-form { margin-top: 16px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: var(--radius-lg); overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.15); transition: all 0.3s ease; }
         .message-form-header { padding: 16px 20px; border-bottom: 1px solid var(--glass-border); background: rgba(255,255,255,0.03); display: flex; align-items: flex-start; gap: 12px; }
@@ -3101,11 +3752,6 @@ export default function ChatPage() {
         .composer-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 4px 16px 16px; }
         .composer-toolbar-left { display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0; }
         .composer-hints { font-size: 12px; color: var(--text-muted); }
-        .chat-runtime-model-status { display: flex; align-items: center; gap: 5px; min-width: 0; flex-wrap: wrap; }
-        .chat-runtime-model-status__pill { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; border-radius: 7px; border: 1px solid rgba(255,255,255,0.08); background: rgba(255,255,255,0.035); color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
-        .chat-runtime-model-status__pill--vendor { color: var(--accent-cyan); border-color: rgba(16,163,127,0.28); background: rgba(16,163,127,0.08); }
-        .chat-runtime-model-status__pill--protocol { color: #93c5fd; border-color: rgba(147,197,253,0.22); background: rgba(59,130,246,0.08); }
-        .chat-runtime-model-status__pill--thinking { color: #facc15; border-color: rgba(250,204,21,0.22); background: rgba(250,204,21,0.08); }
         .effort-selector { display: flex; gap: 2px; background: rgba(255,255,255,0.04); border-radius: 8px; padding: 2px; border: 1px solid var(--glass-border); }
         .effort-btn { font-size: 11px; font-weight: 500; padding: 3px 10px; border: none; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; transition: all 0.15s; white-space: nowrap; }
         .effort-btn:hover { color: var(--text-secondary); background: rgba(255,255,255,0.04); }
@@ -3152,17 +3798,23 @@ export default function ChatPage() {
         .required-mark { font-style: normal; color: #ef4444; }
         .token-usage-badge { display: inline-flex; align-items: center; padding: 1px 6px; margin-left: 8px; font-size: 11px; color: var(--text-muted, #71717a); background: rgba(255,255,255,0.04); border-radius: 4px; cursor: help; }
         .session-token-total { padding: 4px 12px; font-size: 11px; color: var(--text-muted, #71717a); text-align: right; }
-        .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 9999; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(4px); animation: confirm-fadein 0.15s ease; }
+        .confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.64); z-index: 9999; display: flex; align-items: center; justify-content: center; backdrop-filter: blur(12px); animation: confirm-fadein 0.15s ease; padding: 24px; }
         @keyframes confirm-fadein { from { opacity: 0; } to { opacity: 1; } }
-        .confirm-dialog { background: var(--bg-card, #1e1e2e); border: 1px solid var(--glass-border); border-radius: 16px; padding: 28px 32px 24px; min-width: 340px; max-width: 420px; box-shadow: 0 20px 60px rgba(0,0,0,0.5); animation: confirm-slidein 0.2s cubic-bezier(0.16,1,0.3,1); }
+        .confirm-dialog { width: min(440px, calc(100vw - 48px)); background: linear-gradient(180deg, rgba(30,30,34,0.96), rgba(18,18,22,0.98)); border: 1px solid rgba(255,255,255,0.12); border-radius: var(--radius-xl); padding: 20px; box-shadow: var(--shadow-modal, 0 24px 80px rgba(0,0,0,0.55)); animation: confirm-slidein 0.2s cubic-bezier(0.16,1,0.3,1); }
+        .confirm-dialog--danger { border-color: rgba(239,68,68,0.32); box-shadow: 0 24px 80px rgba(0,0,0,0.58), 0 0 0 1px rgba(239,68,68,0.08); }
         @keyframes confirm-slidein { from { opacity: 0; transform: scale(0.95) translateY(8px); } to { opacity: 1; transform: none; } }
-        .confirm-message { margin: 0 0 24px; font-size: 15px; font-weight: 500; color: var(--text-primary); line-height: 1.5; }
-        .confirm-actions { display: flex; justify-content: flex-end; gap: 12px; }
-        .confirm-cancel, .confirm-ok { padding: 9px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; border: 1px solid var(--glass-border); }
-        .confirm-cancel { background: transparent; color: var(--text-secondary); }
-        .confirm-cancel:hover { background: var(--glass-reflection); color: var(--text-primary); }
-        .confirm-ok { background: #ef4444; color: #fff; border-color: transparent; }
-        .confirm-ok:hover { background: #dc2626; }
+        .confirm-dialog__header { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; align-items: flex-start; }
+        .confirm-dialog__icon { width: 42px; height: 42px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--radius-lg); color: var(--status-red); background: rgba(239,68,68,0.11); border: 1px solid rgba(239,68,68,0.28); }
+        .confirm-dialog__copy { min-width: 0; display: grid; gap: 7px; }
+        .confirm-title { margin: 0; color: var(--text-primary); font-size: 16px; font-weight: 700; line-height: 1.3; letter-spacing: 0; }
+        .confirm-message { margin: 0; font-size: 14px; font-weight: 600; color: var(--text-primary); line-height: 1.5; overflow-wrap: anywhere; }
+        .confirm-detail { margin: 0; font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+        .confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+        .confirm-cancel, .confirm-ok { min-height: 34px; padding: 8px 16px; border-radius: var(--radius-md); font-size: 13px; font-weight: 700; cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s, transform 0.15s; border: 1px solid var(--glass-border); }
+        .confirm-cancel { background: rgba(255,255,255,0.03); color: var(--text-secondary); }
+        .confirm-cancel:hover { background: rgba(255,255,255,0.07); color: var(--text-primary); border-color: var(--glass-border-hover); }
+        .confirm-ok { background: rgba(239,68,68,0.14); color: #fecaca; border-color: rgba(239,68,68,0.44); }
+        .confirm-ok:hover { background: rgba(239,68,68,0.22); color: #fff; border-color: rgba(239,68,68,0.68); transform: translateY(-1px); }
 
         .mention-target-indicator { display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--glass-border); font-size: 13px; }
         .mention-target-label { color: var(--text-muted); }

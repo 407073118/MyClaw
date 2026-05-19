@@ -73,13 +73,13 @@ export type CreateMcpItemInput = {
   name: string;
   summary: string;
   description: string;
-  version: string;
+  version?: string;
   releaseNotes: string;
   config: McpServerConfig;
 };
 
 export type PublishMcpReleaseInput = {
-  version: string;
+  version?: string;
   releaseNotes: string;
   config: McpServerConfig;
 };

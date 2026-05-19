@@ -46,6 +46,26 @@ describe("desktop guest login", () => {
     expect((window as any).myClawAPI.auth.introspect).not.toHaveBeenCalled();
   });
 
+  it("persists the current user avatar in the local auth session", async () => {
+    await useAuthStore.getState().loginAsGuest();
+
+    useAuthStore.getState().updateCurrentUserAvatar("data:image/png;base64,QUJD");
+
+    expect(useAuthStore.getState().session.user?.avatarDataUrl).toBe("data:image/png;base64,QUJD");
+    expect(localStorage.getItem("myclaw-desktop-auth-session")).toContain("data:image/png;base64,QUJD");
+
+    useAuthStore.getState().applyIntrospectResult({
+      active: true,
+      user: {
+        account: "guest",
+        displayName: "游客",
+        roles: ["guest"],
+      },
+    });
+
+    expect(useAuthStore.getState().session.user?.avatarDataUrl).toBe("data:image/png;base64,QUJD");
+  });
+
   it("lets the login page enter by guest without account or password", async () => {
     const { default: LoginPage } = await import("../src/renderer/pages/LoginPage");
 

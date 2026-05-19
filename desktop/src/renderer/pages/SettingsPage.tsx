@@ -5,10 +5,16 @@ import { useWorkspaceStore } from "@/stores/workspace";
 import type { AsrConfig, ProtocolTarget } from "@shared/contracts";
 import { DEFAULT_ASR_CONFIG } from "@shared/contracts";
 import { readBrMiniMaxRuntimeDiagnostics } from "@shared/br-minimax";
+import FallbackAvatar from "../components/FallbackAvatar";
 import { resolveModelCapability } from "../../main/services/model-capability-resolver";
 import { formatCapabilitySource } from "../utils/context-ui-helpers";
+import {
+  getAccountAvatarBackground,
+  readAccountAvatarFileAsDataUrl,
+  resolveAccountAvatarInitials,
+} from "../utils/account-avatar";
 import { getModelVendorLabel } from "../utils/model-profile-display";
-import { Box, Sliders, ShieldCheck, Mic, ChevronRight, CheckCircle2, AlertCircle, UserCog, Sparkles, LogOut } from "lucide-react";
+import { Box, Sliders, ShieldCheck, Mic, ChevronRight, CheckCircle2, AlertCircle, UserCog, Sparkles, LogOut, ImagePlus, Trash2 } from "lucide-react";
 
 type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
 
@@ -18,6 +24,7 @@ const DEFAULT_APPROVAL_POLICY = {
   autoApproveSkills: true,
   alwaysAllowedTools: [] as string[],
 };
+const ACCOUNT_AVATAR_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 
 function createDefaultApprovalPolicy() {
   return { ...DEFAULT_APPROVAL_POLICY };
@@ -130,8 +137,64 @@ export default function SettingsPage() {
     downloadPageUrl: null,
   };
   const appUpdateSourceLabel = appUpdate.feedLabel ?? "未配置公开发布仓库";
-  const currentUserDisplayName = auth.session?.user?.displayName ?? "未登录用户";
-  const currentUserAccount = auth.session?.user?.account ?? "未绑定账号";
+  const currentUser = auth.session?.user ?? null;
+  const currentUserDisplayName = currentUser?.displayName ?? "未登录用户";
+  const currentUserAccount = currentUser?.account ?? "未绑定账号";
+  const currentUserAvatarDataUrl = typeof currentUser?.avatarDataUrl === "string" && currentUser.avatarDataUrl
+    ? currentUser.avatarDataUrl
+    : null;
+  const currentUserAvatarBackground = getAccountAvatarBackground({
+    account: currentUserAccount,
+    displayName: currentUserDisplayName,
+  });
+  const currentUserAvatarInitials = resolveAccountAvatarInitials({
+    account: currentUserAccount,
+    displayName: currentUserDisplayName,
+  });
+  const [accountAvatarPreview, setAccountAvatarPreview] = useState<string | null>(currentUserAvatarDataUrl);
+  const [accountAvatarStatus, setAccountAvatarStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAccountAvatarPreview(currentUserAvatarDataUrl);
+  }, [currentUserAvatarDataUrl]);
+
+  /** 读取用户选择的本地头像，完成校验后写入当前 auth 会话。 */
+  async function handleAccountAvatarChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    setAccountAvatarStatus(null);
+    try {
+      const dataUrl = await readAccountAvatarFileAsDataUrl(file);
+      setAccountAvatarPreview(dataUrl);
+      auth.updateCurrentUserAvatar(dataUrl);
+      setAccountAvatarStatus("头像已更新");
+      console.info("[settings] 已更新当前账号头像", {
+        account: currentUser?.account ?? null,
+        fileName: file.name,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "头像读取失败，请重新选择。";
+      setAccountAvatarStatus(message);
+      console.warn("[settings] 当前账号头像更新失败", {
+        account: currentUser?.account ?? null,
+        error: message,
+      });
+    }
+  }
+
+  /** 移除当前用户的本地头像，恢复离线生成的默认头像。 */
+  function handleAccountAvatarRemove() {
+    setAccountAvatarPreview(null);
+    auth.updateCurrentUserAvatar(null);
+    setAccountAvatarStatus("头像已移除");
+    console.info("[settings] 已移除当前账号头像", {
+      account: currentUser?.account ?? null,
+    });
+  }
 
   /** 从设置页退出当前账号，并记录账号信息便于排查登录状态。 */
   async function handleSettingsLogout() {
@@ -642,9 +705,15 @@ export default function SettingsPage() {
                 <h4>当前账号</h4>
                 <div className="list-row list-row--with-avatar account-summary-row">
                   <span className="list-row__lead">
-                    <span className="list-row__avatar account-avatar">
-                      {currentUserDisplayName.charAt(0).toUpperCase()}
-                    </span>
+                    <FallbackAvatar
+                      data-testid="settings-account-avatar-preview"
+                      className="list-row__avatar account-avatar"
+                      name={currentUserDisplayName}
+                      background={currentUserAvatarBackground}
+                      src={accountAvatarPreview}
+                      initials={currentUserAvatarInitials}
+                      alt={`${currentUserDisplayName} 头像`}
+                    />
                   </span>
                   <span className="list-row__main">
                     <span className="list-row__title-row">
@@ -654,6 +723,34 @@ export default function SettingsPage() {
                     <span className="list-row__meta-row">
                       <span className="list-row__meta">{currentUserAccount}</span>
                     </span>
+                  </span>
+                  <span className="list-row__trailing account-avatar-actions">
+                    <label className="btn-secondary account-avatar-upload" title="更换头像">
+                      <ImagePlus size={14} />
+                      <span>更换头像</span>
+                      <input
+                        data-testid="settings-account-avatar-upload"
+                        type="file"
+                        accept={ACCOUNT_AVATAR_ACCEPT}
+                        onChange={(event) => void handleAccountAvatarChange(event)}
+                      />
+                    </label>
+                    {accountAvatarPreview && (
+                      <button
+                        data-testid="settings-account-avatar-remove"
+                        type="button"
+                        className="btn-icon account-avatar-remove"
+                        title="移除头像"
+                        onClick={handleAccountAvatarRemove}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+                    {accountAvatarStatus && (
+                      <span data-testid="settings-account-avatar-status" className="account-avatar-status">
+                        {accountAvatarStatus}
+                      </span>
+                    )}
                   </span>
                 </div>
               </div>
@@ -961,13 +1058,37 @@ export default function SettingsPage() {
         .account-summary-row {
           min-height: 56px;
           cursor: default;
+          align-items: center;
         }
         .account-summary-row:hover {
           background: var(--bg-surface);
           border-color: var(--row-border);
         }
         .account-avatar {
-          background: linear-gradient(135deg, var(--accent-cyan), #0d9668);
+          overflow: hidden;
+        }
+        .account-avatar-actions {
+          margin-left: auto;
+          flex-wrap: wrap;
+          justify-content: flex-end;
+        }
+        .account-avatar-upload {
+          position: relative;
+          overflow: hidden;
+        }
+        .account-avatar-upload input {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
+          cursor: pointer;
+        }
+        .account-avatar-remove {
+          color: var(--text-muted);
+        }
+        .account-avatar-status {
+          font-size: 12px;
+          color: var(--text-muted);
+          white-space: nowrap;
         }
         .account-action-list {
           gap: 6px;

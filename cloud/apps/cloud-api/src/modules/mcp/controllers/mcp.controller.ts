@@ -41,7 +41,7 @@ export class McpController {
   ) {
     this.assertReleaseBody(body);
     return this.mcpService.publishRelease(id, {
-      version: body.version,
+      version: body.version?.trim() || undefined,
       releaseNotes: body.releaseNotes,
       config: body.config
     });
@@ -56,7 +56,7 @@ export class McpController {
       name: body.name,
       summary: body.summary,
       description: body.description,
-      version: body.version,
+      version: body.version?.trim() || undefined,
       releaseNotes: body.releaseNotes,
       config: body.config
     });
@@ -74,9 +74,6 @@ export class McpController {
 
   /** 校验发布版本请求体 */
   private assertReleaseBody(body: PublishMcpReleaseInput): void {
-    if (!body.version?.trim()) {
-      throw new BadRequestException("release_version_required");
-    }
     if (!body.releaseNotes?.trim()) {
       throw new BadRequestException("release_notes_required");
     }

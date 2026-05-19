@@ -71,7 +71,7 @@ export class HubController {
     const checkedFile = this.requireReleaseZip(file, "employee_package_zip_required");
 
     return this.hubService.publishEmployeePackageRelease(id, {
-      version: body.version!,
+      version: body.version?.trim() || undefined,
       releaseNotes: body.releaseNotes!,
       fileName: checkedFile.originalname,
       contentType: checkedFile.mimetype,
@@ -90,7 +90,7 @@ export class HubController {
     const checkedFile = this.requireReleaseZip(file, "workflow_package_zip_required");
 
     return this.hubService.publishWorkflowPackageRelease(id, {
-      version: body.version!,
+      version: body.version?.trim() || undefined,
       releaseNotes: body.releaseNotes!,
       fileName: checkedFile.originalname,
       contentType: checkedFile.mimetype,
@@ -109,10 +109,6 @@ export class HubController {
   }
 
   private assertReleaseBody(body: PublishReleaseBody) {
-    if (!body.version?.trim()) {
-      throw new BadRequestException("release_version_required");
-    }
-
     if (!body.releaseNotes?.trim()) {
       throw new BadRequestException("release_notes_required");
     }

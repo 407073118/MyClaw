@@ -46,8 +46,8 @@ const stubProfileResolver: ModelProfileResolver = (_id?: string) => ({
   name: "Test",
 });
 
-const stubToolExecutor: ToolExecutorFn = async (toolId, label, _workingDir) => {
-  return { success: true, output: `Tool ${toolId} result for: ${label}` };
+const stubToolExecutor: ToolExecutorFn = async (toolId, args, _workingDir) => {
+  return { success: true, output: `Tool ${toolId} result for: ${JSON.stringify(args)}` };
 };
 
 function buildRegistry(modelCaller?: ModelCaller): NodeExecutorRegistry {

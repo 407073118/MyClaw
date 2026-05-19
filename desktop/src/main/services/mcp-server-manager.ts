@@ -37,6 +37,7 @@ type McpClientLike = {
   connect(): Promise<McpToolInfo[]>;
   disconnect(): Promise<void>;
   reconnect(): Promise<McpToolInfo[]>;
+  refreshTools(): Promise<McpToolInfo[]>;
   callTool(toolName: string, args: Record<string, unknown>): Promise<{ content: Array<{ type: string; text?: string; [key: string]: unknown }>; isError?: boolean }>;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   removeAllListeners(event?: string): unknown;
@@ -209,7 +210,7 @@ export class McpServerManager {
   // 连接生命周期
   // -----------------------------------------------------------------------
 
-  /** 连接单个服务（stdio 或 HTTP）。 */
+  /** 连接单个服务（stdio、HTTP、SSE 或 Streamable HTTP）。 */
   async connectServer(id: string): Promise<McpServer> {
     const config = this.configs.find((c) => c.id === id);
     if (!config) throw new Error(`MCP server not found: ${id}`);
@@ -219,7 +220,7 @@ export class McpServerManager {
 
     let client: McpClientLike;
 
-    if (config.transport === "http") {
+    if (config.transport !== "stdio") {
       const httpConfig = config as McpHttpServerConfig;
       client = new McpHttpClient(httpConfig.url, httpConfig.headers);
     } else {
@@ -235,6 +236,26 @@ export class McpServerManager {
     client.on("error", (err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       log.error("Server error", { name: config.name, error: message });
+    });
+
+    client.on("notification", (method: unknown) => {
+      if (method !== "notifications/tools/list_changed" && method !== "tools/list_changed") {
+        return;
+      }
+      void client.refreshTools()
+        .then((tools) => {
+          log.info("MCP server tools refreshed after list_changed", {
+            name: config.name,
+            toolCount: tools.length,
+          });
+        })
+        .catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          log.warn("Failed to refresh MCP tools after list_changed", {
+            name: config.name,
+            error: message,
+          });
+        });
     });
 
     if (config.transport === "stdio") {
@@ -459,7 +480,7 @@ export class McpServerManager {
       return true;
     }
 
-    if (nextConfig.transport === "http") {
+    if (nextConfig.transport !== "stdio") {
       const previousHttp = previousConfig as McpHttpServerConfig;
       const nextHttp = nextConfig as McpHttpServerConfig;
       return previousHttp.url !== nextHttp.url

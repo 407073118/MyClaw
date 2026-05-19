@@ -7,6 +7,7 @@
  *   list_dir / listDir / ls / dir              → fs.list
  *   search / grep / fs.grep                     → fs.search
  *   find / fs.find                              → fs.find
+ *   artifact_register / artifact.register       → artifact.register
  *   exec / shell / bash                         → exec.command
  *   run_command / runCommand                    → exec.command
  *
@@ -44,6 +45,11 @@ const TOOL_ID_ALIASES: Record<string, string> = {
   "fs_find": "fs.find",
   "glob": "fs.find",
   "fs.glob": "fs.find",
+  // artifact.register
+  "artifact_register": "artifact.register",
+  "artifact.register": "artifact.register",
+  "file.register": "artifact.register",
+  "register_file": "artifact.register",
   // exec.command
   "exec": "exec.command",
   "shell": "exec.command",

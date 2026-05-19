@@ -21,10 +21,21 @@ const mocks = vi.hoisted(() => {
     siliconPersons: [],
     activeSiliconPersonId: null,
     modelSwitchNotice: null as { fromName: string; toName: string } | null,
+    webPanel: {
+      isOpen: false,
+      viewPath: null,
+      title: "",
+      data: null,
+      panelWidth: 420,
+      tabs: [],
+      activeTabId: null,
+    },
     selectSession: vi.fn(),
     deleteSession: vi.fn().mockResolvedValue(undefined),
     pushAssistantMessage: vi.fn(),
     createSession: vi.fn(),
+    createWebPanelTab: vi.fn(),
+    closeWebPanel: vi.fn(),
     sendMessage: vi.fn(),
     cancelSessionRun: vi.fn().mockResolvedValue(undefined),
     pollBackgroundTask: vi.fn().mockResolvedValue(null),
@@ -98,6 +109,8 @@ describe("ChatPage", () => {
     mocks.workspace.selectSession.mockReset();
     mocks.workspace.pushAssistantMessage.mockReset();
     mocks.workspace.createSession.mockReset();
+    mocks.workspace.createWebPanelTab.mockReset();
+    mocks.workspace.closeWebPanel.mockReset();
     mocks.workspace.sendMessage.mockReset();
     mocks.workspace.cancelSessionRun.mockReset();
     mocks.workspace.pollBackgroundTask.mockReset();
@@ -111,6 +124,7 @@ describe("ChatPage", () => {
     mocks.getCachedMarkdownMock.mockImplementation((_id: string, content: string, renderMarkdown: (value: string) => string) => renderMarkdown(content));
     mocks.flushStreamingBufferNowMock.mockReset();
     mocks.workspace.modelSwitchNotice = null;
+    mocks.workspace.webPanel.isOpen = false;
     mocks.workspace.approvalRequests.splice(0, mocks.workspace.approvalRequests.length);
     window.sessionStorage.clear();
     delete (mocks.workspace.currentSession as Record<string, unknown>).lastComputerCalls;
@@ -150,6 +164,28 @@ describe("ChatPage", () => {
     expect(document.activeElement).toBe(deleteButton);
   });
 
+  it("renders delete confirmation with destructive project-styled chrome", async () => {
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    fireEvent.click(screen.getByTestId("session-delete-chat-session-1"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog.getAttribute("data-variant")).toBe("danger");
+    expect(screen.getByTestId("chat-confirm-dialog")).toBeTruthy();
+    expect(screen.getByTestId("chat-confirm-dialog-icon")).toBeTruthy();
+    expect(screen.getByTestId("chat-confirm-dialog-title")).toBeTruthy();
+    expect(screen.getByTestId("chat-confirm-dialog-detail")).toBeTruthy();
+  });
+
   it("shows a dismissible top reminder banner when a reminder is delivered", async () => {
     const sessionStreamUnsubscribe = vi.fn();
     const webPanelUnsubscribe = vi.fn();
@@ -182,8 +218,12 @@ describe("ChatPage", () => {
     const banner = await screen.findByTestId("chat-reminder-banner");
     expect(banner.textContent).toContain("需求评审");
     expect(banner.textContent).toContain("15 分钟后开始");
+    expect(within(banner).getByText("系统提醒")).toBeTruthy();
+    expect(screen.getByTestId("chat-reminder-banner-icon")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "关闭提醒提示" }));
+    const closeReminderButton = screen.getByRole("button", { name: "关闭提醒提示" });
+    expect(closeReminderButton.textContent).toBe("");
+    fireEvent.click(closeReminderButton);
 
     await waitFor(() => expect(screen.queryByTestId("chat-reminder-banner")).toBeNull());
     expect(reminderUnsubscribe).not.toHaveBeenCalled();
@@ -269,6 +309,43 @@ describe("ChatPage", () => {
     }).not.toThrow();
 
     expect(screen.getByTestId("new-chat-button")).toBeTruthy();
+  });
+
+  it("places an icon-only WebPanel toggle immediately to the right of new chat", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => sessionStreamUnsubscribe),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    const view = render(React.createElement(ChatPage));
+
+    const newChatButton = screen.getByTestId("new-chat-button");
+    const webPanelToggle = screen.getByTestId("chat-web-panel-toggle");
+    expect(newChatButton.nextElementSibling).toBe(webPanelToggle);
+    expect(webPanelToggle.textContent).toBe("");
+    expect(webPanelToggle.getAttribute("aria-label")).toBe("打开 WebPanel");
+    expect(webPanelToggle.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(webPanelToggle);
+    expect(mocks.workspace.createWebPanelTab).toHaveBeenCalledTimes(1);
+    expect(mocks.workspace.closeWebPanel).not.toHaveBeenCalled();
+
+    mocks.workspace.webPanel.isOpen = true;
+    view.rerender(React.createElement(ChatPage));
+
+    const activeToggle = screen.getByTestId("chat-web-panel-toggle");
+    expect(activeToggle.getAttribute("aria-label")).toBe("收起 WebPanel");
+    expect(activeToggle.getAttribute("aria-pressed")).toBe("true");
+
+    fireEvent.click(activeToggle);
+    expect(mocks.workspace.closeWebPanel).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the composer editable while a stop button is shown, then restores submit after a canceled runtime status", async () => {
@@ -744,6 +821,111 @@ describe("ChatPage", () => {
     expect(screen.getByText("OpenAI latest updates")).toBeTruthy();
   });
 
+  it("renders inline A2UI forms with a single field", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+
+    mocks.workspace.currentSession = {
+      id: "chat-session-1",
+      title: "Demo Session",
+      messages: [
+        {
+          id: "assistant-a2ui-1",
+          role: "assistant",
+          content: [
+            "```a2ui",
+            JSON.stringify({
+              text: "请确认邮箱",
+              ui: {
+                kind: "form",
+                title: "补充信息",
+                fields: [
+                  { name: "email", label: "邮箱", input: "text", required: true },
+                ],
+              },
+            }),
+            "```",
+          ].join("\n"),
+          createdAt: "2026-05-18T00:00:00.000Z",
+        },
+      ],
+    };
+    mocks.workspace.sessions = [mocks.workspace.currentSession];
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => sessionStreamUnsubscribe),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    expect(await screen.findByTestId("ui-form-assistant-a2ui-1")).toBeTruthy();
+    expect(screen.getByTestId("ui-field-assistant-a2ui-1-email")).toBeTruthy();
+  });
+
+  it("renders inline A2UI select fields with the project dropdown component", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+
+    mocks.workspace.currentSession = {
+      id: "chat-session-1",
+      title: "Demo Session",
+      messages: [
+        {
+          id: "assistant-a2ui-select-1",
+          role: "assistant",
+          content: [
+            "```a2ui",
+            JSON.stringify({
+              ui: {
+                kind: "form",
+                title: "Pick mode",
+                fields: [
+                  {
+                    name: "mode",
+                    label: "Mode",
+                    input: "select",
+                    required: true,
+                    options: [
+                      { label: "Fast", value: "fast" },
+                      { label: "Careful", value: "careful" },
+                    ],
+                  },
+                ],
+              },
+            }),
+            "```",
+          ].join("\n"),
+          createdAt: "2026-05-18T00:00:00.000Z",
+        },
+      ],
+    };
+    mocks.workspace.sessions = [mocks.workspace.currentSession];
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => sessionStreamUnsubscribe),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    const control = await screen.findByTestId("ui-field-assistant-a2ui-select-1-mode-control");
+    expect(control.className).toContain("glass-select__button");
+    fireEvent.click(control);
+    const listbox = await screen.findByRole("listbox");
+    expect(listbox.className).toContain("glass-select__menu");
+    fireEvent.click(screen.getByRole("option", { name: "Careful" }));
+    expect((screen.getByTestId("ui-field-assistant-a2ui-select-1-mode") as HTMLSelectElement).value).toBe("careful");
+  });
+
   it("renders file-search citations even when the source does not expose a clickable url", async () => {
     const sessionStreamUnsubscribe = vi.fn();
     const webPanelUnsubscribe = vi.fn();
@@ -833,5 +1015,99 @@ describe("ChatPage", () => {
     expect(screen.getByText("click")).toBeTruthy();
     expect(screen.getByText("type")).toBeTruthy();
     expect(screen.getByTestId("approval-card-approval-computer-1")).toBeTruthy();
+  });
+
+  it("keeps generic approval actions ordered from reject to safest allow", async () => {
+    mocks.workspace.approvalRequests.push({
+      id: "approval-tool-order",
+      sessionId: "chat-session-1",
+      source: "builtin-tool",
+      toolId: "fs.write",
+      label: "fs.write",
+      risk: "write",
+      detail: "写入文件",
+    } as any);
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    const card = screen.getByTestId("approval-card-approval-tool-order");
+    const labels = within(card).getAllByRole("button").map((button) => button.textContent);
+
+    expect(labels).toEqual(["拒绝", "始终允许此工具", "允许本次运行", "允许一次"]);
+    expect(labels.at(-1)).toBe("允许一次");
+  });
+
+  it("shows the approving tool before long fs.write payloads", async () => {
+    mocks.workspace.approvalRequests.push({
+      id: "approval-tool-summary",
+      sessionId: "chat-session-1",
+      source: "builtin-tool",
+      toolId: "fs.write",
+      label: "自动化测试平台调研报告.md\n---\n# 自动化测试平台调研报告\n\n## 调研概述\n长内容会继续很多行。",
+      risk: "write",
+      detail: "{\"path\":\"自动化测试平台调研报告.md\",\"content\":\"# 自动化测试平台调研报告\"}",
+    } as any);
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    const card = screen.getByTestId("approval-card-approval-tool-summary");
+
+    expect(within(card).getByRole("heading", { name: "是否允许工具 fs.write 执行？" })).toBeTruthy();
+    expect(within(card).getByText("目标")).toBeTruthy();
+    expect(within(card).getByText("自动化测试平台调研报告.md")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /自动化测试平台调研报告/ })).toBeNull();
+  });
+
+  it("keeps external path approval actions ordered from reject to safest allow", async () => {
+    mocks.workspace.approvalRequests.push({
+      id: "approval-path-order",
+      sessionId: "chat-session-1",
+      source: "external-path",
+      toolId: "fs.read",
+      label: "读取外部路径",
+      risk: "read",
+      detail: "模型请求读取工作区外路径",
+      pathMeta: {
+        path: "E:\\skill\\Skill表单开发规范.md",
+        userPath: "E:\\skill\\Skill表单开发规范.md",
+        operation: "read",
+        suggestedDirectory: "E:\\skill",
+      },
+    } as any);
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => vi.fn()),
+        onWebPanelOpen: vi.fn(() => vi.fn()),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    const card = screen.getByTestId("approval-card-approval-path-order");
+    const labels = within(card).getAllByRole("button").map((button) => button.textContent);
+
+    expect(labels).toEqual(["拒绝", "永久拒绝此路径", "本目录（始终）", "本会话", "仅此次"]);
+    expect(labels.at(-1)).toBe("仅此次");
   });
 });

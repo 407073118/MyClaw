@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadRuntimeEnv } from "../load-runtime-env";
@@ -19,17 +20,20 @@ describe("loadRuntimeEnv", () => {
 
   it("loads .env from the current cloud-api working directory", () => {
     delete process.env.DATABASE_URL;
+    const cloudApiDirectory = resolve("/tmp/myclaw/cloud/apps/cloud-api");
+    const runtimeDirectory = resolve("/tmp/myclaw/cloud/apps/cloud-api/dist/runtime");
+    const cloudApiEnvPath = resolve(cloudApiDirectory, ".env");
     process.loadEnvFile = vi.fn((path: string) => {
-      if (path.endsWith("/.env")) {
+      if (path === cloudApiEnvPath) {
         process.env.DATABASE_URL = "postgresql://cwd-user:cwd-pass@127.0.0.1:5432/myclaw_cloud?schema=public";
       } else {
         throw new Error(`unexpected path: ${path}`);
       }
     });
 
-    const loadedPath = loadRuntimeEnv("/tmp/myclaw/cloud/apps/cloud-api", "/tmp/myclaw/cloud/apps/cloud-api/dist/runtime");
+    const loadedPath = loadRuntimeEnv(cloudApiDirectory, runtimeDirectory);
 
-    expect(loadedPath).toBe("/tmp/myclaw/cloud/apps/cloud-api/.env");
+    expect(loadedPath).toBe(cloudApiEnvPath);
     expect(process.env.DATABASE_URL).toBe(
       "postgresql://cwd-user:cwd-pass@127.0.0.1:5432/myclaw_cloud?schema=public"
     );
@@ -37,14 +41,18 @@ describe("loadRuntimeEnv", () => {
 
   it("falls back to apps/cloud-api/.env when started from the cloud workspace root", () => {
     delete process.env.DATABASE_URL;
+    const cloudRootDirectory = resolve("/tmp/myclaw/cloud");
+    const runtimeDirectory = resolve("/tmp/myclaw/cloud/apps/cloud-api/dist/runtime");
+    const cloudRootEnvPath = resolve(cloudRootDirectory, ".env");
+    const cloudApiEnvPath = resolve(cloudRootDirectory, "apps/cloud-api/.env");
     process.loadEnvFile = vi.fn((path: string) => {
-      if (path === "/tmp/myclaw/cloud/.env") {
+      if (path === cloudRootEnvPath) {
         const error = new Error("missing env file") as NodeJS.ErrnoException;
         error.code = "ENOENT";
         throw error;
       }
 
-      if (path === "/tmp/myclaw/cloud/apps/cloud-api/.env") {
+      if (path === cloudApiEnvPath) {
         process.env.DATABASE_URL = "postgresql://root-user:root-pass@127.0.0.1:5432/myclaw_cloud?schema=public";
         return;
       }
@@ -52,9 +60,9 @@ describe("loadRuntimeEnv", () => {
       throw new Error(`unexpected path: ${path}`);
     });
 
-    const loadedPath = loadRuntimeEnv("/tmp/myclaw/cloud", "/tmp/myclaw/cloud/apps/cloud-api/dist/runtime");
+    const loadedPath = loadRuntimeEnv(cloudRootDirectory, runtimeDirectory);
 
-    expect(loadedPath).toBe("/tmp/myclaw/cloud/apps/cloud-api/.env");
+    expect(loadedPath).toBe(cloudApiEnvPath);
     expect(process.env.DATABASE_URL).toBe(
       "postgresql://root-user:root-pass@127.0.0.1:5432/myclaw_cloud?schema=public"
     );

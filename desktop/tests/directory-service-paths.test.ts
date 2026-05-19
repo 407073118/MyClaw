@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -64,6 +64,37 @@ describe("directory service path resolution", () => {
     expect(paths.rootDir).toBe(userDataRoot);
     expect(paths.myClawDir).toBe(join(userDataRoot, "myClaw"));
     expect(existsSync(paths.modelsDir)).toBe(true);
+  });
+
+  it("uses the persisted artifacts root override from settings", async () => {
+    const customArtifactsRoot = join(overrideRoot, "custom-artifacts");
+    const settingsDir = join(userDataRoot, "myClaw");
+    mkdirSync(settingsDir, { recursive: true });
+    writeFileSync(
+      join(settingsDir, "settings.json"),
+      JSON.stringify({ artifactsRootPath: customArtifactsRoot }, null, 2),
+      "utf8",
+    );
+
+    const { initializeDirectories } = await import("../src/main/services/directory-service");
+
+    const paths = await initializeDirectories();
+
+    expect(paths.artifactsDir).toBe(customArtifactsRoot);
+    expect(existsSync(customArtifactsRoot)).toBe(true);
+  });
+
+  it("persists runtime artifacts root changes into settings", async () => {
+    const customArtifactsRoot = join(overrideRoot, "runtime-artifacts");
+    const { derivePaths, persistArtifactsRootPath } = await import("../src/main/services/directory-service");
+    const paths = derivePaths(userDataRoot);
+
+    const savedPath = persistArtifactsRootPath(paths, customArtifactsRoot);
+
+    expect(savedPath).toBe(customArtifactsRoot);
+    expect(paths.artifactsDir).toBe(customArtifactsRoot);
+    expect(existsSync(customArtifactsRoot)).toBe(true);
+    expect(JSON.parse(readFileSync(paths.settingsFile, "utf8")).artifactsRootPath).toBe(customArtifactsRoot);
   });
 
   it("redirects userData only when an explicit portable data root is provided", async () => {

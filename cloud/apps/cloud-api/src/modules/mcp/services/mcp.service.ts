@@ -8,11 +8,12 @@ import type {
 } from "@myclaw-cloud/shared";
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 
+import { resolveReleaseVersion } from "../../releases/versioning";
 import { MCP_REPOSITORY, type McpRepository } from "../ports/mcp.repository";
 
 /** 发布版本时使用的 MCP 输入结构。 */
 type PublishReleaseInput = {
-  version: string;
+  version?: string;
   releaseNotes: string;
   config: McpServerConfig;
 };
@@ -23,7 +24,7 @@ type CreateWithInitialReleaseInput = {
   name: string;
   summary: string;
   description: string;
-  version: string;
+  version?: string;
   releaseNotes: string;
   config: McpServerConfig;
 };
@@ -59,7 +60,16 @@ export class McpService {
 
     this.validateConfig(input.config);
 
-    const version = input.version.trim();
+    const version = resolveReleaseVersion({
+      requestedVersion: input.version,
+      latestVersion: item.latestVersion
+    });
+    console.info("[mcp-service] 解析 MCP 发布版本号", {
+      itemId,
+      requestedVersion: input.version ?? null,
+      latestVersion: item.latestVersion ?? null,
+      resolvedVersion: version
+    });
     const releaseNotes = input.releaseNotes.trim();
     const releaseId = this.buildReleaseId(itemId, version);
 
@@ -85,7 +95,15 @@ export class McpService {
 
     this.validateConfig(input.config);
 
-    const version = input.version.trim();
+    const version = resolveReleaseVersion({
+      requestedVersion: input.version,
+      latestVersion: null
+    });
+    console.info("[mcp-service] 解析 MCP 初始版本号", {
+      itemId,
+      requestedVersion: input.version ?? null,
+      resolvedVersion: version
+    });
     const item = await this.mcpRepository.createItem({
       id: itemId,
       name: input.name.trim(),

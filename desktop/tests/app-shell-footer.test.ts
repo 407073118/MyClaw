@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
       user: {
         displayName: "1",
         account: "tester@example.com",
+        avatarDataUrl: null,
       },
     },
     logout: vi.fn().mockResolvedValue(undefined),
@@ -95,6 +96,7 @@ describe("AppShell footer status", () => {
 
   afterEach(() => {
     cleanup();
+    mocks.auth.session.user.avatarDataUrl = null;
   });
 
   it("does not render the always-on glowing model dot once the workspace is ready", async () => {
@@ -152,5 +154,32 @@ describe("AppShell footer status", () => {
     expect(settingsLink.textContent?.trim()).toBe("");
     expect(settingsLink.getAttribute("aria-label")).toBe("打开设置");
     expect(settingsLink.closest(".user-card-top")).not.toBeNull();
+  });
+
+  it("renders the saved personal avatar in the sidebar footer", async () => {
+    mocks.auth.session.user.avatarDataUrl = "data:image/png;base64,QUJD";
+
+    const { default: AppShell } = await import("../src/renderer/layouts/AppShell");
+    render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ["/chat"] },
+        React.createElement(
+          Routes,
+          undefined,
+          React.createElement(
+            Route,
+            { path: "/", element: React.createElement(AppShell) },
+            React.createElement(Route, {
+              path: "chat",
+              element: React.createElement("div", { "data-testid": "chat-route" }),
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const avatar = screen.getByTestId("app-shell-user-avatar");
+    expect(avatar.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,QUJD");
   });
 });

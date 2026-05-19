@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-const { executeRequestVariantsMock } = vi.hoisted(() => ({
+const { executeRequestVariantsMock, callModelMock } = vi.hoisted(() => ({
   executeRequestVariantsMock: vi.fn(async ({ url }: { url: string }) => {
     if (url.endsWith("/responses")) {
       return {
@@ -62,10 +62,7 @@ const { executeRequestVariantsMock } = vi.hoisted(() => ({
       fallbackEvents: [],
     };
   }),
-}));
-
-vi.mock("../../../src/main/services/model-client", () => ({
-  callModel: vi.fn(async () => ({
+  callModelMock: vi.fn(async () => ({
     content: "done",
     toolCalls: [],
     finishReason: "stop",
@@ -76,6 +73,10 @@ vi.mock("../../../src/main/services/model-client", () => ({
       fallbackEvents: [],
     },
   })),
+}));
+
+vi.mock("../../../src/main/services/model-client", () => ({
+  callModel: callModelMock,
   resolveModelEndpointUrl: vi.fn((profile: { baseUrl: string }) => `${profile.baseUrl}/messages`),
   buildRequestHeaders: vi.fn(() => ({ "x-test": "1" })),
 }));
@@ -219,6 +220,68 @@ describe("execution gateway", () => {
         },
       ],
     });
+    expect(result.requestShape.tools).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "function",
+        name: "fs_read",
+        strict: true,
+      }),
+    ]));
+    expect(JSON.stringify(result.requestShape.tools)).not.toContain("\"function\":");
+  });
+
+  it("does not expose tools when capability probe marks the model as no-tools", async () => {
+    callModelMock.mockClear();
+    const gateway = createExecutionGateway();
+    const profile: ModelProfile = {
+      id: "profile-local-no-tools",
+      name: "Local no-tools",
+      provider: "local-gateway",
+      providerFlavor: "generic-local-gateway",
+      baseUrl: "http://localhost:11434/v1",
+      apiKey: "",
+      model: "local-model",
+      discoveredCapabilities: {
+        source: "manual-override",
+        supportsTools: false,
+      },
+    };
+    const executionPlan: ExecutionPlan = {
+      runtimeVersion: SESSION_RUNTIME_VERSION,
+      adapterId: "openai-compatible",
+      adapterSelectionSource: "profile",
+      reasoningMode: "auto",
+      replayPolicy: "assistant-turn",
+      fallbackAdapterIds: [],
+    };
+
+    const result = await gateway.executeTurn({
+      mode: "legacy",
+      profile,
+      executionPlan,
+      messages: [{ role: "user", content: "hello" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "fs_read",
+          description: "Read file contents",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+            },
+            required: ["path"],
+          },
+        },
+      }],
+      sessionId: "session-local-no-tools",
+    });
+
+    expect(result.toolBundle.providerToolPolicy?.fallbackBehavior).toBe("disable-tools");
+    expect(result.toolBundle.tools).toEqual([]);
+    expect(result.requestShape.tools).toEqual([]);
+    expect(callModelMock).toHaveBeenCalledTimes(1);
+    expect(callModelMock.mock.calls[0]?.[0].tools).toEqual([]);
   });
 
   it("compiles anthropic tools and surfaces messages-native request metadata for anthropic-native legacy input", async () => {
@@ -546,14 +609,14 @@ describe("execution gateway", () => {
 
     expect(result.requestShape.tools).toEqual(expect.arrayContaining([
       { type: "web_search" },
-      {
+      expect.objectContaining({
         type: "function",
         name: "fs_read",
         description: "Read file contents",
         parameters: expect.objectContaining({
           type: "object",
         }),
-      },
+      }),
     ]));
     expect(result.toolBundle.registry.map((tool) => tool.name)).toEqual(["fs_read"]);
     expect(result.capabilityEvents).toEqual([

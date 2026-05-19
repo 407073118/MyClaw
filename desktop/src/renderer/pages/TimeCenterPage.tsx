@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Bot, MessageSquare, Pause, Pencil, Play, RotateCcw, Trash2, Workflow } from "lucide-react";
+import { Bot, CalendarDays, CheckCircle2, MessageSquare, Pause, Pencil, Play, RotateCcw, Trash2, Workflow } from "lucide-react";
 
 import type {
   AvailabilityPolicy,
@@ -58,11 +58,65 @@ type TimelineEntry = {
   endsAt?: string;
   sourceLabel: string;
   meta: string;
-  tone: "personal" | "silicon" | "automation" | "warning";
+  tone: "personal" | "silicon" | "automation" | "warning" | "done";
   lastRunLabel?: string;
 };
 
 type TimelineEntryItem = CalendarEvent | Reminder | TaskCommitment | ScheduleJob;
+
+/** 判断提醒是否应该留在规划视图中，已提醒需要保留可追溯标识。 */
+function shouldShowReminderInPlanning(reminder: Reminder): boolean {
+  return reminder.status === "scheduled" || reminder.status === "delivered";
+}
+
+/** 生成提醒状态的中文标签，避免 UI 直接暴露英文枚举值。 */
+function formatReminderStatusLabel(status: Reminder["status"]): string {
+  return ({
+    scheduled: "待提醒",
+    delivered: "已提醒",
+    dismissed: "已关闭",
+    cancelled: "已取消",
+  } satisfies Record<Reminder["status"], string>)[status];
+}
+
+/** 生成提醒状态对应的样式后缀，供列表、侧栏和状态胶囊复用。 */
+function getReminderStatusClassName(status: Reminder["status"]): string {
+  return ({
+    scheduled: "scheduled",
+    delivered: "delivered",
+    dismissed: "dismissed",
+    cancelled: "cancelled",
+  } satisfies Record<Reminder["status"], string>)[status];
+}
+
+/** 生成提醒行的说明文本，已提醒但无备注时给出明确投递语义。 */
+function formatReminderBodyLabel(reminder: Reminder): string {
+  if (reminder.body) {
+    return reminder.body;
+  }
+  if (reminder.status === "delivered") {
+    return "已通过系统通知提醒";
+  }
+  if (reminder.status === "dismissed") {
+    return "已关闭提醒";
+  }
+  if (reminder.status === "cancelled") {
+    return "已取消提醒";
+  }
+  return "到点提醒";
+}
+
+/** 按 UX 优先级排序提醒：待提醒在前，已提醒作为历史记录弱化展示。 */
+function compareReminderForStatusView(left: Reminder, right: Reminder): number {
+  const leftOrder = left.status === "scheduled" ? 0 : 1;
+  const rightOrder = right.status === "scheduled" ? 0 : 1;
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+  return left.status === "delivered"
+    ? right.triggerAt.localeCompare(left.triggerAt)
+    : left.triggerAt.localeCompare(right.triggerAt);
+}
 
 type TimelineComposerDefaults = {
   event?: {
@@ -628,14 +682,18 @@ export default function TimeCenterPage() {
   }
 
   return (
-    <main className="schedule-planning-page" data-testid="time-center-page">
-      <header className="schedule-planning-header">
-        <div className="schedule-planning-header__lead">
-          <span className="schedule-planning-header__eyebrow">统一时间轴</span>
-          <h2 className="schedule-planning-header__title">日程规划</h2>
+    <div className="page-shell schedule-planning-page" data-testid="time-center-page">
+      <header className="page-header page-header--sticky schedule-planning-header">
+        <div className="page-header__lead schedule-planning-header__lead">
+          <div className="page-header__eyebrow schedule-planning-header__eyebrow">
+            <CalendarDays size={14} aria-hidden="true" />
+            <span>统一时间轴</span>
+          </div>
+          <h2 className="page-header__title schedule-planning-header__title">日程规划</h2>
+          <p className="page-header__subtitle">统一管理会议、提醒、定时任务和硅基员工安排。</p>
         </div>
 
-        <div className="schedule-planning-header__actions">
+        <div className="page-header__actions schedule-planning-header__actions">
           <DateNavigator
             selectedDate={selectedDate}
             todayDateKey={todayDateKey}
@@ -650,195 +708,197 @@ export default function TimeCenterPage() {
         </div>
       </header>
 
-      <ScheduleSummaryBar model={planningModel} feedback={feedback} />
+      <main className="page-content schedule-planning-content">
+        <ScheduleSummaryBar model={planningModel} feedback={feedback} />
 
-      <TimeAwarenessCatchUp />
+        <TimeAwarenessCatchUp />
 
-      <PlanningViewSwitcher activeView={activeView} onChange={setActiveView} />
+        <PlanningViewSwitcher activeView={activeView} onChange={setActiveView} />
 
-      <section className="schedule-planning-grid">
-        {activeView === "timeline" ? (
-          <section className="schedule-timeline-panel" data-testid="schedule-timeline">
-            <TimelineHeader selectedDate={selectedDate} timezone={timezone} entryCount={planningModel.entries.length} />
-            <ScheduleTimeline
-              entries={visibleTimelineEntries}
-              hiddenEntryCount={hiddenTimelineEntryCount}
-              timezone={timezone}
+        <section className="schedule-planning-grid">
+          {activeView === "timeline" ? (
+            <section className="schedule-timeline-panel" data-testid="schedule-timeline">
+              <TimelineHeader selectedDate={selectedDate} timezone={timezone} entryCount={planningModel.entries.length} />
+              <ScheduleTimeline
+                entries={visibleTimelineEntries}
+                hiddenEntryCount={hiddenTimelineEntryCount}
+                timezone={timezone}
+                selectedDate={selectedDate}
+                todayDateKey={todayDateKey}
+                onCreateEvent={openEventComposer}
+                onOpenEntry={(entry) => {
+                  console.info("[日程规划] 打开时间轴条目详情", {
+                    kind: entry.kind,
+                    itemId: entry.itemId,
+                    title: entry.title,
+                  });
+                  setSelectedTimelineEntry(entry);
+                  closeTimelineContextMenu();
+                }}
+                onContextMenu={handleTimelineContextMenu}
+                onDragSelectStart={(anchorInput, clientY) => {
+                  setTimelineInteraction({
+                    startY: clientY,
+                    currentY: clientY,
+                    startInput: anchorInput,
+                    currentInput: anchorInput,
+                  });
+                }}
+                onDragSelectMove={(anchorInput, clientY) => {
+                  setTimelineInteraction((current) => (current ? { ...current, currentY: clientY, currentInput: anchorInput } : current));
+                }}
+              />
+            </section>
+          ) : null}
+
+          {activeView === "events" ? (
+            <CalendarEventListPage
+              events={time.calendarEvents}
               selectedDate={selectedDate}
-              todayDateKey={todayDateKey}
-              onCreateEvent={openEventComposer}
-              onOpenEntry={(entry) => {
-                console.info("[日程规划] 打开时间轴条目详情", {
-                  kind: entry.kind,
-                  itemId: entry.itemId,
-                  title: entry.title,
+              timezone={timezone}
+              siliconPersonNameById={siliconPersonNameById}
+            />
+          ) : null}
+
+          {activeView === "week" ? (
+            <WeekView
+              selectedDate={selectedDate}
+              timezone={timezone}
+              calendarEvents={time.calendarEvents}
+              reminders={time.reminders}
+              taskCommitments={time.taskCommitments}
+              scheduleJobs={time.scheduleJobs}
+              latestRunByJobId={latestRunByJobId}
+              siliconPersonNameById={siliconPersonNameById}
+              onSelectDate={(d) => { setSelectedDate(d); setActiveView("timeline"); }}
+            />
+          ) : null}
+
+          {activeView === "reminders" ? (
+            <ReminderListPage reminders={time.reminders} timezone={timezone} onDelete={handleDeleteReminder} />
+          ) : null}
+
+          {activeView === "jobs" ? (
+            <ScheduleJobListPage
+              jobs={time.scheduleJobs}
+              timezone={timezone}
+              siliconPersonNameById={siliconPersonNameById}
+              latestRunByJobId={latestRunByJobId}
+              onToggle={handleToggleScheduleJob}
+              onDelete={handleDeleteScheduleJob}
+              onRunNow={handleRunScheduleJobNow}
+              onEdit={handleEditScheduleJob}
+            />
+          ) : null}
+
+          {activeView === "awareness" ? (
+            <TimeAwarenessRoutineManager />
+          ) : null}
+
+          <aside className="schedule-resource-rail" data-testid="schedule-resource-rail">
+            <ResourceStatusCard
+              siliconPersons={workspace.siliconPersons ?? []}
+              entries={planningModel.entries}
+              jobs={time.scheduleJobs}
+              latestRunByJobId={latestRunByJobId}
+            />
+            <UnscheduledTaskCard tasks={unscheduledTasks} timezone={timezone} onArrange={() => setActiveComposer("task")} />
+          </aside>
+        </section>
+
+        {timelineContextMenu ? (
+          <div
+            className="timeline-context-menu"
+            style={{ left: timelineContextMenu.x, top: timelineContextMenu.y }}
+            onMouseLeave={closeTimelineContextMenu}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                openEventComposer({
+                  initialStartsAt: timelineContextMenu.anchorInput,
+                  initialEndsAt: timelineContextMenu.anchorInput,
                 });
-                setSelectedTimelineEntry(entry);
                 closeTimelineContextMenu();
               }}
-              onContextMenu={handleTimelineContextMenu}
-              onDragSelectStart={(anchorInput, clientY) => {
-                setTimelineInteraction({
-                  startY: clientY,
-                  currentY: clientY,
-                  startInput: anchorInput,
-                  currentInput: anchorInput,
+            >
+              新建日程
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                openEventComposer({
+                  initialStartsAt: timelineContextMenu.anchorInput,
+                  initialEndsAt: timelineContextMenu.anchorInput,
                 });
+                closeTimelineContextMenu();
               }}
-              onDragSelectMove={(anchorInput, clientY) => {
-                setTimelineInteraction((current) => (current ? { ...current, currentY: clientY, currentInput: anchorInput } : current));
-              }}
-            />
-          </section>
+            >
+              用此时间新建
+            </button>
+            <button type="button" onClick={closeTimelineContextMenu}>
+              关闭
+            </button>
+          </div>
         ) : null}
 
-        {activeView === "events" ? (
-          <CalendarEventListPage
-            events={time.calendarEvents}
-            selectedDate={selectedDate}
+        {activeComposer ? (
+          <ComposerModal
+            activeComposer={activeComposer}
+            onSelectComposer={(composer) => {
+              setActiveComposer(composer);
+              // 切到非定时任务 tab 时清空 type/edit 状态，避免误带到下次。
+              if (composer !== "job") {
+                setChosenJobType(null);
+                setEditingJob(null);
+              } else if (!editingJob && chosenJobType === null) {
+                setChosenJobType("assistant_prompt");
+              }
+              if (composer !== "event") setEditingEvent(null);
+              if (composer !== "reminder") setEditingReminder(null);
+              if (composer !== "task") setEditingTask(null);
+            }}
             timezone={timezone}
-            siliconPersonNameById={siliconPersonNameById}
-          />
-        ) : null}
-
-        {activeView === "week" ? (
-          <WeekView
-            selectedDate={selectedDate}
-            timezone={timezone}
-            calendarEvents={time.calendarEvents}
-            reminders={time.reminders}
-            taskCommitments={time.taskCommitments}
-            scheduleJobs={time.scheduleJobs}
-            latestRunByJobId={latestRunByJobId}
-            siliconPersonNameById={siliconPersonNameById}
-            onSelectDate={(d) => { setSelectedDate(d); setActiveView("timeline"); }}
-          />
-        ) : null}
-
-        {activeView === "reminders" ? (
-          <ReminderListPage reminders={time.reminders} timezone={timezone} onDelete={handleDeleteReminder} />
-        ) : null}
-
-        {activeView === "jobs" ? (
-          <ScheduleJobListPage
-            jobs={time.scheduleJobs}
-            timezone={timezone}
-            siliconPersonNameById={siliconPersonNameById}
-            latestRunByJobId={latestRunByJobId}
-            onToggle={handleToggleScheduleJob}
-            onDelete={handleDeleteScheduleJob}
-            onRunNow={handleRunScheduleJobNow}
-            onEdit={handleEditScheduleJob}
-          />
-        ) : null}
-
-        {activeView === "awareness" ? (
-          <TimeAwarenessRoutineManager />
-        ) : null}
-
-        <aside className="schedule-resource-rail" data-testid="schedule-resource-rail">
-          <ResourceStatusCard
-            siliconPersons={workspace.siliconPersons ?? []}
-            entries={planningModel.entries}
-            jobs={time.scheduleJobs}
-            latestRunByJobId={latestRunByJobId}
-          />
-          <UnscheduledTaskCard tasks={unscheduledTasks} timezone={timezone} onArrange={() => setActiveComposer("task")} />
-        </aside>
-      </section>
-
-      {timelineContextMenu ? (
-        <div
-          className="timeline-context-menu"
-          style={{ left: timelineContextMenu.x, top: timelineContextMenu.y }}
-          onMouseLeave={closeTimelineContextMenu}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              openEventComposer({
-                initialStartsAt: timelineContextMenu.anchorInput,
-                initialEndsAt: timelineContextMenu.anchorInput,
-              });
+            availabilityPolicy={time.availabilityPolicy}
+            timelineDefaults={timelineDefaults}
+            onClose={() => {
+              setActiveComposer(null);
+              clearEditingState();
+              setTimelineDefaults({});
               closeTimelineContextMenu();
             }}
-          >
-            新建日程
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              openEventComposer({
-                initialStartsAt: timelineContextMenu.anchorInput,
-                initialEndsAt: timelineContextMenu.anchorInput,
-              });
-              closeTimelineContextMenu();
-            }}
-          >
-            用此时间新建
-          </button>
-          <button type="button" onClick={closeTimelineContextMenu}>
-            关闭
-          </button>
-        </div>
-      ) : null}
+            onSaveEvent={handleSaveCalendarEvent}
+            onSaveTask={handleSaveTaskCommitment}
+            onSaveReminder={handleSaveReminder}
+            onSaveJob={handleSaveScheduleJob}
+            onSaveAvailabilityPolicy={handleSaveAvailabilityPolicy}
+            chosenJobType={chosenJobType}
+            editingJob={editingJob}
+            editingEvent={editingEvent}
+            editingReminder={editingReminder}
+            editingTask={editingTask}
+            onChooseJobType={setChosenJobType}
+            onClearJobType={() => setChosenJobType(null)}
+            workflowOptions={workflowOptions}
+            siliconPersonOptions={siliconPersonOptions}
+            modelOptions={modelOptions}
+          />
+        ) : null}
 
-      {activeComposer ? (
-        <ComposerModal
-          activeComposer={activeComposer}
-          onSelectComposer={(composer) => {
-            setActiveComposer(composer);
-            // 切到非定时任务 tab 时清空 type/edit 状态，避免误带到下次。
-            if (composer !== "job") {
-              setChosenJobType(null);
-              setEditingJob(null);
-            } else if (!editingJob && chosenJobType === null) {
-              setChosenJobType("assistant_prompt");
-            }
-            if (composer !== "event") setEditingEvent(null);
-            if (composer !== "reminder") setEditingReminder(null);
-            if (composer !== "task") setEditingTask(null);
-          }}
-          timezone={timezone}
-          availabilityPolicy={time.availabilityPolicy}
-          timelineDefaults={timelineDefaults}
-          onClose={() => {
-            setActiveComposer(null);
-            clearEditingState();
-            setTimelineDefaults({});
-            closeTimelineContextMenu();
-          }}
-          onSaveEvent={handleSaveCalendarEvent}
-          onSaveTask={handleSaveTaskCommitment}
-          onSaveReminder={handleSaveReminder}
-          onSaveJob={handleSaveScheduleJob}
-          onSaveAvailabilityPolicy={handleSaveAvailabilityPolicy}
-          chosenJobType={chosenJobType}
-          editingJob={editingJob}
-          editingEvent={editingEvent}
-          editingReminder={editingReminder}
-          editingTask={editingTask}
-          onChooseJobType={setChosenJobType}
-          onClearJobType={() => setChosenJobType(null)}
-          workflowOptions={workflowOptions}
-          siliconPersonOptions={siliconPersonOptions}
-          modelOptions={modelOptions}
-        />
-      ) : null}
+        {selectedTimelineEntry && selectedTimelineItem ? (
+          <TimelineEntryDetailModal
+            entry={selectedTimelineEntry}
+            item={selectedTimelineItem}
+            timezone={timezone}
+            onClose={() => setSelectedTimelineEntry(null)}
+            onEdit={handleEditSelectedTimelineItem}
+            onDelete={handleDeleteSelectedTimelineItem}
+          />
+        ) : null}
 
-      {selectedTimelineEntry && selectedTimelineItem ? (
-        <TimelineEntryDetailModal
-          entry={selectedTimelineEntry}
-          item={selectedTimelineItem}
-          timezone={timezone}
-          onClose={() => setSelectedTimelineEntry(null)}
-          onEdit={handleEditSelectedTimelineItem}
-          onDelete={handleDeleteSelectedTimelineItem}
-        />
-      ) : null}
-
-      <style>{styles}</style>
-    </main>
+        <style>{styles}</style>
+      </main>
+    </div>
   );
 }
 
@@ -1327,29 +1387,42 @@ function ReminderListPage({
   onDelete: (id: string) => Promise<void>;
 }) {
   const visibleReminders = reminders
-    .filter((reminder) => reminder.status === "scheduled")
-    .sort((left, right) => left.triggerAt.localeCompare(right.triggerAt));
+    .filter(shouldShowReminderInPlanning)
+    .sort(compareReminderForStatusView);
+  const scheduledCount = reminders.filter((reminder) => reminder.status === "scheduled").length;
+  const deliveredCount = reminders.filter((reminder) => reminder.status === "delivered").length;
 
   return (
     <section className="schedule-list-page">
       <header className="list-page-header">
         <h3>提醒列表</h3>
-        <p>{visibleReminders.length} 个待触发提醒</p>
+        <p>{scheduledCount} 个待触发 · {deliveredCount} 个已提醒</p>
       </header>
       <div className="list-page-body">
         {visibleReminders.length === 0 ? <p className="side-empty">暂无提醒。</p> : null}
-        {visibleReminders.map((reminder) => (
-          <article key={reminder.id} className="list-page-row">
-            <span className="list-page-row__time">{formatDateTime(reminder.triggerAt, timezone)}</span>
-            <div>
-              <strong>{reminder.title}</strong>
-              <span>{reminder.body ?? "到点提醒"}</span>
-            </div>
-            <button type="button" className="btn-ghost" onClick={() => void onDelete(reminder.id)}>
-              删除提醒
-            </button>
-          </article>
-        ))}
+        {visibleReminders.map((reminder) => {
+          const statusClassName = getReminderStatusClassName(reminder.status);
+          return (
+            <article
+              key={reminder.id}
+              className={`list-page-row list-page-row--reminder list-page-row--${statusClassName}`}
+              data-testid={`reminder-row-${reminder.id}`}
+            >
+              <span className="list-page-row__time">{formatDateTime(reminder.triggerAt, timezone)}</span>
+              <div className="reminder-row__main">
+                <strong>{reminder.title}</strong>
+                <span>{formatReminderBodyLabel(reminder)}</span>
+              </div>
+              <span className={`reminder-status-badge reminder-status-badge--${statusClassName}`}>
+                {reminder.status === "delivered" ? <CheckCircle2 size={13} aria-hidden="true" /> : null}
+                {formatReminderStatusLabel(reminder.status)}
+              </span>
+              <button type="button" className="btn-ghost" onClick={() => void onDelete(reminder.id)}>
+                删除提醒
+              </button>
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -1851,32 +1924,41 @@ function ReminderStatusCard({
   timezone: string;
   onDelete: (id: string) => Promise<void>;
 }) {
-  const scheduledReminders = reminders
-    .filter((reminder) => reminder.status === "scheduled")
-    .sort((left, right) => left.triggerAt.localeCompare(right.triggerAt))
+  const visibleReminders = reminders
+    .filter(shouldShowReminderInPlanning)
+    .sort(compareReminderForStatusView)
     .slice(0, 4);
+  const scheduledCount = reminders.filter((reminder) => reminder.status === "scheduled").length;
+  const deliveredCount = reminders.filter((reminder) => reminder.status === "delivered").length;
 
   return (
     <section className="side-card">
       <header className="side-card__header">
         <h3>提醒</h3>
-        <span className="side-card__count">{scheduledReminders.length}</span>
+        <span className="side-card__count">待 {scheduledCount} · 已 {deliveredCount}</span>
       </header>
-      {scheduledReminders.length === 0 ? (
-        <p className="side-empty">暂无待触发提醒。</p>
+      {visibleReminders.length === 0 ? (
+        <p className="side-empty">暂无提醒记录。</p>
       ) : (
         <div className="compact-list">
-          {scheduledReminders.map((reminder) => (
-            <article key={reminder.id} className="compact-row">
-              <div>
-                <strong>{reminder.title}</strong>
-                <span>{formatDateTime(reminder.triggerAt, timezone)}</span>
-              </div>
-              <button type="button" className="btn-ghost" onClick={() => void onDelete(reminder.id)}>
-                删除提醒
-              </button>
-            </article>
-          ))}
+          {visibleReminders.map((reminder) => {
+            const statusClassName = getReminderStatusClassName(reminder.status);
+            return (
+              <article key={reminder.id} className={`compact-row compact-row--reminder compact-row--${statusClassName}`}>
+                <div>
+                  <strong>{reminder.title}</strong>
+                  <span>{formatDateTime(reminder.triggerAt, timezone)}</span>
+                </div>
+                <span className={`reminder-status-badge reminder-status-badge--${statusClassName}`}>
+                  {reminder.status === "delivered" ? <CheckCircle2 size={13} aria-hidden="true" /> : null}
+                  {formatReminderStatusLabel(reminder.status)}
+                </span>
+                <button type="button" className="btn-ghost" onClick={() => void onDelete(reminder.id)}>
+                  删除提醒
+                </button>
+              </article>
+            );
+          })}
         </div>
       )}
     </section>
@@ -1975,7 +2057,7 @@ function buildTimelineDetailRows(entry: TimelineEntry, item: TimelineEntryItem, 
     rows.push({ label: "状态", value: item.status });
   } else if (item.kind === "reminder") {
     if (item.body) rows.push({ label: "备注", value: item.body });
-    rows.push({ label: "状态", value: item.status });
+    rows.push({ label: "状态", value: formatReminderStatusLabel(item.status) });
   } else if (item.kind === "task_commitment") {
     rows.push({ label: "优先级", value: formatPriority(item.priority) });
     if (item.durationMinutes) rows.push({ label: "预计时长", value: `${item.durationMinutes} 分钟` });
@@ -2029,20 +2111,20 @@ function buildReminderEntries(
   siliconPersonNameById: ReadonlyMap<string, string>,
 ): TimelineEntry[] {
   return reminders
-    .filter((reminder) => reminder.status === "scheduled" && isoToDateKey(reminder.triggerAt, timezone) === dateKey)
+    .filter((reminder) => shouldShowReminderInPlanning(reminder) && isoToDateKey(reminder.triggerAt, timezone) === dateKey)
     .map((reminder): TimelineEntry => ({
       id: `reminder:${reminder.id}`,
       itemId: reminder.id,
       kind: "reminder",
       title: reminder.title,
-      displayTitle: `提醒：${reminder.title}`,
+      displayTitle: reminder.status === "delivered" ? `已提醒：${reminder.title}` : `提醒：${reminder.title}`,
       ownerScope: reminder.ownerScope,
       ownerId: reminder.ownerId,
       ownerLabel: resolveOwnerLabel(reminder.ownerScope, reminder.ownerId, siliconPersonNameById),
       startsAt: reminder.triggerAt,
-      sourceLabel: "提醒",
-      meta: reminder.body ?? "到点提醒",
-      tone: "personal",
+      sourceLabel: formatReminderStatusLabel(reminder.status),
+      meta: formatReminderBodyLabel(reminder),
+      tone: reminder.status === "delivered" ? "done" : "personal",
     }));
 }
 
@@ -2511,44 +2593,22 @@ function formatWeekDayLoad(entries: TimelineEntry[]): string {
 
 const styles = `
   .schedule-planning-page {
-    height: 100%;
+    background: var(--bg-base);
+  }
+
+  .schedule-planning-content {
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 14px;
     overflow: hidden;
-    padding: 24px 32px;
-    background: var(--bg-base);
   }
 
-  .schedule-planning-header {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 16px;
-    flex-shrink: 0;
+  .schedule-planning-header__actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
 
-  .schedule-planning-header__lead {
-    display: grid;
-    gap: 5px;
-  }
-
-  .schedule-planning-header__eyebrow {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-  }
-
-  .schedule-planning-header__title {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: 24px;
-    line-height: 1.2;
-    letter-spacing: -0.02em;
-  }
-
-  .schedule-planning-header__actions,
   .date-navigator {
     display: flex;
     align-items: center;
@@ -2815,6 +2875,22 @@ const styles = `
   .timeline-entry--silicon .timeline-entry__dot { background: #10a37f; box-shadow: 0 0 8px rgba(16, 163, 127, 0.4); }
   .timeline-entry--automation .timeline-entry__dot { background: #f59e0b; box-shadow: 0 0 8px rgba(245, 158, 11, 0.4); }
   .timeline-entry--warning .timeline-entry__dot { background: #ef4444; box-shadow: 0 0 8px rgba(239, 68, 68, 0.4); }
+  .timeline-entry--done {
+    border-color: rgba(148, 163, 184, 0.14);
+    background: rgba(255, 255, 255, 0.018);
+  }
+  .timeline-entry--done .timeline-entry__dot {
+    background: #94a3b8;
+    box-shadow: none;
+  }
+  .timeline-entry--done .timeline-entry__title-row strong {
+    color: var(--text-secondary);
+  }
+  .timeline-entry--done .tag {
+    border-color: rgba(16, 163, 127, 0.24);
+    background: rgba(16, 163, 127, 0.08);
+    color: var(--accent-cyan);
+  }
 
   .timeline-entry__time {
     color: var(--text-secondary);
@@ -3255,6 +3331,12 @@ const styles = `
     border-left-color: var(--status-red);
   }
 
+  .week-planner__entry--done {
+    border-left-color: rgba(148, 163, 184, 0.72);
+    background: rgba(255, 255, 255, 0.022);
+    color: var(--text-muted);
+  }
+
   .week-planner__entry-time {
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
@@ -3359,6 +3441,21 @@ const styles = `
   .compact-row span {
     color: var(--text-muted);
     font-size: 12px;
+  }
+
+  .compact-row--reminder {
+    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .compact-row--delivered {
+    border-color: rgba(148, 163, 184, 0.12);
+    background: rgba(255, 255, 255, 0.018);
+  }
+
+  .compact-row--delivered strong {
+    color: var(--text-secondary);
   }
 
   .job-row {
@@ -3869,6 +3966,23 @@ const styles = `
     grid-template-columns: 140px minmax(0, 1.5fr) minmax(0, 1fr) minmax(132px, auto);
   }
 
+  .list-page-row--reminder {
+    grid-template-columns: 136px minmax(0, 1fr) auto auto;
+  }
+
+  .list-page-row--delivered {
+    background: rgba(255, 255, 255, 0.012);
+  }
+
+  .list-page-row--delivered:hover {
+    background: rgba(255, 255, 255, 0.026);
+  }
+
+  .list-page-row--delivered .list-page-row__time,
+  .list-page-row--delivered strong {
+    color: var(--text-secondary);
+  }
+
   .list-page-row--job:hover {
     background: var(--bg-surface-hover);
   }
@@ -3908,6 +4022,37 @@ const styles = `
   .status-badge--muted { background: rgba(255, 255, 255, 0.05); color: var(--text-secondary); border: 1px solid rgba(255, 255, 255, 0.1); }
   .status-badge--normal { background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); }
 
+  .reminder-status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    min-width: 54px;
+    height: 24px;
+    padding: 0 9px;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .reminder-status-badge svg {
+    flex-shrink: 0;
+  }
+
+  .reminder-status-badge--scheduled {
+    border: 1px solid rgba(16, 163, 127, 0.28);
+    background: rgba(16, 163, 127, 0.11);
+    color: var(--accent-cyan);
+  }
+
+  .reminder-status-badge--delivered {
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    background: rgba(148, 163, 184, 0.075);
+    color: var(--text-secondary);
+  }
+
   .list-page-row__time {
     color: var(--text-secondary);
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -3938,6 +4083,22 @@ const styles = `
   .list-page-row span {
     color: var(--text-muted);
     font-size: 12px;
+  }
+
+  .list-page-row .reminder-status-badge,
+  .compact-row .reminder-status-badge {
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .list-page-row .reminder-status-badge--scheduled,
+  .compact-row .reminder-status-badge--scheduled {
+    color: var(--accent-cyan);
+  }
+
+  .list-page-row .reminder-status-badge--delivered,
+  .compact-row .reminder-status-badge--delivered {
+    color: var(--text-secondary);
   }
 
   .side-empty {
@@ -4070,7 +4231,7 @@ const styles = `
   }
 
   @media (max-width: 1180px) {
-    .schedule-planning-page {
+    .schedule-planning-content {
       overflow: auto;
     }
 
@@ -4081,6 +4242,26 @@ const styles = `
 
     .schedule-resource-rail {
       overflow: visible;
+    }
+
+    .list-page-row--reminder {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px 12px;
+      align-items: start;
+    }
+
+    .list-page-row--reminder .list-page-row__time,
+    .list-page-row--reminder .reminder-row__main {
+      grid-column: 1 / -1;
+    }
+
+    .compact-row--reminder {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .compact-row--reminder .btn-ghost {
+      grid-column: 1 / -1;
+      justify-self: start;
     }
   }
 `;

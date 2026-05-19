@@ -70,6 +70,7 @@ model HubRelease {
   manifestJson            Json     @map("manifest_json")
   artifactFileName        String   @default("") @map("artifact_file_name") @db.VarChar(255)
   artifactFileSize        Int      @default(0) @map("artifact_file_size")
+  artifactSha256          String   @default("") @map("artifact_sha256") @db.VarChar(64)
   artifactStoragePath     String   @default("") @map("artifact_storage_path") @db.VarChar(500)
   artifactDownloadUrl     String   @default("") @map("artifact_download_url") @db.VarChar(500)
   artifactDownloadExpires Int      @default(0) @map("artifact_download_expires")
@@ -146,6 +147,7 @@ model SkillRelease {
   manifestJson            Json     @map("manifest_json")
   artifactFileName        String   @default("") @map("artifact_file_name") @db.VarChar(255)
   artifactFileSize        Int      @default(0) @map("artifact_file_size")
+  artifactSha256          String   @default("") @map("artifact_sha256") @db.VarChar(64)
   artifactStoragePath     String   @default("") @map("artifact_storage_path") @db.VarChar(500)
   artifactDownloadUrl     String   @default("") @map("artifact_download_url") @db.VarChar(500)
   artifactDownloadExpires Int      @default(0) @map("artifact_download_expires")
@@ -155,4 +157,424 @@ model SkillRelease {
 
   @@index([skillId])
   @@map("skill_release")
+}
+
+// ─── 项目维护台 ─────────────────────────────────────────────
+
+/// 项目主表：Cloud 上维护 Agent 工作上下文的核心容器。
+model Project {
+  /// 项目 ID，系统内部唯一标识。
+  id Int @id @default(autoincrement())
+
+  /// 项目编码，用于 URL、检索和外部引用，例如 customer-service。
+  code String @unique @db.VarChar(80)
+
+  /// 项目名称，面向用户展示。
+  name String @db.VarChar(255)
+
+  /// 项目描述，说明项目业务范围。
+  description String? @db.Text
+
+  /// 项目负责人账号。
+  ownerAccount String @map("owner_account") @db.VarChar(191)
+
+  /// 项目状态：active=启用，archived=归档。
+  status String @default("active") @db.VarChar(40)
+
+  /// 创建人账号。
+  createdBy String @map("created_by") @db.VarChar(191)
+
+  /// 最后更新人账号。
+  updatedBy String? @map("updated_by") @db.VarChar(191)
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  services ProjectServiceEndpoint[]
+  repositories ProjectRepository[]
+  rongzhiLink ProjectRongzhiLink?
+  apis ProjectApi[]
+  skills ProjectSkillRef[]
+  mcps ProjectMcpRef[]
+  workflows ProjectWorkflowRef[]
+  siliconPersons ProjectSiliconPersonRef[]
+  snapshots ProjectConfigSnapshot[]
+  changeLogs ProjectChangeLog[]
+
+  @@index([ownerAccount])
+  @@index([status])
+  @@map("project")
+}
+
+/// 项目服务端点表：一个项目可维护多个服务及其接口基础地址。
+model ProjectServiceEndpoint {
+  /// 服务端点 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// 服务名称，例如 user-service、order-service。
+  name String @db.VarChar(120)
+
+  /// 服务接口基础地址。
+  baseUrl String @map("base_url") @db.VarChar(500)
+
+  /// 服务说明。
+  description String? @db.Text
+
+  /// 是否启用。
+  enabled Boolean @default(true)
+
+  /// 排序值。
+  sortOrder Int @default(0) @map("sort_order")
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, name])
+  @@index([projectId])
+  @@map("project_service_endpoint")
+}
+
+/// 项目 Git 仓库表：支持前端、后端、多服务、多仓库项目。
+model ProjectRepository {
+  /// 仓库绑定 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// 仓库名称，例如 frontend、backend、order-service。
+  name String @db.VarChar(120)
+
+  /// Git 仓库地址。
+  gitUrl String @map("git_url") @db.VarChar(500)
+
+  /// 仓库类型：frontend、backend、service、mobile、infra、other。
+  repoType String @default("service") @map("repo_type") @db.VarChar(40)
+
+  /// 默认分支。
+  defaultBranch String? @map("default_branch") @db.VarChar(100)
+
+  /// 仓库说明。
+  description String? @db.Text
+
+  /// 是否启用。
+  enabled Boolean @default(true)
+
+  /// 排序值。
+  sortOrder Int @default(0) @map("sort_order")
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, name])
+  @@index([projectId])
+  @@map("project_repository")
+}
+
+/// 融智链项目绑定表：记录内部类 Jira 系统的项目代码。
+model ProjectRongzhiLink {
+  /// 所属项目 ID，一个项目暂时只绑定一个融智链项目。
+  projectId Int @id @map("project_id")
+
+  /// 融智链项目代码。
+  projectCode String @map("project_code") @db.VarChar(120)
+
+  /// 融智链项目名称快照。
+  projectName String? @map("project_name") @db.VarChar(255)
+
+  /// 融智链访问地址。
+  baseUrl String? @map("base_url") @db.VarChar(500)
+
+  /// 是否启用。
+  enabled Boolean @default(true)
+
+  /// 最近一次连通性检查状态。
+  lastHealthStatus String? @map("last_health_status") @db.VarChar(40)
+
+  /// 最近一次检查时间。
+  lastCheckedAt DateTime? @map("last_checked_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectCode])
+  @@map("project_rongzhi_link")
+}
+
+/// 项目接口表：维护项目暴露或依赖的接口清单。
+model ProjectApi {
+  /// 接口 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// 接口名称。
+  name String @db.VarChar(255)
+
+  /// 服务名称，例如 user-service、order-service。
+  serviceName String? @map("service_name") @db.VarChar(120)
+
+  /// 接口方向：provided=本项目提供，consumed=本项目依赖。
+  direction String @default("provided") @db.VarChar(40)
+
+  /// 协议类型：http、rpc、graphql、event、other。
+  protocol String @default("http") @db.VarChar(40)
+
+  /// HTTP 方法。
+  method String? @db.VarChar(20)
+
+  /// 接口路径。
+  path String? @db.VarChar(500)
+
+  /// 接口描述。
+  description String? @db.Text
+
+  /// 来源：manual、openapi、repo-scan、rongzhi。
+  source String @default("manual") @db.VarChar(40)
+
+  /// 接口负责人。
+  owner String? @db.VarChar(120)
+
+  /// 标签 JSON。
+  tagsJson Json? @map("tags_json")
+
+  /// 请求结构 JSON。
+  requestSchemaJson Json? @map("request_schema_json")
+
+  /// 响应结构 JSON。
+  responseSchemaJson Json? @map("response_schema_json")
+
+  /// 是否启用。
+  enabled Boolean @default(true)
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([serviceName])
+  @@map("project_api")
+}
+
+/// 项目 Skill 挂载表：记录项目可用的技能。
+model ProjectSkillRef {
+  /// 挂载 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// Skill ID，对应现有 skill 表。
+  skillId String @map("skill_id") @db.VarChar(191)
+
+  /// 锁定的 Skill release ID，可为空表示使用最新版本。
+  skillReleaseId String? @map("skill_release_id") @db.VarChar(191)
+
+  /// 项目内显示名称。
+  alias String? @db.VarChar(120)
+
+  /// 是否启用。
+  enabled Boolean @default(true)
+
+  /// 项目级 Skill 配置。
+  configJson Json? @map("config_json")
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, skillId])
+  @@index([skillId])
+  @@map("project_skill_ref")
+}
+
+/// 项目 MCP 挂载表：记录项目可用的 MCP 服务。
+model ProjectMcpRef {
+  /// 挂载 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// MCP Server ID，对应现有 mcp_server 表。
+  mcpServerId String @map("mcp_server_id") @db.VarChar(191)
+
+  /// 锁定的 MCP release ID，可为空表示使用最新版本。
+  mcpReleaseId String? @map("mcp_release_id") @db.VarChar(191)
+
+  /// 项目内别名。
+  alias String? @db.VarChar(120)
+
+  /// 风险等级快照：read、write、exec、network。
+  riskLevel String? @map("risk_level") @db.VarChar(40)
+
+  /// 是否启用。
+  enabled Boolean @default(true)
+
+  /// 项目级 MCP 覆盖配置。
+  configOverrideJson Json? @map("config_override_json")
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, mcpServerId])
+  @@index([mcpServerId])
+  @@map("project_mcp_ref")
+}
+
+/// 项目工作流挂载表：预留字段，第一期不做业务闭环。
+model ProjectWorkflowRef {
+  /// 挂载 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// 工作流 ID，先存外部引用。
+  workflowId String @map("workflow_id") @db.VarChar(191)
+
+  /// 工作流名称快照。
+  workflowName String? @map("workflow_name") @db.VarChar(255)
+
+  /// 是否启用，第一期默认 false。
+  enabled Boolean @default(false)
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, workflowId])
+  @@index([workflowId])
+  @@map("project_workflow_ref")
+}
+
+/// 项目硅基员工挂载表：预留字段，第一期不做业务闭环。
+model ProjectSiliconPersonRef {
+  /// 挂载 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// 硅基员工 ID，先存外部引用。
+  siliconPersonId String @map("silicon_person_id") @db.VarChar(191)
+
+  /// 员工角色名称，例如研发助手、发布助手。
+  roleName String? @map("role_name") @db.VarChar(120)
+
+  /// 是否启用，第一期默认 false。
+  enabled Boolean @default(false)
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 更新时间。
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, siliconPersonId])
+  @@index([siliconPersonId])
+  @@map("project_silicon_person_ref")
+}
+
+/// 项目配置快照表：用于记录项目配置版本，支持简单回退。
+model ProjectConfigSnapshot {
+  /// 快照 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// 快照版本号，项目内递增。
+  version Int
+
+  /// 完整项目配置快照 JSON。
+  snapshotJson Json @map("snapshot_json")
+
+  /// 快照说明。
+  description String? @db.Text
+
+  /// 创建人账号。
+  createdBy String @map("created_by") @db.VarChar(191)
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, version])
+  @@index([projectId])
+  @@map("project_config_snapshot")
+}
+
+/// 项目变更日志表：记录谁在什么时候改了什么。
+model ProjectChangeLog {
+  /// 日志 ID。
+  id Int @id @default(autoincrement())
+
+  /// 所属项目 ID。
+  projectId Int @map("project_id")
+
+  /// 变更类型，例如 repository.create、skill.enable、api.update。
+  action String @db.VarChar(80)
+
+  /// 变更对象类型。
+  targetType String @map("target_type") @db.VarChar(80)
+
+  /// 变更对象 ID。
+  targetId String? @map("target_id") @db.VarChar(191)
+
+  /// 变更前 JSON。
+  beforeJson Json? @map("before_json")
+
+  /// 变更后 JSON。
+  afterJson Json? @map("after_json")
+
+  /// 操作人账号。
+  operatorAccount String @map("operator_account") @db.VarChar(191)
+
+  /// 创建时间。
+  createdAt DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, createdAt])
+  @@map("project_change_log")
 }

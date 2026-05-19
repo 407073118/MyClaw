@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 
-import type { SkillDefinition } from "@shared/contracts";
+import type { CapabilityBundle, RuntimeCapabilityRef, SkillDefinition } from "@shared/contracts";
 import { BrowserService } from "./browser-service";
 import { PptEngine } from "./ppt/index";
 import { createDocCache, type DocCache } from "./document/doc-cache";
@@ -97,6 +97,8 @@ type ToolExecutionOptions = {
   signal?: AbortSignal;
   /** 可选会话 ID，供 PathAccessPolicy / audit 使用。 */
   sessionId?: string;
+  /** 本轮冻结能力包，优先用于解析项目 Skill 与全局 Skill。 */
+  capabilityBundle?: CapabilityBundle;
 };
 
 type SkillViewArgs = {
@@ -1394,7 +1396,7 @@ export class BuiltinToolExecutor {
     }
 
     if (toolId.startsWith("skill_invoke__")) {
-      return this.executeSkillInvoke(toolId, label);
+      return this.executeSkillInvoke(toolId, label, options?.capabilityBundle);
     }
 
     if (toolId === "skill.view") {
@@ -2014,7 +2016,12 @@ export class BuiltinToolExecutor {
   }
 
   /** 读取技能内容并返回给模型。 */
-  private async executeSkillInvoke(toolId: string, input: string): Promise<ToolExecutionResult> {
+  private async executeSkillInvoke(toolId: string, input: string, capabilityBundle?: CapabilityBundle): Promise<ToolExecutionResult> {
+    const bundledRef = capabilityBundle?.functionNameMap[toolId];
+    if (bundledRef?.kind === "skill") {
+      return this.executeBundledSkillInvoke(bundledRef, input);
+    }
+
     const rawSkillId = toolId.replace("skill_invoke__", "");
     const skill = this.skills.find((item) => {
       const sanitizedId = item.id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -2024,6 +2031,146 @@ export class BuiltinToolExecutor {
     if (!skill) {
       return { success: false, output: "", error: "未找到技能：" + rawSkillId };
     }
+    if (!skill.enabled) {
+      return { success: false, output: "", error: `技能 "${skill.name}" 已禁用。` };
+    }
+
+    try {
+      const skillPath = skill.path;
+      let content = "";
+
+      const skillMdPath = join(skillPath, "SKILL.md");
+      if (existsSync(skillMdPath)) {
+        content = await readFile(skillMdPath, "utf8");
+      } else if (existsSync(skillPath) && skillPath.endsWith(".json")) {
+        const raw = await readFile(skillPath, "utf8");
+        const manifest = JSON.parse(raw);
+        content = manifest.content || manifest.description || ("Skill: " + skill.name);
+        if (manifest.entrypoint) {
+          const entryPath = resolve(dirname(skillPath), manifest.entrypoint);
+          if (existsSync(entryPath)) {
+            content += "\n\n---\n\n" + await readFile(entryPath, "utf8");
+          }
+        }
+      } else if (existsSync(skillPath)) {
+        const fileStat = await stat(skillPath);
+        if (fileStat.isFile()) {
+          content = await readFile(skillPath, "utf8");
+        } else if (fileStat.isDirectory()) {
+          for (const candidate of ["SKILL.md", "README.md", "index.md"]) {
+            const candidatePath = join(skillPath, candidate);
+            if (existsSync(candidatePath)) {
+              content = await readFile(candidatePath, "utf8");
+              break;
+            }
+          }
+        }
+      }
+
+      if (!content) {
+        return { success: false, output: "", error: "无法读取技能内容：" + skill.name + "（路径：" + skillPath + "）" };
+      }
+
+      const maxLen = 15000;
+      const truncated = content.length > maxLen ? content.slice(0, maxLen) + "\n\n...（技能内容已截断）" : content;
+      const header = "# 技能 " + skill.name + "\n" + (skill.description ? "> " + skill.description + "\n" : "") + "\n";
+      const executionNote = skill.hasScriptsDirectory ? buildSkillExecutionGuidance(skillPath) : "";
+      const userInput = input ? "\n## 用户输入\n" + input + "\n" : "";
+
+      return {
+        success: true,
+        output: header + executionNote + userInput + "\n## 技能内容\n\n" + truncated,
+      };
+    } catch (err) {
+      return {
+        success: false,
+        output: "",
+        error: "读取技能失败：" + (err instanceof Error ? err.message : String(err)),
+      };
+    }
+  }
+
+  /** 通过本轮 CapabilityBundle 解析并读取 Skill，避免跨会话共享 mutable skills 状态。 */
+  private async executeBundledSkillInvoke(ref: RuntimeCapabilityRef, input: string): Promise<ToolExecutionResult> {
+    if (!ref.installDir) {
+      console.warn("[skill.invoke] bundle Skill 缺少 installDir，已拒绝读取", {
+        source: ref.source,
+        skillId: ref.id,
+        functionName: ref.functionName ?? null,
+      });
+      return { success: false, output: "", error: "技能缺少安装目录，无法读取：" + ref.id };
+    }
+    try {
+      console.info("[skill.invoke] 按 bundle installDir 读取 Skill", {
+        source: ref.source,
+        skillId: ref.id,
+        installDir: ref.installDir,
+      });
+      const content = await this.readSkillContentFromPath(ref.installDir, ref.displayName ?? ref.id);
+      const maxLen = 15000;
+      const truncated = content.length > maxLen ? content.slice(0, maxLen) + "\n\n...（技能内容已截断）" : content;
+      const headerTitle = ref.source === "project" ? "# 项目技能 " : "# 技能 ";
+      const header = headerTitle + (ref.displayName ?? ref.id) + "\n" + (ref.description ? "> " + ref.description + "\n" : "") + "\n";
+      const manifest = ref.manifestJson && typeof ref.manifestJson === "object" ? ref.manifestJson as { hasScriptsDirectory?: unknown } : {};
+      const executionNote = manifest.hasScriptsDirectory === true ? buildSkillExecutionGuidance(ref.installDir) : "";
+      const userInput = input ? "\n## 用户输入\n" + input + "\n" : "";
+      return {
+        success: true,
+        output: header + executionNote + userInput + "\n## 技能内容\n\n" + truncated,
+      };
+    } catch (error) {
+      console.warn("[skill.invoke] bundle Skill 读取失败", {
+        source: ref.source,
+        skillId: ref.id,
+        installDir: ref.installDir,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {
+        success: false,
+        output: "",
+        error: "读取技能失败：" + (error instanceof Error ? error.message : String(error)),
+      };
+    }
+  }
+
+  /** 从 bundle 指定路径读取 Skill 内容，支持目录、JSON manifest 和单文件兼容格式。 */
+  private async readSkillContentFromPath(skillPath: string, skillName: string): Promise<string> {
+    let content = "";
+    const skillMdPath = join(skillPath, "SKILL.md");
+    if (existsSync(skillMdPath)) {
+      content = await readFile(skillMdPath, "utf8");
+    } else if (existsSync(skillPath) && skillPath.endsWith(".json")) {
+      const raw = await readFile(skillPath, "utf8");
+      const manifest = JSON.parse(raw);
+      content = manifest.content || manifest.description || ("Skill: " + skillName);
+      if (manifest.entrypoint) {
+        const entryPath = resolve(dirname(skillPath), manifest.entrypoint);
+        if (existsSync(entryPath)) {
+          content += "\n\n---\n\n" + await readFile(entryPath, "utf8");
+        }
+      }
+    } else if (existsSync(skillPath)) {
+      const fileStat = await stat(skillPath);
+      if (fileStat.isFile()) {
+        content = await readFile(skillPath, "utf8");
+      } else if (fileStat.isDirectory()) {
+        for (const candidate of ["SKILL.md", "README.md", "index.md"]) {
+          const candidatePath = join(skillPath, candidate);
+          if (existsSync(candidatePath)) {
+            content = await readFile(candidatePath, "utf8");
+            break;
+          }
+        }
+      }
+    }
+    if (!content) {
+      throw new Error("无法读取技能内容：" + skillName + "（路径：" + skillPath + "）");
+    }
+    return content;
+  }
+
+  /** 读取全局 SkillDefinition 指向的技能内容。 */
+  private async readSkillFromDefinition(skill: SkillDefinition, input: string): Promise<ToolExecutionResult> {
     if (!skill.enabled) {
       return { success: false, output: "", error: `技能 "${skill.name}" 已禁用。` };
     }

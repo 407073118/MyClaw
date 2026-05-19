@@ -15,6 +15,7 @@ export type CreateReleaseInput<TManifest extends HubManifest = HubManifest> = {
   artifact: {
     fileName: string;
     fileSize: number;
+    sha256: string;
     storagePath: string;
     downloadUrl: string;
     downloadExpiresIn: number;

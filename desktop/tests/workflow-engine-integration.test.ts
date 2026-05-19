@@ -46,8 +46,8 @@ const stubProfileResolver: ModelProfileResolver = (_id?: string) => ({
 });
 
 /** Stub tool executor that returns success */
-const stubToolExecutor: ToolExecutorFn = async (toolId, label, _workingDir) => {
-  return { success: true, output: `Tool ${toolId} result for: ${label}` };
+const stubToolExecutor: ToolExecutorFn = async (toolId, args, _workingDir) => {
+  return { success: true, output: `Tool ${toolId} result for: ${JSON.stringify(args)}` };
 };
 
 /** Build a registry with all node executors registered */

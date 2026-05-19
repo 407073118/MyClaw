@@ -18,6 +18,8 @@ import { createLogger } from "../services/logger";
 import { saveSession, saveWorkflow, saveWorkflowRun, deleteWorkflowFile } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
+import { builtinToolIdToFunctionName } from "../services/builtin-tool-registry";
+import { buildToolLabel } from "../services/tool-schemas";
 import { buildArtifactContextBlock } from "../services/artifact-context-builder";
 import { buildCanonicalTurnContent } from "../services/model-runtime/canonical-turn-content";
 import { createExecutionGateway } from "../services/model-runtime/execution-gateway";
@@ -415,7 +417,14 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
   const toolExecutor = new BuiltinToolExecutor();
   toolExecutor.setSkills(ctx.state.skills);
 
-  const toolExecFn: ToolExecutorFn = async (toolId, label, workingDir) => {
+  const toolExecFn: ToolExecutorFn = async (toolId, args, workingDir) => {
+    const functionName = builtinToolIdToFunctionName(toolId) ?? toolId.replace(/\./g, "_");
+    const label = buildToolLabel(functionName, args);
+    console.info("[workflow] 已使用结构化参数调用 builtin 工具节点", {
+      toolId,
+      functionName,
+      argKeys: Object.keys(args),
+    });
     const result = await toolExecutor.execute(toolId, label, workingDir);
     return {
       success: result.success,

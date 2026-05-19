@@ -51,6 +51,7 @@ const mocks = vi.hoisted(() => {
 });
 
 vi.mock("../src/renderer/components/workflow/workflow-node-factory", () => ({
+  WORKFLOW_CREATABLE_NODE_KINDS: ["start", "llm", "tool", "http-request", "human-input", "condition", "join", "end"],
   getWorkflowNodeKindLabel: (kind: string) => kind,
   isGeneratedScopedReference: () => false,
 }));

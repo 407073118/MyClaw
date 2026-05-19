@@ -33,6 +33,10 @@ import type { AwarenessRuntimeService } from "./awareness-runtime";
 import type { AwarenessStore } from "./awareness-store";
 import type { StandingOrderService } from "./standing-order-service";
 import type { LongRunLedgerService } from "./long-run-ledger";
+import type { ProjectCapabilityService } from "./project-capability-service";
+import type { ProjectSkillInstaller } from "./project-skill-installer";
+import type { CapabilityBundleResolver } from "./capability-bundle-resolver";
+import type { ProjectMcpRuntimeService } from "./project-mcp-runtime-service";
 
 export type ActiveSessionRun = {
   runId: string;
@@ -99,6 +103,11 @@ export type RuntimeContext = {
     awarenessSignalCollector?: unknown;
     standingOrderService?: StandingOrderService;
     longRunLedger?: LongRunLedgerService;
+    projectCapabilities?: ProjectCapabilityService;
+    projectSkillInstaller?: ProjectSkillInstaller;
+    capabilityBundles?: CapabilityBundleResolver;
+    /** 项目 MCP 一次性运行时，只做本轮 list/call，不写入全局 MCP 配置。 */
+    projectMcpRuntime?: ProjectMcpRuntimeService;
   };
   tools: {
     resolveBuiltinTools: () => ResolvedBuiltinTool[];

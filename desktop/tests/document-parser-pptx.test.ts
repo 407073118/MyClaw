@@ -24,7 +24,6 @@ import {
 } from "../src/main/services/document/parsers/pptx-parser";
 import type { ParagraphNode, SlideNode } from "@shared/contracts";
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const JSZip = require("jszip");
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -52,7 +52,6 @@ const { data: selectedManifest } = await useAsyncData<McpManifest | null>(
 const showPublishModal = ref(false);
 const publishForm = reactive({
   id: "",
-  version: "",
   releaseNotes: "",
   transport: "stdio" as McpServerConfig["transport"],
   command: "npx",
@@ -176,7 +175,6 @@ function openPublish() {
   }
 
   publishForm.id = selectedConnector.value.id;
-  publishForm.version = "";
   publishForm.releaseNotes = "";
   fillPublishConfig(selectedManifest.value?.config ?? null);
   publishStatus.value = { type: "", message: "" };
@@ -193,7 +191,7 @@ function openPublish() {
 async function handlePublish() {
   console.info("[MCP 发布版本] 开始提交新版本", {
     id: publishForm.id,
-    version: publishForm.version,
+    versionMode: "auto",
     transport: publishForm.transport
   });
   publishPending.value = true;
@@ -202,7 +200,6 @@ async function handlePublish() {
     const result = await $fetch<PublishMcpReleaseResponse>(`/api/mcp/items/${publishForm.id}/releases`, {
       method: "POST",
       body: {
-        version: publishForm.version,
         releaseNotes: publishForm.releaseNotes,
         config: buildPublishConfig()
       }
@@ -337,15 +334,13 @@ JSON.stringify(selectedManifest ?? { status: "loading" }, null, 2)
           </header>
 
           <form class="publication-form" @submit.prevent="handlePublish">
-            <div class="form-row">
-              <div class="form-group flex-1">
-                <label>版本</label>
-                <input v-model="publishForm.version" type="text" placeholder="1.0.0" required />
-              </div>
-              <div class="form-group flex-2">
-                <label>发布说明</label>
-                <input v-model="publishForm.releaseNotes" type="text" placeholder="说明这个版本的更新内容" required />
-              </div>
+            <div class="auto-version-hint">
+              版本将由 Cloud 自动递增。
+            </div>
+
+            <div class="form-group">
+              <label>发布说明</label>
+              <input v-model="publishForm.releaseNotes" type="text" placeholder="说明这个版本的更新内容" required />
             </div>
 
             <div class="form-group">
@@ -471,6 +466,7 @@ code { color: var(--text-main); font-family: "SFMono-Regular", "Fira Code", mono
 .modal-header h3 { font-size: 1.5rem; font-weight: 900; color: var(--text-main); margin: 0; }
 .close-btn { background: none; border: none; color: var(--text-dim); font-size: 1.5rem; cursor: pointer; }
 .publication-form { display: flex; flex-direction: column; gap: 24px; }
+.auto-version-hint { font-size: 0.82rem; color: var(--nuxt-green); background: rgba(var(--nuxt-green-rgb), 0.08); border: 1px solid rgba(var(--nuxt-green-rgb), 0.15); border-radius: 10px; padding: 10px 14px; font-weight: 800; }
 .form-row { display: flex; gap: 16px; }
 .flex-1 { flex: 1; }
 .flex-2 { flex: 2; }

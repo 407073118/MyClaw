@@ -1,4 +1,5 @@
 import { ToolRiskCategory } from "./events";
+import type { BuiltinToolApprovalMode } from "./builtin-tool";
 
 export type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
 export type ApprovalDecision =
@@ -91,15 +92,29 @@ export function shouldRequestApproval(input: {
   toolId: string;
   risk: ToolRiskCategory;
   isOutsideWorkspace?: boolean;
+  toolApprovalMode?: BuiltinToolApprovalMode | null;
 }): boolean {
   // Unrestricted mode: never ask, even for external paths
   if (input.policy.mode === "unrestricted") {
     return false;
   }
 
+  // 工作区外访问始终保留显式审批，避免单工具 allow 绕过路径边界。
+  if (input.isOutsideWorkspace === true) {
+    return true;
+  }
+
   // Auto-allow-all: workspace paths auto-approved; external paths need approval
   if (input.policy.mode === "auto-allow-all") {
-    return input.isOutsideWorkspace === true;
+    return false;
+  }
+
+  if (input.toolApprovalMode === "always-allow") {
+    return false;
+  }
+
+  if (input.toolApprovalMode === "always-ask") {
+    return true;
   }
 
   if (input.policy.alwaysAllowedTools.includes(input.toolId)) {

@@ -111,20 +111,26 @@ function ArtifactItem({
   const openWebPanel = useWorkspaceStore((state) => state.openWebPanel);
   const applyArtifactEvent = useWorkspaceStore((state) => state.applyArtifactEvent ?? (() => undefined));
   const myClawRootPath = useWorkspaceStore((state) => state.myClawRootPath);
+  const artifactsRootPath = useWorkspaceStore((state) => state.artifactsRootPath);
   const [previewState, setPreviewState] = useState<"idle" | "loading" | "error">("idle");
 
   /** 点击工作文件时打开右侧预览面板，避免把 md/doc 等文件直接丢给系统外部应用。 */
   async function handlePreviewArtifact(): Promise<void> {
+    const baseDirectory = artifact.storageClass === "artifact"
+      ? artifactsRootPath ?? myClawRootPath
+      : myClawRootPath;
+    const candidateBaseDirectories = [artifactsRootPath, myClawRootPath].filter((path): path is string => Boolean(path));
     console.info("[work-files-panel] 用户请求预览工作文件", {
       artifactId: artifact.id,
       relativePath: artifact.relativePath,
-      baseDirectory: myClawRootPath ?? null,
+      baseDirectory: baseDirectory ?? null,
     });
     setPreviewState("loading");
     try {
       const result = await window.myClawAPI.fileViewerPreview({
         path: artifact.relativePath,
-        baseDirectory: myClawRootPath ?? null,
+        baseDirectory: baseDirectory ?? null,
+        candidateBaseDirectories,
       });
       if (!result.success || !result.viewMeta) {
         console.warn("[work-files-panel] 工作文件预览失败", {

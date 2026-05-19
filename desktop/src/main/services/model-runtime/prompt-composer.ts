@@ -1,5 +1,6 @@
 import type {
   CanonicalTurnContent,
+  CapabilityBundle,
   ChatSession,
   ExperienceProfileId,
   McpTool,
@@ -75,6 +76,7 @@ export type ComposePromptInput = {
   toolPolicyId?: string | null;
   reasoningProfileId?: string | null;
   skills?: SkillDefinition[];
+  capabilityBundle?: CapabilityBundle;
   gitBranch?: string | null;
   personalPromptProfile?: PersonalPromptProfile | null;
   reasoningEffort?: "low" | "medium" | "high" | "xhigh" | null;
@@ -111,7 +113,7 @@ function buildBrMiniMaxResponsesDeepPlanningOverlay(): string {
 
 function buildTaskPlanningContent(effort: string): string {
   if (effort === "low") {
-    return "You have task tracking tools (task_create, task_update, etc.) — use them only when explicitly asked.";
+    return "You have task tracking tools (task_create, task_update, task_wait_for_user, etc.) — use them only when explicitly asked.";
   }
   const lines: string[] = [
     "You have task tools for decomposing and tracking user requests. **This is your primary workflow — use it for every non-trivial request.**",
@@ -129,20 +131,21 @@ function buildTaskPlanningContent(effort: string): string {
     "### Phase 2: Execution (task_update + work tools)",
     "4. **Execute** — Work through tasks one by one:",
     "   - `task_update(id, status: \"in_progress\")` → do the work with appropriate tools → `task_update(id, status: \"completed\")`",
-    "5. **Complete ALL tasks** — Do not stop until every task is marked completed. The system will prompt you to continue if you stop prematurely.",
+    "5. **Complete ALL tasks** — Do not stop until every task is marked completed, unless `task_wait_for_user` has placed a task in waiting_user because the user must answer before work can continue.",
     "",
     "## Task Tools",
     "- `task_create({ subject, description, activeForm })` — subject: imperative (e.g. \"修复登录Bug\"), activeForm: present continuous (e.g. \"正在修复登录Bug\"). Always provide activeForm.",
-    "- `task_update({ id, status })` — Mark \"in_progress\" before starting, \"waiting_user\" after asking the user to choose or clarify, and \"completed\" immediately after finishing.",
+    "- `task_update({ id, status })` — Mark \"in_progress\" before starting and \"completed\" immediately after finishing. Use blocked/failed/cancelled only for real terminal blockers.",
+    "- `task_wait_for_user({ taskId, question, reason, choices?, inputSchema? })` — Ask for structured user input. This tool is terminal for the turn: after calling it, do not call other tools and do not continue other pending tasks.",
     "- `task_list()` / `task_get({ id })` — Check current task state.",
-    "- **Status flow**: pending → in_progress → completed. Use waiting_user as a pause state when the next step requires the user's answer. Only ONE task can be in_progress at a time.",
+    "- **Status flow**: pending → in_progress → completed. waiting_user is a runtime hard pause created by task_wait_for_user. blocked/failed/cancelled are non-runnable terminal or blocker states. Once any task is waiting_user, stop the turn and do not continue other pending tasks. Only ONE task can be in_progress at a time.",
     "",
     "## Key Rules",
     "- **Plan first, execute second** — Create ALL tasks before starting the first one. These two phases MUST be in separate responses.",
     "- **Even single-step requests get a task** — Creating a task signals \"I understood your request and here's what I'll do.\"",
     "- **Discover new steps? Add tasks** — If you find additional work during execution, call task_create alone (no other work tools in the same response).",
-    "- **Finish ALL tasks** — Never stop responding while tasks are still pending or in_progress. Complete every task you created.",
-    "- **Clarification UX** — If you need multiple choices or several fields from the user, output a ```a2ui JSON form with select/text fields instead of plain markdown checkboxes. Stop after the question and wait for the user's submission.",
+    "- **Finish ALL tasks** — Never stop responding while tasks are still pending or in_progress. Complete every task you created unless you have called task_wait_for_user and are waiting for the user's answer.",
+    "- **Clarification UX** — If you need multiple choices, approval, rejection, cancellation, or several fields from the user, call task_wait_for_user with simple choices/inputSchema. Do not rely on prose, markdown checkboxes, or schema defaults for the pause.",
     "- **Skip tasks ONLY for**: direct factual Q&A, greetings, or clarification questions.",
   ];
   if (effort === "high") {
@@ -336,6 +339,34 @@ function buildSkillsContent(skills: SkillDefinition[]): string {
   return lines.join("\n");
 }
 
+/** 根据冻结能力包构建按来源分组的 Skill 提示，确保模型使用 bundle 函数名。 */
+function buildBundleSkillsContent(bundle: CapabilityBundle): string {
+  const projectSkills = bundle.skills.filter((item) => item.source === "project");
+  const userSkills = bundle.skills.filter((item) => item.source === "global");
+  const lines: string[] = [
+    "**IMPORTANT — Skill-first principle:** Before doing any work manually, check if one of the skills below matches the user's request. If a skill's description matches the user's intent, call the exact bundle function name shown here first.",
+  ];
+  const appendGroup = (title: string, items: typeof bundle.skills) => {
+    lines.push("", `## ${title}`);
+    if (items.length === 0) {
+      lines.push("No skills in this group.");
+      return;
+    }
+    for (const item of items) {
+      const functionName = item.functionName ?? Object.entries(bundle.functionNameMap)
+        .find(([, ref]) =>
+          ref === item ||
+          (ref.source === item.source && ref.kind === item.kind && ref.id === item.id && ref.capabilityRefId === item.capabilityRefId)
+        )?.[0];
+      if (!functionName) continue;
+      lines.push(`- **${item.displayName ?? item.id}**: ${item.description || "(无描述)"} → call \`${functionName}\``);
+    }
+  };
+  appendGroup("Project Skills", projectSkills);
+  appendGroup("User Skills", userSkills);
+  return lines.join("\n");
+}
+
 // ── Guidelines 引导内容 ─────────────────────────────────────────
 
 function buildGuidelinesContent(effort: string): string {
@@ -495,7 +526,14 @@ export function composePromptSections(input: ComposePromptInput): PromptSection[
     ));
   }
 
-  if (input.skills && input.skills.length > 0) {
+  if (input.capabilityBundle) {
+    sections.push(createSection(
+      "skills",
+      "Available Skills",
+      "skills",
+      buildBundleSkillsContent(input.capabilityBundle),
+    ));
+  } else if (input.skills && input.skills.length > 0) {
     sections.push(createSection(
       "skills",
       "Available Skills",

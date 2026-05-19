@@ -47,6 +47,66 @@ describe("TimeOrchestrationStore", () => {
     store.close();
   });
 
+  it("treats local no-offset reminder trigger times as due in their timezone", async () => {
+    const root = mkdtempSync(join(tmpdir(), "myclaw-time-local-reminder-"));
+    const paths = derivePaths(root);
+    const store = await TimeOrchestrationStore.create(paths);
+
+    const reminder = await store.upsertReminder({
+      title: "本地时间提醒",
+      triggerAt: "2026-05-19T14:01:42",
+      timezone: "Asia/Shanghai",
+    });
+
+    const due = await store.listDueReminders(new Date("2026-05-19T06:02:00.000Z"));
+    expect(due.map((item) => item.id)).toContain(reminder.id);
+
+    store.close();
+  });
+
+  it("treats legacy local reminder rows as due after reopening time.db", async () => {
+    const root = mkdtempSync(join(tmpdir(), "myclaw-time-legacy-local-reminder-"));
+    const paths = derivePaths(root);
+    const store = await TimeOrchestrationStore.create(paths);
+    store.close();
+
+    const SQL = await initSqlJs();
+    const db = new SQL.Database(readFileSync(paths.timeDbFile));
+    const payload = JSON.stringify({
+      id: "legacy-local-reminder",
+      kind: "reminder",
+      title: "旧本地提醒",
+      triggerAt: "2026-05-19T14:01:42",
+      timezone: "Asia/Shanghai",
+      ownerScope: "personal",
+      status: "scheduled",
+      source: "agent",
+      createdAt: "2026-05-19T05:56:52.447Z",
+      updatedAt: "2026-05-19T05:56:52.447Z",
+    }).replace(/'/g, "''");
+    db.exec(`
+      INSERT INTO reminders (
+        id, title, trigger_at, timezone, status, updated_at, payload_json
+      ) VALUES (
+        'legacy-local-reminder',
+        '旧本地提醒',
+        '2026-05-19T14:01:42',
+        'Asia/Shanghai',
+        'scheduled',
+        '2026-05-19T05:56:52.447Z',
+        '${payload}'
+      );
+    `);
+    writeFileSync(paths.timeDbFile, Buffer.from(db.export()));
+    db.close();
+
+    const reopenedStore = await TimeOrchestrationStore.create(paths);
+    const due = await reopenedStore.listDueReminders(new Date("2026-05-19T06:02:00.000Z"));
+    expect(due.map((item) => item.id)).toContain("legacy-local-reminder");
+
+    reopenedStore.close();
+  });
+
   it("migrateAssistantPromptSessionMode backfills legacy assistant_prompt jobs and is idempotent", async () => {
     const root = mkdtempSync(join(tmpdir(), "myclaw-time-migrate-"));
     const paths = derivePaths(root);

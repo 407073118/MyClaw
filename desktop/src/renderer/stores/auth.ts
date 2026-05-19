@@ -4,6 +4,7 @@ export type AuthUser = {
   account: string;
   displayName: string;
   roles: string[];
+  avatarDataUrl?: string | null;
   [key: string]: unknown;
 };
 
@@ -145,6 +146,7 @@ type AuthState = {
   // 动作
   hydrateFromStorage: (force?: boolean) => void;
   persistSession: () => void;
+  updateCurrentUserAvatar: (avatarDataUrl: string | null) => void;
   applyLoginSession: (payload: AuthLoginResponse) => void;
   applyRefreshSession: (payload: AuthRefreshResponse) => void;
   clearSession: () => void;
@@ -220,6 +222,29 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
     console.info("[desktop-auth] 已写入本地登录态", {
       account: session.user?.account ?? null,
       hasRefreshToken: Boolean(session.refreshToken),
+    });
+  },
+
+  /** 更新当前用户头像并立即持久化，供设置页、侧边栏和重启恢复共用同一份头像状态。 */
+  updateCurrentUserAvatar(avatarDataUrl) {
+    const current = get().session;
+    if (!current.user) {
+      console.warn("[desktop-auth] 无法更新个人头像：当前没有登录用户");
+      return;
+    }
+
+    const session: DesktopAuthSession = {
+      ...current,
+      user: {
+        ...current.user,
+        avatarDataUrl,
+      },
+    };
+    set({ session });
+    get().persistSession();
+    console.info("[desktop-auth] 已更新当前用户个人头像", {
+      account: session.user?.account ?? null,
+      hasAvatar: Boolean(avatarDataUrl),
     });
   },
 
@@ -385,7 +410,14 @@ export const useAuthStore = create<AuthState>()((rawSet, get) => {
     }
 
     const current = get().session;
-    const session: DesktopAuthSession = { ...current, user: payload.user };
+    const preservedAvatarDataUrl = current.user?.avatarDataUrl ?? null;
+    const session: DesktopAuthSession = {
+      ...current,
+      user: {
+        ...payload.user,
+        avatarDataUrl: payload.user.avatarDataUrl ?? preservedAvatarDataUrl,
+      },
+    };
     set({ session, validationChecked: true });
     get().persistSession();
     console.info("[desktop-auth] cloud 会话校验通过", { account: payload.user.account });

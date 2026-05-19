@@ -25,12 +25,12 @@ function createFormState(config: McpServerConfig | null | undefined): FormState 
     return { id: "", name: "", enabled: true, transport: "stdio", command: "", argsText: "", url: "", headersText: "" };
   }
 
-  if (config.transport === "http") {
+  if (config.transport !== "stdio") {
     return {
       id: config.id,
       name: config.name,
       enabled: config.enabled,
-      transport: "http",
+      transport: config.transport,
       command: "",
       argsText: "",
       url: config.url,
@@ -99,7 +99,8 @@ export default function McpServerForm({
   }
 
   function updateTransport(event: React.ChangeEvent<HTMLSelectElement>) {
-    const nextTransport = event.target.value === "http" ? "http" : "stdio";
+    const value = event.target.value;
+    const nextTransport: McpTransport = value === "http" || value === "sse" || value === "streamable-http" ? value : "stdio";
     console.info("[mcp-server-form] 切换传输方式", { previousTransport: form.transport, nextTransport });
     updateField("transport", nextTransport);
   }
@@ -132,7 +133,7 @@ export default function McpServerForm({
     }
 
     const url = form.url.trim();
-    if (!url) throw new Error("http 模式必须填写 URL。");
+    if (!url) throw new Error("远程传输模式必须填写 URL。");
 
     const headers = parseHeaders(form.headersText);
     return {
@@ -140,7 +141,7 @@ export default function McpServerForm({
       name,
       source,
       enabled: form.enabled,
-      transport: "http",
+      transport: form.transport,
       url,
       ...(headers ? { headers } : {}),
     };
@@ -192,6 +193,8 @@ export default function McpServerForm({
           <select value={form.transport} data-testid="mcp-form-transport" onChange={updateTransport}>
             <option value="stdio">STDIO</option>
             <option value="http">HTTP</option>
+            <option value="sse">SSE</option>
+            <option value="streamable-http">Streamable HTTP</option>
           </select>
         </label>
         <label className="field checkbox-field">

@@ -6,7 +6,7 @@
     "sync:shared": "pnpm --dir ../../packages/shared build",
     "predev": "pnpm run sync:shared",
     "dev": "nest start --watch",
-    "prebuild": "pnpm run sync:shared",
+    "prebuild": "pnpm run sync:shared && pnpm run prisma:generate",
     "build": "tsc -p tsconfig.json --noEmit",
     "bundle": "node scripts/bundle.mjs",
     "pretest": "pnpm run sync:shared",

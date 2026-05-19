@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { copyFile, mkdir, rename } from "node:fs/promises";
-import { dirname, extname, join, relative } from "node:path";
+import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
 import type {
   ArtifactKind,
@@ -47,8 +47,41 @@ export type CompleteArtifactInput = {
   sha256?: string | null;
 };
 
-function normalizeRelativePath(paths: MyClawPaths, absolutePath: string): string {
+function normalizeRelativePath(paths: MyClawPaths, storageClass: ArtifactStorageClass, absolutePath: string): string {
+  if (storageClass === "artifact" && isInsideBase(paths.artifactsDir, absolutePath)) {
+    return relative(paths.artifactsDir, absolutePath).replace(/\\/g, "/");
+  }
   return relative(paths.myClawDir, absolutePath).replace(/\\/g, "/");
+}
+
+/** 判断目标路径是否位于指定根目录内，支持用户把产物目录改到任意本地位置。 */
+function isInsideBase(base: string, target: string): boolean {
+  const normalizedBase = resolve(base).replace(/\\/g, "/").toLowerCase();
+  const normalizedTarget = resolve(target).replace(/\\/g, "/").toLowerCase();
+  return normalizedTarget === normalizedBase || normalizedTarget.startsWith(`${normalizedBase}/`);
+}
+
+/** 按 storageClass 解析 artifact 真实文件路径，兼容早期相对 myClawDir 的记录。 */
+export function resolveArtifactAbsolutePath(paths: MyClawPaths, artifact: ArtifactRecord): string {
+  if (isAbsolute(artifact.relativePath)) {
+    return resolve(artifact.relativePath);
+  }
+
+  if (artifact.storageClass === "artifact") {
+    const configuredPath = resolve(paths.artifactsDir, artifact.relativePath);
+    if (existsSync(configuredPath)) {
+      return configuredPath;
+    }
+
+    const legacyPath = resolve(paths.myClawDir, artifact.relativePath);
+    if (existsSync(legacyPath)) {
+      return legacyPath;
+    }
+
+    return configuredPath;
+  }
+
+  return resolve(paths.myClawDir, artifact.relativePath);
 }
 
 function ensureDirSync(dir: string): void {
@@ -106,15 +139,11 @@ export class ArtifactManager {
     scope: ArtifactScopeRef,
     siliconPersonId?: string | null,
   ): string {
-    // 会话产出统一落入 data/<sessionId>/ 目录（懒创建）
-    if (scope.scopeKind === "session") {
-      if (siliconPersonId) {
-        return getPersonSessionDataDir(this.paths, siliconPersonId, scope.scopeId);
-      }
-      return getSessionDataDir(this.paths, scope.scopeId);
-    }
-
     if (storageClass === "artifact") {
+    // 用户可见产物统一落入当前配置的 Files 产物目录，避免和会话临时 data 目录混在一起。
+      if (scope.scopeKind === "session") {
+        return join(this.paths.artifactsDir, "sessions", scope.scopeId);
+      }
       if (scope.scopeKind === "workflowRun") {
         return join(this.paths.artifactsDir, "workflows", scope.scopeId);
       }
@@ -122,6 +151,14 @@ export class ArtifactManager {
         return join(this.paths.artifactsDir, "silicon-persons", scope.scopeId);
       }
       return join(this.paths.artifactsDir, "turn-outcomes", scope.scopeId);
+    }
+
+    // 会话工作文件仍可落入 data/<sessionId>/ 目录（懒创建）。
+    if (scope.scopeKind === "session") {
+      if (siliconPersonId) {
+        return getPersonSessionDataDir(this.paths, siliconPersonId, scope.scopeId);
+      }
+      return getSessionDataDir(this.paths, scope.scopeId);
     }
 
     if (storageClass === "cache") {
@@ -169,7 +206,7 @@ export class ArtifactManager {
       storageClass: input.storageClass,
       lifecycle,
       status: input.status ?? "planned",
-      relativePath: normalizeRelativePath(this.paths, absolutePath),
+      relativePath: normalizeRelativePath(this.paths, input.storageClass, absolutePath),
       sizeBytes: existsSync(absolutePath) ? statSync(absolutePath).size : null,
       sha256: existsSync(absolutePath) ? computeSha256(absolutePath) : null,
       metadata: input.metadata ?? null,
@@ -225,11 +262,11 @@ export class ArtifactManager {
 
     const absolutePath = input.absolutePath
       ? input.absolutePath
-      : join(this.paths.myClawDir, current.relativePath);
+      : resolveArtifactAbsolutePath(this.paths, current);
     const sizeBytes = existsSync(absolutePath) ? statSync(absolutePath).size : current.sizeBytes;
     const sha256 = input.sha256 === undefined ? computeSha256(absolutePath) : input.sha256;
     const artifact = this.registry.updateArtifact(input.artifactId, {
-      relativePath: normalizeRelativePath(this.paths, absolutePath),
+      relativePath: normalizeRelativePath(this.paths, current.storageClass, absolutePath),
       sizeBytes,
       sha256,
       lifecycle: input.lifecycle ?? current.lifecycle,
@@ -325,7 +362,7 @@ export class ArtifactManager {
         throw new Error(`Artifact not found: ${artifactId}`);
       }
 
-      const currentAbsolutePath = join(this.paths.myClawDir, current.relativePath);
+      const currentAbsolutePath = resolveArtifactAbsolutePath(this.paths, current);
       const targetAbsolutePath = this.resolveManagedPath(
         "artifact",
         scope,
@@ -339,7 +376,7 @@ export class ArtifactManager {
 
       const updated = this.registry.updateArtifact(artifactId, {
         storageClass: "artifact",
-        relativePath: normalizeRelativePath(this.paths, targetAbsolutePath),
+        relativePath: normalizeRelativePath(this.paths, "artifact", targetAbsolutePath),
         lifecycle: "final",
         status: "ready",
       });

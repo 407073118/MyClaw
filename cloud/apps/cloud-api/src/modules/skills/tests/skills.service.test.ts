@@ -8,6 +8,7 @@ function createArtifactServiceMock() {
     storeSkillArtifact: vi.fn(async ({ releaseId }: { releaseId: string }) => ({
       fileName: `${releaseId}.zip`,
       fileSize: 256,
+      sha256: "a".repeat(64),
       storageKey: `/group1/M00/00/16/${releaseId}.zip`,
       storageUrl: `http://127.0.0.1:8080/group1/M00/00/16/${releaseId}.zip`,
     })),
@@ -81,6 +82,7 @@ describe("skills service", () => {
       artifact: {
         fileName: input.artifact.fileName,
         fileSize: input.artifact.fileSize,
+        sha256: input.artifact.sha256,
         downloadUrl: input.artifact.downloadUrl,
         expiresIn: input.artifact.downloadExpiresIn,
       },
@@ -115,6 +117,56 @@ describe("skills service", () => {
 
     expect(result.releaseId).toBe("release-skill-filesystem-1.1.0");
     expect(createRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto increments the next patch version when publishing without a version", async () => {
+    const createRelease = vi.fn(async (input: any) => ({
+      skillId: input.skillId,
+      releaseId: input.releaseId,
+      version: input.version,
+      releaseNotes: input.releaseNotes,
+      manifest: input.manifest,
+      artifact: {
+        fileName: input.artifact.fileName,
+        fileSize: input.artifact.fileSize,
+        sha256: input.artifact.sha256,
+        downloadUrl: input.artifact.downloadUrl,
+        expiresIn: input.artifact.downloadExpiresIn,
+      },
+    }));
+
+    const repository = {
+      list: vi.fn(async () => []),
+      findById: vi.fn(async () => ({
+        id: "skill-filesystem",
+        name: "Filesystem Skill",
+        summary: "Manage filesystem tasks",
+        description: "Skill backed by cloud storage",
+        latestVersion: "1.0.1",
+        latestReleaseId: "release-skill-filesystem-1.0.1",
+        releases: [],
+        createdAt: "2026-03-27T10:00:00.000Z",
+        updatedAt: "2026-03-27T10:00:00.000Z",
+      })),
+      createSkill: vi.fn(),
+      createRelease,
+    };
+
+    const service = new SkillsService(repository as any, createArtifactServiceMock() as any);
+    const result = await service.publishRelease("skill-filesystem", {
+      releaseNotes: "Auto patch version",
+      fileName: "skill-filesystem.zip",
+      fileBytes: Buffer.from("zip-data"),
+      entryFile: "SKILL.md",
+      readme: "# Filesystem Skill",
+    });
+
+    expect(result.version).toBe("1.0.2");
+    expect(result.releaseId).toBe("release-skill-filesystem-1.0.2");
+    expect(createRelease).toHaveBeenCalledWith(expect.objectContaining({
+      version: "1.0.2",
+      releaseId: "release-skill-filesystem-1.0.2",
+    }));
   });
 
   it("rejects publishing a non-zip skill package", async () => {

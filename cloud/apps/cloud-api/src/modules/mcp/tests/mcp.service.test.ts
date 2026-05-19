@@ -169,6 +169,75 @@ describe("mcp service", () => {
     expect(repository.createRelease).toHaveBeenCalledTimes(1);
   });
 
+  it("未传版本号时为已有 MCP 自动递增 patch 版本", async () => {
+    const config = stdioConfig({ args: ["@playwright/mcp@1.0.2"] } as any);
+
+    const repository = {
+      list: vi.fn(async () => []),
+      findById: vi.fn(async () => ({
+        id: "playwright",
+        name: "Playwright MCP",
+        summary: "浏览器自动化 MCP 服务",
+        description: "Playwright 浏览器自动化 MCP 服务器",
+        latestVersion: "1.0.1",
+        releases: []
+      })),
+      createItem: vi.fn(),
+      createRelease: vi.fn(async (input: any) => ({
+        id: input.releaseId,
+        version: input.version,
+        releaseNotes: input.releaseNotes,
+        config: input.config
+      })),
+      findReleaseById: vi.fn()
+    };
+
+    const service = new McpService(repository as any);
+    const result = await service.publishRelease("playwright", {
+      releaseNotes: "自动递增版本",
+      config
+    });
+
+    expect(result.release.id).toBe("release-playwright-1.0.2");
+    expect(result.release.version).toBe("1.0.2");
+  });
+
+  it("创建 MCP 条目时不需要用户填写初始版本", async () => {
+    const config = sseConfig();
+    const repository = {
+      list: vi.fn(async () => []),
+      findById: vi.fn().mockResolvedValueOnce(null),
+      createItem: vi.fn(async (input: any) => ({
+        id: input.id,
+        name: input.name,
+        summary: input.summary,
+        description: input.description,
+        latestVersion: input.latestVersion,
+        releases: []
+      })),
+      createRelease: vi.fn(async (input: any) => ({
+        id: input.releaseId,
+        version: input.version,
+        releaseNotes: input.releaseNotes,
+        config: input.config
+      })),
+      findReleaseById: vi.fn()
+    };
+
+    const service = new McpService(repository as any);
+    const result = await service.createWithInitialRelease({
+      id: "remote-mcp",
+      name: "Remote MCP",
+      summary: "远程 MCP 服务",
+      description: "基于 SSE 传输的远程 MCP 服务器",
+      releaseNotes: "初始版本",
+      config
+    });
+
+    expect(result.item.latestVersion).toBe("1.0.0");
+    expect(result.release.id).toBe("release-remote-mcp-1.0.0");
+  });
+
   it("发布时 MCP 条目不存在则抛出 NotFoundException", async () => {
     const repository = {
       list: vi.fn(async () => []),

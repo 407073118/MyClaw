@@ -3,7 +3,7 @@
 import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
 const mocks = vi.hoisted(() => {
   const workspace = {
@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => {
         unreadCount: 2,
         hasUnread: true,
         needsApproval: false,
+        avatarDataUrl: null,
         updatedAt: "2026-04-08T01:00:00.000Z",
         workflowIds: ["workflow-1"],
         skillIds: ["skill-1"],
@@ -132,6 +133,7 @@ const mocks = vi.hoisted(() => {
       messages: [],
     }),
     switchSiliconPersonSession: vi.fn().mockResolvedValue(null),
+    deleteSession: vi.fn().mockResolvedValue(undefined),
     sendSiliconPersonMessage: vi.fn().mockResolvedValue(null),
     startSiliconPersonWorkflowRun: vi.fn().mockResolvedValue(null),
     markSiliconPersonSessionRead: vi.fn().mockResolvedValue(null),
@@ -148,6 +150,11 @@ const mocks = vi.hoisted(() => {
 vi.mock("../src/renderer/stores/workspace", () => ({
   useWorkspaceStore: mocks.useWorkspaceStoreMock,
 }));
+
+function LocationProbe() {
+  const location = useLocation();
+  return React.createElement("div", { "data-testid": "hub-route" }, `${location.pathname}${location.search}`);
+}
 
 describe("Silicon person studio page", () => {
   beforeEach(() => {
@@ -172,6 +179,7 @@ describe("Silicon person studio page", () => {
           skillsDir: "C:/data/myClaw/silicon-persons/sp-1/skills",
           sessionsDir: "C:/data/myClaw/silicon-persons/sp-1/sessions",
         }),
+        fileViewerOpenExternal: vi.fn().mockResolvedValue({ success: true }),
       },
     });
   });
@@ -183,6 +191,7 @@ describe("Silicon person studio page", () => {
     mocks.workspace.updateSiliconPerson.mockClear();
     mocks.workspace.createSiliconPersonSession.mockClear();
     mocks.workspace.switchSiliconPersonSession.mockClear();
+    mocks.workspace.deleteSession.mockClear();
     mocks.workspace.sendSiliconPersonMessage.mockClear();
     mocks.workspace.startSiliconPersonWorkflowRun.mockClear();
     mocks.workspace.markSiliconPersonSessionRead.mockClear();
@@ -206,6 +215,10 @@ describe("Silicon person studio page", () => {
             React.createElement(Route, {
               path: "/employees/:id/studio",
               element: React.createElement(SiliconPersonWorkspacePage),
+            }),
+            React.createElement(Route, {
+              path: "/hub",
+              element: React.createElement(LocationProbe),
             }),
           ),
         ),
@@ -244,6 +257,34 @@ describe("Silicon person studio page", () => {
     });
   });
 
+  it("uploads and persists a local avatar from the profile tab", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getByTestId("studio-tab-profile"));
+
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "ada.png", { type: "image/png" });
+    fireEvent.change(screen.getByTestId("profile-tab-avatar-upload"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      const image = screen.getByTestId("profile-tab-avatar-preview").querySelector("img");
+      expect(image?.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+    });
+
+    fireEvent.click(screen.getByTestId("profile-tab-save"));
+    fireEvent.click(await screen.findByText("确认保存"));
+
+    await waitFor(() => {
+      expect(mocks.workspace.updateSiliconPerson).toHaveBeenCalledWith(
+        "sp-1",
+        expect.objectContaining({
+          avatarDataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+        }),
+      );
+    });
+  });
+
   it("places the WebPanel action to the right of the new session action", async () => {
     await renderPage();
 
@@ -258,6 +299,30 @@ describe("Silicon person studio page", () => {
 
     expect(mocks.workspace.createWebPanelTab).toHaveBeenCalledTimes(1);
     expect(mocks.workspace.closeWebPanel).not.toHaveBeenCalled();
+  });
+
+  it("uses a project-styled confirmation dialog before deleting a session", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+
+    try {
+      await renderPage();
+
+      fireEvent.click(screen.getByLabelText(/Default Session/));
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      const dialog = await screen.findByTestId("silicon-person-delete-session-dialog");
+      expect(dialog.getAttribute("data-variant")).toBe("danger");
+      expect(screen.getByTestId("silicon-person-delete-session-title")).toBeTruthy();
+      expect(screen.getByTestId("silicon-person-delete-session-detail")).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId("silicon-person-delete-session-confirm"));
+
+      await waitFor(() => {
+        expect(mocks.workspace.deleteSession).toHaveBeenCalledWith("session-1");
+      });
+    } finally {
+      confirmSpy.mockRestore();
+    }
   });
 
   it("marks the silicon person WebPanel action active and closes it when already open", async () => {
@@ -365,6 +430,41 @@ describe("Silicon person studio page", () => {
     expect(screen.getByText("Internal KB")).toBeTruthy();
     expect(screen.getByText("Code Search")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-workflow-binding-workflow-1")).toBeTruthy();
+  });
+
+  it("offers scoped management actions for employee skills and MCP services", async () => {
+    await renderPage();
+
+    fireEvent.click(screen.getByTestId("studio-tab-capabilities"));
+    await screen.findByText("Data Analysis");
+
+    const api = window.myClawAPI as {
+      fileViewerOpenExternal: ReturnType<typeof vi.fn>;
+      listSiliconPersonSkills: ReturnType<typeof vi.fn>;
+      listSiliconPersonMcpServers: ReturnType<typeof vi.fn>;
+    };
+
+    fireEvent.click(screen.getByTestId("silicon-person-skills-open-folder"));
+    await waitFor(() => {
+      expect(api.fileViewerOpenExternal).toHaveBeenCalledWith("C:/data/myClaw/silicon-persons/sp-1/skills");
+    });
+
+    const skillsCallsBeforeRefresh = api.listSiliconPersonSkills.mock.calls.length;
+    fireEvent.click(screen.getByTestId("silicon-person-skills-refresh"));
+    await waitFor(() => {
+      expect(api.listSiliconPersonSkills.mock.calls.length).toBeGreaterThan(skillsCallsBeforeRefresh);
+    });
+
+    const mcpCallsBeforeRefresh = api.listSiliconPersonMcpServers.mock.calls.length;
+    fireEvent.click(screen.getByTestId("silicon-person-mcp-refresh"));
+    await waitFor(() => {
+      expect(api.listSiliconPersonMcpServers.mock.calls.length).toBeGreaterThan(mcpCallsBeforeRefresh);
+    });
+
+    fireEvent.click(screen.getByTestId("silicon-person-mcp-add"));
+    const hubRoute = await screen.findByTestId("hub-route");
+    expect(hubRoute.textContent).toContain("/hub?tab=mcp");
+    expect(hubRoute.textContent).toContain("siliconPersonId=sp-1");
   });
 
   it("starts a bound workflow run from the capabilities tab", async () => {

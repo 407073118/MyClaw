@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertCircle, Loader2, Maximize2, Minimize2, PanelRightClose, Plus, RefreshCw, X } from "lucide-react";
+import { AlertCircle, Loader2, Maximize2, Minimize2, PanelRightClose, PanelRightOpen, Plus, RefreshCw, X } from "lucide-react";
 import { useWorkspaceStore } from "../stores/workspace";
 
 const WEB_PANEL_MIN_WIDTH = 320;
 const WEB_PANEL_MAX_WIDTH = 1120;
+const WEB_PANEL_APP_TITLEBAR_HEIGHT = 36;
 const WEB_PANEL_FULLSCREEN_TOOLBAR_HEIGHT = 44;
 type PanelLoadState = "idle" | "loading" | "ready" | "error";
 
@@ -73,11 +74,12 @@ export default function WebPanel() {
     const rect = target.getBoundingClientRect();
     const isFullscreenSnapshot = fullscreenRef.current;
     const isUnmeasuredFullscreenSurface = isFullscreenSnapshot && target === surfaceRef.current && rect.height === 0;
+    const fullscreenContentTop = WEB_PANEL_APP_TITLEBAR_HEIGHT + WEB_PANEL_FULLSCREEN_TOOLBAR_HEIGHT;
     const width = rect.width || (isFullscreenSnapshot ? window.innerWidth : panelWidthRef.current);
     const height = rect.height || (isUnmeasuredFullscreenSurface
-      ? Math.max(0, window.innerHeight - WEB_PANEL_FULLSCREEN_TOOLBAR_HEIGHT)
+      ? Math.max(0, window.innerHeight - fullscreenContentTop)
       : window.innerHeight);
-    const y = isUnmeasuredFullscreenSurface ? WEB_PANEL_FULLSCREEN_TOOLBAR_HEIGHT : rect.top;
+    const y = isUnmeasuredFullscreenSurface ? fullscreenContentTop : rect.top;
     const boundsScale = getPanelBoundsScale();
     void window.myClawAPI.panelSetBounds({
       x: rect.left * boundsScale,
@@ -233,17 +235,27 @@ export default function WebPanel() {
       setIsDragging(true);
       const startX = e.clientX;
       const startWidth = webPanel.panelWidth;
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+      let latestWidth = startWidth;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      console.info("[web-panel] 开始拖拽调整右侧面板宽度", { startWidth });
 
       const handleMouseMove = (moveEvent: MouseEvent) => {
         const delta = startX - moveEvent.clientX;
         const newWidth = Math.max(WEB_PANEL_MIN_WIDTH, Math.min(WEB_PANEL_MAX_WIDTH, startWidth + delta));
+        latestWidth = newWidth;
         setWebPanelWidth(newWidth);
       };
 
       const handleMouseUp = () => {
         setIsDragging(false);
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
         document.removeEventListener("mousemove", handleMouseMove);
         document.removeEventListener("mouseup", handleMouseUp);
+        console.info("[web-panel] 完成拖拽调整右侧面板宽度", { startWidth, finalWidth: latestWidth });
         requestAnimationFrame(reportPanelBounds);
       };
 
@@ -251,6 +263,26 @@ export default function WebPanel() {
       document.addEventListener("mouseup", handleMouseUp);
     },
     [reportPanelBounds, webPanel.panelWidth, setWebPanelWidth]
+  );
+
+  /** 支持键盘微调右侧面板宽度，保证拖拽线不可精确点击时仍有可达操作。 */
+  const handleResizeKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+        return;
+      }
+      event.preventDefault();
+      const direction = event.key === "ArrowLeft" ? 1 : -1;
+      const nextWidth = Math.max(WEB_PANEL_MIN_WIDTH, Math.min(WEB_PANEL_MAX_WIDTH, webPanel.panelWidth + direction * 32));
+      console.info("[web-panel] 用户通过键盘调整右侧面板宽度", {
+        key: event.key,
+        previousWidth: webPanel.panelWidth,
+        nextWidth,
+      });
+      setWebPanelWidth(nextWidth);
+      requestAnimationFrame(reportPanelBounds);
+    },
+    [reportPanelBounds, setWebPanelWidth, webPanel.panelWidth]
   );
 
   /** 刷新主进程中的 WebContentsView，保留当前面板数据。 */
@@ -376,7 +408,19 @@ export default function WebPanel() {
       style={isFullscreen ? undefined : { width: webPanel.panelWidth }}
     >
       {/* 拖拽手柄 */}
-      <div className="wp-drag-handle" onMouseDown={handleMouseDown}>
+      <div
+        className="wp-drag-handle"
+        role="separator"
+        aria-label="调整右侧 WebPanel 宽度"
+        aria-orientation="vertical"
+        aria-valuemin={WEB_PANEL_MIN_WIDTH}
+        aria-valuemax={WEB_PANEL_MAX_WIDTH}
+        aria-valuenow={webPanel.panelWidth}
+        tabIndex={0}
+        data-testid="web-panel-resize-handle"
+        onMouseDown={handleMouseDown}
+        onKeyDown={handleResizeKeyDown}
+      >
         <div className="wp-drag-indicator" />
       </div>
 
@@ -420,6 +464,7 @@ export default function WebPanel() {
               onClick={handleCreateTab}
               title="新增面板"
               aria-label="新增面板"
+              data-testid="web-panel-tab-add"
             >
               <Plus size={15} aria-hidden />
             </button>
@@ -432,6 +477,7 @@ export default function WebPanel() {
             onClick={handleRefresh}
             title="刷新"
             aria-label="刷新"
+            disabled={!activeViewPath}
           >
             <RefreshCw size={14} aria-hidden />
           </button>
@@ -459,27 +505,16 @@ export default function WebPanel() {
         </div>
       </div>
 
-      {isFullscreen ? (
-        <button
-          type="button"
-          className="wp-floating-fullscreen-exit"
-          onClick={handleToggleFullscreen}
-          aria-label="退出全屏"
-          title="退出全屏"
-          data-testid="web-panel-floating-fullscreen-exit"
-        >
-          <Minimize2 size={14} aria-hidden />
-          <span>退出全屏</span>
-        </button>
-      ) : null}
-
       {/* 原生 WebContentsView 会覆盖在这块占位区域内。 */}
       <div ref={surfaceRef} className="wp-native-surface" data-testid="web-panel-native-surface" aria-hidden />
 
       {!activeViewPath ? (
-        <div className="wp-empty-panel">
-          <strong>新面板</strong>
-          <span>从聊天、文件或 Skill 打开内容后，会在这里形成一个独立标签页。</span>
+        <div className="wp-empty-panel" data-testid="web-panel-empty-state">
+          <div className="wp-empty-panel-icon" aria-hidden>
+            <PanelRightOpen size={18} />
+          </div>
+          <strong>右侧 WebPanel</strong>
+          <span>从聊天、文件或 Skill 打开内容后，会在这里停靠成独立标签页。</span>
         </div>
       ) : null}
 
@@ -515,14 +550,17 @@ export default function WebPanel() {
           display: flex;
           flex-direction: column;
           flex-shrink: 0;
-          overflow: hidden;
+          overflow: visible;
           min-width: 320px;
           max-width: min(1120px, calc(100vw - 72px));
         }
 
         .web-panel.fullscreen {
           position: fixed;
-          inset: 0;
+          left: 0;
+          right: 0;
+          top: 36px;
+          bottom: 0;
           z-index: 2000;
           width: auto;
           max-width: none;
@@ -541,15 +579,17 @@ export default function WebPanel() {
 
         .wp-drag-handle {
           position: absolute;
-          left: -4px;
+          left: -12px;
           top: 0;
           bottom: 0;
-          width: 8px;
+          width: 16px;
           cursor: col-resize;
-          z-index: 10;
+          z-index: 2300;
           display: flex;
           align-items: center;
           justify-content: center;
+          touch-action: none;
+          box-sizing: border-box;
         }
 
         .wp-drag-indicator {
@@ -560,7 +600,18 @@ export default function WebPanel() {
           transition: background 0.2s;
         }
 
+        .wp-drag-handle:hover,
+        .wp-drag-handle:focus-visible {
+          background: rgba(45, 212, 191, 0.08);
+        }
+
+        .wp-drag-handle:focus-visible {
+          outline: 1px solid rgba(45, 212, 191, 0.36);
+          outline-offset: -1px;
+        }
+
         .wp-drag-handle:hover .wp-drag-indicator,
+        .wp-drag-handle:focus-visible .wp-drag-indicator,
         .web-panel.dragging .wp-drag-indicator {
           background: var(--accent-cyan, #67e8f9);
         }
@@ -578,8 +629,12 @@ export default function WebPanel() {
         }
 
         .web-panel.fullscreen .wp-toolbar {
+          position: relative;
           height: 44px;
           padding: 0 14px 0 16px;
+          background: rgba(12, 12, 13, 0.98);
+          border-bottom-color: rgba(255, 255, 255, 0.10);
+          box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
         }
 
         .wp-toolbar-left {
@@ -728,6 +783,14 @@ export default function WebPanel() {
           color: var(--text-primary);
         }
 
+        .wp-btn:disabled,
+        .wp-btn:disabled:hover {
+          cursor: not-allowed;
+          opacity: 0.38;
+          background: transparent;
+          color: var(--text-muted);
+        }
+
         .wp-btn-fullscreen.is-exit {
           width: auto;
           gap: 6px;
@@ -735,6 +798,12 @@ export default function WebPanel() {
           border: 1px solid rgba(255, 255, 255, 0.12);
           background: rgba(255, 255, 255, 0.05);
           color: var(--text-secondary);
+        }
+
+        .web-panel.fullscreen .wp-btn-fullscreen.is-exit {
+          border-color: rgba(45, 212, 191, 0.30);
+          background: rgba(45, 212, 191, 0.10);
+          color: var(--accent-cyan, #67e8f9);
         }
 
         .wp-btn-close:hover {
@@ -746,33 +815,6 @@ export default function WebPanel() {
           font-size: 12px;
           font-weight: 600;
           white-space: nowrap;
-        }
-
-        .wp-floating-fullscreen-exit {
-          position: fixed;
-          top: 8px;
-          right: 16px;
-          z-index: 2600;
-          height: 30px;
-          padding: 0 12px;
-          border-radius: 7px;
-          border: 1px solid rgba(255, 255, 255, 0.16);
-          background: rgba(24, 24, 27, 0.92);
-          color: var(--text-secondary);
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          gap: 7px;
-          font-size: 12px;
-          font-weight: 650;
-          cursor: pointer;
-          box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
-        }
-
-        .wp-floating-fullscreen-exit:hover {
-          background: rgba(39, 39, 42, 0.96);
-          color: var(--text-primary);
-          border-color: rgba(45, 212, 191, 0.38);
         }
 
         .wp-native-surface {
@@ -792,22 +834,39 @@ export default function WebPanel() {
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 8px;
+          gap: 10px;
           padding: 24px;
           background: #0c0c0d;
           color: var(--text-muted);
           text-align: center;
         }
 
+        .web-panel.fullscreen .wp-empty-panel {
+          top: 44px;
+        }
+
+        .wp-empty-panel-icon {
+          width: 34px;
+          height: 34px;
+          border-radius: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.10);
+          background: rgba(255, 255, 255, 0.045);
+          color: var(--text-secondary);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+
         .wp-empty-panel strong {
           color: var(--text-primary);
-          font-size: 14px;
+          font-size: 13px;
+          font-weight: 650;
         }
 
         .wp-empty-panel span {
-          max-width: 320px;
+          max-width: 280px;
           font-size: 12px;
-          line-height: 1.6;
+          line-height: 1.55;
         }
 
         .wp-status-overlay {

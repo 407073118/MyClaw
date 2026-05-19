@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, ResolvedSessionRuntimeIntent, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, ExperienceProfileId, PromptSection, ProtocolTarget, ProviderFamily, TurnOutcome, McpTool } from "@shared/contracts";
+import type { ArtifactRecord, CapabilityBundle, ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, ResolvedSessionRuntimeIntent, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, TaskResumeInput, ExperienceProfileId, PromptSection, ProtocolTarget, ProviderFamily, TurnOutcome, McpTool, BuiltinToolApprovalMode } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
 import { buildTaskDisplayItems } from "@shared/task-logical";
 
@@ -12,6 +12,7 @@ import type { ChatMessage as ModelChatMessage, ChatMessageContent, ResolvedToolC
 import { saveSession, saveSiliconPerson, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles, saveSettings } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
 import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../services/tool-schemas";
+import { resolveBuiltinToolById } from "../services/builtin-tool-registry";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { PathAccessPolicy, type PathPolicyApprovalCallback, type PathApprovalInput, type PathApprovalResponse } from "../services/path-access-policy";
 import { PathAccessAudit } from "../services/path-access-audit";
@@ -21,6 +22,7 @@ import { join as pathJoin } from "node:path";
 import { resolveModelCapability } from "../services/model-capability-resolver";
 import { assembleContext } from "../services/context-assembler";
 import { buildArtifactContextBlock } from "../services/artifact-context-builder";
+import { executeArtifactRegisterTool, getGeneratedFilePathFromToolCall, registerGeneratedFileArtifact } from "../services/artifact-tool";
 import { buildPersonalPromptContext } from "../services/personal-prompt-profile";
 import { extractEnrichedContext, buildEnrichedContextBlock } from "../services/context-enricher";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
@@ -38,7 +40,8 @@ import { isTerminalBackgroundTaskStatus, syncSessionBackgroundTaskSnapshot } fro
 import { syncSiliconPersonExecutionResult } from "../services/silicon-person-session";
 import { getOrCreateWorkspace } from "../services/silicon-person-workspace";
 import { blockTask, completeTask, createPlanState, startTask } from "../services/planner-runtime";
-import { getContinuableTasks, isAssistantWaitingForUserInput, markActiveTasksWaitingForUser } from "../services/task-continuation";
+import { canAutoContinueTaskChain, getContinuableTasks, isAssistantWaitingForUserInput, markActiveTasksWaitingForUser } from "../services/task-continuation";
+import { createTaskInterruptRequest, resolveTaskInterruptRequest, TaskInterruptExpiredError } from "../services/task-interrupt-store";
 import { createTask, listTasks, getTask, updateTask, clearCompletedTasks } from "../services/task-store";
 import type { TaskCreateInput, TaskUpdateInput } from "../services/task-store";
 import type { TimeSnapshot } from "../services/time-application-service";
@@ -246,6 +249,8 @@ const TOOL_RISK_MAP: Record<string, ToolRiskCategory> = {
 };
 
 function getToolRisk(toolId: string, toolName: string): ToolRiskCategory {
+  const builtinTool = resolveBuiltinToolById(toolId);
+  if (builtinTool) return builtinTool.risk;
   // 先检查内置工具风险映射表
   if (TOOL_RISK_MAP[toolId]) return TOOL_RISK_MAP[toolId];
   // Skill 默认按 Read 风险处理
@@ -253,13 +258,14 @@ function getToolRisk(toolId: string, toolName: string): ToolRiskCategory {
   if (toolId === "skill.view") return ToolRiskCategory.Read;
   if (toolId === "file.view") return ToolRiskCategory.Read;
   // MCP 工具：根据名称推断风险
-  if (toolName.startsWith("mcp__")) return ToolRiskCategory.Write;
+  if (toolName.startsWith("mcp__") || toolName.startsWith("mcp_project_")) return ToolRiskCategory.Write;
   return ToolRiskCategory.Read;
 }
 
 function getApprovalSource(toolId: string): "builtin-tool" | "mcp-tool" | "skill" {
   if (toolId.startsWith("skill_invoke__")) return "skill";
   if (toolId.startsWith("mcp__")) return "mcp-tool";
+  if (toolId.startsWith("mcp_project_")) return "mcp-tool";
   return "builtin-tool";
 }
 
@@ -276,6 +282,7 @@ type CreateSessionInput = {
 type SendMessageInput = {
   content: string;
   attachedDirectory?: string | null;
+  internalContinuation?: boolean;
 };
 
 type SessionPayload = {
@@ -451,6 +458,40 @@ function broadcastToRenderers(channel: string, payload: unknown): void {
       // WebContents 可能在检查后到发送前被销毁，这里可安全忽略
     }
   }
+}
+
+/** 广播 artifact 完成事件，让会话文件抽屉和 Files 工作台立即刷新。 */
+function broadcastArtifactCompleted(
+  ctx: RuntimeContext,
+  artifact: ArtifactRecord,
+  fallbackScope: { scopeKind: "session"; scopeId: string },
+): void {
+  const links = ctx.services.artifactRegistry.listArtifactLinks(artifact.id);
+  const primary = links.find((link) => link.scopeKind === fallbackScope.scopeKind && link.scopeId === fallbackScope.scopeId)
+    ?? links.find((link) => link.isPrimary)
+    ?? links[0]
+    ?? fallbackScope;
+
+  console.info("[session:artifact] 广播生成文件登记事件", {
+    artifactId: artifact.id,
+    scopeKind: primary.scopeKind,
+    scopeId: primary.scopeId,
+    title: artifact.title,
+    relativePath: artifact.relativePath,
+    lifecycle: artifact.lifecycle,
+    status: artifact.status,
+  });
+
+  broadcastToRenderers("session:stream", {
+    type: EventType.ArtifactCompleted,
+    artifactId: artifact.id,
+    scopeKind: primary.scopeKind,
+    scopeId: primary.scopeId,
+    lifecycle: artifact.lifecycle,
+    status: artifact.status,
+    title: artifact.title,
+    artifact,
+  });
 }
 
 /**
@@ -753,6 +794,7 @@ function buildSessionPromptSections(input: {
   session: ChatSession;
   workingDir: string;
   skills: SkillDefinition[];
+  capabilityBundle?: CapabilityBundle | null;
   gitBranch?: string | null;
   personalPromptProfile?: PersonalPromptProfile | null;
   reasoningEffort?: "low" | "medium" | "high" | null;
@@ -782,6 +824,7 @@ function buildSessionPromptSections(input: {
     toolPolicyId: input.toolPolicyId ?? null,
     reasoningProfileId: input.reasoningProfileId ?? null,
     skills: input.skills,
+    capabilityBundle: input.capabilityBundle ?? undefined,
     gitBranch: input.gitBranch,
     personalPromptProfile: input.personalPromptProfile,
     reasoningEffort: input.reasoningEffort,
@@ -825,7 +868,7 @@ function buildSessionPromptSections(input: {
       layer: "context",
       content: [
         "Execute tasks strictly in order. Complete each task before starting the next one.",
-        "If a task is waiting_user, resume it only after the user answers, then set it back to in_progress before continuing.",
+        "If ANY task is waiting_user or has an active interrupt request, the whole task chain is paused for user input. Do not continue pending tasks until the user answers through structured resume; after resume, continue the resumed task before later tasks.",
         ...taskLines,
       ].join("\n"),
     });
@@ -1103,6 +1146,7 @@ function buildSystemPrompt(
   reasoningEffort?: "low" | "medium" | "high" | null,
   enrichedContextBlock?: string | null,
   mcpTools?: Array<{ id: string; name: string; description?: string; serverId: string }>,
+  artifactsRootPath?: string | null,
 ): string {
   const now = new Date();
   const parts: string[] = [];
@@ -1116,6 +1160,9 @@ function buildSystemPrompt(
   // ── Environment ──────────────────────────────────────────
   parts.push(`\n# Environment`);
   parts.push(`- Working directory: ${workingDir}`);
+  if (artifactsRootPath) {
+    parts.push(`- Current configured Files output directory: ${artifactsRootPath}`);
+  }
   parts.push(`- Platform: ${process.platform} (${process.arch})`);
   parts.push(`- Date: ${now.toISOString().split("T")[0]} ${now.toTimeString().split(" ")[0]}`);
   if (gitBranch) {
@@ -1142,7 +1189,7 @@ function buildSystemPrompt(
   // ── Task Management（强化引导）──────────────────────────
   parts.push(`\n# Task Planning (IMPORTANT)`);
   if (effort === "low") {
-    parts.push(`You have task tracking tools (task_create, task_update, etc.) — use them only when explicitly asked.`);
+    parts.push(`You have task tracking tools (task_create, task_update, task_wait_for_user, etc.) — use them only when explicitly asked.`);
   } else {
     parts.push(`You have task tools for decomposing and tracking user requests. **This is your primary workflow — use it for every non-trivial request.**`);
     parts.push(`\n## Mandatory Workflow`);
@@ -1152,14 +1199,15 @@ function buildSystemPrompt(
     parts.push(`3. **Execute** — Work through tasks one by one: \`task_update(id, status: "in_progress")\` → do the work → \`task_update(id, status: "completed")\``);
     parts.push(`\n## Tools`);
     parts.push(`- \`task_create({ subject, description, activeForm })\` — subject: imperative (e.g. "修复登录Bug"), activeForm: present continuous (e.g. "正在修复登录Bug"). Always provide activeForm.`);
-    parts.push(`- \`task_update({ id, status })\` — Mark "in_progress" before starting, "waiting_user" after asking the user to choose or clarify, and "completed" immediately after finishing.`);
+    parts.push(`- \`task_update({ id, status })\` — Mark "in_progress" before starting and "completed" immediately after finishing. Use blocked/failed/cancelled only for real blockers or terminal outcomes.`);
+    parts.push(`- \`task_wait_for_user({ taskId, question, reason, choices?, inputSchema? })\` — Ask for structured user input. This tool is terminal for the turn: after calling it, do not call other tools and do not continue pending tasks.`);
     parts.push(`- \`task_list()\` / \`task_get({ id })\` — Check current task state.`);
-    parts.push(`- **Status flow**: pending → in_progress → completed. Use waiting_user as a pause state when the next step requires the user's answer. Only ONE task can be in_progress at a time.`);
+    parts.push(`- **Status flow**: pending → in_progress → completed. waiting_user is a runtime hard pause created by task_wait_for_user. blocked/failed/cancelled are non-runnable states. Once any task is waiting_user, stop the turn and do not continue other pending tasks. Only ONE task can be in_progress at a time.`);
     parts.push(`\n## Key Rules`);
     parts.push(`- **Plan first, execute second** — Create ALL tasks before starting the first one. Let the user see the full plan.`);
     parts.push(`- **Even single-step requests get a task** — Creating a task signals "I understood your request and here's what I'll do."`);
     parts.push(`- **Discover new steps? Add tasks** — If you find additional work during execution, create new tasks to track it.`);
-    parts.push(`- **Clarification UX** — If you need multiple choices or several fields from the user, output a \`\`\`a2ui JSON form with select/text fields instead of plain markdown checkboxes. Stop after the question and wait for the user's submission.`);
+    parts.push(`- **Clarification UX** — If you need multiple choices, approval, rejection, cancellation, or several fields from the user, call task_wait_for_user with simple choices/inputSchema. Do not rely on prose, markdown checkboxes, or schema defaults for the pause.`);
     parts.push(`- **Skip tasks ONLY for**: direct factual Q&A, greetings, or clarification questions.`);
     if (effort === "high") {
       parts.push(`\n## Deep Reasoning Protocol (MANDATORY)`);
@@ -1178,7 +1226,8 @@ function buildSystemPrompt(
   parts.push(`- \`document_read\` — Read structured/long documents with stats, outline, search, and precise reads. Prefer it for .docx/.pdf/.pptx/.xlsx/.md/.txt/.csv/.json; use JSON Pointer locators for JSON subtrees.`);
   parts.push(`- \`file_view\` — Open/view a local file in the right-side panel without placing its body in model context.`);
   parts.push(`- \`fs_edit\` — Replace a specific string in a file (preferred for partial edits).`);
-  parts.push(`- \`fs_write\` — Create new files or full rewrites only.`);
+  parts.push(`- \`fs_write\` — Create new files or full rewrites only. The Files output directory above is the current local configured path; do not assume a hard-coded myClaw/artifacts folder.`);
+  parts.push(`- \`artifact_register\` — Register files produced by shell scripts, MCP tools, or external programs into Files so the user can preview and reopen them later.`);
   parts.push(`- \`fs_list\` / \`fs_find\` / \`fs_search\` — List dirs, find files by glob, grep text.`);
   parts.push(`## Shell & Git`);
   parts.push(`- \`exec_command\` — Run shell commands (dangerous commands are blocked).`);
@@ -1410,6 +1459,8 @@ type TaskToolResult = {
   error?: string;
   /** 是否修改了 session.tasks，需要持久化和广播 */
   mutated: boolean;
+  /** 是否要求当前模型轮次立即终止，禁止注入 Task V2 续行提示 */
+  terminalForTurn?: boolean;
 };
 
 type TimeToolResult = {
@@ -1802,6 +1853,36 @@ function executeTaskTool(
         if (!id) {
           return { success: false, output: "", error: "id is required", mutated: false };
         }
+        if (args.status === "waiting_user") {
+          return {
+            success: false,
+            output: JSON.stringify({
+              ok: false,
+              error: "waiting_user must be created by task_wait_for_user",
+              terminalForTurn: true,
+            }),
+            error: "Use task_wait_for_user instead of task_update(status: waiting_user)",
+            mutated: false,
+            terminalForTurn: true,
+          };
+        }
+        const activeInterrupt = (session.taskInterrupts ?? []).find(
+          (request) => request.taskId === id && request.status === "active",
+        );
+        if (activeInterrupt) {
+          return {
+            success: false,
+            output: JSON.stringify({
+              ok: false,
+              error: "Task has an active interrupt request",
+              interruptRequestId: activeInterrupt.requestId,
+              terminalForTurn: true,
+            }),
+            error: "Task has an active interrupt request",
+            mutated: false,
+            terminalForTurn: true,
+          };
+        }
         const input: TaskUpdateInput = {};
         if (args.subject !== undefined) input.subject = String(args.subject);
         if (args.description !== undefined) input.description = String(args.description);
@@ -1814,6 +1895,61 @@ function executeTaskTool(
         const result = updateTask(tasks, id, input);
         session.tasks = result.tasks;
         return { success: true, output: JSON.stringify(buildSerializedTask(result.tasks, result.updated)), mutated: true };
+      }
+
+      case "task.wait_for_user": {
+        const taskId = String(args.taskId ?? "");
+        const question = String(args.question ?? "");
+        const reason = String(args.reason ?? "");
+        if (!taskId) {
+          return { success: false, output: "", error: "taskId is required", mutated: false };
+        }
+        if (!question) {
+          return { success: false, output: "", error: "question is required", mutated: false };
+        }
+        if (!reason) {
+          return { success: false, output: "", error: "reason is required", mutated: false };
+        }
+        const choices = Array.isArray(args.choices)
+          ? args.choices
+            .filter((choice): choice is Record<string, unknown> => !!choice && typeof choice === "object")
+            .map((choice) => ({
+              label: String(choice.label ?? ""),
+              value: String(choice.value ?? ""),
+              description: choice.description != null ? String(choice.description) : undefined,
+            }))
+            .filter((choice) => choice.label && choice.value)
+          : undefined;
+        const interruptResult = createTaskInterruptRequest(session, {
+          taskId,
+          question,
+          reason,
+          inputSchema:
+            args.inputSchema && typeof args.inputSchema === "object" && !Array.isArray(args.inputSchema)
+              ? (args.inputSchema as Record<string, unknown>)
+              : undefined,
+          choices: choices && choices.length > 0 ? choices : undefined,
+          expiresAt: args.expiresAt != null ? String(args.expiresAt) : undefined,
+        });
+        session.tasks = interruptResult.session.tasks;
+        session.taskInterrupts = interruptResult.session.taskInterrupts;
+        console.info("[session:task-wait-for-user] 已创建终止型用户中断", {
+          sessionId: session.id,
+          taskId,
+          requestId: interruptResult.request.requestId,
+        });
+        return {
+          success: true,
+          output: JSON.stringify({
+            ok: true,
+            status: "waiting_user",
+            summary: "Task paused for user input",
+            interruptRequestId: interruptResult.request.requestId,
+            terminalForTurn: true,
+          }),
+          mutated: true,
+          terminalForTurn: true,
+        };
       }
 
       default:
@@ -2496,6 +2632,74 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
     };
   });
 
+  /** 结构化恢复 Task V2 用户中断，并把恢复上下文写回会话。 */
+  ipcMain.handle("task:resume", async (_event, input: TaskResumeInput) => {
+    if (!input || typeof input !== "object") {
+      console.warn("[task:resume] 恢复失败：输入为空");
+      throw new Error("Task resume input is required");
+    }
+    const session = ctx.state.sessions.find((item) =>
+      (item.taskInterrupts ?? []).some((request) => request.requestId === input.requestId),
+    );
+    if (!session) {
+      console.warn("[task:resume] 恢复失败：未找到包含请求的会话", {
+        requestId: input.requestId,
+        taskId: input.taskId,
+      });
+      throw new Error(`Task interrupt request not found: ${input.requestId}`);
+    }
+
+    let result: ReturnType<typeof resolveTaskInterruptRequest>;
+    try {
+      result = resolveTaskInterruptRequest(session, input);
+    } catch (error) {
+      if (error instanceof TaskInterruptExpiredError) {
+        session.tasks = error.result.session.tasks;
+        session.taskInterrupts = error.result.session.taskInterrupts;
+        await saveSession(ctx.runtime.paths, session);
+        broadcastSessionTasksUpdated(session.id, session.tasks ?? []);
+        broadcastToRenderers("session:stream", {
+          type: EventType.SessionUpdated,
+          sessionId: session.id,
+          session,
+        });
+      }
+      throw error;
+    }
+    session.tasks = result.session.tasks;
+    session.taskInterrupts = result.session.taskInterrupts;
+    session.messages = result.session.messages;
+    await saveSession(ctx.runtime.paths, session);
+    broadcastSessionTasksUpdated(session.id, session.tasks ?? []);
+    broadcastToRenderers("session:stream", {
+      type: EventType.SessionUpdated,
+      sessionId: session.id,
+      session,
+    });
+    console.info("[task:resume] 已恢复 Task V2 用户中断", {
+      sessionId: session.id,
+      taskId: input.taskId,
+      requestId: input.requestId,
+      action: input.action,
+    });
+    if ((input.action === "submit" || input.action === "approve") && ctx.state.models.length > 0) {
+      try {
+        await registeredSessionSendMessageBridge?.(session.id, {
+          content: "继续执行已恢复的 Task V2 任务。",
+          internalContinuation: true,
+        });
+      } catch (error) {
+        console.warn("[task:resume] 自动续跑失败，已保留恢复后的任务状态", {
+          sessionId: session.id,
+          taskId: input.taskId,
+          requestId: input.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return { task: result.task, request: result.request };
+  });
+
   // -------------------------------------------------------------------------
   // 发送消息：进入 agentic 工具循环
   // -------------------------------------------------------------------------
@@ -2566,12 +2770,14 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       }
 
       // 追加用户消息
-      session.messages.push({
-        id: randomUUID(),
-        role: "user",
-        content: input.content,
-        createdAt: now,
-      });
+      if (input.internalContinuation !== true) {
+        session.messages.push({
+          id: randomUUID(),
+          role: "user",
+          content: input.content,
+          createdAt: now,
+        });
+      }
       await syncSiliconPersonSummaryForSession(ctx, session);
 
       // 通知渲染层本轮运行已开始
@@ -2646,11 +2852,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       // 汇总已连接 MCP 服务提供的工具
       const builtinTools = ctx.tools.resolveBuiltinTools();
       const builtinToolIds = new Set(builtinTools.map((tool) => tool.id));
+      const builtinToolById = new Map(builtinTools.map((tool) => [tool.id, tool]));
       const exposedBuiltinToolIds = new Set(
         builtinTools
           .filter((tool) => tool.enabled && tool.exposedToModel)
           .map((tool) => tool.id),
       );
+      const resolveBuiltinToolApprovalMode = (toolId: string) => builtinToolById.get(toolId)?.effectiveApprovalMode ?? "inherit";
 
       const resolvedMcpTools: RuntimeResolvedMcpTool[] = personWorkspace
         ? (activeMcpManager?.getAllTools() ?? []).map((tool) => ({
@@ -2661,6 +2869,32 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           }))
         : ctx.tools.resolveMcpTools();
       const mcpTools = resolvedMcpTools.filter((tool) => tool.enabled !== false && tool.exposedToModel !== false);
+      const mcpToolByFunctionName = new Map<string, RuntimeResolvedMcpTool>();
+      for (const tool of mcpTools) {
+        mcpToolByFunctionName.set(tool.id.replace(/[^a-zA-Z0-9_-]/g, "_"), tool);
+      }
+      const capabilityBundle = await ctx.services.capabilityBundles?.resolveForSession({
+        sessionId,
+        globalSkills: allSkills,
+        globalMcpTools: mcpTools,
+      }) ?? null;
+      if (capabilityBundle) {
+        ctx.services.projectCapabilities?.saveRunCapabilitySnapshot({
+          runId,
+          sessionId,
+          localProjectId: capabilityBundle.project?.id ?? null,
+          bundleHash: capabilityBundle.hash,
+          bundleJson: capabilityBundle,
+        });
+        console.info("[session:send-message] 项目能力包解析完成", {
+          sessionId,
+          runId,
+          bundleHash: capabilityBundle.hash,
+          projectId: capabilityBundle.project?.id ?? null,
+          skillCount: capabilityBundle.skills.length,
+          mcpToolCount: capabilityBundle.mcpTools.length,
+        });
+      }
       // 用当前技能与路径权限刷新工具执行器（硅基员工使用自己的技能）
       toolExecutor.setSkills(allSkills);
       toolExecutor.setAllowExternalPaths(allowsExternalPaths(ctx.state.getApprovals().mode));
@@ -2798,7 +3032,11 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         enabledSkills,
         mcpTools,
         initialTurnExecutionPlan.toolPolicyId,
-        { builtinTools },
+        {
+          builtinTools,
+          artifactsRootPath: ctx.runtime.artifactsRootPath,
+          ...(capabilityBundle ? { capabilityBundle } : {}),
+        },
       );
 
       console.info("[session:send-message] tools summary", {
@@ -2829,7 +3067,17 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       const boundBuildSystemPrompt = (s: ChatSession, wd: string, sk?: SkillDefinition[]) => {
         const enriched = extractEnrichedContext(s);
         const enrichedBlock = buildEnrichedContextBlock(enriched);
-        let prompt = buildSystemPrompt(s, wd, sk, gitBranch, ctx.state.getPersonalPromptProfile(), runReasoningEffort, enrichedBlock || null, mcpTools);
+        let prompt = buildSystemPrompt(
+          s,
+          wd,
+          sk,
+          gitBranch,
+          ctx.state.getPersonalPromptProfile(),
+          runReasoningEffort,
+          enrichedBlock || null,
+          mcpTools,
+          ctx.runtime.artifactsRootPath,
+        );
 
         // 硅基员工身份注入：告诉模型自己是谁、在哪工作
         if (siliconPersonIdentity) {
@@ -2862,7 +3110,13 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             const risk = approvalInput.risk || getComputerActionRisk(approvalInput.action);
             const source = getApprovalSource(toolId);
             const policy = resolveApprovalPolicyForSession(ctx, session);
-            const needsApproval = shouldRequestApproval({ policy, source, toolId, risk });
+            const needsApproval = shouldRequestApproval({
+              policy,
+              source,
+              toolId,
+              risk,
+              toolApprovalMode: resolveBuiltinToolApprovalMode(toolId),
+            });
 
             if (!needsApproval) {
               return { approved: true, reason: null };
@@ -2981,6 +3235,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           session,
           workingDir,
           skills: enabledSkills,
+          capabilityBundle,
           gitBranch,
           personalPromptProfile: ctx.state.getPersonalPromptProfile(),
           reasoningEffort: runReasoningEffort,
@@ -3180,6 +3435,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             session,
             workingDir,
             skills: enabledSkills,
+            capabilityBundle,
             gitBranch,
             personalPromptProfile: ctx.state.getPersonalPromptProfile(),
             reasoningEffort: runReasoningEffort,
@@ -3205,7 +3461,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             enabledSkills,
             mcpTools,
             turnExecutionPlan.toolPolicyId,
-            { builtinTools },
+            { builtinTools, ...(capabilityBundle ? { capabilityBundle } : {}) },
           );
           const canonicalContent = buildCanonicalTurnContent({
             systemSections: canonicalSections,
@@ -3468,12 +3724,43 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
               const toolId = functionNameToToolId(toolCall.name);
               const label = buildToolLabel(toolCall.name, toolCall.input);
-              const risk = getToolRisk(toolId, toolCall.name);
+              const bundledCapabilityRef = capabilityBundle?.functionNameMap[toolCall.name];
+              const mcpDescriptor = mcpToolByFunctionName.get(toolCall.name);
+              const risk = bundledCapabilityRef?.kind === "mcp"
+                ? ToolRiskCategory.Write
+                : mcpDescriptor?.risk ?? getToolRisk(toolId, toolCall.name);
               const source = getApprovalSource(toolId);
 
+              if (builtinToolIds.has(toolId) && !exposedBuiltinToolIds.has(toolId)) {
+                console.warn("[session:send-message] 拒绝执行未暴露的内置工具", {
+                  sessionId,
+                  runId,
+                  toolId,
+                  toolName: toolCall.name,
+                });
+                approvedTools.push({ toolCall, denied: true });
+                continue;
+              }
+
               const policy = resolveApprovalPolicyForSession(ctx, session);
-              const isOutsideWorkspace = toolId.startsWith("fs.") && toolExecutor.isOutsideWorkspace(workingDir, label.split("\n")[0].trim());
-              const needsApproval = shouldRequestApproval({ policy, source, toolId, risk, isOutsideWorkspace });
+              const pathForWorkspaceCheck = toolId === "artifact.register" && typeof toolCall.input.path === "string"
+                ? toolCall.input.path
+                : toolId.startsWith("fs.")
+                  ? label.split("\n")[0].trim()
+                  : "";
+              const isOutsideWorkspace = !!pathForWorkspaceCheck
+                && (toolId.startsWith("fs.") || toolId === "artifact.register")
+                && toolExecutor.isOutsideWorkspace(workingDir, pathForWorkspaceCheck);
+              const needsApproval = shouldRequestApproval({
+                policy,
+                source,
+                toolId,
+                risk,
+                isOutsideWorkspace,
+                toolApprovalMode: source === "mcp-tool"
+                  ? (mcpDescriptor?.effectiveApprovalMode as BuiltinToolApprovalMode | undefined) ?? "inherit"
+                  : resolveBuiltinToolApprovalMode(toolId),
+              });
 
               if (needsApproval) {
                 const approvalId = randomUUID();
@@ -3486,7 +3773,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   risk,
                   detail: JSON.stringify(toolCall.input).slice(0, 500),
                   ...(source === "mcp-tool" ? {
-                    serverId: mcpTools.find((t) => t.id.replace(/[^a-zA-Z0-9_-]/g, "_") === toolCall.name)?.serverId,
+                    serverId: mcpDescriptor?.serverId ?? bundledCapabilityRef?.serverId ?? undefined,
                     toolName: toolCall.name,
                     arguments: toolCall.input,
                   } : {}),
@@ -3574,7 +3861,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             });
             const executeSingleTool = async (
               toolCall: ResolvedToolCall,
-            ): Promise<{ content: ChatMessageContent; succeeded: boolean; failureReason?: string }> => {
+            ): Promise<{ content: ChatMessageContent; succeeded: boolean; failureReason?: string; terminalForTurn?: boolean }> => {
               const toolCallId = toolCall.id;
               const toolId = functionNameToToolId(toolCall.name);
               const label = buildToolLabel(toolCall.name, toolCall.input);
@@ -3592,6 +3879,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               let imageBase64: string | undefined;
               let toolSucceeded = true;
               let failureReason: string | undefined;
+              let terminalForTurn = false;
               try {
                 if (builtinToolIds.has(toolId) && !exposedBuiltinToolIds.has(toolId)) {
                   throw new Error(`Builtin tool is disabled or hidden from model: ${toolId}`);
@@ -3601,6 +3889,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   const taskResult = executeTaskTool(session, toolId, toolCall.input);
                   toolOutput = taskResult.output;
                   toolSucceeded = taskResult.success;
+                  terminalForTurn = taskResult.terminalForTurn === true;
                   if (!taskResult.success) failureReason = taskResult.error;
                   if (taskResult.mutated) {
                     await saveSession(ctx.runtime.paths, session);
@@ -3616,23 +3905,107 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   toolSucceeded = timeResult.success;
                   if (!timeResult.success) failureReason = timeResult.error;
                   if (timeResult.mutated) timeStateMutated = true;
-                } else if (toolCall.name.startsWith("mcp__")) {
-                  const mcpTool = mcpTools.find((t) => {
-                    const safeName = t.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-                    return safeName === toolCall.name;
+                } else if (toolId === "artifact.register") {
+                  const artifactResult = await executeArtifactRegisterTool(toolCall.input, {
+                    artifactManager: ctx.services.artifactManager,
+                    paths: ctx.runtime.paths,
+                    cwd: workingDir,
+                    sessionId,
+                    siliconPersonId: session.siliconPersonId ?? null,
+                    sourceToolName: toolCall.name,
                   });
-                  if (!mcpTool || !activeMcpManager) {
-                    throw new Error(`MCP tool not found: ${toolCall.name}`);
+                  toolOutput = artifactResult.success
+                    ? artifactResult.output
+                    : `[错误] ${artifactResult.error ?? "artifact_register 执行失败"}`;
+                  toolSucceeded = artifactResult.success;
+                  if (!artifactResult.success) {
+                    failureReason = artifactResult.error ?? "artifact_register 执行失败";
                   }
-                  toolOutput = await activeMcpManager.callTool(
-                    mcpTool.serverId,
-                    mcpTool.name,
-                    toolCall.input,
-                  );
+                  if (artifactResult.artifact) {
+                    broadcastArtifactCompleted(ctx, artifactResult.artifact, {
+                      scopeKind: "session",
+                      scopeId: sessionId,
+                    });
+                  }
+                } else if (toolCall.name.startsWith("mcp__") || capabilityBundle?.functionNameMap[toolCall.name]?.kind === "mcp") {
+                  const bundledMcpRef = capabilityBundle?.functionNameMap[toolCall.name];
+                  if (bundledMcpRef?.kind === "mcp") {
+                    console.info("[session:send-message] 收到 bundle MCP 调用", {
+                      sessionId,
+                      runId,
+                      functionName: toolCall.name,
+                      source: bundledMcpRef.source,
+                      serverId: bundledMcpRef.serverId ?? null,
+                      toolName: bundledMcpRef.toolName ?? null,
+                    });
+                    if (!bundledMcpRef.toolName) {
+                      console.warn("[session:send-message] 拒绝缺少 toolName 的 bundle MCP 调用", {
+                        sessionId,
+                        runId,
+                        functionName: toolCall.name,
+                      });
+                      throw new Error("bundle_mcp_tool_name_missing");
+                    }
+                    if (bundledMcpRef.source === "project") {
+                      if (!ctx.services.projectMcpRuntime) {
+                        console.warn("[session:send-message] 拒绝项目 MCP 调用：runtime 未初始化", {
+                          sessionId,
+                          runId,
+                          functionName: toolCall.name,
+                        });
+                        throw new Error("project_mcp_runtime_missing");
+                      }
+                      console.info("[session:send-message] 使用项目 MCP 临时 runtime 调用工具", {
+                        sessionId,
+                        runId,
+                        capabilityRefId: bundledMcpRef.capabilityRefId ?? null,
+                        toolName: bundledMcpRef.toolName,
+                      });
+                      toolOutput = await ctx.services.projectMcpRuntime.callToolForCapability(
+                        bundledMcpRef,
+                        toolCall.input,
+                      );
+                    } else {
+                      if (!bundledMcpRef.serverId || !activeMcpManager) {
+                        console.warn("[session:send-message] 拒绝全局 MCP bundle 调用：server 或 manager 缺失", {
+                          sessionId,
+                          runId,
+                          functionName: toolCall.name,
+                          serverId: bundledMcpRef.serverId ?? null,
+                        });
+                        throw new Error(`MCP tool not found: ${toolCall.name}`);
+                      }
+                      console.info("[session:send-message] 使用全局 MCP legacy 路径调用工具", {
+                        sessionId,
+                        runId,
+                        serverId: bundledMcpRef.serverId,
+                        toolName: bundledMcpRef.toolName,
+                      });
+                      toolOutput = await activeMcpManager.callTool(
+                        bundledMcpRef.serverId,
+                        bundledMcpRef.toolName,
+                        toolCall.input,
+                      );
+                    }
+                  } else {
+                    const mcpTool = mcpTools.find((t) => {
+                      const safeName = t.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+                      return safeName === toolCall.name;
+                    });
+                    if (!mcpTool || !activeMcpManager) {
+                      throw new Error(`MCP tool not found: ${toolCall.name}`);
+                    }
+                    toolOutput = await activeMcpManager.callTool(
+                      mcpTool.serverId,
+                      mcpTool.name,
+                      toolCall.input,
+                    );
+                  }
                 } else {
                   const execResult = await toolExecutor.execute(toolId, label, workingDir, {
                     signal: abortController.signal,
                     sessionId,
+                    ...(capabilityBundle ? { capabilityBundle } : {}),
                   });
                   toolSucceeded = execResult.success;
                   toolOutput = execResult.success
@@ -3650,6 +4023,36 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   // 如果技能带有视图文件，则通知渲染层打开 WebPanel
                   if (execResult.viewMeta) {
                     broadcastToRenderers("web-panel:open", execResult.viewMeta);
+                  }
+
+                  const generatedFilePath = getGeneratedFilePathFromToolCall(toolId, toolCall.input);
+                  if (execResult.success && generatedFilePath) {
+                    try {
+                      const artifact = await registerGeneratedFileArtifact({
+                        artifactManager: ctx.services.artifactManager,
+                        paths: ctx.runtime.paths,
+                        cwd: workingDir,
+                        sessionId,
+                        siliconPersonId: session.siliconPersonId ?? null,
+                        sourceToolName: toolCall.name,
+                        filePath: generatedFilePath,
+                        title: generatedFilePath.split(/[\\/]/).pop() ?? generatedFilePath,
+                      });
+                      toolOutput += `\n\n[Files] 已记录到 Files：${artifact.title} (${artifact.relativePath})`;
+                      broadcastArtifactCompleted(ctx, artifact, {
+                        scopeKind: "session",
+                        scopeId: sessionId,
+                      });
+                    } catch (artifactError) {
+                      const message = artifactError instanceof Error ? artifactError.message : String(artifactError);
+                      console.warn("[session:artifact] 工具已生成文件，但登记 Files 失败", {
+                        sessionId,
+                        toolName: toolCall.name,
+                        generatedFilePath,
+                        error: message,
+                      });
+                      toolOutput += `\n\n[Files] 文件已生成，但登记到 Files 失败：${message}`;
+                    }
                   }
                 }
 
@@ -3699,6 +4102,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                   ],
                   succeeded: toolSucceeded,
                   ...(failureReason ? { failureReason } : {}),
+                  ...(terminalForTurn ? { terminalForTurn } : {}),
                 };
               }
 
@@ -3706,6 +4110,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 content: cappedOutput,
                 succeeded: toolSucceeded,
                 ...(failureReason ? { failureReason } : {}),
+                ...(terminalForTurn ? { terminalForTurn } : {}),
               };
             };
 
@@ -3745,8 +4150,16 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
             // ---- 第 4 步：把已批准工具拆分成只读组与写入组 ----
             const approved = approvedTools.filter((t) => !t.denied);
-            const readOnlyTasks = approved.filter((t) => isReadOnlyTool(functionNameToToolId(t.toolCall.name)));
-            const writeTasks = approved.filter((t) => !isReadOnlyTool(functionNameToToolId(t.toolCall.name)));
+            const terminalApprovedTool = approved.find(
+              (t) => functionNameToToolId(t.toolCall.name) === "task.wait_for_user",
+            );
+            const executableApproved = terminalApprovedTool ? [terminalApprovedTool] : approved;
+            const toolsSkippedByTerminal = terminalApprovedTool
+              ? approved.filter((t) => t.toolCall.id !== terminalApprovedTool.toolCall.id)
+              : [];
+            const readOnlyTasks = executableApproved.filter((t) => isReadOnlyTool(functionNameToToolId(t.toolCall.name)));
+            const writeTasks = executableApproved.filter((t) => !isReadOnlyTool(functionNameToToolId(t.toolCall.name)));
+            let terminalTaskToolRequested = false;
 
             // 并发执行只读工具（按 PARALLEL_LIMIT 分批）
             // 先收集结果，再按确定顺序串行写入消息
@@ -3762,6 +4175,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               for (const { toolCall, result } of results) {
                 if (result.succeeded) {
                   successfulToolExecutions++;
+                }
+                if (result.terminalForTurn) {
+                  terminalTaskToolRequested = true;
                 }
                 markPlanTaskToolProgress(session, activePlanTaskId, {
                   toolName: toolCall.name,
@@ -3790,6 +4206,9 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               if (result.succeeded) {
                 successfulToolExecutions++;
               }
+              if (result.terminalForTurn) {
+                terminalTaskToolRequested = true;
+              }
               markPlanTaskToolProgress(session, activePlanTaskId, {
                 toolName: toolCall.name,
                 succeeded: result.succeeded,
@@ -3808,6 +4227,50 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 sessionId,
                 session,
               });
+              if (terminalTaskToolRequested) {
+                console.info("[session:task-wait-for-user] 终止型任务工具已执行，停止本轮剩余工具与自动续跑", {
+                  sessionId,
+                  toolName: toolCall.name,
+                });
+                break;
+              }
+            }
+
+            if (terminalTaskToolRequested && toolsSkippedByTerminal.length > 0) {
+              for (const { toolCall } of toolsSkippedByTerminal) {
+                const toolId = functionNameToToolId(toolCall.name);
+                const skippedOutput = JSON.stringify({
+                  ok: false,
+                  status: "skipped",
+                  reason: "terminal_task_wait_for_user",
+                  summary: "Skipped because task_wait_for_user is terminal for this turn",
+                });
+                markPlanTaskToolProgress(session, activePlanTaskId, {
+                  toolName: toolCall.name,
+                  succeeded: false,
+                  failureReason: "terminal_task_wait_for_user",
+                  now: new Date().toISOString(),
+                });
+                session.messages.push({
+                  id: randomUUID(),
+                  role: "tool" as const,
+                  content: skippedOutput,
+                  tool_call_id: toolCall.id,
+                  createdAt: new Date().toISOString(),
+                });
+                broadcastToRenderers("session:stream", {
+                  type: EventType.ToolFailed,
+                  sessionId,
+                  toolCallId: toolCall.id,
+                  toolId,
+                  error: skippedOutput,
+                });
+              }
+              broadcastToRenderers("session:stream", {
+                type: EventType.SessionUpdated,
+                sessionId,
+                session,
+              });
             }
 
             await persistSessionTurnOutcomeMetrics(ctx, result.outcome, {
@@ -3815,6 +4278,17 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               toolSuccessCount: successfulToolExecutions,
               contextStability: !assembled.wasCompacted,
             });
+
+            if (terminalTaskToolRequested) {
+              terminalStatus = "completed";
+              terminalReason = null;
+              completedNormally = true;
+              console.info("[session:task-wait-for-user] terminalForTurn 生效，跳过 Task V2 续行提示", {
+                sessionId,
+                round,
+              });
+              break;
+            }
 
             // ---- 循环检测 ----
             if (shouldContinuePlanningOnly) {
@@ -4010,14 +4484,20 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
             // ---- Task V2 续行：模型停止但仍有未完成任务时自动推进 ----
             // 仅在 Plan Mode 未接管执行时生效，避免与 Plan Mode 的续行逻辑冲突
-            const unfinishedV2Tasks = getContinuableTasks(session.tasks ?? []);
+            const allV2Tasks = session.tasks ?? [];
             const isPlanModeManagingExecution = session.planModeState?.mode === "executing";
-            if (
-              unfinishedV2Tasks.length > 0 &&
-              !isPlanModeManagingExecution &&
-              taskContinuationCount < MAX_TASK_CONTINUATIONS &&
-              !isBackgroundHandoff
-            ) {
+            const autoContinuationGate = canAutoContinueTaskChain(allV2Tasks, {
+              isWaitingForUserInput,
+              isBackgroundHandoff,
+              isPlanModeManagingExecution,
+              continuationCount: taskContinuationCount,
+              maxContinuations: MAX_TASK_CONTINUATIONS,
+              taskInterrupts: session.taskInterrupts ?? [],
+            });
+            const unfinishedV2Tasks = autoContinuationGate.allowed
+              ? getContinuableTasks(allV2Tasks)
+              : [];
+            if (autoContinuationGate.allowed && unfinishedV2Tasks.length > 0) {
               taskContinuationCount++;
               completedNormally = false;
               const pendingCount = unfinishedV2Tasks.filter((t) => t.status === "pending").length;

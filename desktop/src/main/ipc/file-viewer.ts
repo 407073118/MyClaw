@@ -1,6 +1,6 @@
 import { ipcMain, shell } from "electron";
 import { dirname, resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 
 import { FILE_VIEWER_PANEL_PATH } from "@shared/contracts";
 import { buildFileViewerPayload } from "../services/file-viewer";
@@ -8,6 +8,7 @@ import { buildFileViewerPayload } from "../services/file-viewer";
 type FileViewerPreviewInput = {
   path: string;
   baseDirectory?: string | null;
+  candidateBaseDirectories?: string[] | null;
 };
 
 export type FileViewerPreviewResult = {
@@ -25,19 +26,56 @@ export type FileViewerPreviewResult = {
 function normalizeLocalPath(input: string, baseDirectory?: string | null): string | null {
   const raw = input.trim();
   if (!raw || /^[a-z]+:\/\//i.test(raw)) return null;
-  const base = baseDirectory?.trim() && existsSync(baseDirectory)
+  const base = isExistingDirectory(baseDirectory)
     ? baseDirectory
     : process.cwd();
   return resolve(base, raw);
 }
 
+/** 判断候选根目录是否真实存在，避免把文件路径或脏输入继续拼接。 */
+function isExistingDirectory(path: string | null | undefined): path is string {
+  if (!path?.trim()) return false;
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** 按优先级收集可用于解析聊天裸文件名的根目录。 */
+function buildPreviewBaseCandidates(input: FileViewerPreviewInput): string[] {
+  const candidates = [
+    input.baseDirectory,
+    ...(Array.isArray(input.candidateBaseDirectories) ? input.candidateBaseDirectories : []),
+    process.cwd(),
+  ];
+  const unique = new Set<string>();
+  for (const candidate of candidates) {
+    if (isExistingDirectory(candidate)) {
+      unique.add(candidate);
+    }
+  }
+  return [...unique];
+}
+
+/** 依次尝试主目录和同消息候选目录，找到第一个真实存在的本地路径。 */
+function resolveExistingPreviewPath(input: FileViewerPreviewInput): string | null {
+  const raw = input.path.trim();
+  if (!raw || /^[a-z]+:\/\//i.test(raw)) return null;
+  for (const base of buildPreviewBaseCandidates(input)) {
+    const resolved = resolve(base, raw);
+    if (existsSync(resolved)) return resolved;
+  }
+  return null;
+}
+
 /** 为聊天内联文件名构造右侧预览结果，正文只进入 UI payload，不回填聊天文本。 */
 export async function buildFileViewerPreviewResult(input: FileViewerPreviewInput): Promise<FileViewerPreviewResult> {
-  const resolved = normalizeLocalPath(input.path, input.baseDirectory);
-  if (!resolved || !existsSync(resolved)) {
+  const resolved = resolveExistingPreviewPath(input);
+  if (!resolved) {
     return {
       success: false,
-      error: "文件不存在或不是本地路径。",
+      error: "文件不存在或不是本地路径；请提供完整路径或确保消息里包含所在目录。",
     };
   }
 

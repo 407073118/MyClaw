@@ -5,7 +5,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import WorkflowNodeEditor from "../src/renderer/components/workflow/WorkflowNodeEditor";
-import { getWorkflowNodeKindLabel } from "../src/renderer/components/workflow/workflow-node-factory";
+import {
+  WORKFLOW_CREATABLE_NODE_KINDS,
+  getWorkflowNodeKindLabel,
+} from "../src/renderer/components/workflow/workflow-node-factory";
 
 describe("workflow node text", () => {
   it("renders readable Chinese labels for workflow node kinds", () => {
@@ -17,6 +20,10 @@ describe("workflow node text", () => {
     expect(getWorkflowNodeKindLabel("subgraph")).toBe("子工作流");
     expect(getWorkflowNodeKindLabel("join")).toBe("汇聚");
     expect(getWorkflowNodeKindLabel("end")).toBe("结束");
+  });
+
+  it("does not offer subgraph as a creatable workflow node while the executor is unavailable", () => {
+    expect(WORKFLOW_CREATABLE_NODE_KINDS).not.toContain("subgraph");
   });
 
   it("shows readable Chinese copy in the node editor", () => {

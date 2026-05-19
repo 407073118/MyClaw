@@ -2,6 +2,8 @@ export type AuthUser = {
   account: string;
   displayName: string;
   roles: string[];
+  /** 用户本地上传的个人头像 data URL；为空时由客户端显示离线默认头像。 */
+  avatarDataUrl?: string | null;
 };
 
 export type AuthLoginRequest = {

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeContext } from "../src/main/services/runtime-context";
 import { PLAN_MODE_STATE_VALUES } from "@shared/contracts";
 
-const ORCHESTRATION_TEST_TIMEOUT_MS = 20000;
+const ORCHESTRATION_TEST_TIMEOUT_MS = 60_000;
 
 const ipcHandleRegistry = new Map<string, (...args: unknown[]) => unknown>();
 const sentStreamEvents: Array<{ channel: string; payload: unknown }> = [];

@@ -123,22 +123,36 @@ describe("mcp controller", () => {
     });
   });
 
-  it("发布时缺少 version 抛出 BadRequestException", async () => {
+  it("发布新版本时可以不传 version 并交给服务自动递增", async () => {
+    const publishRelease = vi.fn(async () => ({
+      itemId: "playwright",
+      release: {
+        id: "release-playwright-1.0.2",
+        version: "1.0.2",
+        releaseNotes: "自动递增",
+        config: stdioConfig()
+      }
+    }));
     const controller = new McpController({
       list: vi.fn(),
       findById: vi.fn(),
-      publishRelease: vi.fn(),
+      publishRelease,
       createWithInitialRelease: vi.fn(),
       findReleaseById: vi.fn()
     } as unknown as McpService);
 
     await expect(
       controller.publishRelease("playwright", {
-        version: "",
-        releaseNotes: "缺少版本号",
+        releaseNotes: "自动递增",
         config: stdioConfig()
       })
-    ).rejects.toBeInstanceOf(BadRequestException);
+    ).resolves.toMatchObject({
+      release: { version: "1.0.2" }
+    });
+    expect(publishRelease).toHaveBeenCalledWith("playwright", expect.objectContaining({
+      version: undefined,
+      releaseNotes: "自动递增"
+    }));
   });
 
   it("发布时缺少 config 抛出 BadRequestException", async () => {

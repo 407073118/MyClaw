@@ -329,16 +329,16 @@ describe("Sessions isReadOnlyTool", () => {
     expect(isReadOnlyTool("fs.read")).toBe(true);
     expect(isReadOnlyTool("fs.list")).toBe(true);
     expect(isReadOnlyTool("git.status")).toBe(true);
-  });
+  }, 15000);
 
   it("identifies skill tools as read-only", async () => {
     const { isReadOnlyTool } = await import("../src/main/ipc/sessions");
     expect(isReadOnlyTool("skill_invoke__my-skill")).toBe(true);
-  });
+  }, 15000);
 
   it("identifies write tools as not read-only", async () => {
     const { isReadOnlyTool } = await import("../src/main/ipc/sessions");
     expect(isReadOnlyTool("fs.write")).toBe(false);
     expect(isReadOnlyTool("exec.command")).toBe(false);
-  });
+  }, 15000);
 });

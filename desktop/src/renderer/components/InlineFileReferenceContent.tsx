@@ -1,7 +1,10 @@
 import React, { useEffect, useRef } from "react";
 
 import { useWorkspaceStore } from "../stores/workspace";
-import { findInlineFileReferences } from "../utils/inline-file-references";
+import {
+  findInlineFileCandidateBaseDirectories,
+  findInlineFileReferences,
+} from "../utils/inline-file-references";
 
 type WebPanelMeta = {
   viewPath: string;
@@ -101,10 +104,14 @@ export default function InlineFileReferenceContent({
       event.stopPropagation();
 
       target.dataset.state = "loading";
+      target.removeAttribute("data-error");
+      target.setAttribute("aria-busy", "true");
       try {
+        const candidateBaseDirectories = findInlineFileCandidateBaseDirectories(root.textContent ?? "");
         const result = await window.myClawAPI.fileViewerPreview({
           path,
           baseDirectory: baseDirectory ?? null,
+          ...(candidateBaseDirectories.length > 0 ? { candidateBaseDirectories } : {}),
         });
         if (result.success && result.viewMeta) {
           const openWebPanel = onOpenWebPanel ?? ((viewMeta: WebPanelMeta) => {
@@ -112,13 +119,23 @@ export default function InlineFileReferenceContent({
           });
           openWebPanel(result.viewMeta);
           target.dataset.state = "ready";
+          target.removeAttribute("data-error");
+          target.setAttribute("aria-label", path);
         } else {
+          const errorMessage = result.error ?? "文件不存在或无法预览";
           target.dataset.state = "missing";
-          target.title = result.error ?? "文件不存在或无法预览";
+          target.dataset.error = "未找到";
+          target.title = `${errorMessage}：${path}`;
+          target.setAttribute("aria-label", `${path}（未找到）`);
         }
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         target.dataset.state = "missing";
-        target.title = error instanceof Error ? error.message : String(error);
+        target.dataset.error = "未找到";
+        target.title = `${errorMessage}：${path}`;
+        target.setAttribute("aria-label", `${path}（未找到）`);
+      } finally {
+        target.removeAttribute("aria-busy");
       }
     };
 

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => {
       title: string;
       description: string;
       soul?: string;
+      avatarDataUrl?: string | null;
       approvalMode?: string;
       modelProfileId?: string;
       reasoningEffort?: "low" | "medium" | "high";
@@ -103,6 +104,8 @@ describe("SiliconPersonCreatePage", () => {
     expect(screen.getByText("身份与人格")).toBeTruthy();
     expect(screen.queryByText("工作流绑定")).toBeNull();
     expect(screen.getByTestId("silicon-person-create-model")).toBeTruthy();
+    expect(screen.getByTestId("silicon-person-avatar-preview")).toBeTruthy();
+    expect(screen.getByTestId("silicon-person-avatar-upload")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-create-approval-mode")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-create-soul")).toBeTruthy();
     expect(screen.getByTestId("silicon-person-create-reasoning-effort")).toBeTruthy();
@@ -181,6 +184,48 @@ describe("SiliconPersonCreatePage", () => {
         expect.objectContaining({
           approvalMode: "auto_approve",
           reasoningEffort: "high",
+        }),
+      );
+    });
+  });
+
+  it("uploads a local avatar and includes it in creation payload", async () => {
+    const { default: SiliconPersonCreatePage } = await import("../src/renderer/pages/SiliconPersonCreatePage");
+
+    render(
+      React.createElement(
+        MemoryRouter,
+        undefined,
+        React.createElement(SiliconPersonCreatePage),
+      ),
+    );
+
+    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "ada.png", { type: "image/png" });
+    fireEvent.change(screen.getByTestId("silicon-person-avatar-upload"), {
+      target: { files: [file] },
+    });
+
+    await waitFor(() => {
+      const image = screen.getByTestId("silicon-person-avatar-preview").querySelector("img");
+      expect(image?.getAttribute("src")).toMatch(/^data:image\/png;base64,/);
+    });
+
+    fireEvent.change(screen.getByTestId("silicon-person-create-name"), {
+      target: { value: "Ada" },
+    });
+    fireEvent.change(screen.getByTestId("silicon-person-create-soul"), {
+      target: { value: "擅长结构化分析，沟通直接，优先给结论。" },
+    });
+    fireEvent.change(screen.getByTestId("silicon-person-create-model"), {
+      target: { value: "model-1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "创建" }));
+
+    await waitFor(() => {
+      expect(mocks.workspace.createSiliconPerson).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Ada",
+          avatarDataUrl: expect.stringMatching(/^data:image\/png;base64,/),
         }),
       );
     });

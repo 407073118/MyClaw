@@ -1,7 +1,7 @@
 import type { BuiltinToolApprovalMode } from "./builtin-tool";
 import { ToolRiskCategory } from "./events";
 
-export type McpTransport = "stdio" | "http";
+export type McpTransport = "stdio" | "http" | "sse" | "streamable-http";
 export type McpSource = "manual" | "claude" | "codex" | "cursor";
 export type McpServerHealth = "unknown" | "healthy" | "error";
 
@@ -21,7 +21,7 @@ export type McpStdioServerConfig = McpServerConfigBase & {
 };
 
 export type McpHttpServerConfig = McpServerConfigBase & {
-  transport: "http";
+  transport: "http" | "sse" | "streamable-http";
   url: string;
   headers?: Record<string, string>;
 };

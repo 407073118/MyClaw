@@ -193,6 +193,7 @@ export function registerSiliconPersonHandlers(ctx: RuntimeContext): void {
         baseIdentity: (input.baseIdentity as string | undefined)?.trim() || undefined,
         rolePersona: (input.rolePersona as string | undefined)?.trim() || undefined,
         soul: (input.soul as string | undefined)?.trim() || undefined,
+        avatarDataUrl: (input.avatarDataUrl as string | undefined)?.trim() || null,
         modelProfileId: rawModelProfileId,
         modelBindingSnapshot: buildModelBindingSnapshot(ctx, rawModelProfileId),
         updatedAt: now,

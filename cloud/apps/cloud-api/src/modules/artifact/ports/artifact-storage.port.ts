@@ -12,6 +12,7 @@ export type StoreSkillArtifactInput = {
 export type StoredSkillArtifact = {
   fileName: string;
   fileSize: number;
+  sha256: string;
   storageKey: string;
   storageUrl: string;
 };

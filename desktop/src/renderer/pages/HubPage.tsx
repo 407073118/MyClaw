@@ -1,10 +1,12 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useLocation } from "react-router-dom";
 import FallbackAvatar from "../components/FallbackAvatar";
 import { useDialogA11y } from "../hooks/useDialogA11y";
-import { useWorkspaceStore, type CloudSkillCategory } from "../stores/workspace";
+import { useWorkspaceStore, type CloudProjectSummary, type CloudSkillCategory } from "../stores/workspace";
 import { useShellStore } from "../stores/shell";
+import { AlertCircle, Cloud, Download, Search, X } from "lucide-react";
 
-type CloudHubItemType = "skill" | "mcp" | "employee-package" | "workflow-package";
+type CloudHubItemType = "skill" | "mcp" | "employee-package" | "workflow-package" | "project";
 
 const SKILL_CATEGORIES: { value: CloudSkillCategory; label: string }[] = [
   { value: "productivity", label: "效率工具" },
@@ -41,6 +43,7 @@ function hubTypeLabel(type: string) {
   if (type === "skill") return "技能";
   if (type === "mcp") return "MCP";
   if (type === "employee-package") return "员工包";
+  if (type === "project") return "项目";
   return "工作流包";
 }
 
@@ -53,8 +56,16 @@ function installActionLabel(type: string) {
 export default function HubPage() {
   const workspace = useWorkspaceStore();
   const shell = useShellStore();
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const queryTab = searchParams.get("tab");
+  const scopedSiliconPersonId = searchParams.get("siliconPersonId")?.trim() ?? "";
+  const initialActiveTab: CloudHubItemType =
+    queryTab === "mcp" || queryTab === "employee-package" || queryTab === "workflow-package" || queryTab === "project"
+      ? queryTab
+      : "skill";
 
-  const [activeTab, setActiveTab] = useState<CloudHubItemType>("skill");
+  const [activeTab, setActiveTab] = useState<CloudHubItemType>(initialActiveTab);
   const [selectedCategory, setSelectedCategory] = useState<CloudSkillCategory | "">("");
   const [selectedTag, setSelectedTag] = useState("");
   const [keyword, setKeyword] = useState("");
@@ -65,10 +76,19 @@ export default function HubPage() {
   const [importFeedback, setImportFeedback] = useState("");
   const [importError, setImportError] = useState("");
   const [cloudError, setCloudError] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<CloudProjectSummary | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
   const detailPanelRef = useRef<HTMLElement>(null);
   const MAX_RETRIES = 5;
+
+  useEffect(() => {
+    if (!scopedSiliconPersonId) return;
+    console.info("[hub-page] 使用硅基员工安装上下文", {
+      siliconPersonId: scopedSiliconPersonId,
+      activeTab,
+    });
+  }, [activeTab, scopedSiliconPersonId]);
 
   const displayedSkills = useMemo(() => {
     let items: any[] = workspace.cloudSkills ?? [];
@@ -91,6 +111,35 @@ export default function HubPage() {
   );
 
   const cloudManifest = (workspace as any).cloudHubManifest;
+
+  /** 查找 Cloud 项目在本机已同步的绑定记录。 */
+  function findLocalProject(project: CloudProjectSummary) {
+    return workspace.projects.find((item) => item.cloudProjectId === String(project.id)) ?? null;
+  }
+
+  /** 判断本机项目是否落后于 Cloud 最新运行时版本。 */
+  function isProjectOutdated(project: CloudProjectSummary) {
+    const localProject = findLocalProject(project);
+    if (!localProject) return false;
+    return localProject.cloudVersion < project.version || localProject.lastSyncStatus === "stale" || localProject.lastSyncStatus === "failed";
+  }
+
+  /** 生成项目卡片状态，帮助用户理解下载、绑定和更新动作。 */
+  function projectStatusLabel(project: CloudProjectSummary) {
+    const localProject = findLocalProject(project);
+    if (!localProject) return "未下载";
+    if (isProjectOutdated(project)) return "可更新";
+    return "已同步";
+  }
+
+  /** 根据当前会话和本地项目状态决定项目主按钮文案。 */
+  function projectActionLabel(project: CloudProjectSummary) {
+    const localProject = findLocalProject(project);
+    if (!localProject) return "下载并绑定当前会话";
+    if (isProjectOutdated(project)) return "更新并绑定当前会话";
+    if (workspace.currentProjectBinding?.id === localProject.id) return "已绑定当前会话";
+    return "绑定当前会话";
+  }
 
   function scheduleRetry() {
     if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
@@ -122,6 +171,19 @@ export default function HubPage() {
   async function loadData() {
     if (activeTab === "skill") {
       await loadSkills();
+    } else if (activeTab === "project") {
+      setLoading(true);
+      setCloudError(false);
+      try {
+        await workspace.loadCloudProjects();
+        await workspace.loadProjects();
+        retryCountRef.current = 0;
+      } catch {
+        setCloudError(true);
+        scheduleRetry();
+      } finally {
+        setLoading(false);
+      }
     } else {
       setLoading(true);
       setCloudError(false);
@@ -171,12 +233,17 @@ export default function HubPage() {
   async function switchTab(tab: CloudHubItemType) {
     setActiveTab(tab);
     setDetailVisible(false);
+    setSelectedProject(null);
     setImportFeedback("");
     setImportError("");
     setLoading(true);
     setCloudError(false);
     try {
       if (tab === "skill") await workspace.loadCloudSkills({});
+      else if (tab === "project") {
+        await workspace.loadCloudProjects();
+        await workspace.loadProjects();
+      }
       else await workspace.loadCloudHubItems(tab);
     } catch {
       setCloudError(true);
@@ -189,6 +256,7 @@ export default function HubPage() {
   /** 关闭云端详情弹层，并清理导入反馈。 */
   const closeDetail = useCallback(() => {
     setDetailVisible(false);
+    setSelectedProject(null);
     setImportFeedback("");
     setImportError("");
   }, []);
@@ -203,6 +271,7 @@ export default function HubPage() {
   async function openSkillDetail(skillId: string, trigger?: HTMLElement | null) {
     captureDialogTrigger(trigger);
     setDetailVisible(true);
+    setSelectedProject(null);
     setImportFeedback("");
     setImportError("");
     workspace.clearCloudSkillDetail();
@@ -216,6 +285,7 @@ export default function HubPage() {
   async function openHubItemDetail(itemId: string, trigger?: HTMLElement | null) {
     captureDialogTrigger(trigger);
     setDetailVisible(true);
+    setSelectedProject(null);
     setImportFeedback("");
     setImportError("");
     workspace.clearCloudHubDetail();
@@ -228,6 +298,62 @@ export default function HubPage() {
     }
   }
 
+  /** 打开 Cloud 项目详情弹层，不额外请求详情，直接使用摘要与本地绑定状态。 */
+  function openProjectDetail(project: CloudProjectSummary, trigger?: HTMLElement | null) {
+    console.info("[hub-page] 打开 Cloud 项目详情", { cloudProjectId: project.id, version: project.version });
+    captureDialogTrigger(trigger);
+    workspace.clearCloudSkillDetail();
+    workspace.clearCloudHubDetail();
+    setSelectedProject(project);
+    setDetailVisible(true);
+    setImportFeedback("");
+    setImportError("");
+  }
+
+  /** 下载或更新 Cloud 项目，并把本地项目绑定到当前会话。 */
+  async function handleProjectAction(project: CloudProjectSummary) {
+    const sessionId = workspace.currentSession?.id;
+    if (!sessionId) {
+      setImportError("请先创建或选择一个会话。");
+      return;
+    }
+    if (isImporting) return;
+
+    const localProject = findLocalProject(project);
+    const needsUpdate = isProjectOutdated(project);
+    console.info("[hub-page] 处理 Cloud 项目绑定动作", {
+      cloudProjectId: project.id,
+      sessionId,
+      localProjectId: localProject?.id ?? null,
+      needsUpdate,
+    });
+    if (localProject && !needsUpdate && workspace.currentProjectBinding?.id === localProject.id) {
+      setImportFeedback("当前会话已绑定该项目。");
+      return;
+    }
+
+    setIsImporting(true);
+    setImportFeedback("");
+    setImportError("");
+    try {
+      if (!localProject) {
+        await workspace.bindCloudProject({ cloudProjectId: String(project.id), sessionId });
+        setImportFeedback("已下载项目并绑定当前会话。");
+        return;
+      }
+
+      const targetProject = needsUpdate
+        ? (await workspace.syncProjectRuntimeContext(localProject.id)).project
+        : localProject;
+      await workspace.bindSessionProject(sessionId, targetProject.id);
+      setImportFeedback(needsUpdate ? "已更新项目并绑定当前会话。" : "已绑定当前会话。");
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "项目同步或绑定失败。");
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
   async function installSkill() {
     const detail = (workspace as any).cloudSkillDetail;
     if (!detail || isImporting) return;
@@ -235,8 +361,12 @@ export default function HubPage() {
     if (!releaseId) { setImportError("无可用版本。"); return; }
     setIsImporting(true); setImportFeedback(""); setImportError("");
     try {
-      await workspace.importCloudSkill({ releaseId, skillName: detail.name });
-      setImportFeedback("已安装到本地技能目录。");
+      await workspace.importCloudSkill({
+        releaseId,
+        skillName: detail.name,
+        ...(scopedSiliconPersonId ? { siliconPersonId: scopedSiliconPersonId } : {}),
+      });
+      setImportFeedback(scopedSiliconPersonId ? "已安装到该员工技能目录。" : "已安装到本地技能目录。");
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "安装失败。");
     } finally { setIsImporting(false); }
@@ -249,8 +379,11 @@ export default function HubPage() {
     setIsImporting(true); setImportFeedback(""); setImportError("");
     try {
       if (detail.type === "mcp") {
-        await workspace.importCloudMcp(manifest);
-        setImportFeedback("已安装到本地 MCP 配置。");
+        await workspace.importCloudMcp({
+          manifest,
+          ...(scopedSiliconPersonId ? { siliconPersonId: scopedSiliconPersonId } : {}),
+        });
+        setImportFeedback(scopedSiliconPersonId ? "已安装到该员工 MCP 配置。" : "已安装到本地 MCP 配置。");
       } else {
         const releaseId = detail.releases[0]?.id;
         if (!releaseId) throw new Error("无可用版本。");
@@ -271,29 +404,37 @@ export default function HubPage() {
   const hubDetail = (workspace as any).cloudHubDetail as any;
 
   return (
-    <main className="page-container">
-      <header className="page-header">
-        <div className="header-text">
-          <span className="eyebrow">Cloud Hub</span>
-          <h2 className="page-title">云端市场</h2>
-          <p className="page-subtitle">发现、安装和管理云端 Skills 和 MCP 资源</p>
+    <div className="page-shell" data-testid="hub-page">
+      <header className="page-header page-header--sticky">
+        <div className="page-header__lead">
+          <div className="page-header__eyebrow">
+            <Cloud size={14} />
+            <span>Cloud Hub</span>
+          </div>
+          <h2 className="page-header__title">云端市场</h2>
+          <p className="page-header__subtitle">发现、安装和管理云端 Skills、MCP 与项目能力。</p>
         </div>
       </header>
 
-      {/* Tab bar */}
-      <div className="hub-tabs">
+      <main className="page-content hub-content">
+        {/* Tab bar */}
+        <div className="hub-tabs">
         <button data-testid="hub-tab-skills" className={`tab-item${activeTab === "skill" ? " active" : ""}`} onClick={() => void switchTab("skill")}>技能</button>
         <button data-testid="hub-tab-mcp" className={`tab-item${activeTab === "mcp" ? " active" : ""}`} onClick={() => void switchTab("mcp")}>MCP</button>
         <button data-testid="hub-tab-employee-packages" className={`tab-item${activeTab === "employee-package" ? " active" : ""}`} onClick={() => void switchTab("employee-package")}>员工包</button>
         <button data-testid="hub-tab-workflow-packages" className={`tab-item${activeTab === "workflow-package" ? " active" : ""}`} onClick={() => void switchTab("workflow-package")}>工作流包</button>
+        <button data-testid="hub-tab-projects" className={`tab-item${activeTab === "project" ? " active" : ""}`} onClick={() => void switchTab("project")}>项目</button>
       </div>
 
       {/* Error state */}
       {cloudError && !loading ? (
-        <div className="state-container error-state">
-          <p>云端Hub暂时不可用</p>
-          <p className="error-detail">{shell.runtimeBaseUrl}/api/cloud-hub/items</p>
-          <button className="secondary" onClick={() => void loadData()}>重试</button>
+        <div className="banner banner--error hub-error-state">
+          <AlertCircle size={16} />
+          <div>
+            <p>云端Hub暂时不可用</p>
+            <p className="error-detail">{shell.runtimeBaseUrl}/api/cloud-hub/items</p>
+          </div>
+          <button className="btn-toolbar" onClick={() => void loadData()}>重试</button>
         </div>
       ) : activeTab === "skill" ? (
         <>
@@ -306,9 +447,7 @@ export default function HubPage() {
 
           <div className="toolbar">
             <div className="search-bar">
-              <svg className="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.3-4.3" />
-              </svg>
+              <Search className="search-icon" size={16} />
               <input value={keyword} onChange={(e) => setKeyword(e.target.value)} type="text" placeholder="搜索 Skills..." />
             </div>
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="sort-select">
@@ -337,37 +476,87 @@ export default function HubPage() {
             <div className="state-container">
               <p>没有找到匹配的 Skills。</p>
               {(selectedCategory || selectedTag || keyword) && (
-                <button className="secondary" onClick={() => { setKeyword(""); setSelectedCategory(""); setSelectedTag(""); }}>清除筛选</button>
+                <button className="btn-toolbar" onClick={() => { setKeyword(""); setSelectedCategory(""); setSelectedTag(""); }}>清除筛选</button>
               )}
             </div>
           ) : (
-            <div className="skills-grid">
+            <div className="list-rows hub-list">
               {displayedSkills.map((skill: any) => (
-                <button key={skill.id} data-testid={`hub-item-${skill.id}`} className="skill-card" onClick={(event) => void openSkillDetail(skill.id, event.currentTarget)}>
-                  <div className="card-top">
+                <button key={skill.id} data-testid={`hub-item-${skill.id}`} className="list-row list-row--with-avatar list-row--with-description hub-resource-row" onClick={(event) => void openSkillDetail(skill.id, event.currentTarget)}>
+                  <div className="list-row__lead">
                     <FallbackAvatar
                       name={skill.name}
                       src={skill.icon}
                       className="skill-avatar"
                       background={getAvatarColor(skill.name)}
                     />
-                    <div className="card-title-block"><h4>{skill.name}</h4><span className="author">{skill.author || "anonymous"}</span></div>
                   </div>
-                  <p className="text-clamp">{skill.summary || skill.description || "暂无说明。"}</p>
-                  <div className="card-tags">
-                    {skill.category && <span className="category-badge">{getCategoryLabel(skill.category)}</span>}
-                    {(skill.tags || []).slice(0, 3).map((tag: string) => <span key={tag} className="mini-tag">{tag}</span>)}
+                  <div className="list-row__main">
+                    <div className="list-row__title-row">
+                      <span className="list-row__title">{skill.name}</span>
+                      {skill.category && <span className="tag tag--accent">{getCategoryLabel(skill.category)}</span>}
+                      {(skill.tags || []).slice(0, 2).map((tag: string) => <span key={tag} className="tag tag--muted">{tag}</span>)}
+                    </div>
+                    <div className="list-row__description">{skill.summary || skill.description || "暂无说明。"}</div>
+                    <div className="list-row__meta-row">
+                      <span className="list-row__meta">{skill.author || "anonymous"}</span>
+                      <span className="list-row__meta-sep" />
+                      <span className="list-row__meta">{formatDate(skill.updatedAt)}</span>
+                    </div>
                   </div>
-                  <div className="card-foot">
-                    <span className="foot-item">
-                      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
-                      {formatDownloads(skill.downloadCount || 0)}
-                    </span>
-                    <span className="foot-item">{skill.latestVersion ? `v${skill.latestVersion}` : "草稿"}</span>
-                    <span className="foot-item">{formatDate(skill.updatedAt)}</span>
+                  <div className="list-row__trailing">
+                    <span className="tag tag--green"><Download size={11} /> {formatDownloads(skill.downloadCount || 0)}</span>
+                    <span className="tag tag--muted">{skill.latestVersion ? `v${skill.latestVersion}` : "草稿"}</span>
                   </div>
                 </button>
               ))}
+            </div>
+          )}
+        </>
+      ) : activeTab === "project" ? (
+        <>
+          {loading ? (
+            <div className="state-container"><div className="pulse-loader"></div><p>正在加载项目列表...</p></div>
+          ) : (workspace.cloudProjects ?? []).length === 0 ? (
+            <div className="state-container"><p>云端暂无可绑定项目。</p></div>
+          ) : (
+            <div className="list-rows hub-list">
+              {(workspace.cloudProjects ?? []).map((project) => {
+                const localProject = findLocalProject(project);
+                const status = projectStatusLabel(project);
+                return (
+                  <button key={project.id} data-testid={`hub-project-${project.id}`} className="list-row list-row--with-avatar list-row--with-description hub-resource-row" onClick={(event) => openProjectDetail(project, event.currentTarget)}>
+                    <div className="list-row__lead">
+                      <FallbackAvatar
+                        name={project.name}
+                        className="skill-avatar"
+                        background={getAvatarColor(project.name)}
+                      />
+                    </div>
+                    <div className="list-row__main">
+                      <div className="list-row__title-row">
+                        <span className="list-row__title">{project.name}</span>
+                        <span className={`tag tag--${status === "可更新" ? "yellow" : status === "已同步" ? "green" : "accent"}`}>{status}</span>
+                      </div>
+                      <div className="list-row__description">{project.description || "暂无说明。"}</div>
+                      <div className="list-row__meta-row">
+                        <span className="list-row__meta list-row__meta--mono">{project.code}</span>
+                        <span className="list-row__meta-sep" />
+                        <span className="list-row__meta">{project.ownerAccount}</span>
+                        <span className="list-row__meta-sep" />
+                        <span className="list-row__meta">云端 v{project.version}</span>
+                        <span className="list-row__meta-sep" />
+                        <span className="list-row__meta">{localProject ? `本地 v${localProject.cloudVersion}` : "本地未下载"}</span>
+                      </div>
+                    </div>
+                    <div className="list-row__trailing">
+                      <span className="tag tag--muted">{project.repositoryCount} 仓库</span>
+                      <span className="tag tag--accent">{project.skillCount} 技能</span>
+                      <span className="tag tag--green">{project.mcpCount} MCP</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           )}
         </>
@@ -378,26 +567,37 @@ export default function HubPage() {
           ) : filteredHubItems.length === 0 ? (
             <div className="state-container"><p>当前分类暂无资源。</p></div>
           ) : (
-            <div className="skills-grid">
+            <div className="list-rows hub-list">
               {filteredHubItems.map((item: any) => (
-                <button key={item.id} data-testid={`hub-item-${item.id}`} className="skill-card" onClick={(event) => void openHubItemDetail(item.id, event.currentTarget)}>
-                  <div className="card-top">
+                <button key={item.id} data-testid={`hub-item-${item.id}`} className="list-row list-row--with-avatar list-row--with-description hub-resource-row" onClick={(event) => void openHubItemDetail(item.id, event.currentTarget)}>
+                  <div className="list-row__lead">
                     <FallbackAvatar
                       name={item.name}
                       src={item.iconUrl}
                       className="skill-avatar"
                       background={getAvatarColor(item.name)}
                     />
-                    <div className="card-title-block"><h4>{item.name}</h4><span className="author">{hubTypeLabel(item.type)}</span></div>
                   </div>
-                  <p className="text-clamp">{item.summary || "暂无说明。"}</p>
-                  <div className="card-foot"><span className="foot-item">{item.latestVersion ? `v${item.latestVersion}` : "—"}</span></div>
+                  <div className="list-row__main">
+                    <div className="list-row__title-row">
+                      <span className="list-row__title">{item.name}</span>
+                      <span className="tag tag--accent">{hubTypeLabel(item.type)}</span>
+                    </div>
+                    <div className="list-row__description">{item.summary || "暂无说明。"}</div>
+                    <div className="list-row__meta-row">
+                      <span className="list-row__meta">{item.latestVersion ? `v${item.latestVersion}` : "暂无版本"}</span>
+                    </div>
+                  </div>
+                  <div className="list-row__trailing">
+                    <span className="tag tag--muted">详情</span>
+                  </div>
                 </button>
               ))}
             </div>
           )}
         </>
       )}
+      </main>
 
       {/* Detail overlay */}
       {detailVisible && (
@@ -410,7 +610,47 @@ export default function HubPage() {
             aria-label="云端资源详情"
             tabIndex={-1}
           >
-            {skillDetail && activeTab === "skill" ? (
+            {selectedProject && activeTab === "project" ? (() => {
+              const localProject = findLocalProject(selectedProject);
+              const status = projectStatusLabel(selectedProject);
+              const alreadyBound = Boolean(localProject && workspace.currentProjectBinding?.id === localProject.id && !isProjectOutdated(selectedProject));
+              return (
+              <>
+                <div className="detail-header">
+                  <FallbackAvatar
+                    name={selectedProject.name}
+                    className="skill-avatar lg"
+                    background={getAvatarColor(selectedProject.name)}
+                  />
+                  <div>
+                    <h3>{selectedProject.name}</h3>
+                    <p className="detail-author">{selectedProject.code} · {selectedProject.ownerAccount} · {status}</p>
+                  </div>
+                  <button type="button" className="icon-btn" aria-label="关闭详情" onClick={closeDetail}>
+                    <X size={16} />
+                  </button>
+                </div>
+                <p className="detail-desc">{selectedProject.description || "暂无说明。"}</p>
+                <div className="detail-info-grid">
+                  <div className="info-item"><span className="info-label">云端版本</span><span className="info-value">云端 v{selectedProject.version}</span></div>
+                  <div className="info-item"><span className="info-label">本地版本</span><span className="info-value">{localProject ? `本地 v${localProject.cloudVersion}` : "本地未下载"}</span></div>
+                  <div className="info-item"><span className="info-label">绑定状态</span><span className="info-value">{alreadyBound ? "当前会话已绑定" : status}</span></div>
+                </div>
+                <div className="detail-info-grid">
+                  <div className="info-item"><span className="info-label">仓库</span><span className="info-value">{selectedProject.repositoryCount}</span></div>
+                  <div className="info-item"><span className="info-label">技能</span><span className="info-value">{selectedProject.skillCount}</span></div>
+                  <div className="info-item"><span className="info-label">MCP</span><span className="info-value">{selectedProject.mcpCount}</span></div>
+                </div>
+                <div className="detail-actions">
+                  <button data-testid="hub-project-action" className="btn-primary" disabled={isImporting || !workspace.currentSession || alreadyBound} onClick={() => void handleProjectAction(selectedProject)}>
+                    {isImporting ? "处理中..." : projectActionLabel(selectedProject)}
+                  </button>
+                </div>
+                {importFeedback && <p data-testid="hub-import-feedback" className="feedback success">{importFeedback}</p>}
+                {importError && <p className="feedback error">{importError}</p>}
+              </>
+              );
+            })() : skillDetail && activeTab === "skill" ? (
               <>
                 <div className="detail-header">
                   <FallbackAvatar
@@ -423,7 +663,9 @@ export default function HubPage() {
                     <h3>{skillDetail.name}</h3>
                     <p className="detail-author">{skillDetail.author || "anonymous"} · {getCategoryLabel(skillDetail.category)}</p>
                   </div>
-                  <button type="button" className="close-btn" aria-label="关闭详情" onClick={closeDetail}>&times;</button>
+                  <button type="button" className="icon-btn" aria-label="关闭详情" onClick={closeDetail}>
+                    <X size={16} />
+                  </button>
                 </div>
                 <p className="detail-desc">{skillDetail.description}</p>
                 <div className="detail-info-grid">
@@ -440,8 +682,8 @@ export default function HubPage() {
                   </div>
                 )}
                 <div className="detail-actions">
-                  <button data-testid="hub-action-import" className="primary" disabled={isImporting} onClick={() => void installSkill()}>
-                    {isImporting ? "安装中..." : "安装到本地技能目录"}
+                  <button data-testid="hub-action-import" className="btn-primary" disabled={isImporting} onClick={() => void installSkill()}>
+                    {isImporting ? "安装中..." : scopedSiliconPersonId ? "安装到该员工技能目录" : "安装到本地技能目录"}
                   </button>
                 </div>
                 {importFeedback && <p data-testid="hub-import-feedback" className="feedback success">{importFeedback}</p>}
@@ -459,7 +701,9 @@ export default function HubPage() {
                     <h3>{hubDetail.name}</h3>
                     <p className="detail-author">{hubTypeLabel(hubDetail.type)}</p>
                   </div>
-                  <button type="button" className="close-btn" aria-label="关闭详情" onClick={closeDetail}>&times;</button>
+                  <button type="button" className="icon-btn" aria-label="关闭详情" onClick={closeDetail}>
+                    <X size={16} />
+                  </button>
                 </div>
                 <p className="detail-desc">{hubDetail.description}</p>
                 <div className="detail-info-grid">
@@ -476,13 +720,24 @@ export default function HubPage() {
                   </div>
                 )}
                 <div className="detail-actions">
-                  <button data-testid="hub-action-import" className="primary" disabled={isImporting || !cloudManifest} onClick={() => void installHubItem()}>
-                    {isImporting ? "导入中..." : installActionLabel(hubDetail.type)}
+                  <button data-testid="hub-action-import" className="btn-primary" disabled={isImporting || !cloudManifest} onClick={() => void installHubItem()}>
+                    {isImporting
+                      ? "导入中..."
+                      : scopedSiliconPersonId && hubDetail.type === "mcp"
+                        ? "安装到该员工 MCP 配置"
+                        : installActionLabel(hubDetail.type)}
                   </button>
                 </div>
                 {importFeedback && <p data-testid="hub-import-feedback" className="feedback success">{importFeedback}</p>}
                 {importError && <p className="feedback error">{importError}</p>}
               </>
+            ) : importError ? (
+              <div className="state-container">
+                <p className="feedback error">{importError}</p>
+                <button type="button" className="btn-toolbar" onClick={closeDetail}>
+                  关闭
+                </button>
+              </div>
             ) : (
               <div className="state-container"><div className="pulse-loader"></div><p>加载详情中...</p></div>
             )}
@@ -491,62 +746,51 @@ export default function HubPage() {
       )}
 
       <style>{`
-        .page-container { overflow-y: auto; padding: 32px; }
-        .page-header { margin-bottom: 28px; }
-        .hub-tabs { display: flex; gap: 8px; margin-bottom: 24px; }
-        .tab-item { padding: 8px 18px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: 999px; color: var(--text-secondary); font-size: 0.85rem; font-weight: 700; cursor: pointer; transition: 0.2s; }
-        .tab-item:hover { border-color: var(--text-muted); color: var(--text-primary); }
-        .tab-item.active { background: var(--accent-primary); color: var(--accent-text, var(--text-primary)); border-color: transparent; }
-        .category-tabs { display: flex; gap: 4px; margin-bottom: 20px; overflow-x: auto; scrollbar-width: none; }
+        .hub-content { display: flex; flex-direction: column; }
+        .hub-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+        .tab-item { padding: 8px 18px; background: var(--bg-surface); border: 1px solid var(--row-border); border-radius: var(--radius-md); color: var(--text-secondary); font-size: 0.85rem; font-weight: 700; cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease; }
+        .tab-item:hover { background: var(--bg-surface-hover); border-color: var(--row-border-hover); color: var(--text-primary); }
+        .tab-item.active { background: rgba(16, 163, 127, 0.14); color: var(--accent-cyan); border-color: rgba(16, 163, 127, 0.26); }
+        .category-tabs { display: flex; gap: 6px; margin-bottom: 18px; overflow-x: auto; scrollbar-width: none; }
         .category-tabs::-webkit-scrollbar { display: none; }
-        .cat-item { padding: 6px 14px; background: transparent; border: 1px solid var(--glass-border); border-radius: 20px; color: var(--text-muted); font-size: 0.78rem; font-weight: 700; cursor: pointer; transition: 0.2s; white-space: nowrap; }
-        .cat-item:hover { border-color: rgba(45,212,191,0.3); color: var(--text-primary); }
-        .cat-item.active { background: rgba(45,212,191,0.12); border-color: var(--accent-cyan, #2dd4bf); color: var(--accent-cyan, #2dd4bf); }
-        .toolbar { display: flex; gap: 14px; align-items: center; margin-bottom: 18px; }
-        .search-bar { position: relative; display: flex; align-items: center; flex: 1; max-width: 400px; }
-        .search-icon { position: absolute; left: 14px; width: 16px; height: 16px; color: var(--text-muted); }
-        .search-bar input { width: 100%; height: 38px; padding: 0 16px 0 40px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: 10px; color: var(--text-primary); font-family: inherit; font-size: 0.85rem; transition: 0.2s; }
-        .search-bar input:focus { outline: none; border-color: var(--accent-cyan, #2dd4bf); box-shadow: 0 0 0 3px rgba(16,163,127,0.14); }
-        .sort-select { height: 38px; padding: 0 12px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: 10px; color: var(--text-primary); font-family: inherit; font-size: 0.8rem; font-weight: 700; cursor: pointer; transition: border-color 0.2s, box-shadow 0.2s; }
-        .sort-select:focus { outline: none; border-color: var(--accent-cyan, #2dd4bf); box-shadow: 0 0 0 3px rgba(16,163,127,0.14); }
-        .tag-cloud { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
-        .tag-chip { padding: 4px 12px; background: var(--bg-card); border: 1px solid var(--glass-border); border-radius: 14px; color: var(--text-muted); font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: 0.2s; }
-        .tag-chip:hover { border-color: rgba(45,212,191,0.3); color: var(--text-primary); }
-        .tag-chip.active { background: rgba(45,212,191,0.1); border-color: var(--accent-cyan, #2dd4bf); color: var(--accent-cyan, #2dd4bf); }
-        .stats-row { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--glass-border); }
-        .stats-count { color: var(--accent-cyan, #2dd4bf); font-size: 0.8rem; font-weight: 800; letter-spacing: 0.04em; }
-        .filter-hint { color: var(--text-muted); font-size: 0.75rem; font-weight: 600; }
+        .cat-item { padding: 7px 12px; background: transparent; border: 1px solid var(--row-border); border-radius: var(--radius-md); color: var(--text-muted); font-size: 12px; font-weight: 700; cursor: pointer; transition: 0.15s ease; white-space: nowrap; }
+        .cat-item:hover { border-color: var(--row-border-hover); color: var(--text-primary); }
+        .cat-item.active { background: rgba(16, 163, 127, 0.10); border-color: rgba(16, 163, 127, 0.24); color: var(--accent-cyan); }
+        .toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+        .search-bar { position: relative; display: flex; align-items: center; flex: 1; max-width: 420px; }
+        .search-icon { position: absolute; left: 14px; color: var(--text-muted); pointer-events: none; }
+        .search-bar input { width: 100%; height: 38px; padding: 0 16px 0 40px; background: var(--bg-surface); border: 1px solid var(--row-border); border-radius: var(--radius-md); color: var(--text-primary); font-family: inherit; font-size: 13px; transition: 0.15s ease; }
+        .search-bar input:focus { outline: none; border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14); }
+        .sort-select { height: 38px; padding: 0 12px; background: var(--bg-surface); border: 1px solid var(--row-border); border-radius: var(--radius-md); color: var(--text-primary); font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+        .sort-select:focus { outline: none; border-color: var(--accent-cyan); box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14); }
+        .tag-cloud { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+        .tag-chip { padding: 4px 10px; background: var(--bg-surface); border: 1px solid var(--row-border); border-radius: var(--radius-sm); color: var(--text-muted); font-size: 12px; font-weight: 600; cursor: pointer; transition: 0.15s ease; }
+        .tag-chip:hover { border-color: var(--row-border-hover); color: var(--text-primary); }
+        .tag-chip.active { background: rgba(16, 163, 127, 0.10); border-color: rgba(16, 163, 127, 0.24); color: var(--accent-cyan); }
+        .stats-row { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--row-border); }
+        .stats-count { color: var(--accent-cyan); font-size: 12px; font-weight: 800; letter-spacing: 0.04em; }
+        .filter-hint { color: var(--text-muted); font-size: 12px; font-weight: 600; }
         .state-container { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 60px 20px; color: var(--text-muted); text-align: center; }
-        .error-detail { font-size: 0.75rem; }
-        .pulse-loader { width: 32px; height: 32px; border: 3px solid var(--glass-border); border-top-color: var(--accent-cyan, #2dd4bf); border-radius: 50%; animation: hub-spin 0.8s linear infinite; }
+        .hub-error-state { align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
+        .hub-error-state p { margin: 0; }
+        .error-detail { margin-top: 4px !important; font-size: 12px; color: var(--text-muted); }
+        .pulse-loader { width: 32px; height: 32px; border: 3px solid var(--glass-border); border-top-color: var(--accent-cyan); border-radius: 50%; animation: hub-spin 0.8s linear infinite; }
         @keyframes hub-spin { to { transform: rotate(360deg); } }
-        .skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
-        .skill-card { text-align: left; padding: 22px; border-radius: 14px; transition: 0.3s cubic-bezier(0.4,0,0.2,1); display: flex; flex-direction: column; gap: 12px; background: var(--bg-card); border: 1px solid var(--glass-border); cursor: pointer; position: relative; overflow: hidden; color: var(--text-primary); }
-        .skill-card::before { content: ""; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(45,212,191,0.08) 0%, transparent 100%); opacity: 0; transition: 0.3s; }
-        .skill-card:hover { transform: translateY(-3px); border-color: rgba(45,212,191,0.4); box-shadow: 0 10px 25px rgba(0,0,0,0.12); }
-        .skill-card:hover::before { opacity: 1; }
-        .card-top { display: flex; align-items: center; gap: 12px; position: relative; z-index: 2; }
-        .skill-avatar { width: 44px; height: 44px; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; background: rgba(45,212,191,0.15); }
-        .skill-avatar img { width: 100%; height: 100%; object-fit: contain; padding: 5px; }
-        .skill-avatar span { font-size: 1.1rem; font-weight: 900; color: #fff; }
-        .skill-avatar.lg { width: 56px; height: 56px; border-radius: 14px; }
-        .skill-avatar.lg span { font-size: 1.4rem; }
-        .card-title-block { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-        .card-title-block h4 { margin: 0; font-size: 1rem; font-weight: 800; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .author { font-size: 0.72rem; color: var(--text-muted); font-weight: 600; }
-        .text-clamp { margin: 0; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; position: relative; z-index: 2; }
-        .card-tags { display: flex; flex-wrap: wrap; gap: 6px; position: relative; z-index: 2; }
-        .category-badge { font-size: 0.65rem; font-weight: 800; background: rgba(45,212,191,0.12); color: var(--accent-cyan, #2dd4bf); padding: 3px 8px; border-radius: 4px; }
-        .mini-tag { font-size: 0.65rem; font-weight: 600; color: var(--text-muted); background: var(--bg-base, var(--glass-reflection)); padding: 3px 8px; border-radius: 4px; }
-        .card-foot { display: flex; justify-content: space-between; border-top: 1px solid var(--glass-border); padding-top: 12px; margin-top: auto; font-size: 0.72rem; font-weight: 700; color: var(--text-muted); position: relative; z-index: 2; }
-        .foot-item { display: flex; align-items: center; gap: 4px; }
-        .detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 32px; }
-        .detail-panel { background: var(--bg-card, #1a1a2e); border: 1px solid var(--glass-border); border-radius: 16px; padding: 28px; max-width: 600px; width: 100%; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+        .hub-resource-row { width: 100%; appearance: none; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+        .hub-resource-row:focus-visible { outline: 2px solid var(--accent-cyan); outline-offset: 2px; }
+        .hub-list .tag { gap: 4px; }
+        .hub-list .tag svg { flex-shrink: 0; }
+        .skill-avatar { width: 32px; height: 32px; border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; background: rgba(45,212,191,0.15); }
+        .skill-avatar img { width: 100%; height: 100%; object-fit: contain; padding: 4px; }
+        .skill-avatar span { font-size: 14px; font-weight: 900; color: #fff; }
+        .skill-avatar.lg { width: 56px; height: 56px; border-radius: var(--radius-lg); }
+        .skill-avatar.lg span { font-size: 22px; }
+        .detail-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.62); z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 32px; }
+        .detail-panel { background: var(--bg-card, #1a1a2e); border: 1px solid var(--glass-border); border-radius: var(--radius-2xl); padding: 28px; max-width: 640px; width: 100%; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; box-shadow: var(--shadow-modal); }
         .detail-header { display: flex; align-items: center; gap: 16px; }
         .detail-header h3 { margin: 0; font-size: 1.3rem; font-weight: 800; }
         .detail-author { margin: 4px 0 0; font-size: 0.8rem; color: var(--text-muted); font-weight: 600; }
-        .close-btn { margin-left: auto; background: none; border: none; color: var(--text-muted); font-size: 1.5rem; cursor: pointer; padding: 0 8px; line-height: 1; }
-        .close-btn:hover { color: var(--text-primary); }
+        .detail-header .icon-btn { margin-left: auto; }
         .detail-desc { margin: 0; font-size: 0.9rem; color: var(--text-secondary); line-height: 1.6; }
         .detail-info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
         .info-item { display: flex; flex-direction: column; gap: 4px; padding: 12px; background: var(--bg-base, rgba(0,0,0,0.2)); border-radius: 8px; border: 1px solid var(--glass-border); transition: border-color 0.2s, background 0.2s; }
@@ -559,14 +803,16 @@ export default function HubPage() {
         .release-version { font-family: monospace; font-weight: 700; color: var(--accent-cyan, #2dd4bf); white-space: nowrap; }
         .release-notes { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .detail-actions { display: flex; gap: 12px; }
-        .primary, .secondary { border: 1px solid var(--glass-border); border-radius: 10px; padding: 10px 20px; background: var(--bg-base); color: var(--text-primary); cursor: pointer; font-weight: 700; font-size: 0.85rem; transition: 0.2s; }
-        .primary { background: var(--accent-primary, var(--accent-cyan, #2dd4bf)); color: var(--accent-text, #000); border-color: transparent; }
-        .primary:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-1px); }
-        .primary:disabled { opacity: 0.6; cursor: not-allowed; }
         .feedback { margin: 0; font-size: 0.85rem; font-weight: 600; }
         .feedback.success { color: var(--status-green); }
         .feedback.error { color: var(--status-red); }
+        @media (max-width: 760px) {
+          .toolbar { flex-direction: column; align-items: stretch; }
+          .search-bar { max-width: none; }
+          .list-row__trailing { display: none; }
+          .detail-info-grid { grid-template-columns: 1fr; }
+        }
       `}</style>
-    </main>
+    </div>
   );
 }

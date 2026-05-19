@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -123,6 +123,32 @@ describe("file_view tool wiring", () => {
       data: {
         panelKind: "file-viewer",
         fileName: "README.md",
+        viewerKind: "markdown",
+        content: body,
+      },
+    });
+  });
+
+  it("resolves a bare file name from candidate directories mentioned in the chat message", async () => {
+    const externalDir = join(tmpRoot, "external-skill");
+    const fileName = "Skill表单开发规范.md";
+    const body = "# Skill 表单开发规范\n\n可预览。";
+    mkdirSync(externalDir, { recursive: true });
+    writeFileSync(join(externalDir, fileName), body, "utf8");
+
+    const result = await buildFileViewerPreviewResult({
+      path: fileName,
+      baseDirectory: tmpRoot,
+      candidateBaseDirectories: [externalDir],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.resolvedPath).toBe(join(externalDir, fileName));
+    expect(result.viewMeta).toMatchObject({
+      title: fileName,
+      data: {
+        panelKind: "file-viewer",
+        fileName,
         viewerKind: "markdown",
         content: body,
       },

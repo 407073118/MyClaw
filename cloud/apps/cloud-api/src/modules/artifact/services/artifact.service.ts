@@ -71,12 +71,14 @@ export class ArtifactService {
             select: {
               artifactFileName: true;
               artifactFileSize: true;
+              artifactSha256: true;
               artifactStoragePath: true;
               artifactDownloadUrl: true;
             };
           }) => Promise<{
             artifactFileName: string;
             artifactFileSize: number;
+            artifactSha256: string;
             artifactStoragePath: string;
             artifactDownloadUrl: string;
           } | null>;
@@ -89,6 +91,7 @@ export class ArtifactService {
       select: {
         artifactFileName: true,
         artifactFileSize: true,
+        artifactSha256: true,
         artifactStoragePath: true,
         artifactDownloadUrl: true
       }
@@ -110,6 +113,7 @@ export class ArtifactService {
     return {
       fileName: release.artifactFileName,
       fileSize: release.artifactFileSize,
+      sha256: release.artifactSha256,
       storageKey: release.artifactStoragePath,
       storageUrl: release.artifactDownloadUrl || release.artifactStoragePath
     };

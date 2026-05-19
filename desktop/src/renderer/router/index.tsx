@@ -10,6 +10,7 @@ import SetupPage from "../pages/SetupPage";
 import LoginPage from "../pages/LoginPage";
 import ChatPage from "../pages/ChatPage";
 import HubPage from "../pages/HubPage";
+import ProjectsPage from "../pages/ProjectsPage";
 import ToolsPage from "../pages/ToolsPage";
 import McpPage from "../pages/McpPage";
 import McpDetailPage from "../pages/McpDetailPage";
@@ -92,6 +93,7 @@ export function AppRoutes() {
         <Route index element={<Navigate to="/chat" replace />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/hub" element={<HubPage />} />
+        <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/tools" element={<ToolsPage />} />
         <Route path="/memory" element={<MemoryWorkspacePage />} />
         <Route path="/files" element={<FilesWorkspacePage />} />

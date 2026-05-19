@@ -14,7 +14,6 @@ const form = reactive({
   name: "",
   summary: "",
   description: "",
-  version: "0.1.0",
   releaseNotes: "初始版本",
   transport: "stdio" as McpServerConfig["transport"],
   command: "npx",
@@ -103,7 +102,7 @@ function buildConfig(): McpServerConfig {
 async function handlePublish() {
   console.info("[MCP 创建] 开始提交 MCP 创建请求", {
     id: form.id,
-    version: form.version,
+    versionMode: "auto",
     transport: form.transport
   });
   errorMsg.value = "";
@@ -117,7 +116,6 @@ async function handlePublish() {
         name: form.name,
         summary: form.summary,
         description: form.description,
-        version: form.version,
         releaseNotes: form.releaseNotes,
         config: buildConfig()
       }
@@ -259,11 +257,8 @@ useHead({
               <input v-model="form.id" type="text" placeholder="playwright" required />
             </div>
 
-            <div class="row-inputs mb-lg">
-              <div class="form-group flex-1">
-                <label>版本</label>
-                <input v-model="form.version" type="text" placeholder="1.0.0" required />
-              </div>
+            <div class="meta-change-hint mb-lg">
+              版本将由 Cloud 自动递增。
             </div>
 
             <div class="form-group">
@@ -334,6 +329,7 @@ useHead({
 .form-group input, .form-group textarea { width: 100%; padding: 14px 18px; background: var(--bg-input); border: 1px solid var(--border-main); border-radius: 12px; color: var(--text-main); font-family: inherit; font-size: 0.95rem; transition: 0.2s; box-sizing: border-box; }
 .form-group input:focus, .form-group textarea:focus { outline: none; border-color: var(--nuxt-green); box-shadow: 0 0 0 3px rgba(var(--nuxt-green-rgb), 0.1); background: rgba(var(--nuxt-green-rgb), 0.02); }
 .mono-font { font-family: "SFMono-Regular", "Fira Code", monospace !important; font-size: 0.85rem !important; line-height: 1.6; }
+.meta-change-hint { font-size: 0.8rem; color: var(--nuxt-green); background: rgba(var(--nuxt-green-rgb), 0.08); border: 1px solid rgba(var(--nuxt-green-rgb), 0.15); border-radius: 10px; padding: 10px 14px; font-weight: 700; }
 
 .transport-grid-nx { display: flex; flex-wrap: wrap; gap: 12px; }
 .transport-pill-nx { height: 40px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--border-main); background: var(--bg-input); color: var(--text-dim); font-weight: 800; cursor: pointer; transition: 0.2s; }

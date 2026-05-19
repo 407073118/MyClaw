@@ -58,6 +58,23 @@ describe("Task V2 CRUD (task-store)", () => {
     expect(result.created.subject).toBe("1. Read foo.ts");
   });
 
+  it("does not reuse cancelled failed or blocked logical tasks", () => {
+    const existing: Task[] = [
+      { id: "t1", subject: "Read foo.ts", description: "Read foo.ts before editing", status: "cancelled", blocks: [], blockedBy: [] },
+      { id: "t2", subject: "Run tests", description: "Run tests before submit", status: "failed", blocks: [], blockedBy: [] },
+      { id: "t3", subject: "Review PR", description: "Review the active pull request", status: "blocked", blocks: [], blockedBy: [] },
+    ];
+
+    const result = createTask(existing, {
+      subject: "Read foo.ts",
+      description: "Read foo.ts before editing",
+    });
+
+    expect(result.tasks).toHaveLength(4);
+    expect(result.created.id).not.toBe("t1");
+    expect(result.created.blockedBy).toEqual([]);
+  });
+
   it("evicts completed tasks when exceeding max limit", () => {
     // Fill up to 200
     let tasks: Task[] = [];
@@ -191,6 +208,19 @@ describe("Task V2 CRUD (task-store)", () => {
     const result = clearCompletedTasks(tasks);
     expect(result.tasks).toEqual([]);
     expect(result.cleared).toBe(1);
+  });
+
+  it("clears non-runnable terminal tasks at the start of a new turn", () => {
+    const tasks: Task[] = [
+      { id: "t1", subject: "Cancelled", description: "d", status: "cancelled", blocks: [], blockedBy: [] },
+      { id: "t2", subject: "Failed", description: "d", status: "failed", blocks: [], blockedBy: [] },
+      { id: "t3", subject: "Blocked", description: "d", status: "blocked", blocks: [], blockedBy: [] },
+      { id: "t4", subject: "Pending", description: "d", status: "pending", blocks: [], blockedBy: [] },
+    ];
+
+    const result = clearCompletedTasks(tasks);
+    expect(result.tasks.map((task) => task.id)).toEqual(["t4"]);
+    expect(result.cleared).toBe(3);
   });
 
   // -------------------------------------------------------------------------

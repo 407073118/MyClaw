@@ -14,6 +14,7 @@ import type {
   BuiltinToolApprovalMode,
   CalendarEvent,
   ChatSession,
+  CloudProjectBinding,
   ExecutionRun,
   McpServer,
   McpServerConfig,
@@ -21,6 +22,8 @@ import type {
   ModelProfile,
   ModelRouteProbeResult,
   PersonalPromptProfile,
+  ProjectCapabilityDetail,
+  ProjectCapabilityLocalState,
   Reminder,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
@@ -73,6 +76,21 @@ export type CloudHubManifest = {
 export type CloudDownloadToken = {
   downloadUrl: string;
   expiresAt: string;
+};
+
+export type CloudProjectSummary = {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  ownerAccount: string;
+  status: "active" | "archived";
+  version: number;
+  repositoryCount: number;
+  apiCount: number;
+  skillCount: number;
+  mcpCount: number;
+  updatedAt: string;
 };
 
 export type CloudSkillCategory = "productivity" | "development" | "data" | "communication" | "other";
@@ -214,6 +232,10 @@ type WorkspaceState = {
   cloudHubManifest: CloudHubManifest | null;
   cloudSkills: CloudSkillSummary[];
   cloudSkillDetail: CloudSkillDetail | null;
+  cloudProjects: CloudProjectSummary[];
+  projects: CloudProjectBinding[];
+  projectDetails: Record<string, ProjectCapabilityDetail>;
+  currentProjectBinding: CloudProjectBinding | null;
   approvals: ApprovalPolicy | null;
   approvalRequests: ApprovalRequest[];
   personalPrompt: PersonalPromptProfile;
@@ -255,6 +277,7 @@ type WorkspaceState = {
   cancelPlanMode: () => Promise<void>;
   loadArtifactsByScope: (scope: ArtifactScopeRef) => Promise<ArtifactRecord[]>;
   loadRecentArtifacts: (input?: { limit?: number }) => Promise<ArtifactRecord[]>;
+  updateArtifactsRootPath: (path: string) => Promise<string>;
   markArtifactFinal: (artifactId: string, scope?: ArtifactScopeRef) => Promise<ArtifactRecord>;
   openArtifact: (artifactId: string) => Promise<void>;
   revealArtifact: (artifactId: string) => Promise<void>;
@@ -279,6 +302,7 @@ type WorkspaceState = {
   loadCloudHubItems: (type?: "all" | CloudHubItemType) => Promise<CloudHubItem[]>;
   loadCloudHubDetail: (itemId: string) => Promise<CloudHubItemDetail>;
   loadCloudHubManifest: (releaseId: string) => Promise<CloudHubManifest>;
+  loadCloudProjects: () => Promise<CloudProjectSummary[]>;
 
   loadCloudSkills: (query?: {
     category?: CloudSkillCategory;
@@ -289,6 +313,20 @@ type WorkspaceState = {
   loadCloudSkillDetail: (skillId: string) => Promise<CloudSkillDetail>;
   clearCloudSkillDetail: () => void;
   clearCloudHubDetail: () => void;
+  loadProjects: () => Promise<CloudProjectBinding[]>;
+  loadProjectDetail: (localProjectId: string) => Promise<ProjectCapabilityDetail>;
+  bindSessionProject: (sessionId: string, localProjectId: string | null) => Promise<void>;
+  loadSessionProjectBinding: (sessionId: string | null) => Promise<CloudProjectBinding | null>;
+  setProjectCapabilityState: (capabilityRefId: string, localState: ProjectCapabilityLocalState) => Promise<ProjectCapabilityDetail>;
+  bindCloudProject: (input: { cloudProjectId: string; sessionId?: string; accessToken?: string; accountId?: string }) => Promise<ProjectCapabilityDetail>;
+  syncProjectRuntimeContext: (localProjectId: string) => Promise<ProjectCapabilityDetail>;
+  installProjectCapability: (capabilityRefId: string) => Promise<ProjectCapabilityDetail | null>;
+  confirmProjectMcpCapability: (input: {
+    capabilityRefId: string;
+    localConfirmed: boolean;
+    secretsConfigured: boolean;
+    allowExposeToModel: boolean;
+  }) => Promise<ProjectCapabilityDetail>;
 
   addApprovalRequest: (request: ApprovalRequest) => void;
   removeApprovalRequest: (approvalId: string) => void;
@@ -332,8 +370,8 @@ type WorkspaceState = {
   createStandingOrder: (input: Record<string, unknown>) => Promise<void>;
   deleteStandingOrder: (id: string) => Promise<void>;
 
-  importCloudSkill: (input: { releaseId: string; skillName: string }) => Promise<unknown>;
-  importCloudMcp: (input: { releaseId: string; servers: McpServerConfig[] }) => Promise<unknown>;
+  importCloudSkill: (input: { releaseId: string; skillName: string; siliconPersonId?: string }) => Promise<unknown>;
+  importCloudMcp: (input: { releaseId?: string; servers?: McpServerConfig[]; manifest?: CloudHubManifest | Record<string, unknown>; siliconPersonId?: string }) => Promise<unknown>;
   importCloudSiliconPersonPackage: (input: {
     itemId: string;
     releaseId: string;
@@ -495,19 +533,19 @@ function mergeSiliconPersonSessionPayload(
   return { siliconPersons, sessions, workflowRuns: state.workflowRuns };
 }
 
-/** 灏?scope 杞垚绋冲畾鐨勫瓧绗︿覆 key锛屼究浜?store 鎸夌粍缂撳瓨宸ヤ綔鏂囦欢銆?*/
+/** 将 scope 转成稳定的字符串 key，便于 store 按组缓存工作文件。 */
 function artifactScopeKey(scope: ArtifactScopeRef): string {
   return `${scope.scopeKind}:${scope.scopeId}`;
 }
 
-/** 鍚戞枃浠跺垪琛ㄤ腑鍚堝苟鏈€鏂扮殑 artifact 璁板綍锛屽苟鎸夋洿鏂版椂闂撮檷搴忔帓搴忋€?*/
+/** 向文件列表中合并最新的 artifact 记录，并按更新时间降序排序。 */
 function mergeArtifactRecord(list: ArtifactRecord[], artifact: ArtifactRecord): ArtifactRecord[] {
   const next = list.filter((item) => item.id !== artifact.id);
   next.unshift(artifact);
   return next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
-/** 浠?session stream 浜嬩欢涓彁鍙?artifact payload锛屽吋瀹?payload 鍖呰９涓庢壆骞崇粨鏋勩€?*/
+/** 从 session stream 事件中提取 artifact payload，兼容 payload 包裹与扁平结构。 */
 function readArtifactEventPayload(event: Record<string, unknown>): ArtifactRecord | null {
   const candidate = event.payload && typeof event.payload === "object"
     ? event.payload as Record<string, unknown>
@@ -701,6 +739,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   cloudHubManifest: null,
   cloudSkills: [],
   cloudSkillDetail: null,
+  cloudProjects: [],
+  projects: [],
+  projectDetails: {},
+  currentProjectBinding: null,
   approvals: null,
   approvalRequests: [],
   personalPrompt: {
@@ -732,6 +774,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   // Bootstrap
   // -------------------------------------------------------------------------
 
+  /** 加载桌面启动数据，并恢复当前会话的项目绑定显示。 */
   async loadBootstrap() {
     const state = get();
     if (state.ready || state.loading) {
@@ -743,14 +786,31 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       const agentTaskRequest = window.myClawAPI.listAgentTasks
         ? window.myClawAPI.listAgentTasks().catch(() => ({ items: [] as AgentTask[] }))
         : Promise.resolve({ items: [] as AgentTask[] });
-      const [payload, agentTaskPayload] = await Promise.all([
+      const projectRequest = window.myClawAPI.projects?.listLocal
+        ? window.myClawAPI.projects.listLocal().catch(() => ({ items: [] as CloudProjectBinding[] }))
+        : Promise.resolve({ items: [] as CloudProjectBinding[] });
+      const [payload, agentTaskPayload, projectPayload] = await Promise.all([
         window.myClawAPI.bootstrap(),
         agentTaskRequest,
+        projectRequest,
       ]);
+      const activeSessionId = getMostRecentSessionId(payload.sessions);
+      let currentProjectBinding: CloudProjectBinding | null = null;
+      if (activeSessionId && window.myClawAPI.projects?.getSessionBinding) {
+        try {
+          const binding = await window.myClawAPI.projects.getSessionBinding(activeSessionId);
+          currentProjectBinding = (projectPayload.items ?? []).find((project) => project.id === binding.localProjectId) ?? null;
+        } catch (bindingError) {
+          console.warn("[workspace] 加载当前会话项目绑定失败", {
+            sessionId: activeSessionId,
+            error: bindingError instanceof Error ? bindingError.message : String(bindingError),
+          });
+        }
+      }
 
       set({
         sessions: payload.sessions,
-        activeSessionId: getMostRecentSessionId(payload.sessions),
+        activeSessionId,
         models: payload.models,
         myClawRootPath: payload.myClawRootPath ?? null,
         skillsRootPath: payload.skillsRootPath ?? null,
@@ -779,6 +839,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
         cloudHubItems: payload.cloudHubItems ?? [],
         cloudHubDetail: payload.cloudHubDetail ?? null,
         cloudHubManifest: payload.cloudHubManifest ?? null,
+        cloudProjects: payload.cloudProjects ?? [],
+        projects: projectPayload.items ?? [],
+        currentProjectBinding,
+        projectDetails: {},
         approvals: payload.approvals ?? null,
         approvalRequests: payload.approvalRequests ?? [],
         personalPrompt: payload.personalPrompt ?? {
@@ -1166,9 +1230,11 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   // Sessions
   // -------------------------------------------------------------------------
 
+  /** 选择主聊天会话，并同步刷新该会话的项目绑定显示。 */
   selectSession(sessionId) {
     if (get().sessions.some((s) => s.id === sessionId)) {
       set({ activeSessionId: sessionId });
+      void get().loadSessionProjectBinding(sessionId);
     }
   },
 
@@ -1192,12 +1258,19 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     }
   },
 
+  /** 新建主聊天会话，新会话默认没有项目绑定。 */
   async createSession() {
     const payload = await window.myClawAPI.createSession();
-    set((s) => ({ sessions: [payload.session, ...s.sessions], activeSessionId: payload.session.id }));
+    console.info("[workspace] 新建会话并清空当前项目绑定显示", { sessionId: payload.session.id });
+    set((s) => ({
+      sessions: [payload.session, ...s.sessions],
+      activeSessionId: payload.session.id,
+      currentProjectBinding: null,
+    }));
     return payload.session;
   },
 
+  /** 删除主聊天会话，并把新的当前会话项目绑定刷新到 store。 */
   async deleteSession(sessionId) {
     // 删除前记录该 session 是否归属硅基员工
     const deletedSession = get().sessions.find((s) => s.id === sessionId);
@@ -1213,6 +1286,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
           : s.activeSessionId;
       return { sessions, approvalRequests, activeSessionId };
     });
+    void get().loadSessionProjectBinding(get().activeSessionId);
 
     // 如果被删的 session 归属硅基员工，刷新该员工摘要以同步 sessions 列表
     if (ownerSiliconPersonId) {
@@ -1405,7 +1479,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     });
   },
 
-  /** 鎸夊綋鍓?scope 鍔犺浇宸ヤ綔鏂囦欢鍒楄〃锛屽悓姝ュ啓鍏?store 缂撳瓨銆?*/
+  /** 按当前 scope 加载工作文件列表，同步写入 store 缓存。 */
   async loadArtifactsByScope(scope) {
     const artifacts = await window.myClawAPI.listArtifactsByScope(scope);
     const key = artifactScopeKey(scope);
@@ -1418,14 +1492,21 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return artifacts;
   },
 
-  /** 鍔犺浇鍏ㄥ眬鏈€杩戜骇鍑虹殑宸ヤ綔鏂囦欢锛屼緵 Files 宸ヤ綔鍙颁笌蹇嵎鍏ュ彛鍏变韩銆?*/
+  /** 加载全局最近产出的工作文件，供 Files 工作台与快捷入口共享。 */
   async loadRecentArtifacts(input) {
     const artifacts = await window.myClawAPI.listRecentArtifacts(input ?? {});
     set({ recentArtifacts: artifacts });
     return artifacts;
   },
 
-  /** 灏嗘寚瀹?artifact 鎻愬崌涓烘渶缁堜氦浠橈紝骞跺洖鍐欏埌鏈湴缂撳瓨銆?*/
+  /** 更新 Files 产物目录，并让后续工具生成与登记使用新路径。 */
+  async updateArtifactsRootPath(path) {
+    const payload = await window.myClawAPI.updateArtifactsRootPath(path);
+    set({ artifactsRootPath: payload.artifactsRootPath });
+    return payload.artifactsRootPath;
+  },
+
+  /** 将指定 artifact 提升为最终交付，并回写到本地缓存。 */
   async markArtifactFinal(artifactId, scope) {
     const artifact = await window.myClawAPI.markArtifactFinal(artifactId, scope);
     set((state) => {
@@ -1443,7 +1524,7 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return artifact;
   },
 
-  /** 鎵撳紑鎸囧畾鏂囦欢锛屽苟璁╂湰鍦扮紦瀛樼殑璁块棶鏃堕棿鍚屾鏇存柊銆?*/
+  /** 打开指定文件，并让本地缓存的访问时间同步更新。 */
   async openArtifact(artifactId) {
     await window.myClawAPI.openArtifact(artifactId);
     const artifact = get().recentArtifacts.find((item) => item.id === artifactId)
@@ -1462,12 +1543,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     });
   },
 
-  /** 鍦ㄧ郴缁熸枃浠剁鐞嗗櫒涓畾浣嶅埌鎸囧畾鏂囦欢锛屼笉鏀瑰啓鏈湴鐘舵€併€?*/
+  /** 在系统文件管理器中定位到指定文件，不改写本地状态。 */
   async revealArtifact(artifactId) {
     await window.myClawAPI.revealArtifact(artifactId);
   },
 
-  /** 娑堣垂涓诲線姹夋祦鎺ㄩ€佺殑 artifact 浜嬩欢锛屾渶灏忔洿鏂?store 缂撳瓨銆?*/
+  /** 消费主进程流推送的 artifact 事件，最小更新 store 缓存。 */
   applyArtifactEvent(event) {
     const artifact = readArtifactEventPayload(event);
     if (!artifact) {
@@ -1650,6 +1731,14 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     return manifest;
   },
 
+  /** 加载 Cloud 项目摘要列表，供 Hub 项目入口下载和更新本地绑定。 */
+  async loadCloudProjects() {
+    console.info("[workspace] 加载 Cloud 项目列表");
+    const projects = await window.myClawAPI.fetchCloudProjects();
+    set({ cloudProjects: projects });
+    return projects;
+  },
+
   // -------------------------------------------------------------------------
   // Cloud Skills
   // -------------------------------------------------------------------------
@@ -1661,7 +1750,12 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
   },
 
   async loadCloudSkillDetail(skillId) {
+    console.info("[workspace] 加载 Cloud Skill 详情", { skillId });
     const detail = await window.myClawAPI.fetchCloudSkillDetail(skillId);
+    if (!detail) {
+      console.info("[workspace] Cloud Skill 详情不存在或已下架", { skillId });
+      throw new Error(`云端 Skill 不存在或已下架：${skillId}`);
+    }
     set({ cloudSkillDetail: detail });
     return detail;
   },
@@ -1672,6 +1766,137 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
 
   clearCloudHubDetail() {
     set({ cloudHubDetail: null, cloudHubManifest: null });
+  },
+
+  // -------------------------------------------------------------------------
+  // Projects
+  // -------------------------------------------------------------------------
+
+  /** 加载本机已绑定项目列表。 */
+  async loadProjects() {
+    console.info("[workspace] 加载本机绑定项目列表");
+    const payload = await window.myClawAPI.projects.listLocal();
+    set({ projects: payload.items ?? [] });
+    return payload.items ?? [];
+  },
+
+  /** 加载项目能力详情并缓存到 store。 */
+  async loadProjectDetail(localProjectId) {
+    console.info("[workspace] 加载项目能力详情", { localProjectId });
+    const detail = await window.myClawAPI.projects.getDetail(localProjectId);
+    set((state) => ({
+      projectDetails: {
+        ...state.projectDetails,
+        [localProjectId]: detail,
+      },
+    }));
+    return detail;
+  },
+
+  /** 将指定会话绑定到本地项目，传 null 表示解绑。 */
+  async bindSessionProject(sessionId, localProjectId) {
+    console.info("[workspace] 绑定会话项目", { sessionId, localProjectId });
+    await window.myClawAPI.projects.bindSession({ sessionId, localProjectId });
+    const currentProjectBinding = localProjectId
+      ? get().projects.find((project) => project.id === localProjectId) ?? null
+      : null;
+    set({ currentProjectBinding });
+  },
+
+  /** 查询指定会话当前绑定项目，并更新顶部运行时显示。 */
+  async loadSessionProjectBinding(sessionId) {
+    if (!sessionId) {
+      set({ currentProjectBinding: null });
+      return null;
+    }
+    console.info("[workspace] 查询会话项目绑定", { sessionId });
+    const payload = await window.myClawAPI.projects.getSessionBinding(sessionId);
+    const currentProjectBinding = payload.localProjectId
+      ? get().projects.find((project) => project.id === payload.localProjectId) ?? null
+      : null;
+    set({ currentProjectBinding });
+    return currentProjectBinding;
+  },
+
+  /** 更新项目能力本地启停状态。 */
+  async setProjectCapabilityState(capabilityRefId, localState) {
+    console.info("[workspace] 更新项目能力本地状态", { capabilityRefId, localState });
+    const detail = await window.myClawAPI.projects.setCapabilityState({ capabilityRefId, localState });
+    set((state) => ({
+      projectDetails: {
+        ...state.projectDetails,
+        [detail.project.id]: detail,
+      },
+    }));
+    return detail;
+  },
+
+  /** 手动同步指定本地项目的 Cloud runtime-context。 */
+  async syncProjectRuntimeContext(localProjectId) {
+    console.info("[workspace] 同步项目运行上下文", { localProjectId });
+    const detail = await window.myClawAPI.projects.sync({ localProjectId });
+    set((state) => ({
+      projects: [
+        detail.project,
+        ...state.projects.filter((project) => project.id !== detail.project.id),
+      ],
+      currentProjectBinding:
+        state.currentProjectBinding?.id === detail.project.id
+          ? detail.project
+          : state.currentProjectBinding,
+      projectDetails: {
+        ...state.projectDetails,
+        [detail.project.id]: detail,
+      },
+    }));
+    return detail;
+  },
+
+  /** 安装项目 Skill 工件并重新加载项目详情。 */
+  async installProjectCapability(capabilityRefId) {
+    console.info("[workspace] 安装项目能力", { capabilityRefId });
+    await window.myClawAPI.projects.installCapability({ capabilityRefId });
+    const detail = Object.values(get().projectDetails)
+      .find((candidate) => candidate.refs.some((ref) => ref.id === capabilityRefId));
+    return detail ? get().loadProjectDetail(detail.project.id) : null;
+  },
+
+  /** 确认项目 MCP 本地安全策略，不写入任何 secret。 */
+  async confirmProjectMcpCapability(input) {
+    console.info("[workspace] 确认项目 MCP 本地策略", {
+      capabilityRefId: input.capabilityRefId,
+      localConfirmed: input.localConfirmed,
+      allowExposeToModel: input.allowExposeToModel,
+    });
+    const detail = await window.myClawAPI.projects.confirmMcpCapability(input);
+    set((state) => ({
+      projectDetails: {
+        ...state.projectDetails,
+        [detail.project.id]: detail,
+      },
+    }));
+    return detail;
+  },
+
+  /** 绑定 Cloud 项目到本机，并按需绑定当前会话。 */
+  async bindCloudProject(input) {
+    console.info("[workspace] 绑定 Cloud 项目", {
+      cloudProjectId: input.cloudProjectId,
+      sessionId: input.sessionId ?? null,
+    });
+    const detail = await window.myClawAPI.projects.bindCloudProject(input);
+    set((state) => ({
+      projects: [
+        detail.project,
+        ...state.projects.filter((project) => project.id !== detail.project.id),
+      ],
+      currentProjectBinding: input.sessionId ? detail.project : state.currentProjectBinding,
+      projectDetails: {
+        ...state.projectDetails,
+        [detail.project.id]: detail,
+      },
+    }));
+    return detail;
   },
 
   // -------------------------------------------------------------------------
@@ -1745,13 +1970,27 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
     const payload = await window.myClawAPI.importCloudSkill({
       releaseId: input.releaseId,
       skillName: input.skillName,
+      ...(input.siliconPersonId ? { siliconPersonId: input.siliconPersonId } : {}),
     });
+    if (input.siliconPersonId) {
+      console.info("[workspace] 已安装 Cloud Skill 到硅基员工目录", {
+        siliconPersonId: input.siliconPersonId,
+        releaseId: input.releaseId,
+      });
+      return payload;
+    }
     set({ skills: payload.skills?.items ?? get().skills, skillDetails: {} });
     return payload;
   },
 
   async importCloudMcp(input) {
     const payload = await window.myClawAPI.importCloudMcp(input);
+    if (input.siliconPersonId) {
+      console.info("[workspace] 已安装 Cloud MCP 到硅基员工配置", {
+        siliconPersonId: input.siliconPersonId,
+      });
+      return payload;
+    }
     set({ mcpServers: payload.servers ?? get().mcpServers });
     return payload;
   },

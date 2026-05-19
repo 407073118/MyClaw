@@ -24,6 +24,17 @@ export function buildPanelViewerHtml(): string {
     .markdown h1 { font-size: 24px; margin: 0 0 18px; }
     .markdown h2 { font-size: 19px; margin: 28px 0 12px; }
     .markdown h3 { font-size: 16px; margin: 22px 0 10px; }
+    .markdown p { margin: 0 0 14px; }
+    .markdown strong { color: var(--text); font-weight: 750; }
+    .markdown code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.07); color: var(--accent); font-family: "Cascadia Code", ui-monospace, monospace; font-size: .92em; }
+    .markdown pre { margin: 14px 0 18px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; background: rgba(255,255,255,.035); overflow: auto; }
+    .markdown pre code { display: block; padding: 0; background: transparent; color: var(--soft); white-space: pre; font-size: 12px; line-height: 1.65; }
+    .markdown ul, .markdown ol { margin: 0 0 14px 22px; padding: 0; }
+    .markdown li { margin: 4px 0; }
+    .markdown hr { border: 0; border-top: 1px solid rgba(255,255,255,.1); margin: 24px 0; }
+    .markdown-table-wrap { max-width: 100%; margin: 14px 0 20px; overflow: auto; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; }
+    .markdown-table-wrap table { min-width: 100%; }
+    .markdown-table-wrap th, .markdown-table-wrap td { white-space: normal; vertical-align: top; }
     .code { margin: 0; min-height: 100%; padding: 16px 18px 36px; font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace; font-size: 12px; line-height: 1.65; color: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
     .monaco-lite { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100%; font-family: "Cascadia Code", ui-monospace, monospace; font-size: 12px; line-height: 1.65; }
     .lines { padding: 16px 10px 36px 14px; color: #71717a; text-align: right; border-right: 1px solid rgba(255,255,255,.06); user-select: none; }
@@ -121,13 +132,169 @@ export function buildPanelViewerHtml(): string {
     }
 
     function markdown(content) {
-      return esc(content)
-        .replace(/^# (.*)$/gm, '<h1>$1</h1>')
-        .replace(/^## (.*)$/gm, '<h2>$1</h2>')
-        .replace(/^### (.*)$/gm, '<h3>$1</h3>')
-        .replace(/\\n\\n/g, '</p><p>')
-        .replace(/^/, '<p>')
-        .replace(/$/, '</p>');
+      console.info("[panel-viewer] 渲染 Markdown 文件预览", { length: String(content || "").length });
+      const lines = String(content || "").replace(/\\r\\n/g, "\\n").split("\\n");
+      const html = [];
+      const fence = String.fromCharCode(96, 96, 96);
+      let paragraph = [];
+      let unorderedItems = [];
+      let orderedItems = [];
+      let codeLines = null;
+      let codeLanguage = "";
+
+      // 刷新段落缓存，保持普通文本换行可读。
+      function flushParagraph() {
+        if (!paragraph.length) return;
+        html.push("<p>" + inlineMarkdown(paragraph.join("\\n")).replace(/\\n/g, "<br>") + "</p>");
+        paragraph = [];
+      }
+
+      // 刷新列表缓存，支持报告里常见的要点清单。
+      function flushLists() {
+        if (unorderedItems.length) {
+          html.push("<ul>" + unorderedItems.map((item) => "<li>" + inlineMarkdown(item) + "</li>").join("") + "</ul>");
+          unorderedItems = [];
+        }
+        if (orderedItems.length) {
+          html.push("<ol>" + orderedItems.map((item) => "<li>" + inlineMarkdown(item) + "</li>").join("") + "</ol>");
+          orderedItems = [];
+        }
+      }
+
+      // 刷新代码块缓存，避免三反引号直接显示在预览里。
+      function flushCodeBlock() {
+        if (codeLines === null) return;
+        const languageClass = codeLanguage ? ' class="language-' + attr(codeLanguage) + '"' : "";
+        html.push("<pre><code" + languageClass + ">" + esc(codeLines.join("\\n")) + "</code></pre>");
+        codeLines = null;
+        codeLanguage = "";
+      }
+
+      for (let index = 0; index < lines.length; index += 1) {
+        const line = lines[index];
+        const trimmed = line.trim();
+
+        if (codeLines !== null) {
+          if (trimmed.startsWith(fence)) {
+            flushCodeBlock();
+          } else {
+            codeLines.push(line);
+          }
+          continue;
+        }
+
+        if (trimmed.startsWith(fence)) {
+          flushParagraph();
+          flushLists();
+          codeLines = [];
+          codeLanguage = trimmed.slice(3).trim();
+          continue;
+        }
+
+        if (isMarkdownTableStart(lines, index)) {
+          flushParagraph();
+          flushLists();
+          const tableResult = renderMarkdownTableAt(lines, index);
+          html.push(tableResult.html);
+          index = tableResult.nextIndex - 1;
+          continue;
+        }
+
+        if (!trimmed) {
+          flushParagraph();
+          flushLists();
+          continue;
+        }
+
+        const heading = trimmed.match(/^(#{1,6})\\s+(.+)$/);
+        if (heading) {
+          flushParagraph();
+          flushLists();
+          const level = Math.min(6, heading[1].length);
+          html.push("<h" + level + ">" + inlineMarkdown(heading[2]) + "</h" + level + ">");
+          continue;
+        }
+
+        if (/^[-*_]{3,}$/.test(trimmed)) {
+          flushParagraph();
+          flushLists();
+          html.push("<hr>");
+          continue;
+        }
+
+        const unorderedMatch = line.match(/^\\s*[-*+]\\s+(.+)$/);
+        if (unorderedMatch) {
+          flushParagraph();
+          orderedItems = [];
+          unorderedItems.push(unorderedMatch[1]);
+          continue;
+        }
+
+        const orderedMatch = line.match(/^\\s*\\d+\\.\\s+(.+)$/);
+        if (orderedMatch) {
+          flushParagraph();
+          unorderedItems = [];
+          orderedItems.push(orderedMatch[1]);
+          continue;
+        }
+
+        paragraph.push(line);
+      }
+
+      flushCodeBlock();
+      flushParagraph();
+      flushLists();
+      return html.join("");
+    }
+
+    function inlineMarkdown(value) {
+      let html = esc(value);
+      const codeSpans = [];
+      const inlineCodeMarker = String.fromCharCode(96);
+      const inlineCodePattern = new RegExp(inlineCodeMarker + "([^" + inlineCodeMarker + "]+)" + inlineCodeMarker, "g");
+      html = html.replace(inlineCodePattern, (_match, code) => {
+        const token = "@@CODE_SPAN_" + codeSpans.length + "@@";
+        codeSpans.push("<code>" + code + "</code>");
+        return token;
+      });
+      html = html
+        .replace(/\\*\\*([^*]+)\\*\\*/g, "<strong>$1</strong>")
+        .replace(/__([^_]+)__/g, "<strong>$1</strong>");
+      return html.replace(/@@CODE_SPAN_(\\d+)@@/g, (_match, index) => codeSpans[Number(index)] || "");
+    }
+
+    function isMarkdownTableStart(lines, index) {
+      const current = String(lines[index] || "").trim();
+      const delimiter = String(lines[index + 1] || "").trim();
+      return current.startsWith("|") && isMarkdownTableDelimiter(delimiter);
+    }
+
+    function isMarkdownTableDelimiter(line) {
+      const cells = splitMarkdownTableRow(line);
+      return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell.replace(/\\s+/g, "")));
+    }
+
+    function splitMarkdownTableRow(line) {
+      const trimmed = String(line || "").trim();
+      if (!trimmed.includes("|")) return [];
+      return trimmed.replace(/^\\|/, "").replace(/\\|$/, "").split("|").map((cell) => cell.trim());
+    }
+
+    function renderMarkdownTableAt(lines, startIndex) {
+      const header = splitMarkdownTableRow(lines[startIndex]);
+      const rows = [];
+      let index = startIndex + 2;
+      while (index < lines.length) {
+        const line = String(lines[index] || "").trim();
+        if (!line.startsWith("|") || isMarkdownTableDelimiter(line)) break;
+        rows.push(splitMarkdownTableRow(line));
+        index += 1;
+      }
+      const body = rows.map((row) => "<tr>" + header.map((_cell, cellIndex) => "<td>" + inlineMarkdown(row[cellIndex] || "") + "</td>").join("") + "</tr>").join("");
+      return {
+        html: '<div class="markdown-table-wrap"><table><thead><tr>' + header.map((cell) => "<th>" + inlineMarkdown(cell) + "</th>").join("") + "</tr></thead><tbody>" + body + "</tbody></table></div>",
+        nextIndex: index,
+      };
     }
 
     function fallback(payload, message) {

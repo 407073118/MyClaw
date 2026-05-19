@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   Clock,
   ListTodo,
+  FolderOpen,
   MessageSquare,
   PanelRightClose,
   PanelRightOpen,
@@ -14,22 +15,28 @@ import {
   Pencil,
   Play,
   Plug,
+  Plus,
+  RefreshCw,
   RotateCcw,
   Save,
   Send,
   Trash2,
+  UploadCloud,
   Users,
   Workflow,
   Wrench,
+  X,
 } from "lucide-react";
 import type { ApprovalDecision, ApprovalRequest, ExecutionRun, McpServer, ModelProfile, ScheduleJob, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
 import MarkdownView from "../components/MarkdownView";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
+import SiliconPersonAvatar from "../components/SiliconPersonAvatar";
 import ScheduleJobEditor, { type ScheduleJobEditorSubmitInput } from "../components/time/ScheduleJobEditor";
 import { useWorkspaceStore } from "../stores/workspace";
 import { formatJobFrequency } from "../utils/frequency";
 import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
 import { resolveReasoningControlSpec } from "../utils/reasoning-controls";
+import { readAvatarFileAsDataUrl } from "../utils/silicon-person-avatar";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
 
 /** 把消息内容转成可直接展示的文本，兼容字符串和富结构内容。 */
@@ -265,12 +272,15 @@ export default function SiliconPersonWorkspacePage() {
   const [sessionError, setSessionError] = useState("");
   const [approvalError, setApprovalError] = useState("");
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [deleteSessionConfirm, setDeleteSessionConfirm] = useState<{ sessionId: string; title: string } | null>(null);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState("");
   const [activeStudioTab, setActiveStudioTab] = useState<"chat" | "profile" | "tasks" | "capabilities">("chat");
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
   const saveDialogRef = useRef<HTMLDivElement | null>(null);
   const confirmBtnRef = useRef<HTMLButtonElement | null>(null);
   const cancelBtnRef = useRef<HTMLButtonElement | null>(null);
+  const deleteConfirmBtnRef = useRef<HTMLButtonElement | null>(null);
+  const deleteCancelBtnRef = useRef<HTMLButtonElement | null>(null);
   const [draftMessage, setDraftMessage] = useState("");
   const [chosenJobType, setChosenJobType] = useState<"workflow" | "silicon_person" | null>(null);
   const [editingJob, setEditingJob] = useState<ScheduleJob | null>(null);
@@ -278,6 +288,8 @@ export default function SiliconPersonWorkspacePage() {
   // 草稿状态，与当前硅基员工实体保持同构。
   const [draftName, setDraftName] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
+  const [draftAvatarDataUrl, setDraftAvatarDataUrl] = useState<string | null>(null);
+  const [avatarUploadError, setAvatarUploadError] = useState("");
   const [draftApprovalMode, setDraftApprovalMode] = useState<SiliconPersonApprovalMode>("inherit");
   const [draftWorkflowIds, setDraftWorkflowIds] = useState<string[]>([]);
   // 员工自己工作空间的 skills 和 MCP 服务（独立目录，非全局引用）
@@ -342,12 +354,23 @@ export default function SiliconPersonWorkspacePage() {
     () => buildModelRuntimeStatusItems(activeModelProfile),
     [activeModelProfile],
   );
+  const avatarPreviewPerson = useMemo(
+    () => ({
+      id: siliconPerson?.id ?? siliconPersonId ?? "silicon-person",
+      name: draftName.trim() || siliconPerson?.name || "硅基员工",
+      title: draftTitle.trim() || siliconPerson?.title || "硅基员工",
+      avatarDataUrl: draftAvatarDataUrl,
+    }),
+    [draftAvatarDataUrl, draftName, draftTitle, siliconPerson, siliconPersonId],
+  );
 
   // 员工详情变化后，把最新数据同步到本地草稿。
   useEffect(() => {
     if (!siliconPerson) return;
     setDraftName(siliconPerson.name);
     setDraftTitle(siliconPerson.title);
+    setDraftAvatarDataUrl(siliconPerson.avatarDataUrl ?? null);
+    setAvatarUploadError("");
     setDraftApprovalMode(siliconPerson.approvalMode);
     setDraftWorkflowIds([...siliconPerson.workflowIds]);
     setDraftSoul(siliconPerson.soul ?? "");
@@ -360,6 +383,9 @@ export default function SiliconPersonWorkspacePage() {
   const loadPersonResources = useCallback(async () => {
     if (!siliconPersonId) return;
     const api = window.myClawAPI;
+    console.info("[silicon-person-studio] 刷新员工能力资源", {
+      siliconPersonId,
+    });
     const [skillsRes, mcpRes, pathsRes] = await Promise.all([
       api.listSiliconPersonSkills(siliconPersonId),
       api.listSiliconPersonMcpServers(siliconPersonId),
@@ -368,7 +394,34 @@ export default function SiliconPersonWorkspacePage() {
     setPersonSkills(skillsRes.items ?? []);
     setPersonMcpServers(mcpRes.servers ?? []);
     setPersonPaths(pathsRes);
+    console.info("[silicon-person-studio] 员工能力资源刷新完成", {
+      siliconPersonId,
+      skillCount: skillsRes.items?.length ?? 0,
+      mcpServerCount: mcpRes.servers?.length ?? 0,
+    });
   }, [siliconPersonId]);
+
+  /** 打开当前硅基员工自己的 Skills 目录，避免误跳到全局 Skills 根目录。 */
+  const openPersonSkillsFolder = useCallback(async () => {
+    if (!personPaths.skillsDir) return;
+    console.info("[silicon-person-studio] 打开员工 Skills 目录", {
+      siliconPersonId,
+      skillsDir: personPaths.skillsDir,
+    });
+    await window.myClawAPI.fileViewerOpenExternal(personPaths.skillsDir);
+  }, [personPaths.skillsDir, siliconPersonId]);
+
+  /** 跳转到 Hub 的 MCP 资源入口，并携带员工上下文用于后续安装落点。 */
+  const openPersonMcpAddEntry = useCallback(() => {
+    const search = new URLSearchParams({
+      tab: "mcp",
+      siliconPersonId,
+    });
+    console.info("[silicon-person-studio] 打开员工 MCP 添加入口", {
+      siliconPersonId,
+    });
+    navigate(`/hub?${search.toString()}`);
+  }, [navigate, siliconPersonId]);
 
   // 首次进入时补齐硅基员工详情、工作流列表和独立资源。
   useEffect(() => {
@@ -563,6 +616,49 @@ export default function SiliconPersonWorkspacePage() {
     };
   }, [showSaveConfirm, isSaving]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 删除会话确认弹层打开时：聚焦取消按钮、ESC 关闭、Enter 确认、Tab 限定在弹层内。
+  useEffect(() => {
+    if (!deleteSessionConfirm) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    deleteCancelBtnRef.current?.focus();
+
+    function handleKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeDeleteSessionConfirm();
+        return;
+      }
+      if (event.key === "Enter" && !deletingSessionId) {
+        const target = event.target as HTMLElement | null;
+        if (target !== deleteCancelBtnRef.current) {
+          event.preventDefault();
+          void confirmDeleteSession();
+        }
+        return;
+      }
+      if (event.key === "Tab") {
+        const focusable = [deleteCancelBtnRef.current, deleteConfirmBtnRef.current].filter(Boolean) as HTMLButtonElement[];
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (event.shiftKey && active === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && active === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      previouslyFocused?.focus?.();
+    };
+  }, [deleteSessionConfirm, deletingSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   /** 绑定当前下拉中选中的工作流，避免重复添加。 */
   function bindWorkflow() {
     if (!selectedWorkflowId || draftWorkflowIds.includes(selectedWorkflowId)) return;
@@ -680,6 +776,41 @@ export default function SiliconPersonWorkspacePage() {
     await workspace.updateScheduleJob({ ...job, status: nextStatus });
   }
 
+  /** 读取资料页上传的本地头像文件，并写入当前员工草稿。 */
+  async function handleAvatarFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (!file) return;
+
+    setAvatarUploadError("");
+    try {
+      const nextAvatarDataUrl = await readAvatarFileAsDataUrl(file);
+      console.info("[silicon-person-studio] 本地头像上传成功", {
+        siliconPersonId,
+        fileName: file.name,
+        fileSize: file.size,
+      });
+      setDraftAvatarDataUrl(nextAvatarDataUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "头像上传失败，请重新选择图片。";
+      console.warn("[silicon-person-studio] 本地头像上传失败", {
+        siliconPersonId,
+        fileName: file.name,
+        error: message,
+      });
+      setAvatarUploadError(message);
+    }
+  }
+
+  /** 清空资料页头像草稿，保存后该员工回退到默认渐变头像。 */
+  function handleAvatarClear() {
+    console.info("[silicon-person-studio] 移除本地头像草稿", {
+      siliconPersonId,
+    });
+    setDraftAvatarDataUrl(null);
+    setAvatarUploadError("");
+  }
+
   /** 保存侧栏中的硅基员工角色卡和 workflow 绑定信息。 */
   async function handleSave() {
     if (!siliconPersonId) return;
@@ -695,6 +826,7 @@ export default function SiliconPersonWorkspacePage() {
       await workspace.updateSiliconPerson(siliconPersonId, {
         name: draftName.trim(),
         title: draftTitle.trim(),
+        avatarDataUrl: draftAvatarDataUrl,
         approvalMode: draftApprovalMode,
         workflowIds: [...draftWorkflowIds],
         soul: draftSoul.trim() || undefined,
@@ -777,8 +909,8 @@ export default function SiliconPersonWorkspacePage() {
   /** 处理当前会话里的审批请求，按钮只负责把决定转给 workspace。 */
   /** 向当前硅基员工的 currentSession 继续发送消息，保持私域会话连续性。 */
 
-  /** 删除指定硅基员工会话，并同步刷新该员工配置用于更新会话列表。 */
-  async function handleDeleteSession(sessionId: string) {
+  /** 打开删除指定硅基员工会话的项目风格确认弹层。 */
+  function handleDeleteSession(sessionId: string) {
     if (!siliconPersonId || !siliconPerson) return;
     if (deletingSessionId) return;
 
@@ -789,12 +921,34 @@ export default function SiliconPersonWorkspacePage() {
     }
     const targetTitle = targetSession?.title ?? `会话 ${sessionId.slice(0, 8)}`;
 
-    if (!window.confirm(`确认要删除「${targetTitle}」吗？`)) {
-      return;
+    console.info("[silicon-person-studio] 打开删除会话确认弹层", {
+      siliconPersonId,
+      sessionId,
+      title: targetTitle,
+    });
+    setDeleteSessionConfirm({ sessionId, title: targetTitle });
+  }
+
+  /** 关闭删除会话确认弹层，并记录用户取消路径。 */
+  function closeDeleteSessionConfirm() {
+    if (deleteSessionConfirm) {
+      console.info("[silicon-person-studio] 关闭删除会话确认弹层", {
+        siliconPersonId,
+        sessionId: deleteSessionConfirm.sessionId,
+      });
     }
+    setDeleteSessionConfirm(null);
+  }
+
+  /** 确认删除会话，并同步刷新该员工配置用于更新会话列表。 */
+  async function confirmDeleteSession() {
+    if (!siliconPersonId || !deleteSessionConfirm) return;
+    const sessionId = deleteSessionConfirm.sessionId;
+    if (deletingSessionId) return;
 
     setSessionError("");
     setDeletingSessionId(sessionId);
+    setDeleteSessionConfirm(null);
     try {
       console.info("[silicon-person-studio] 请求删除会话", {
         siliconPersonId,
@@ -828,7 +982,7 @@ export default function SiliconPersonWorkspacePage() {
     setSessionError("");
     setIsSending(true);
     try {
-      console.info("[silicon-person-studio] 请求删除当前会话及其消息", {
+      console.info("[silicon-person-studio] 请求发送当前会话消息", {
         siliconPersonId,
         sessionId: currentSessionSummary?.id ?? null,
         contentLength: content.length,
@@ -837,7 +991,7 @@ export default function SiliconPersonWorkspacePage() {
       setDraftMessage("");
       setViewVersion((value) => value + 1);
     } catch (error) {
-      setSessionError(error instanceof Error ? error.message : "删除硅基员工会话失败。");
+      setSessionError(error instanceof Error ? error.message : "发送硅基员工会话消息失败。");
     } finally {
       setIsSending(false);
     }
@@ -1224,6 +1378,37 @@ export default function SiliconPersonWorkspacePage() {
               <div className="ws-card ws-form-card" data-testid="profile-tab-form">
                 <h3>基本信息</h3>
                 <div className="ws-form-fields">
+                  <div className="ws-avatar-field ws-field--full">
+                    <SiliconPersonAvatar
+                      person={avatarPreviewPerson}
+                      className="ws-avatar-preview"
+                      data-testid="profile-tab-avatar-preview"
+                    />
+                    <div className="ws-avatar-copy">
+                      <span>头像</span>
+                      <p>上传本地图片后会保存在员工资料中；删除后自动回到默认头像。</p>
+                      <div className="ws-avatar-actions">
+                        <label className="btn-toolbar ws-avatar-upload-btn" title="上传本地头像">
+                          <UploadCloud size={14} aria-hidden />
+                          上传头像
+                          <input
+                            data-testid="profile-tab-avatar-upload"
+                            className="ws-avatar-file-input"
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                            onChange={(event) => void handleAvatarFileChange(event)}
+                          />
+                        </label>
+                        {draftAvatarDataUrl && (
+                          <button type="button" className="btn-toolbar" onClick={handleAvatarClear} title="移除头像">
+                            <X size={14} aria-hidden />
+                            移除
+                          </button>
+                        )}
+                      </div>
+                      {avatarUploadError && <span className="ws-avatar-error" role="alert">{avatarUploadError}</span>}
+                    </div>
+                  </div>
                   <label className="ws-field">
                     <span>名称</span>
                     <input value={draftName} onChange={(e) => setDraftName(e.target.value)} data-testid="profile-tab-name" type="text" />
@@ -1360,18 +1545,34 @@ export default function SiliconPersonWorkspacePage() {
           <section className="ws-col">
             {/* ── 员工独立 Skills ── */}
             <article className="ws-card">
-                <div className="ws-cap-header">
-                  <div>
+              <div className="ws-cap-header">
+                <div>
                   <h3>技能</h3>
                   <p className="ws-card-desc">硅基员工工作台支持的 Skills，可从 Hub 安装。</p>
                 </div>
-                <button
-                  type="button"
-                  className="btn-toolbar"
-                  onClick={() => void loadPersonResources()}
-                >
-                  刷新
-                </button>
+                <div className="ws-cap-actions">
+                  <button
+                    type="button"
+                    className="btn-toolbar"
+                    data-testid="silicon-person-skills-open-folder"
+                    title="打开员工 Skills 目录"
+                    disabled={!personPaths.skillsDir}
+                    onClick={() => void openPersonSkillsFolder()}
+                  >
+                    <FolderOpen size={14} aria-hidden />
+                    打开文件夹
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-toolbar"
+                    data-testid="silicon-person-skills-refresh"
+                    title="刷新员工 Skills"
+                    onClick={() => void loadPersonResources()}
+                  >
+                    <RefreshCw size={14} aria-hidden />
+                    刷新
+                  </button>
+                </div>
               </div>
               {personSkills.length > 0 ? (
                 <div className="list-rows">
@@ -1406,13 +1607,28 @@ export default function SiliconPersonWorkspacePage() {
                   <h3>MCP 服务</h3>
                   <p className="ws-card-desc">员工独立工作空间中的 MCP 服务，各员工互不影响</p>
                 </div>
-                <button
-                  type="button"
-                  className="btn-toolbar"
-                  onClick={() => void loadPersonResources()}
-                >
-                  刷新
-                </button>
+                <div className="ws-cap-actions">
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    data-testid="silicon-person-mcp-add"
+                    title="从 Hub 添加员工 MCP 服务"
+                    onClick={openPersonMcpAddEntry}
+                  >
+                    <Plus size={14} aria-hidden />
+                    添加
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-toolbar"
+                    data-testid="silicon-person-mcp-refresh"
+                    title="刷新员工 MCP 服务"
+                    onClick={() => void loadPersonResources()}
+                  >
+                    <RefreshCw size={14} aria-hidden />
+                    刷新
+                  </button>
+                </div>
               </div>
               {personMcpServers.length > 0 ? (
                 <div className="list-rows">
@@ -1690,6 +1906,57 @@ export default function SiliconPersonWorkspacePage() {
       </section>
 
       </main>
+
+      {/* 删除会话确认弹窗 */}
+      {deleteSessionConfirm && (
+        <div
+          className="sp-confirm-overlay"
+          role="presentation"
+          onClick={closeDeleteSessionConfirm}
+        >
+          <div
+            className="sp-confirm-dialog sp-confirm-dialog--danger"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sp-delete-session-title"
+            aria-describedby="sp-delete-session-hint"
+            data-testid="silicon-person-delete-session-dialog"
+            data-variant="danger"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sp-confirm-icon sp-confirm-icon--danger">
+              <Trash2 size={22} aria-hidden />
+            </div>
+            <h3 id="sp-delete-session-title" className="sp-confirm-message" data-testid="silicon-person-delete-session-title">
+              删除会话「{deleteSessionConfirm.title}」？
+            </h3>
+            <p id="sp-delete-session-hint" className="sp-confirm-hint" data-testid="silicon-person-delete-session-detail">
+              这会移除该硅基员工的本地会话记录和消息内容，删除后不可撤销。
+            </p>
+            <div className="sp-confirm-actions">
+              <button
+                type="button"
+                ref={deleteCancelBtnRef}
+                className="btn-toolbar"
+                onClick={closeDeleteSessionConfirm}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                ref={deleteConfirmBtnRef}
+                className="btn-ghost btn-ghost--danger"
+                data-testid="silicon-person-delete-session-confirm"
+                onClick={() => void confirmDeleteSession()}
+                disabled={Boolean(deletingSessionId)}
+              >
+                <Trash2 size={14} aria-hidden />
+                确认删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 保存确认弹窗 */}
       {showSaveConfirm && (
@@ -2055,6 +2322,15 @@ export default function SiliconPersonWorkspacePage() {
         /* ── Form Card ── */
         .ws-form-card { display: flex; flex-direction: column; gap: 18px; }
         .ws-form-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .ws-avatar-field { display: flex; align-items: center; gap: 14px; padding: 14px; border: 1px solid rgba(148,163,184,0.16); border-radius: var(--radius-lg); background: rgba(0,0,0,0.14); }
+        .ws-avatar-preview { position: relative; width: 64px; height: 64px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; border-radius: 18px; border: 1px solid rgba(255,255,255,0.18); color: #fff; font-size: 22px; font-weight: 800; box-shadow: inset 0 1px 0 rgba(255,255,255,0.22); }
+        .ws-avatar-copy { min-width: 0; display: grid; gap: 7px; }
+        .ws-avatar-copy > span { color: var(--text-primary); font-size: 13px; font-weight: 700; }
+        .ws-avatar-copy p { margin: 0; color: var(--text-muted); font-size: 12px; line-height: 1.45; }
+        .ws-avatar-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        .ws-avatar-upload-btn { position: relative; overflow: hidden; }
+        .ws-avatar-file-input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+        .ws-avatar-error { color: var(--status-red); font-size: 12px; line-height: 1.4; }
         .ws-model-status { display: flex; flex-wrap: wrap; gap: 8px; }
         .ws-model-status-pill { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: var(--text-secondary); font-size: 11px; font-weight: 600; line-height: 1; letter-spacing: 0.04em; white-space: nowrap; }
         .ws-model-status-pill--vendor, .ws-model-status-pill--protocol { color: var(--accent-strong); border-color: rgba(16,163,127,0.24); background: rgba(16,163,127,0.08); }
@@ -2100,6 +2376,7 @@ export default function SiliconPersonWorkspacePage() {
         /* ── Capabilities ── */
         .ws-cap-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
         .ws-cap-header > div:first-child { min-width: 0; flex: 1; }
+        .ws-cap-actions { display: inline-flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
         .ws-bind-row { display: flex; gap: 8px; align-items: center; }
         .ws-bind-select { padding: 8px 14px; padding-right: 36px; border: 1px solid var(--glass-border); border-radius: var(--radius-md); background: var(--bg-base); color: var(--text-primary); font: inherit; font-size: 0.82rem; appearance: none; -webkit-appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 12px; transition: border-color 0.15s ease, box-shadow 0.15s ease; }
         .ws-bind-select:hover { border-color: var(--glass-border-hover); background: rgba(255,255,255,0.02); }
@@ -2394,6 +2671,10 @@ export default function SiliconPersonWorkspacePage() {
           display: flex; flex-direction: column; align-items: center;
           text-align: center;
         }
+        .sp-confirm-dialog--danger {
+          border-color: rgba(239, 68, 68, 0.34);
+          box-shadow: var(--shadow-modal), 0 0 0 1px rgba(239, 68, 68, 0.08);
+        }
         @keyframes sp-dialog-in {
           from { opacity: 0; transform: scale(0.96); }
           to   { opacity: 1; transform: none; }
@@ -2408,6 +2689,11 @@ export default function SiliconPersonWorkspacePage() {
           color: var(--accent-cyan);
           margin-bottom: 18px;
           flex-shrink: 0;
+        }
+        .sp-confirm-icon--danger {
+          background: rgba(239, 68, 68, 0.12);
+          border-color: rgba(239, 68, 68, 0.28);
+          color: var(--status-red);
         }
 
         .sp-confirm-message {
@@ -2428,7 +2714,8 @@ export default function SiliconPersonWorkspacePage() {
           display: flex; gap: 12px; width: 100%;
         }
         .sp-confirm-actions .btn-toolbar,
-        .sp-confirm-actions .btn-primary {
+        .sp-confirm-actions .btn-primary,
+        .sp-confirm-actions .btn-ghost {
           flex: 1;
           justify-content: center;
         }

@@ -12,6 +12,7 @@ export * from "./mcp";
 export * from "./model";
 export * from "./plan";
 export * from "./personal-prompt";
+export * from "./project-capability";
 export * from "./session-runtime";
 export * from "./session";
 export * from "./silicon-person";

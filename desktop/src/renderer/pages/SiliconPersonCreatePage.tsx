@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { UploadCloud, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { ModelProfile, SiliconPersonApprovalMode } from "@shared/contracts";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
+import SiliconPersonAvatar from "../components/SiliconPersonAvatar";
 import { useWorkspaceStore } from "../stores/workspace";
 import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
 import { resolveReasoningControlSpec } from "../utils/reasoning-controls";
+import { readAvatarFileAsDataUrl } from "../utils/silicon-person-avatar";
 
 /** 从“身份与人格”中提取一段稳定摘要，兼容现有列表页和工作台概览。 */
 function deriveDescriptionFromSoul(input: string, fallbackName: string): string {
@@ -37,6 +40,8 @@ export default function SiliconPersonCreatePage() {
   // 基础资料
   const [name, setName] = useState("");
   const [soul, setSoul] = useState("");
+  const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState("");
 
   // 执行配置
   const [approvalMode, setApprovalMode] = useState<SiliconPersonApprovalMode>("inherit");
@@ -58,6 +63,15 @@ export default function SiliconPersonCreatePage() {
     () => buildModelRuntimeStatusItems(activeModelProfile),
     [activeModelProfile],
   );
+  const avatarPreviewPerson = useMemo(
+    () => ({
+      id: templateSourceId || name.trim() || "new-silicon-person",
+      name: name.trim() || "新员工",
+      title: name.trim() || "硅基员工",
+      avatarDataUrl,
+    }),
+    [avatarDataUrl, name, templateSourceId],
+  );
 
   const canCreate = Boolean(name.trim() && soul.trim() && selectedModelId);
 
@@ -75,10 +89,46 @@ export default function SiliconPersonCreatePage() {
     if (!source) return;
     setName(`${source.name}(副本)`);
     setSoul(source.soul ?? "");
+    setAvatarDataUrl(source.avatarDataUrl ?? null);
+    setAvatarError("");
     setApprovalMode(source.approvalMode ?? "inherit");
     setSelectedModelId(source.modelProfileId ?? "");
     setReasoningEnabled(source.reasoningEnabled ?? true);
     setReasoningEffort(source.reasoningEffort ?? "medium");
+  }
+
+  /** 读取用户选择的本地头像文件，并把结果放入创建草稿。 */
+  async function handleAvatarFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    event.target.value = "";
+    if (!file) return;
+
+    setAvatarError("");
+    try {
+      const nextAvatarDataUrl = await readAvatarFileAsDataUrl(file);
+      console.info("[silicon-person-create] 本地头像上传成功", {
+        fileName: file.name,
+        fileSize: file.size,
+      });
+      setAvatarDataUrl(nextAvatarDataUrl);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "头像上传失败，请重新选择图片。";
+      console.warn("[silicon-person-create] 本地头像上传失败", {
+        fileName: file.name,
+        error: message,
+      });
+      setAvatarError(message);
+    }
+  }
+
+  /** 移除当前草稿中的头像，提交后将使用默认渐变头像。 */
+  function handleAvatarClear() {
+    console.info("[silicon-person-create] 移除本地头像草稿", {
+      templateSourceId,
+      name: name.trim(),
+    });
+    setAvatarDataUrl(null);
+    setAvatarError("");
   }
 
   /** 提交创建请求，并在创建后补写审批与推理配置（模型在 create 阶段直接写入）。 */
@@ -104,6 +154,7 @@ export default function SiliconPersonCreatePage() {
         title: trimmedName,
         description: deriveDescriptionFromSoul(trimmedSoul, trimmedName),
         soul: trimmedSoul,
+        avatarDataUrl,
         modelProfileId: selectedModelId,
       });
 
@@ -193,6 +244,38 @@ export default function SiliconPersonCreatePage() {
               <div>
                 <span className="spc-pane-title">身份设定</span>
                 <p className="spc-pane-description">名称用于列表识别，身份与人格决定它的默认协作方式。</p>
+              </div>
+            </div>
+
+            <div className="spc-avatar-field">
+              <SiliconPersonAvatar
+                person={avatarPreviewPerson}
+                className="spc-avatar-preview"
+                data-testid="silicon-person-avatar-preview"
+              />
+              <div className="spc-avatar-copy">
+                <span>头像</span>
+                <p>上传本地图片后会随员工资料保存在本机；未上传时使用自动生成头像。</p>
+                <div className="spc-avatar-actions">
+                  <label className="btn-toolbar spc-avatar-upload-btn" title="上传本地头像">
+                    <UploadCloud size={14} aria-hidden />
+                    上传头像
+                    <input
+                      data-testid="silicon-person-avatar-upload"
+                      className="spc-avatar-file-input"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      onChange={(event) => void handleAvatarFileChange(event)}
+                    />
+                  </label>
+                  {avatarDataUrl && (
+                    <button type="button" className="btn-toolbar" onClick={handleAvatarClear} title="移除头像">
+                      <X size={14} aria-hidden />
+                      移除
+                    </button>
+                  )}
+                </div>
+                {avatarError && <span className="spc-avatar-error" role="alert">{avatarError}</span>}
               </div>
             </div>
 
@@ -315,6 +398,75 @@ export default function SiliconPersonCreatePage() {
           gap: 18px;
           width: 100%;
           min-height: 0;
+        }
+
+        .spc-avatar-field {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          padding: 14px;
+          border-radius: 12px;
+          border: 1px solid rgba(148, 163, 184, 0.16);
+          background: rgba(0, 0, 0, 0.12);
+        }
+
+        .spc-avatar-preview {
+          position: relative;
+          width: 64px;
+          height: 64px;
+          flex-shrink: 0;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 18px;
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          color: #fff;
+          font-size: 22px;
+          font-weight: 800;
+          box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
+        }
+
+        .spc-avatar-copy {
+          min-width: 0;
+          display: grid;
+          gap: 7px;
+        }
+
+        .spc-avatar-copy > span {
+          color: var(--text-primary);
+          font-size: 13px;
+          font-weight: 700;
+        }
+
+        .spc-avatar-copy p {
+          margin: 0;
+          color: var(--text-muted);
+          font-size: 12px;
+          line-height: 1.45;
+        }
+
+        .spc-avatar-actions {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .spc-avatar-upload-btn {
+          position: relative;
+          overflow: hidden;
+        }
+
+        .spc-avatar-file-input {
+          position: absolute;
+          inset: 0;
+          opacity: 0;
+          cursor: pointer;
+        }
+
+        .spc-avatar-error {
+          color: var(--status-red);
+          font-size: 12px;
+          line-height: 1.4;
         }
 
         .spc-copy-strip {

@@ -14,6 +14,8 @@ import { ToolRiskCategory, type ResolvedBuiltinTool } from "../shared/contracts"
 import type { SkillDefinition } from "../shared/contracts/skill";
 import { EXPECTED_BUILTIN_TOOL_NAMES } from "./shared/builtin-tool-contract";
 
+const EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES = EXPECTED_BUILTIN_TOOL_NAMES.filter((name) => name !== "skill_view");
+
 // ---------------------------------------------------------------------------
 // 辅助方法
 // ---------------------------------------------------------------------------
@@ -42,7 +44,7 @@ function makeSkill(overrides: Partial<SkillDefinition> = {}): SkillDefinition {
 describe("Phase 1: SkillTool schemas", () => {
   it("should include builtin tools without skills", () => {
     const tools = buildToolSchemas("/test/cwd");
-    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_BUILTIN_TOOL_NAMES);
+    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES);
     expect(tools.every((t) => t.type === "function")).toBe(true);
   });
 
@@ -106,7 +108,7 @@ describe("Phase 1: SkillTool schemas", () => {
     const skills = [makeSkill()];
     const tools = buildToolSchemas("/test/cwd", skills);
     expect(tools.map((tool) => tool.function.name)).toEqual([
-      ...EXPECTED_BUILTIN_TOOL_NAMES,
+      ...EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES,
       "skill_invoke__test-skill-1",
     ]);
 
@@ -121,13 +123,13 @@ describe("Phase 1: SkillTool schemas", () => {
   it("should NOT include disabled skills", () => {
     const skills = [makeSkill({ enabled: false })];
     const tools = buildToolSchemas("/test/cwd", skills);
-    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_BUILTIN_TOOL_NAMES);
+    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES);
   });
 
   it("should NOT include skills with disableModelInvocation=true", () => {
     const skills = [makeSkill({ disableModelInvocation: true })];
     const tools = buildToolSchemas("/test/cwd", skills);
-    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_BUILTIN_TOOL_NAMES);
+    expect(tools.map((tool) => tool.function.name)).toEqual(EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES);
   });
 
   it("should handle multiple skills", () => {
@@ -138,7 +140,7 @@ describe("Phase 1: SkillTool schemas", () => {
     ];
     const tools = buildToolSchemas("/test/cwd", skills);
     expect(tools.map((tool) => tool.function.name)).toEqual([
-      ...EXPECTED_BUILTIN_TOOL_NAMES,
+      ...EXPECTED_ALWAYS_BUILTIN_TOOL_NAMES,
       "skill_invoke__skill-a",
       "skill_invoke__skill-b",
     ]);

@@ -46,6 +46,20 @@ function parseExecutionRun(row: Record<string, unknown>): ExecutionRun {
   return JSON.parse(String(row.payload_json)) as ExecutionRun;
 }
 
+type LocalDateTimeParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  millisecond: number;
+};
+
+const EXPLICIT_TIMEZONE_PATTERN = /(?:[zZ]|[+-]\d{2}:?\d{2})$/;
+const LOCAL_DATE_TIME_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/;
+
 /** 统一推导定时任务归属，避免硅基员工任务被误存到主日程 personal 分区。 */
 function resolveScheduleJobOwner(input: ScheduleJobUpsertInput): { ownerScope: TimeOwnerScope; ownerId?: string } {
   if (input.ownerScope === "silicon_person") {
@@ -64,6 +78,125 @@ function normalizeIsoDateTime(value: string | undefined): string | undefined {
   }
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+}
+
+/** 解析无时区的本地时间文本，避免 Date.parse 使用系统时区吞掉提醒自带 timezone。 */
+function parseLocalDateTimeParts(value: string): LocalDateTimeParts | undefined {
+  const match = LOCAL_DATE_TIME_PATTERN.exec(value.trim());
+  if (!match) {
+    return undefined;
+  }
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText = "0", millisecondText = "0"] = match;
+  const parts: LocalDateTimeParts = {
+    year: Number(yearText),
+    month: Number(monthText),
+    day: Number(dayText),
+    hour: Number(hourText),
+    minute: Number(minuteText),
+    second: Number(secondText),
+    millisecond: Number(millisecondText.padEnd(3, "0").slice(0, 3)),
+  };
+  const normalized = new Date(
+    Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second, parts.millisecond),
+  );
+  if (
+    normalized.getUTCFullYear() !== parts.year ||
+    normalized.getUTCMonth() + 1 !== parts.month ||
+    normalized.getUTCDate() !== parts.day ||
+    normalized.getUTCHours() !== parts.hour ||
+    normalized.getUTCMinutes() !== parts.minute ||
+    normalized.getUTCSeconds() !== parts.second
+  ) {
+    console.warn("[time-store] 本地提醒时间字段无效，跳过时区归一化", { value });
+    return undefined;
+  }
+  return parts;
+}
+
+/** 计算指定 UTC 时刻在目标时区的偏移，用于把本地提醒时间转换为可比较的 UTC。 */
+function getTimezoneOffsetMs(utcDate: Date, timezone: string): number | undefined {
+  try {
+    const values = new Map(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: timezone,
+        calendar: "iso8601",
+        numberingSystem: "latn",
+        hourCycle: "h23",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+      })
+        .formatToParts(utcDate)
+        .map((part) => [part.type, part.value]),
+    );
+    const zonedAsUtc = Date.UTC(
+      Number(values.get("year")),
+      Number(values.get("month")) - 1,
+      Number(values.get("day")),
+      Number(values.get("hour")),
+      Number(values.get("minute")),
+      Number(values.get("second")),
+      utcDate.getUTCMilliseconds(),
+    );
+    return zonedAsUtc - utcDate.getTime();
+  } catch (error) {
+    console.warn("[time-store] 解析提醒时区失败，无法计算偏移", {
+      timezone,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
+/** 将提醒触发时间归一化为 UTC ISO，同时兼容无时区的旧提醒记录。 */
+function normalizeReminderTriggerAt(triggerAt: string, timezone: string): string | undefined {
+  const value = triggerAt.trim();
+  if (EXPLICIT_TIMEZONE_PATTERN.test(value)) {
+    return normalizeIsoDateTime(value);
+  }
+
+  const localParts = parseLocalDateTimeParts(value);
+  if (localParts) {
+    const localAsUtc = Date.UTC(
+      localParts.year,
+      localParts.month - 1,
+      localParts.day,
+      localParts.hour,
+      localParts.minute,
+      localParts.second,
+      localParts.millisecond,
+    );
+    const firstOffset = getTimezoneOffsetMs(new Date(localAsUtc), timezone);
+    if (firstOffset === undefined) {
+      return undefined;
+    }
+    let candidate = localAsUtc - firstOffset;
+    const verifiedOffset = getTimezoneOffsetMs(new Date(candidate), timezone);
+    if (verifiedOffset !== undefined) {
+      candidate = localAsUtc - verifiedOffset;
+    }
+    return new Date(candidate).toISOString();
+  }
+
+  return normalizeIsoDateTime(value);
+}
+
+/** 计算提醒的绝对触发时间戳，供到期扫描兼容历史本地时间数据。 */
+function resolveReminderTriggerTime(reminder: Reminder): number | undefined {
+  const normalized = normalizeReminderTriggerAt(reminder.triggerAt, reminder.timezone);
+  if (!normalized) {
+    console.warn("[time-store] 无法解析提醒触发时间，跳过本次到期投递", {
+      id: reminder.id,
+      triggerAt: reminder.triggerAt,
+      timezone: reminder.timezone,
+    });
+    return undefined;
+  }
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
 }
 
 /** 根据任务配置推导首次运行时间，确保调度器能从 due 查询中读到新任务。 */
@@ -222,7 +355,7 @@ export class TimeOrchestrationStore {
       {
         id: reminder.id,
         title: reminder.title,
-        trigger_at: reminder.triggerAt,
+        trigger_at: normalizeReminderTriggerAt(reminder.triggerAt, reminder.timezone) ?? reminder.triggerAt,
         timezone: reminder.timezone,
         status: reminder.status,
         updated_at: reminder.updatedAt,
@@ -256,15 +389,26 @@ export class TimeOrchestrationStore {
    */
   async listDueReminders(at: Date): Promise<Reminder[]> {
     console.info("[time-store] 读取到期提醒", { at: at.toISOString() });
-    return this.database.queryAll(
+    const candidates = this.database.queryAll(
       `SELECT payload_json FROM reminders
-       WHERE status = @status AND trigger_at <= @trigger_at
+       WHERE status = @status
        ORDER BY trigger_at ASC`,
       {
         status: "scheduled",
-        trigger_at: at.toISOString(),
       },
     ).map((row) => parseReminder(row));
+    const due = candidates
+      .map((reminder) => ({ reminder, triggerTime: resolveReminderTriggerTime(reminder) }))
+      .filter((item): item is { reminder: Reminder; triggerTime: number } => item.triggerTime !== undefined)
+      .filter((item) => item.triggerTime <= at.getTime())
+      .sort((left, right) => left.triggerTime - right.triggerTime)
+      .map((item) => item.reminder);
+    console.info("[time-store] 完成到期提醒筛选", {
+      at: at.toISOString(),
+      candidates: candidates.length,
+      due: due.length,
+    });
+    return due;
   }
 
   /**

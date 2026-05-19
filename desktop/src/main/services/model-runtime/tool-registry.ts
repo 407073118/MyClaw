@@ -8,7 +8,7 @@ import { type BuildToolSchemaOptions, type OpenAIFunctionTool, buildToolSchemas 
 
 function inferToolSource(name: string): CanonicalToolSpec["source"] {
   if (name.startsWith("skill_invoke__") || name === "skill_view") return "skill";
-  if (name.startsWith("mcp__")) return "mcp";
+  if (name.startsWith("mcp__") || name.startsWith("mcp_project_")) return "mcp";
   return "builtin";
 }
 

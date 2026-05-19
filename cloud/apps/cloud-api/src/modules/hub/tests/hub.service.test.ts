@@ -9,6 +9,7 @@ function createArtifactServiceMock() {
     storeSkillArtifact: vi.fn(async ({ releaseId }: { releaseId: string }) => ({
       fileName: `${releaseId}.zip`,
       fileSize: 128,
+      sha256: "b".repeat(64),
       storageKey: `/group1/M00/00/16/${releaseId}.zip`,
       storageUrl: `http://127.0.0.1:8080/group1/M00/00/16/${releaseId}.zip`,
     })),
@@ -113,6 +114,7 @@ describe("hub service", () => {
       artifact: {
         fileName: "employee-onboarding.zip",
         fileSize: 128,
+        sha256: "b".repeat(64),
         downloadUrl: "/api/artifacts/download/release-employee-onboarding-assistant-1.1.0",
         expiresIn: 300,
       },
@@ -148,6 +150,55 @@ describe("hub service", () => {
     expect(createRelease).toHaveBeenCalledTimes(1);
   });
 
+  it("auto increments employee package release version when version is omitted", async () => {
+    const createRelease = vi.fn(async (input: any) => ({
+      itemId: input.itemId,
+      releaseId: input.releaseId,
+      version: input.version,
+      latestVersion: input.version,
+      manifest: input.manifest,
+      artifact: {
+        fileName: "employee-onboarding.zip",
+        fileSize: 128,
+        sha256: "b".repeat(64),
+        downloadUrl: "/api/artifacts/download/release-employee-onboarding-assistant-1.0.2",
+        expiresIn: 300,
+      },
+    }));
+
+    const service = new HubService(
+      {
+        list: async () => [],
+        findById: async () => ({
+          id: "employee-onboarding-assistant",
+          type: "employee-package" as const,
+          name: "Onboarding Assistant",
+          summary: "Employee package",
+          description: "Employee package for onboarding",
+          latestVersion: "1.0.1",
+          releases: [],
+        }),
+        createItem: unusedCreateItem,
+        createRelease,
+      },
+      createArtifactServiceMock() as any,
+    );
+
+    const result = await service.publishEmployeePackageRelease("employee-onboarding-assistant", {
+      releaseNotes: "Employee package release",
+      fileName: "employee-onboarding.zip",
+      contentType: "application/zip",
+      fileBytes: Buffer.from("zip-data"),
+    });
+
+    expect(result.version).toBe("1.0.2");
+    expect(result.releaseId).toBe("release-employee-onboarding-assistant-1.0.2");
+    expect(createRelease).toHaveBeenCalledWith(expect.objectContaining({
+      version: "1.0.2",
+      latestVersion: "1.0.2",
+    }));
+  });
+
   it("publishes a workflow package release", async () => {
     const createRelease = vi.fn(async (input: any) => ({
       itemId: input.itemId,
@@ -158,6 +209,7 @@ describe("hub service", () => {
       artifact: {
         fileName: "workflow-onboarding.zip",
         fileSize: 128,
+        sha256: "b".repeat(64),
         downloadUrl: "/api/artifacts/download/release-workflow-onboarding-1.1.0",
         expiresIn: 300,
       },

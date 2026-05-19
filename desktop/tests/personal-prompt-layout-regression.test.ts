@@ -109,7 +109,13 @@ describe("personal prompt desktop layout regressions", () => {
   });
 
   it("uses container-aware responsive rules so the shell can collapse the layout before content overlaps", () => {
-    const { container } = render(React.createElement(PersonalPromptPage));
+    const { container } = render(
+      React.createElement(
+        MemoryRouter,
+        undefined,
+        React.createElement(PersonalPromptPage),
+      ),
+    );
     const styleTag = container.querySelector("style");
 
     expect(styleTag?.textContent).toContain("container-type: inline-size");

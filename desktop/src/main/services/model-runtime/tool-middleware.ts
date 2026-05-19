@@ -8,6 +8,11 @@ import type {
 
 import { resolveToolCompileMode } from "./turn-execution-plan-resolver";
 import { hashCacheStableValue } from "./provider-cache-orchestrator";
+import {
+  compileToolsForProviderPolicy,
+  ensureStrictToolSchema,
+  type ProviderToolPolicy,
+} from "./provider-tool-policy";
 
 export type CompiledToolBundle = {
   target: ProviderFamily;
@@ -15,6 +20,7 @@ export type CompiledToolBundle = {
   tools: unknown[];
   registry: CanonicalToolSpec[];
   toolBundleHash?: string;
+  providerToolPolicy?: ProviderToolPolicy;
 };
 
 export type NativeFileSearchConfig = {
@@ -73,6 +79,41 @@ export class ToolMiddleware {
     };
   }
 
+  /** 按 ProviderToolPolicy 编译最终 wire tools，供 canonical provider driver 直接使用。 */
+  compileForPolicy(
+    specs: CanonicalToolSpec[],
+    target: ProviderFamily,
+    policy: ProviderToolPolicy,
+  ): CompiledToolBundle {
+    const compileMode = resolveToolCompileMode(target);
+    const stableSpecs = [...specs].sort((left, right) => {
+      const leftKey = `${left.source}:${left.id}:${left.name}:${left.description}`;
+      const rightKey = `${right.source}:${right.id}:${right.name}:${right.description}`;
+      return leftKey.localeCompare(rightKey);
+    });
+    const tools = compileToolsForProviderPolicy(stableSpecs, policy);
+    const toolBundleHash = hashCacheStableValue(tools);
+    console.info("[tool-middleware] 已按 provider tool policy 生成最终工具 wire body", {
+      target,
+      protocolTarget: policy.protocolTarget,
+      shape: policy.toolDefinitionShape,
+      schemaCompatibility: policy.schemaCompatibility,
+      strictMode: policy.strictMode,
+      toolCount: tools.length,
+      registryCount: stableSpecs.length,
+      toolBundleHash,
+    });
+
+    return {
+      target,
+      compileMode,
+      tools,
+      registry: specs,
+      toolBundleHash,
+      providerToolPolicy: policy,
+    };
+  }
+
   /** 请求工具审批；默认全部批准，方便 legacy shim 平滑接入。 */
   async requestApproval(calls: CanonicalToolCall[]): Promise<Array<{ toolCallId: string; approved: boolean; reason?: string | null }>> {
     if (this.delegates.requestApproval) {
@@ -118,11 +159,7 @@ export function ensureSchema(inputSchema: Record<string, unknown>): Record<strin
 
 /** 为 strict 编译模式补齐 additionalProperties=false。 */
 export function ensureStrictSchema(inputSchema: Record<string, unknown>): Record<string, unknown> {
-  const schema = ensureSchema(inputSchema);
-  if (schema.type === "object" && schema.additionalProperties === undefined) {
-    schema.additionalProperties = false;
-  }
-  return schema;
+  return ensureStrictToolSchema(inputSchema);
 }
 
 /** 创建默认工具中间层。 */

@@ -131,6 +131,7 @@ export class PrismaHubRepository implements HubRepository {
       version: input.version,
       artifactFileName: input.artifact.fileName,
       artifactFileSize: input.artifact.fileSize,
+      artifactSha256: input.artifact.sha256,
       artifactStoragePath: input.artifact.storagePath,
       artifactDownloadUrl: input.artifact.downloadUrl,
       artifactDownloadExpiresIn: input.artifact.downloadExpiresIn,
@@ -145,6 +146,7 @@ export class PrismaHubRepository implements HubRepository {
           manifestJson: input.manifest,
           artifactFileName: input.artifact.fileName,
           artifactFileSize: input.artifact.fileSize,
+          artifactSha256: input.artifact.sha256,
           artifactStoragePath: input.artifact.storagePath,
           artifactDownloadUrl: input.artifact.downloadUrl,
           artifactDownloadExpires: input.artifact.downloadExpiresIn,
@@ -172,6 +174,7 @@ export class PrismaHubRepository implements HubRepository {
       artifact: {
         fileName: input.artifact.fileName,
         fileSize: input.artifact.fileSize,
+        sha256: input.artifact.sha256,
         downloadUrl: input.artifact.downloadUrl,
         expiresIn: input.artifact.downloadExpiresIn,
       }

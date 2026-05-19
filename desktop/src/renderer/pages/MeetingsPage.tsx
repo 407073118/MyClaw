@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Mic, Trash2, Settings2, Radio, ArrowLeft, AlertCircle } from "lucide-react";
+import { CalendarPlus, Mic, Trash2, Settings2, Radio, ArrowLeft, AlertCircle } from "lucide-react";
 
 import type { MeetingRecord, MeetingStatus, StructuredTranscript } from "@shared/contracts";
 
@@ -388,10 +388,11 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
   }
 
   const processing = meeting.status === "transcribing" || meeting.status === "summarizing";
+  const activeTabLabel = tab === "transcript" ? "转写稿" : "会议纪要";
 
   return (
-    <div className="page-shell">
-      <header className="page-header page-header--sticky">
+    <div className="page-shell meeting-detail-page" data-testid="meeting-detail-page">
+      <header className="page-header page-header--sticky meeting-detail-header">
         <div className="page-header__lead">
           <div className="page-header__eyebrow">
             <Mic size={14} />
@@ -406,8 +407,8 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
             </span>
           </p>
         </div>
-        <div className="page-header__actions">
-          <button type="button" className="btn-toolbar" onClick={onBack}>
+        <div className="page-header__actions meeting-detail-actions" data-testid="meeting-detail-actions">
+          <button type="button" className="btn-ghost" onClick={onBack}>
             <ArrowLeft size={14} />返回
           </button>
           <button
@@ -416,6 +417,7 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
             onClick={handleBuildFollowUps}
             disabled={processing || importingFollowUps}
           >
+            <CalendarPlus size={14} />
             {importingFollowUps ? "导入中..." : "导入到日程规划"}
           </button>
           <button type="button" className="btn-ghost btn-ghost--danger" onClick={handleDelete}>
@@ -423,7 +425,7 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
           </button>
         </div>
       </header>
-      <main className="page-content">
+      <main className="page-content meeting-detail-main">
         {processing && (
           <div className="banner banner--warning">
             <AlertCircle size={16} />
@@ -437,48 +439,64 @@ function MeetingDetailView({ meetingId, onBack, onDeleted }: DetailViewProps) {
           </div>
         )}
 
-        {audioUrl && (
-          <AudioPlayer src={audioUrl} seekToMs={seekMs} onTimeUpdate={setCurrentMs} />
-        )}
+        <section className="meeting-detail-console" data-testid="meeting-detail-console">
+          {audioUrl ? (
+            <AudioPlayer src={audioUrl} seekToMs={seekMs} onTimeUpdate={setCurrentMs} />
+          ) : (
+            <div className="meeting-audio-placeholder">
+              {processing ? "音频正在整理中" : "暂无可回放音频"}
+            </div>
+          )}
 
-        <div className="meeting-detail-tabs">
-          <button
-            type="button"
-            className={`btn-toolbar meeting-detail-tab${tab === "transcript" ? " is-active" : ""}`}
-            onClick={() => setTab("transcript")}
-          >
-            转写稿
-          </button>
-          <button
-            type="button"
-            className={`btn-toolbar meeting-detail-tab${tab === "summary" ? " is-active" : ""}`}
-            onClick={() => setTab("summary")}
-          >
-            会议纪要
-          </button>
-        </div>
+          <div className="meeting-detail-console__switcher">
+            <div>
+              <span className="meeting-detail-console__eyebrow">内容视图</span>
+              <strong>{activeTabLabel}</strong>
+            </div>
+            <div className="meeting-detail-tabs" role="group" aria-label="会议内容切换">
+              <button
+                type="button"
+                aria-pressed={tab === "transcript"}
+                className={`meeting-detail-tab${tab === "transcript" ? " is-active" : ""}`}
+                onClick={() => setTab("transcript")}
+              >
+                转写稿
+              </button>
+              <button
+                type="button"
+                aria-pressed={tab === "summary"}
+                className={`meeting-detail-tab${tab === "summary" ? " is-active" : ""}`}
+                onClick={() => setTab("summary")}
+              >
+                会议纪要
+              </button>
+            </div>
+          </div>
+        </section>
 
-        {tab === "transcript" ? (
-          transcript ? (
-            <TranscriptView
-              transcript={transcript}
-              speakerLabels={meeting.speakerLabels}
-              currentTimeMs={currentMs}
-              onSeek={setSeekMs}
-              onUpdateSpeaker={handleUpdateSpeaker}
-            />
+        <section className="meeting-detail-content" data-testid="meeting-detail-content" aria-label={activeTabLabel}>
+          {tab === "transcript" ? (
+            transcript ? (
+              <TranscriptView
+                transcript={transcript}
+                speakerLabels={meeting.speakerLabels}
+                currentTimeMs={currentMs}
+                onSeek={setSeekMs}
+                onUpdateSpeaker={handleUpdateSpeaker}
+              />
+            ) : (
+              <div className="meeting-state-placeholder">
+                {processing ? "转写稿尚未生成..." : "没有可用的转写稿"}
+              </div>
+            )
+          ) : summary ? (
+            <MarkdownView source={summary} className="meeting-summary" />
           ) : (
             <div className="meeting-state-placeholder">
-              {processing ? "转写稿尚未生成..." : "没有可用的转写稿"}
+              {processing ? "会议纪要正在生成..." : "没有可用的会议纪要"}
             </div>
-          )
-        ) : summary ? (
-          <MarkdownView source={summary} className="meeting-summary" />
-        ) : (
-          <div className="meeting-state-placeholder">
-            {processing ? "会议纪要正在生成..." : "没有可用的会议纪要"}
-          </div>
-        )}
+          )}
+        </section>
       </main>
     </div>
   );

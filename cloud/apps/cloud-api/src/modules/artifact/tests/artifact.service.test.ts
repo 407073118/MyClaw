@@ -17,6 +17,7 @@ describe("artifact service", () => {
         findUnique: vi.fn(async () => ({
           artifactFileName: "security-audit.zip",
           artifactFileSize: 256,
+          artifactSha256: "a".repeat(64),
           artifactStoragePath: "/group1/M00/00/16/security-audit.zip",
           artifactDownloadUrl: "/api/artifacts/download/release-skill-security-audit-2.2.0",
         })),
@@ -32,6 +33,7 @@ describe("artifact service", () => {
     expect(artifact).toEqual({
       fileName: "security-audit.zip",
       fileSize: 256,
+      sha256: "a".repeat(64),
       storageKey: "/group1/M00/00/16/security-audit.zip",
       storageUrl: "/api/artifacts/download/release-skill-security-audit-2.2.0",
     });

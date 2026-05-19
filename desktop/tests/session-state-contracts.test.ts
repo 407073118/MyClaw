@@ -2,10 +2,23 @@ import { describe, expect, it } from "vitest";
 
 import {
   SILICON_PERSON_STATUS_VALUES,
+  TASK_STATUS_VALUES,
   resolveSiliconPersonCurrentSessionId,
 } from "@shared/contracts";
 
 describe("Session state contracts", () => {
+  it("exports the Task V2 interrupt-aware status vocabulary", () => {
+    expect(TASK_STATUS_VALUES).toEqual([
+      "pending",
+      "in_progress",
+      "waiting_user",
+      "blocked",
+      "failed",
+      "completed",
+      "cancelled",
+    ]);
+  });
+
   it("exports the shared silicon session status vocabulary", () => {
     expect(SILICON_PERSON_STATUS_VALUES).toEqual(
       expect.arrayContaining([

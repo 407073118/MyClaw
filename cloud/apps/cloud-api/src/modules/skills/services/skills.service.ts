@@ -9,6 +9,7 @@ import type {
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 
 import { ArtifactService } from "../../artifact/services/artifact.service";
+import { resolveReleaseVersion } from "../../releases/versioning";
 import { SKILLS_REPOSITORY, type SkillsRepository } from "../ports/skills.repository";
 
 type PublishSkillReleaseInput = {
@@ -17,7 +18,7 @@ type PublishSkillReleaseInput = {
   fileName: string;
   readme: string;
   releaseNotes: string;
-  version: string;
+  version?: string;
 };
 
 @Injectable()
@@ -75,7 +76,16 @@ export class SkillsService {
       throw new BadRequestException("skill_package_must_be_zip");
     }
 
-    const version = input.version.trim();
+    const version = resolveReleaseVersion({
+      requestedVersion: input.version,
+      latestVersion: skill.latestVersion
+    });
+    console.info("[skills-service] 解析发布版本号", {
+      skillId,
+      requestedVersion: input.version ?? null,
+      latestVersion: skill.latestVersion ?? null,
+      resolvedVersion: version
+    });
     const releaseNotes = input.releaseNotes.trim();
     const releaseId = this.buildReleaseId(skillId, version);
     const storedArtifact = await this.artifactService.storeSkillArtifact({
@@ -99,6 +109,7 @@ export class SkillsService {
       artifact: {
         fileName: storedArtifact.fileName,
         fileSize: storedArtifact.fileSize,
+        sha256: storedArtifact.sha256,
         storagePath: storedArtifact.storageKey,
         downloadUrl: downloadToken.downloadUrl,
         downloadExpiresIn: downloadToken.expiresIn

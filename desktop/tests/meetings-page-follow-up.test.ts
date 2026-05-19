@@ -135,6 +135,15 @@ describe("MeetingsPage follow-up import", () => {
   });
 
   it("uses meeting layout classes for list title and detail tabs", async () => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn(() => "blob:meeting-audio"),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
     Object.defineProperty(window, "myClawAPI", {
       configurable: true,
       value: {
@@ -171,7 +180,7 @@ describe("MeetingsPage follow-up import", () => {
           delete: vi.fn(async () => ({ ok: true })),
           updateSpeaker: vi.fn(async () => ({ ok: true })),
           updateTitle: vi.fn(async () => ({ ok: true })),
-          readAudio: vi.fn(async () => ({ buffer: null })),
+          readAudio: vi.fn(async () => ({ buffer: new ArrayBuffer(16) })),
           onEvent: vi.fn(() => () => undefined),
         },
       },
@@ -221,6 +230,13 @@ describe("MeetingsPage follow-up import", () => {
     );
 
     await waitFor(() => expect(screen.getByRole("button", { name: "转写稿" })).toBeTruthy());
+    expect(screen.getByTestId("meeting-detail-page")).toBeTruthy();
+    expect(screen.getByTestId("meeting-detail-actions").className).toContain("meeting-detail-actions");
+    await waitFor(() => expect(screen.getByTestId("meeting-detail-console")).toBeTruthy());
+    expect(screen.getByTestId("meeting-audio-player").className).toContain("meeting-audio-player--compact");
+    expect(screen.getByTestId("meeting-audio-transport")).toBeTruthy();
+    expect(screen.getByTestId("meeting-speed-segmented")).toBeTruthy();
+    expect(screen.getByTestId("meeting-detail-content")).toBeTruthy();
     expect(screen.getByRole("button", { name: "转写稿" }).className).toContain("meeting-detail-tab");
     expect(screen.getByRole("button", { name: "转写稿" }).className).toContain("is-active");
     expect(screen.getByRole("button", { name: "会议纪要" }).className).toContain("meeting-detail-tab");

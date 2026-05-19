@@ -15,6 +15,10 @@
 3. `server/api/`
 4. 目标目录：`components` / `composables`
 
+涉及管理台页面交互或视觉规范时，先读：
+
+- `../../docs/cloud-web-ui-guidelines.md`
+
 ## 改动规则
 
 - 页面请求优先走 `server/api`

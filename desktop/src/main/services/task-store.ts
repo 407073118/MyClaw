@@ -10,6 +10,17 @@ import type { Task, TaskStatus } from "@shared/contracts";
 import { buildTaskFingerprint, coalesceTasks } from "@shared/task-logical";
 
 const MAX_TASKS_PER_SESSION = 200;
+const NON_RUNNABLE_TERMINAL_STATUSES = new Set<TaskStatus>([
+  "completed",
+  "blocked",
+  "failed",
+  "cancelled",
+]);
+
+/** 判断任务是否已经不可继续，避免复用失败、取消或阻塞的旧逻辑任务。 */
+function isNonRunnableTerminalStatus(status: TaskStatus): boolean {
+  return NON_RUNNABLE_TERMINAL_STATUSES.has(status);
+}
 
 // ---------------------------------------------------------------------------
 // Input 类型
@@ -62,7 +73,7 @@ export function createTask(
   const normalizedTasks = compacted.tasks;
   const inputFingerprint = buildTaskFingerprint(input);
   const existing = normalizedTasks.find(
-    (task) => task.status !== "completed" && buildTaskFingerprint(task) === inputFingerprint,
+    (task) => !isNonRunnableTerminalStatus(task.status) && buildTaskFingerprint(task) === inputFingerprint,
   );
   if (existing) {
     console.info("[task-store] 复用已有逻辑任务，跳过重复创建", {
@@ -76,7 +87,7 @@ export function createTask(
   // 保证默认按创建顺序逐个执行。传入 blockedBy: [] 表示显式无依赖。
   let resolvedBlockedBy = input.blockedBy;
   if (resolvedBlockedBy === undefined) {
-    const lastPending = [...normalizedTasks].reverse().find((t) => t.status !== "completed");
+    const lastPending = [...normalizedTasks].reverse().find((t) => !isNonRunnableTerminalStatus(t.status));
     resolvedBlockedBy = lastPending ? [lastPending.id] : [];
   }
 
@@ -102,7 +113,7 @@ export function createTask(
 
   // 超出上限时淘汰已完成任务，若无则淘汰最早的任务
   if (next.length > MAX_TASKS_PER_SESSION) {
-    const completedIdx = next.findIndex((t) => t.status === "completed");
+    const completedIdx = next.findIndex((t) => isNonRunnableTerminalStatus(t.status));
     if (completedIdx >= 0) {
       next.splice(completedIdx, 1);
     } else {
@@ -200,7 +211,7 @@ export function clearCompletedTasks(tasks: Task[]): {
   cleared: number;
 } {
   const compacted = coalesceTasks(tasks).tasks;
-  const remaining = compacted.filter((t) => t.status !== "completed");
+  const remaining = compacted.filter((t) => !isNonRunnableTerminalStatus(t.status));
   console.info("[task-store] 清理已完成任务", {
     rawCount: tasks.length,
     compactedCount: compacted.length,

@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 const mocks = vi.hoisted(() => {
   const workspace = {
@@ -59,5 +59,40 @@ describe("PersonalPromptPage layout contract", () => {
     expect(headerText?.contains(metaInline)).toBe(true);
     expect(styleText).toContain("grid-template-rows: minmax(0, 1fr)");
     expect(styleText).not.toContain("calc(100vh - 190px)");
+  });
+
+  it("provides a visible route back to account settings", async () => {
+    const { default: PersonalPromptPage } = await import("../src/renderer/pages/PersonalPromptPage");
+
+    const { container } = render(
+      React.createElement(
+        MemoryRouter,
+        { initialEntries: ["/me/prompt"] },
+        React.createElement(
+          Routes,
+          undefined,
+          React.createElement(Route, {
+            path: "/me/prompt",
+            element: React.createElement(PersonalPromptPage),
+          }),
+          React.createElement(Route, {
+            path: "/settings",
+            element: React.createElement("div", { "data-testid": "settings-route" }, "设置页"),
+          }),
+        ),
+      ),
+    );
+
+    const backLink = screen.getByRole("link", { name: "返回设置" });
+    const actions = container.querySelector(".personal-prompt-actions");
+    const saveButton = screen.getByTestId("personal-prompt-save");
+
+    expect(backLink).toBeTruthy();
+    expect(actions?.contains(backLink)).toBe(true);
+    expect(Array.from(actions?.children ?? []).indexOf(backLink)).toBeLessThan(
+      Array.from(actions?.children ?? []).indexOf(saveButton),
+    );
+    fireEvent.click(backLink);
+    expect(screen.getByTestId("settings-route")).toBeTruthy();
   });
 });

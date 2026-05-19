@@ -7,6 +7,7 @@ import type { SkillArtifactReadStream, StoredSkillArtifact } from "../ports/arti
 import { ArtifactController } from "../controllers/artifact.controller";
 import { ArtifactService } from "../services/artifact.service";
 
+// 创建响应对象 mock，便于验证下载接口写入的响应头和响应体。
 function createResponseMock() {
   const headers = new Map<string, string>();
   const bodyChunks: Buffer[] = [];
@@ -51,6 +52,7 @@ function createResponseMock() {
   };
 }
 
+// 创建内存读取流，模拟对象存储返回的工件内容。
 function createReadStream(text: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   return new ReadableStream<Uint8Array>({
@@ -66,6 +68,7 @@ describe("artifact controller", () => {
     const storedArtifact: StoredSkillArtifact = {
       fileName: "security-audit.zip",
       fileSize: 12,
+      sha256: "d0f4c4f5c7b7d7e1c8c2b9f6a7d8e9f00112233445566778899aabbccddeeff0",
       storageKey: "/group1/M00/00/16/security-audit.zip",
       storageUrl: "http://127.0.0.1:8080/group1/M00/00/16/security-audit.zip"
     };

@@ -17,7 +17,6 @@ import { parseXlsxBuffer, xlsxParser, xlsParser, xlsmParser } from "../src/main/
 import type { SheetNode } from "@shared/contracts";
 
 // We use the same xlsx package that the parser uses internally, just to author fixtures.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const XLSX = require("xlsx") as typeof import("xlsx");
 
 /** Build an xlsx buffer with the given sheets. Optionally attach !merges on a specific sheet. */

@@ -46,6 +46,8 @@ export type SiliconPerson = {
   rolePersona?: string;
   /** 员工身份人格定义，包含角色、行为风格与个性描述。 */
   soul?: string;
+  /** 用户本地上传头像的 data URL；为空时由客户端使用离线默认头像。 */
+  avatarDataUrl?: string | null;
   /** 员工使用的模型 ID，对应用户已配置的 ModelProfile.id。为空时使用全局默认模型。 */
   modelProfileId?: string;
   /** 员工推理等级: low（快速）、medium（思考）、high（深度）、xhigh（极深）。为空时默认 medium。 */

@@ -44,6 +44,7 @@ export type HubReleaseUploadResponse<TManifest extends HubManifest = HubManifest
   artifact: {
     fileName: string;
     fileSize: number;
+    sha256: string;
     downloadUrl: string;
     expiresIn: number;
   };

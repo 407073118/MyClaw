@@ -1,5 +1,5 @@
-import React, { useEffect } from "react";
-import { Power, ShieldCheck, Wrench } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { AlertCircle, Power, ShieldCheck, Wrench } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspace";
 
 type ToolRiskCategory = "read" | "write" | "exec" | "install" | "network";
@@ -60,7 +60,17 @@ const BUILTIN_TITLES: Record<string, string> = {
   process: "进程",
   http: "网络",
   archive: "归档",
+  task: "任务",
+  time: "日程",
+  web: "网页检索",
+  browser: "浏览器",
+  ppt: "演示文稿",
+  skill: "技能",
 };
+
+function builtinGroupTitle(group: string): string {
+  return BUILTIN_TITLES[group] ?? group;
+}
 
 function formatApprovalMode(mode: BuiltinToolApprovalMode) {
   return approvalModeLabel(mode);
@@ -68,11 +78,26 @@ function formatApprovalMode(mode: BuiltinToolApprovalMode) {
 
 export default function ToolsPage() {
   const workspace = useWorkspaceStore();
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   /** 初始化时拉取内置工具与 MCP 工具，两类数据都作为桌面列表页展示源。 */
   useEffect(() => {
-    if ((workspace.builtinTools ?? []).length === 0) void workspace.loadBuiltinTools();
-    if ((workspace.mcpTools ?? []).length === 0) void workspace.loadMcpTools();
+    let alive = true;
+    async function loadTools() {
+      try {
+        if ((workspace.builtinTools ?? []).length === 0) await workspace.loadBuiltinTools();
+        if ((workspace.mcpTools ?? []).length === 0) await workspace.loadMcpTools();
+        if (alive) setErrorMessage(null);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error("[tools-page] 加载工具列表失败", { error: detail });
+        if (alive) setErrorMessage(`工具列表加载失败：${detail}`);
+      }
+    }
+    void loadTools();
+    return () => {
+      alive = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -91,18 +116,19 @@ export default function ToolsPage() {
     const groups = [...(workspace.builtinTools ?? [])]
       .map<ToolCard>((tool) => ({ ...tool, kind: "builtin" }))
       .reduce<Array<{ id: string; label: string; title: string; items: ToolCard[] }>>((result, tool) => {
-        const groupId = `builtin-${(tool as ResolvedBuiltinTool).group}`;
-        const existing = result.find((item) => item.id === groupId);
         const builtinTool = tool as ResolvedBuiltinTool;
+        const groupId = `builtin-${builtinTool.group}`;
+        const existing = result.find((item) => item.id === groupId);
         if (existing) {
           existing.items.push(tool);
           return result;
         }
 
+        const groupTitle = builtinGroupTitle(builtinTool.group);
         result.push({
           id: groupId,
-          label: builtinTool.group,
-          title: BUILTIN_TITLES[builtinTool.group] ?? builtinTool.group,
+          label: groupTitle,
+          title: groupTitle,
           items: [tool],
         });
         return result;
@@ -142,8 +168,11 @@ export default function ToolsPage() {
       } else {
         await workspace.updateMcpToolPreference(tool.id, payload);
       }
+      setErrorMessage(null);
     } catch (error) {
-      console.error("[tools-page] 更新工具启用状态失败", { toolId: tool.id, error: String(error) });
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error("[tools-page] 更新工具启用状态失败", { toolId: tool.id, error: detail });
+      setErrorMessage(`更新工具启用状态失败：${detail}`);
     }
   }
 
@@ -166,8 +195,11 @@ export default function ToolsPage() {
       } else {
         await workspace.updateMcpToolPreference(tool.id, payload);
       }
+      setErrorMessage(null);
     } catch (error) {
-      console.error("[tools-page] 更新工具模型可见性失败", { toolId: tool.id, error: String(error) });
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error("[tools-page] 更新工具模型可见性失败", { toolId: tool.id, error: detail });
+      setErrorMessage(`更新工具模型可见性失败：${detail}`);
     }
   }
 
@@ -193,6 +225,13 @@ export default function ToolsPage() {
       </header>
 
       <main className="page-content">
+        {errorMessage ? (
+          <div className="banner banner--error tools-error-banner" role="alert">
+            <AlertCircle size={16} />
+            <span>{errorMessage}</span>
+          </div>
+        ) : null}
+
         {groupedTools.length === 0 ? (
           <section className="empty-state">
             <Wrench size={32} className="empty-state__icon" />
@@ -221,7 +260,7 @@ export default function ToolsPage() {
                     const isBuiltin = tool.kind === "builtin";
                     const builtinTool = tool as ResolvedBuiltinTool;
                     const mcpTool = tool as ResolvedMcpTool;
-                    const sourceLabel = isBuiltin ? `内置分组：${builtinTool.group}` : `来源服务器：${mcpTool.serverId}`;
+                    const sourceLabel = isBuiltin ? `内置分组：${builtinGroupTitle(builtinTool.group)}` : `来源服务器：${mcpTool.serverId}`;
                     const scopeLabel = isBuiltin ? "内置" : "MCP";
                     const scopeTone = isBuiltin ? "accent" : "green";
 
@@ -240,9 +279,9 @@ export default function ToolsPage() {
                             <span className={`tag tag--${scopeTone}`}>{scopeLabel}</span>
                             <span className={`tag tag--${riskTone(tool.risk)}`}>{riskLabel(tool.risk)}</span>
                             {tool.exposedToModel ? (
-                              <span className="tag tag--green">已暴露</span>
+                              <span className="tag tag--green" title="工具中心偏好；实际模型调用还会经过 provider 策略过滤">已暴露</span>
                             ) : (
-                              <span className="tag tag--muted">未暴露</span>
+                              <span className="tag tag--muted" title="工具中心偏好；关闭后模型调用会被执行层拒绝">未暴露</span>
                             )}
                           </div>
                           <div className="list-row__description">{tool.description}</div>
@@ -263,6 +302,7 @@ export default function ToolsPage() {
                           <button
                             type="button"
                             className="btn-toolbar tools-toggle-btn"
+                            aria-pressed={tool.enabled}
                             onClick={() => void toggleEnabled(tool, !tool.enabled)}
                           >
                             <Power size={12} />
@@ -272,6 +312,8 @@ export default function ToolsPage() {
                             type="button"
                             className="btn-toolbar tools-toggle-btn"
                             disabled={!tool.enabled}
+                            aria-pressed={tool.exposedToModel}
+                            title={tool.enabled ? undefined : "需先启用工具"}
                             onClick={() => void toggleExposed(tool, !tool.exposedToModel)}
                           >
                             <ShieldCheck size={12} />
@@ -323,6 +365,10 @@ export default function ToolsPage() {
           display: flex;
           flex-direction: column;
           gap: 16px;
+        }
+
+        .tools-error-banner {
+          margin-bottom: 16px;
         }
 
         .tools-group {

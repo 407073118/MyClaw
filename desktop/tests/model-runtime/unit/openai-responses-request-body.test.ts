@@ -328,6 +328,7 @@ describe("openai responses request body", () => {
           vectorStoreIds: ["vs_qwen_1"],
         },
         previousResponseId: "resp_qwen_prev",
+        enableParallelToolCalls: true,
       },
     );
 
@@ -374,6 +375,20 @@ describe("openai responses request body", () => {
       enable_thinking: true,
       thinking_budget: 4096,
     });
+  });
+
+  it("does not enable Qwen parallel tool calls unless provider policy allows them", () => {
+    const body = buildOpenAiResponsesRequestBody(
+      "qwen-max",
+      [{ role: "user", content: "search this" }],
+      [{ type: "web_search" }],
+      "medium",
+      {
+        providerFamily: "qwen-native",
+      },
+    );
+
+    expect(body).not.toHaveProperty("parallel_tool_calls");
   });
 
   it("enables parallel tool calls for br-minimax deep reasoning responses turns with tools", () => {

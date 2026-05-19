@@ -46,7 +46,7 @@ import { MeetingRecorder } from "./services/meeting-recorder";
 import { callModel } from "./services/model-client";
 import { createTimeApplicationService } from "./services/time-application-service";
 import { createTimeJobExecutor } from "./services/time-job-executor";
-import { createTimeNotificationService } from "./services/time-notification-service";
+import { configureNativeNotificationIdentity, createTimeNotificationService } from "./services/time-notification-service";
 import { createTimeScheduler } from "./services/time-scheduler";
 import { TimeOrchestrationStore } from "./services/time-orchestration-store";
 import { MemoryVaultService } from "./services/memory-vault/service";
@@ -59,6 +59,11 @@ import { createStandingOrderService } from "./services/standing-order-service";
 import { createLongRunLedger } from "./services/long-run-ledger";
 import { createAwarenessRuntime } from "./services/awareness-runtime";
 import { createAwarenessSourceAdapter, type AwarenessSourceSnapshot } from "./services/awareness-source-adapter";
+import { ProjectCapabilityDatabase } from "./services/project-capability-database";
+import { ProjectCapabilityService } from "./services/project-capability-service";
+import { ProjectSkillInstaller } from "./services/project-skill-installer";
+import { CapabilityBundleResolver } from "./services/capability-bundle-resolver";
+import { ProjectMcpRuntimeService } from "./services/project-mcp-runtime-service";
 
 const log = createLogger("main");
 
@@ -68,21 +73,35 @@ type ToolPreferenceSnapshot = Record<string, {
   approvalModeOverride?: unknown;
 }>;
 
+type ToolPreferenceSnapshotResult =
+  | { ok: true; prefs: ToolPreferenceSnapshot }
+  | { ok: false; error: string };
+
 /** 读取工具中心偏好文件，供列表展示与模型暴露快照共用。 */
-function loadToolPreferenceSnapshot(prefsPath: string): ToolPreferenceSnapshot {
+function loadToolPreferenceSnapshot(prefsPath: string): ToolPreferenceSnapshotResult {
   try {
     if (existsSync(prefsPath)) {
-      return JSON.parse(readFileSync(prefsPath, "utf8")) as ToolPreferenceSnapshot;
+      return { ok: true, prefs: JSON.parse(readFileSync(prefsPath, "utf8")) as ToolPreferenceSnapshot };
     }
   } catch (error) {
-    console.warn("[main] 读取工具偏好失败，将使用默认工具配置", { prefsPath, error: String(error) });
+    console.warn("[main] 读取工具偏好失败，已按安全策略隐藏相关工具", { prefsPath, error: String(error) });
+    return { ok: false, error: String(error) };
   }
-  return {};
+  return { ok: true, prefs: {} };
 }
 
 /** 合并内置工具默认定义与用户偏好，保证工具中心状态可被运行时读取。 */
 function resolveBuiltinToolsWithPreferences(prefsPath: string): ResolvedBuiltinTool[] {
-  const prefs = loadToolPreferenceSnapshot(prefsPath);
+  const snapshot = loadToolPreferenceSnapshot(prefsPath);
+  if (!snapshot.ok) {
+    return listBuiltinToolDefinitions().map((tool) => ({
+      ...tool,
+      enabled: false,
+      exposedToModel: false,
+      effectiveApprovalMode: "always-ask",
+    }));
+  }
+  const prefs = snapshot.prefs;
   return listBuiltinToolDefinitions().map((tool) => {
     const pref = prefs[tool.id];
     return {
@@ -126,6 +145,11 @@ protocol.registerSchemesAsPrivileged([
 // 必须在 app.whenReady() 之前把 Electron userData 重定向到便携目录
 redirectUserData();
 
+configureNativeNotificationIdentity({
+  platform: process.platform,
+  setAppUserModelId: app.setAppUserModelId.bind(app),
+});
+
 // ---------------------------------------------------------------------------
 // 窗口管理
 // ---------------------------------------------------------------------------
@@ -133,6 +157,21 @@ redirectUserData();
 let mainWindow: BrowserWindow | null = null;
 let runtimeContext: RuntimeContext | null = null;
 let panelViewManager: PanelViewManager | null = null;
+
+/** 用户点击系统提醒后拉起主窗口，确保像桌面 IM 通知一样可回到上下文。 */
+function focusMainWindowFromNotification(): void {
+  console.info("[time-notification] 用户点击系统提醒，准备拉起主窗口");
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    console.warn("[time-notification] 主窗口不可用，无法从系统提醒拉起");
+    return;
+  }
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+  console.info("[time-notification] 已从系统提醒拉起主窗口");
+}
 
 /** 注册右侧面板使用的自定义协议，覆盖默认会话和独立面板会话。 */
 function registerPanelProtocolHandlers(manager: PanelViewManager): void {
@@ -293,6 +332,11 @@ async function buildRuntimeContext(
   let asrConfig = persisted.asrConfig;
   const artifactRegistry = new ArtifactRegistry(getSessionDatabase());
   const artifactManager = new ArtifactManager(paths, artifactRegistry);
+  const projectCapabilityDatabase = await ProjectCapabilityDatabase.create(paths);
+  const projectCapabilities = new ProjectCapabilityService(projectCapabilityDatabase);
+  const projectSkillInstaller = new ProjectSkillInstaller(paths, projectCapabilityDatabase);
+  const projectMcpRuntime = new ProjectMcpRuntimeService();
+  const capabilityBundles = new CapabilityBundleResolver(projectCapabilities, projectMcpRuntime);
   const timeStore = await TimeOrchestrationStore.create(paths);
   const migrationResult = await timeStore.migrateAssistantPromptSessionMode();
   log.info("assistant_prompt sessionMode migrated", migrationResult);
@@ -322,6 +366,8 @@ async function buildRuntimeContext(
   });
   const timeApplication = createTimeApplicationService({ store: timeStore });
   const timeNotificationService = createTimeNotificationService({
+    appIconPath: resolveAppIconPath({ mainDir: __dirname }),
+    onNativeClick: focusMainWindowFromNotification,
     onDelivered: (payload) => {
       console.info("[time-notification] 广播提醒到渲染进程", {
         id: payload.id,
@@ -698,6 +744,10 @@ async function buildRuntimeContext(
       standingOrderService,
       longRunLedger,
       timeScheduler: schedulerWithAwareness,
+      projectCapabilities,
+      projectSkillInstaller,
+      capabilityBundles,
+      projectMcpRuntime,
     },
     tools: {
       resolveBuiltinTools: () => {
@@ -712,7 +762,16 @@ async function buildRuntimeContext(
         const rawTools = mcpManager.getAllTools();
         // 读取用户偏好设置，与原始工具列表合并
         const prefsPath = join(paths.myClawDir, "mcp-tool-preferences.json");
-        const prefs = loadToolPreferenceSnapshot(prefsPath);
+        const snapshot = loadToolPreferenceSnapshot(prefsPath);
+        if (!snapshot.ok) {
+          return rawTools.map((tool) => ({
+            ...tool,
+            enabled: false,
+            exposedToModel: false,
+            effectiveApprovalMode: "always-ask",
+          } as ResolvedMcpTool));
+        }
+        const prefs = snapshot.prefs;
         return rawTools.map((tool) => {
           const pref = prefs[tool.id];
           return {

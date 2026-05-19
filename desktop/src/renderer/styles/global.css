@@ -660,6 +660,7 @@ h2.page-title {
   width: 32px;
   height: 32px;
   border-radius: var(--radius-md);
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -667,6 +668,9 @@ h2.page-title {
   font-size: 14px;
   font-weight: 700;
   color: #fff;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
 .list-row__main {
@@ -1027,6 +1031,166 @@ a.list-row__title:hover {
   cursor: pointer;
 }
 
+.glass-select {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.glass-select__native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(50%);
+}
+
+.glass-select__button {
+  width: 100%;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(255,255,255,0.045), rgba(255,255,255,0.018)), var(--bg-base);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.glass-select__button:hover:not(:disabled),
+.glass-select.is-open .glass-select__button {
+  border-color: var(--glass-border-hover);
+  background: linear-gradient(180deg, rgba(255,255,255,0.065), rgba(255,255,255,0.025)), var(--bg-base);
+}
+
+.glass-select__button:focus-visible {
+  border-color: var(--accent-cyan);
+  box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.14);
+}
+
+.glass-select__button:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.glass-select__value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glass-select__value.is-placeholder {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.glass-select__chevron {
+  display: inline-flex;
+  color: var(--text-muted);
+  flex: 0 0 auto;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.glass-select.is-open .glass-select__chevron {
+  color: var(--accent-cyan);
+  transform: rotate(180deg);
+}
+
+.glass-select__menu {
+  position: absolute;
+  z-index: 1200;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: var(--radius-lg);
+  background: rgba(18, 18, 22, 0.98);
+  box-shadow: var(--shadow-modal, 0 20px 60px rgba(0,0,0,0.5));
+  backdrop-filter: blur(18px);
+  animation: glass-select-pop 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes glass-select-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+.glass-select__option {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.glass-select__option:hover:not(:disabled),
+.glass-select__option.is-active:not(:disabled) {
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.055);
+  border-color: rgba(255,255,255,0.08);
+}
+
+.glass-select__option.is-selected {
+  color: var(--accent-cyan);
+  background: rgba(16, 163, 127, 0.12);
+  border-color: rgba(16, 163, 127, 0.28);
+}
+
+.glass-select__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.glass-select__option-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.glass-select__option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.glass-select__option-description {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.glass-select__option-check {
+  width: 16px;
+  color: var(--accent-cyan);
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -1076,6 +1240,63 @@ a.list-row__title:hover {
 
 .meeting-status-tag {
   margin-left: 12px;
+}
+
+.meeting-detail-header {
+  align-items: center;
+}
+
+.meeting-detail-actions {
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.meeting-detail-main {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.meeting-detail-console {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.025);
+  box-shadow: var(--glass-inner-glow);
+}
+
+.meeting-detail-console__switcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 36px;
+  padding-top: 2px;
+}
+
+.meeting-detail-console__switcher > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.meeting-detail-console__switcher strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.meeting-detail-console__eyebrow {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.meeting-detail-content {
+  min-height: 0;
 }
 
 .meeting-record-panel {
@@ -1131,14 +1352,46 @@ a.list-row__title:hover {
 
 .meeting-detail-tabs {
   display: flex;
-  gap: 8px;
-  border-bottom: 1px solid var(--glass-border);
-  padding-bottom: 8px;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.18);
+  flex-shrink: 0;
+}
+
+.meeting-detail-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.meeting-detail-tab:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .meeting-detail-tab.is-active {
-  border-color: var(--accent-cyan);
+  border-color: rgba(16, 163, 127, 0.36);
+  background: rgba(16, 163, 127, 0.12);
   color: var(--accent-cyan);
+}
+
+.meeting-detail-tab:focus-visible {
+  outline: 2px solid var(--accent-cyan);
+  outline-offset: 2px;
 }
 
 .meeting-summary {
@@ -1271,48 +1524,161 @@ a.list-row__title:hover {
 }
 
 .meeting-audio-player {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--glass-border);
+  gap: 14px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
   border-radius: var(--radius-lg);
-  backdrop-filter: var(--blur-std);
-  -webkit-backdrop-filter: var(--blur-std);
+  background: rgba(0, 0, 0, 0.22);
 }
 
 .meeting-audio-player__play-btn {
-  min-width: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 74px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(16, 163, 127, 0.34);
+  border-radius: var(--radius-md);
+  background: rgba(16, 163, 127, 0.10);
+  color: var(--accent-cyan);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.meeting-audio-player__play-btn:hover {
+  background: rgba(16, 163, 127, 0.15);
+  border-color: rgba(16, 163, 127, 0.48);
+}
+
+.meeting-audio-player__transport {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.meeting-audio-player__timeline {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.meeting-audio-player__time-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .meeting-audio-player__time {
   font-size: 12px;
   color: var(--text-secondary);
-  min-width: 44px;
-}
-
-.meeting-audio-player__time--current {
-  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .meeting-audio-player__slider {
-  flex: 1;
+  width: 100%;
+  min-width: 120px;
   accent-color: var(--accent-cyan);
 }
 
-.meeting-audio-player__speed-group {
+.meeting-audio-player__speed-panel {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.meeting-audio-player__speed-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.meeting-audio-player__speed-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.035);
 }
 
 .meeting-audio-player__speed-btn {
-  min-width: 42px;
+  min-width: 38px;
+  height: 26px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
 }
 
 .meeting-audio-player__speed-btn.is-active {
-  border-color: var(--accent-cyan);
+  border-color: rgba(16, 163, 127, 0.34);
+  background: rgba(16, 163, 127, 0.12);
   color: var(--accent-cyan);
+}
+
+.meeting-audio-placeholder {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed rgba(255, 255, 255, 0.10);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+  background: rgba(0, 0, 0, 0.16);
+  font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .meeting-detail-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .meeting-detail-console__switcher {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .meeting-detail-tabs {
+    width: 100%;
+  }
+
+  .meeting-detail-tab {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .meeting-audio-player {
+    grid-template-columns: 1fr;
+  }
+
+  .meeting-audio-player__transport {
+    grid-template-columns: 1fr;
+  }
+
+  .meeting-audio-player__play-btn {
+    width: max-content;
+  }
+
+  .meeting-audio-player__speed-panel {
+    justify-content: space-between;
+  }
 }
 
 .meeting-transcript {

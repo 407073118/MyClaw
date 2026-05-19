@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => {
         unreadCount: 0,
         hasUnread: false,
         needsApproval: false,
+        avatarDataUrl: "data:image/png;base64,QUJD",
         updatedAt: "2026-04-14T00:00:00.000Z",
         workflowIds: [],
       },
@@ -72,6 +73,10 @@ describe("SiliconRail routing", () => {
         ),
       ),
     );
+
+    expect(
+      screen.getByTestId("silicon-rail-avatar-sp-1").querySelector("img")?.getAttribute("src"),
+    ).toBe("data:image/png;base64,QUJD");
 
     fireEvent.click(screen.getByTestId("silicon-rail-avatar-sp-1"));
 

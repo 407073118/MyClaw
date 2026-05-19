@@ -128,4 +128,15 @@ describe("McpDetailPage save flow", () => {
       expect(mocks.workspace.createMcpServer).toHaveBeenCalledTimes(1);
     });
   });
+
+  it("renders the create route as a compact desktop form instead of a detail glass card", () => {
+    const { container } = renderMcpDetail();
+
+    expect(screen.getByTestId("mcp-detail-view").className).toContain("page-shell");
+    expect(container.querySelector(".mcp-create-layout")).not.toBeNull();
+    expect(container.querySelector(".mcp-create-main-panel")).not.toBeNull();
+    expect(container.querySelector(".mcp-create-side-panel")).not.toBeNull();
+    expect(container.querySelector(".mcp-create-layout .glass-card")).toBeNull();
+    expect(container.querySelector(".page-header--sticky .btn-primary")?.textContent).toContain("创建服务");
+  });
 });

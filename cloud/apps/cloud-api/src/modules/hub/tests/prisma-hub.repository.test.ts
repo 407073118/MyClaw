@@ -38,6 +38,7 @@ describe("prisma hub repository", () => {
       artifact: {
         fileName: "release-mcp-filesystem-managed-2.2.0.zip",
         fileSize: 256,
+        sha256: "b".repeat(64),
         storagePath: "group1/M00/00/01/wKjAb1Skill.zip",
         downloadUrl: "/api/artifacts/download/release-mcp-filesystem-managed-2.2.0",
         downloadExpiresIn: 300,
@@ -49,6 +50,7 @@ describe("prisma hub repository", () => {
         id: "release-mcp-filesystem-managed-2.2.0",
         artifactFileName: "release-mcp-filesystem-managed-2.2.0.zip",
         artifactFileSize: 256,
+        artifactSha256: "b".repeat(64),
         artifactStoragePath: "group1/M00/00/01/wKjAb1Skill.zip",
         artifactDownloadUrl: "/api/artifacts/download/release-mcp-filesystem-managed-2.2.0",
         artifactDownloadExpires: 300,
@@ -60,6 +62,7 @@ describe("prisma hub repository", () => {
     expect(result.artifact).toEqual({
       fileName: "release-mcp-filesystem-managed-2.2.0.zip",
       fileSize: 256,
+      sha256: "b".repeat(64),
       downloadUrl: "/api/artifacts/download/release-mcp-filesystem-managed-2.2.0",
       expiresIn: 300,
     });

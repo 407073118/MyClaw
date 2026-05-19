@@ -147,6 +147,43 @@ describe("Phase 3: High-risk tools require approval", () => {
 // ---------------------------------------------------------------------------
 
 describe("Phase 3: Approval mode configurable", () => {
+  it("per-tool always-ask should require approval even for read-only tools", () => {
+    const policy = createDefaultApprovalPolicy();
+
+    expect(shouldRequestApproval({
+      policy,
+      source: "builtin-tool",
+      toolId: "fs.read",
+      risk: ToolRiskCategory.Read,
+      toolApprovalMode: "always-ask",
+    })).toBe(true);
+  });
+
+  it("per-tool always-allow should bypass approval for workspace-local write tools", () => {
+    const policy = createDefaultApprovalPolicy();
+
+    expect(shouldRequestApproval({
+      policy,
+      source: "builtin-tool",
+      toolId: "fs.write",
+      risk: ToolRiskCategory.Write,
+      toolApprovalMode: "always-allow",
+    })).toBe(false);
+  });
+
+  it("per-tool always-allow should not bypass external workspace path approval", () => {
+    const policy = createDefaultApprovalPolicy();
+
+    expect(shouldRequestApproval({
+      policy,
+      source: "builtin-tool",
+      toolId: "fs.write",
+      risk: ToolRiskCategory.Write,
+      isOutsideWorkspace: true,
+      toolApprovalMode: "always-allow",
+    })).toBe(true);
+  });
+
   it("auto-allow-all should never request approval", () => {
     const policy: ApprovalPolicy = {
       mode: "auto-allow-all",

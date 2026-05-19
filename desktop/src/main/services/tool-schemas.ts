@@ -6,11 +6,12 @@
  * 因此模型返回的是结构化参数，而不是自由文本。
  */
 
-import type { McpTool, ResolvedBuiltinTool, SkillDefinition } from "@shared/contracts";
+import type { CapabilityBundle, McpTool, ResolvedBuiltinTool, SkillDefinition } from "@shared/contracts";
 import {
   resolveAllowedBuiltinToolGroups,
   resolveBlockedBuiltinToolNames,
 } from "./model-runtime/vendor-policy-registry";
+import { inferBuiltinToolSchemaGroup } from "./builtin-tool-registry";
 
 export type OpenAIFunctionTool = {
   type: "function";
@@ -23,6 +24,8 @@ export type OpenAIFunctionTool = {
 
 export type BuildToolSchemaOptions = {
   builtinTools?: ResolvedBuiltinTool[];
+  capabilityBundle?: CapabilityBundle;
+  artifactsRootPath?: string | null;
 };
 
 /** 根据工具中心偏好判断内置工具是否应该暴露给模型。 */
@@ -44,27 +47,23 @@ function shouldExposeMcpTool(tool: McpTool & { serverId: string }): boolean {
   return preference.enabled !== false && preference.exposedToModel !== false;
 }
 
-function inferBuiltinToolSchemaGroup(functionName: string): "fs" | "exec" | "git" | "http" | "web" | "ppt" | "task" | "time" | "browser" | null {
-  if (functionName.startsWith("fs_")) return "fs";
-  if (functionName === "file_view") return "fs";
-  // document.read（Phase 8）共用 fs 授权策略（路径审批同一 PathAccessPolicy），
-  // 所以分组归入 fs，跟随 fs_* 一起被 tool policy 允许或屏蔽。
-  if (functionName === "document_read" || functionName.startsWith("document_")) return "fs";
-  // xlsx_extract 历史上未归组（pre-existing gap），随 document.read 一起归入 fs，
-  // 保持与 fs_read 同一暴露策略；向后兼容无改动。
-  if (functionName === "xlsx_extract") return "fs";
-  if (functionName.startsWith("exec_")) return "exec";
-  if (functionName.startsWith("git_")) return "git";
-  if (functionName.startsWith("http_")) return "http";
-  if (functionName.startsWith("web_")) return "web";
-  if (functionName.startsWith("ppt_")) return "ppt";
-  if (functionName.startsWith("task_")) return "task";
-  if (functionName.startsWith("calendar_event_")) return "time";
-  if (functionName.startsWith("reminder_")) return "time";
-  if (functionName.startsWith("schedule_job_")) return "time";
-  if (functionName.startsWith("today_brief_")) return "time";
-  if (functionName.startsWith("browser_")) return "browser";
-  return null;
+/** 读取 bundle MCP 的参数 schema，优先使用冻结的 inputSchema，兼容旧 manifestJson.inputSchema。 */
+function resolveBundleMcpInputSchema(ref: CapabilityBundle["functionNameMap"][string]): Record<string, unknown> {
+  if (ref.inputSchema && typeof ref.inputSchema === "object" && !Array.isArray(ref.inputSchema)) {
+    return ref.inputSchema as Record<string, unknown>;
+  }
+  if (ref.manifestJson && typeof ref.manifestJson === "object" && !Array.isArray(ref.manifestJson) && "inputSchema" in ref.manifestJson) {
+    const schema = (ref.manifestJson as { inputSchema?: unknown }).inputSchema;
+    if (schema && typeof schema === "object" && !Array.isArray(schema)) {
+      return schema as Record<string, unknown>;
+    }
+  }
+  console.warn("[tool-schemas] bundle MCP 缺少参数 schema，使用空对象 schema", {
+    functionName: ref.functionName ?? ref.id,
+    source: ref.source,
+    capabilityRefId: ref.capabilityRefId ?? null,
+  });
+  return { type: "object", properties: {}, required: [] };
 }
 
 /**
@@ -78,6 +77,13 @@ export function buildToolSchemas(
   toolPolicyId?: string,
   options?: BuildToolSchemaOptions,
 ): OpenAIFunctionTool[] {
+  const artifactsRootPath = options?.artifactsRootPath?.trim() || null;
+  const artifactDirectoryHint = artifactsRootPath
+    ? ` Current configured Files output directory: ${artifactsRootPath}. Do not hard-code myClaw/artifacts; use the configured path when the user asks to create a user-facing file.`
+    : "";
+  const artifactDirectoryLine = artifactsRootPath
+    ? `Current configured Files output directory: ${artifactsRootPath}`
+    : null;
   const staticTools: OpenAIFunctionTool[] = [
     {
       type: "function",
@@ -220,13 +226,15 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "fs_write",
-        description: `Write content to a file, creating directories as needed. Working directory: ${cwd}`,
+        description: `Write content to a file, creating directories as needed. Working directory: ${cwd}.${artifactDirectoryHint}`,
         parameters: {
           type: "object",
           properties: {
             path: {
               type: "string",
-              description: "File path relative to the working directory",
+              description: artifactsRootPath
+                ? `File path relative to the working directory, or an absolute path under the current configured Files output directory (${artifactsRootPath}) for user-facing generated files.`
+                : "File path relative to the working directory",
             },
             content: {
               type: "string",
@@ -318,6 +326,43 @@ export function buildToolSchemas(
             },
           },
           required: ["path", "old_string", "new_string"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "artifact_register",
+        description: [
+          `Register an existing local file into the Files workspace for the current session.`,
+          `Use this after exec_command, scripts, MCP tools, or external programs create a user-facing work file that should appear in Files.`,
+          `fs_write and ppt_generate outputs are registered automatically, but call artifact_register for indirect outputs or when you need to mark a generated file as final.`,
+          ...(artifactDirectoryLine ? [artifactDirectoryLine] : []),
+          `Working directory: ${cwd}`,
+        ].join("\n"),
+        parameters: {
+          type: "object",
+          properties: {
+            path: {
+              type: "string",
+              description: "Absolute or relative local file path to record in Files.",
+            },
+            title: {
+              type: "string",
+              description: "Optional display title. Defaults to the file name.",
+            },
+            kind: {
+              type: "string",
+              enum: ["doc", "image", "code", "dataset", "archive", "log", "other"],
+              description: "Optional artifact kind. Defaults to extension-based inference.",
+            },
+            lifecycle: {
+              type: "string",
+              enum: ["working", "ready", "final"],
+              description: "Optional lifecycle. Use final only for user-approved deliverables; default is working.",
+            },
+          },
+          required: ["path"],
         },
       },
     },
@@ -544,7 +589,7 @@ export function buildToolSchemas(
             subject: { type: "string", description: "Imperative description of what needs to be done (e.g., 'Fix authentication bug')" },
             description: { type: "string", description: "Detailed description of the task requirements" },
             activeForm: { type: "string", description: "Present continuous form shown during execution (e.g., 'Fixing authentication bug')" },
-            status: { type: "string", enum: ["pending", "in_progress", "waiting_user", "completed"], description: "Initial status. Defaults to 'pending'. Use 'waiting_user' only when the task is paused until the user answers a clarification question." },
+            status: { type: "string", enum: ["pending", "in_progress", "blocked", "failed", "completed", "cancelled"], description: "Initial status. Defaults to 'pending'. Use task_wait_for_user instead of creating waiting_user directly." },
             blockedBy: { type: "array", items: { type: "string" }, description: "Task IDs that must complete before this task can start. Omit to auto-chain to previous task; pass [] for no dependencies." },
           },
           required: ["subject", "description"],
@@ -580,7 +625,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_update",
-        description: "Update a task's status or details. Set 'in_progress' before you start working on a task, 'waiting_user' when you asked the user to choose or clarify something, and 'completed' immediately after you finish. Only ONE task should be in_progress at a time — others are automatically demoted to pending. IMPORTANT: Setting status to 'in_progress' will FAIL if the task has unfinished blockers (blockedBy). You must complete blocking tasks first, in order.",
+        description: "Update a task's status or details. Set 'in_progress' before you start working on a task and 'completed' immediately after you finish. Use the dedicated user-wait tool for any user input pause. Only ONE task should be in_progress at a time — others are automatically demoted to pending. IMPORTANT: Setting status to 'in_progress' will FAIL if the task has unfinished blockers (blockedBy). You must complete blocking tasks first, in order.",
         parameters: {
           type: "object",
           properties: {
@@ -588,11 +633,71 @@ export function buildToolSchemas(
             subject: { type: "string", description: "Updated task subject" },
             description: { type: "string", description: "Updated description" },
             activeForm: { type: "string", description: "Updated present continuous form" },
-            status: { type: "string", enum: ["pending", "in_progress", "waiting_user", "completed"], description: "Updated status" },
+            status: { type: "string", enum: ["pending", "in_progress", "blocked", "failed", "completed", "cancelled"], description: "Updated status. Use the dedicated user-wait tool for user-input pauses." },
             blocks: { type: "array", items: { type: "string" }, description: "Task IDs this task blocks" },
             blockedBy: { type: "array", items: { type: "string" }, description: "Task IDs that block this task" },
           },
           required: ["id"],
+        },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "task_wait_for_user",
+        description: "terminal Task V2 hard pause. Use this when a task needs user input, approval, rejection, or cancellation before any pending task may continue. The runtime creates an active interrupt, sets the task to waiting_user, stops this turn, and waits for structured resume input.",
+        parameters: {
+          type: "object",
+          properties: {
+            taskId: { type: "string", description: "The existing non-terminal task ID that is waiting for the user" },
+            question: { type: "string", description: "Clear user-facing question shown in the waiting card" },
+            reason: { type: "string", description: "Short runtime reason for pausing this task" },
+            inputSchema: {
+              type: ["object", "null"],
+              description: "Optional simple field schema for the expected resume payload",
+              properties: {
+                fields: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string", description: "Stable payload field name" },
+                      label: { type: "string", description: "User-facing field label" },
+                      type: { type: "string", enum: ["text", "textarea", "number", "boolean", "select"], description: "Input control type" },
+                      required: { type: "boolean", description: "Whether the field must be supplied" },
+                      choices: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            label: { type: "string" },
+                            value: { type: "string" },
+                          },
+                          required: ["label", "value"],
+                        },
+                      },
+                    },
+                    required: ["name", "label", "type"],
+                  },
+                },
+              },
+            },
+            choices: {
+              type: ["array", "null"],
+              description: "Optional choices rendered as structured UI controls",
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string", description: "User-facing choice label" },
+                  value: { type: "string", description: "Stable choice value submitted on resume" },
+                  description: { type: "string", description: "Optional choice help text" },
+                },
+                required: ["label", "value"],
+              },
+            },
+            expiresAt: { type: ["string", "null"], description: "Optional ISO-8601 expiration time for the resume token" },
+          },
+          required: ["taskId", "question", "reason"],
         },
       },
     },
@@ -946,14 +1051,58 @@ export function buildToolSchemas(
     if (!toolGroup) {
       return false;
     }
-    if (!allowedBuiltinGroups.has(toolGroup)) {
+    if (!allowedBuiltinGroups.has(toolGroup as "fs" | "exec" | "git" | "http" | "web" | "ppt" | "task" | "time" | "browser")) {
       return false;
     }
     return !blockedBuiltinNames.has(toolName) && shouldExposeBuiltinFunctionTool(toolName, options);
   });
 
+  // 生成 CapabilityBundle 中冻结的项目 / 全局能力 schema。
+  if (options?.capabilityBundle) {
+    let bundleSkillCount = 0;
+    let bundleMcpCount = 0;
+    for (const [functionName, ref] of Object.entries(options.capabilityBundle.functionNameMap)) {
+      if (ref.kind === "skill") {
+        bundleSkillCount++;
+        filteredStaticTools.push({
+          type: "function",
+          function: {
+            name: functionName,
+            description: `Read the "${ref.displayName ?? ref.id}" ${ref.source === "project" ? "project" : "user"} skill instructions. ${ref.description || ""}`.trim(),
+            parameters: {
+              type: "object",
+              properties: {
+                input: {
+                  type: "string",
+                  description: "Optional input or question for the skill.",
+                },
+              },
+              required: [],
+            },
+          },
+        });
+      }
+      if (ref.kind === "mcp") {
+        bundleMcpCount++;
+        filteredStaticTools.push({
+          type: "function",
+          function: {
+            name: functionName,
+            description: ref.description || `MCP tool: ${ref.displayName ?? ref.id}`,
+            parameters: resolveBundleMcpInputSchema(ref),
+          },
+        });
+      }
+    }
+    console.info("[tool-schemas] 已合并 CapabilityBundle schema", {
+      bundleHash: options.capabilityBundle.hash,
+      skillCount: bundleSkillCount,
+      mcpToolCount: bundleMcpCount,
+    });
+  }
+
   // 生成 MCP 工具 schema
-  if (mcpTools && mcpTools.length > 0) {
+  if (!options?.capabilityBundle && mcpTools && mcpTools.length > 0) {
     const usedMcpNames = new Set<string>();
     for (const tool of mcpTools) {
       if (!shouldExposeMcpTool(tool)) continue;
@@ -983,7 +1132,7 @@ export function buildToolSchemas(
   }
 
   // 生成 skill invoke 工具
-  if (skills && skills.length > 0) {
+  if (!options?.capabilityBundle && skills && skills.length > 0) {
     const usedSkillNames = new Set<string>();
     for (const skill of skills) {
       if (!skill.enabled || skill.disableModelInvocation) continue;
@@ -1016,40 +1165,44 @@ export function buildToolSchemas(
       });
     }
 
-    // skill_view：模型应在完成工作后调用它，并携带数据或本地 dataRef 打开 HTML 面板
-    const viewSkills = skills.filter((s) => s.enabled && s.hasViewFile && s.viewFiles && s.viewFiles.length > 0);
-    if (viewSkills.length > 0) {
-      const allPages = viewSkills.flatMap((s) => (s.viewFiles || []).map((f: string) => `${s.id}:${f}`));
-      filteredStaticTools.push({
-        type: "function",
-        function: {
-          name: "skill_view",
-          description: `Open an HTML panel to display results visually. Call this AFTER completing analysis/report work and generating the data. Pass either data or dataRef; prefer dataRef for large local JSON payloads already saved under the skill directory so the payload is not embedded in model context. Available pages: ${allPages.join(", ")}`,
-          parameters: {
-            type: "object",
-            properties: {
-              skill_id: {
-                type: "string",
-                description: `The skill ID. One of: ${viewSkills.map((s) => s.id).join(", ")}`,
-              },
-              page: {
-                type: "string",
-                description: `The HTML page to open. Example: "analysis.html", "report.html"`,
-              },
-              data: {
-                type: "object",
-                description: "The JSON data to display in the panel. Must match the page's expected data structure (defined in the skill's SKILL.md).",
-              },
-              dataRef: {
-                type: "string",
-                description: "Optional local JSON payload file path under the skill directory. Use this instead of data for large local payloads, for example \".myclaw-payloads/resume-diagnosis.json\".",
-              },
+  }
+
+  // skill_view：模型应在完成工作后调用它，并携带数据或本地 dataRef 打开 HTML 面板。
+  const viewSkills = (skills ?? []).filter((s) => s.enabled && s.hasViewFile && s.viewFiles && s.viewFiles.length > 0);
+  if (viewSkills.length > 0 && shouldExposeBuiltinFunctionTool("skill_view", options)) {
+    const allPages = viewSkills.flatMap((s) => (s.viewFiles || []).map((f: string) => `${s.id}:${f}`));
+    console.info("[tool-schemas] 已暴露 skill_view", { viewSkillCount: viewSkills.length, pageCount: allPages.length });
+    filteredStaticTools.push({
+      type: "function",
+      function: {
+        name: "skill_view",
+        description: `Open an HTML panel to display results visually. Call this AFTER completing analysis/report work and generating the data. Pass either data or dataRef; prefer dataRef for large local JSON payloads already saved under the skill directory so the payload is not embedded in model context. Available pages: ${allPages.join(", ")}`,
+        parameters: {
+          type: "object",
+          properties: {
+            skill_id: {
+              type: "string",
+              description: `The skill ID. One of: ${viewSkills.map((s) => s.id).join(", ")}`,
             },
-            required: ["skill_id", "page"],
+            page: {
+              type: "string",
+              description: `The HTML page to open. Example: "analysis.html", "report.html"`,
+            },
+            data: {
+              type: "object",
+              description: "The JSON data to display in the panel. Must match the page's expected data structure (defined in the skill's SKILL.md).",
+            },
+            dataRef: {
+              type: "string",
+              description: "Optional local JSON payload file path under the skill directory. Use this instead of data for large local payloads, for example \".myclaw-payloads/resume-diagnosis.json\".",
+            },
           },
+          required: ["skill_id", "page"],
         },
-      });
-    }
+      },
+    });
+  } else {
+    console.info("[tool-schemas] 未暴露 skill_view：当前无启用 HTML 面板 Skill");
   }
 
   return filteredStaticTools;
@@ -1060,11 +1213,17 @@ export function buildToolSchemas(
  * 函数名使用下划线（OpenAI 约定），工具 ID 使用点号。
  */
 export function functionNameToToolId(name: string): string {
+  if (name.startsWith("mcp__") || name.startsWith("mcp_project_")) {
+    return name;
+  }
   if (name.startsWith("skill_invoke__")) {
     return name; // Skill tools keep their full name as ID
   }
   if (name === "skill_view") {
     return "skill.view";
+  }
+  if (name === "task_wait_for_user") {
+    return "task.wait_for_user";
   }
   if (name.startsWith("calendar_event_")) {
     return "calendar_event." + name.slice("calendar_event_".length);
@@ -1191,6 +1350,8 @@ export function buildToolLabel(functionName: string, args: Record<string, unknow
     case "task.list":
     case "task.get":
     case "task.update":
+    case "task.wait_for_user":
+    case "artifact.register":
     case "calendar_event.create":
     case "calendar_event.list":
     case "reminder.create":

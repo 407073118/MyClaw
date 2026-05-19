@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 
 import type { AgentTask, SiliconPerson, SiliconPersonStatus } from "@shared/contracts";
 import { useWorkspaceStore } from "../stores/workspace";
+import SiliconPersonAvatar from "./SiliconPersonAvatar";
 
 const STATUS_LABEL: Record<SiliconPersonStatus, string> = {
   idle: "待命",
@@ -43,7 +44,6 @@ function AgentAvatarButton({
   compact: boolean;
   onClick: () => void;
 }) {
-  const initial = (person.name || person.title || "?").charAt(0).toUpperCase();
   const statusLabel = STATUS_LABEL[person.status] ?? person.status;
 
   return (
@@ -54,8 +54,9 @@ function AgentAvatarButton({
       title={`${person.name} - ${statusLabel}`}
       onClick={onClick}
     >
-      <span className="agent-avatar-initial">{initial}</span>
-      <span className={`agent-avatar-status agent-avatar-status--${person.status}`} />
+      <SiliconPersonAvatar person={person} className="agent-avatar-initial">
+        <span className={`agent-avatar-status agent-avatar-status--${person.status}`} />
+      </SiliconPersonAvatar>
       {!compact && (
         <span className="agent-avatar-copy">
           <strong>{person.name}</strong>
@@ -297,10 +298,9 @@ export default function AgentTeamDock() {
                   className="agent-person-row"
                   onClick={() => handleOpenPerson(person)}
                 >
-                  <span className="agent-person-avatar" aria-hidden="true">
-                    {(person.name || person.title || "?").charAt(0).toUpperCase()}
+                  <SiliconPersonAvatar person={person} className="agent-person-avatar" aria-hidden={true}>
                     <span className={`agent-person-avatar-dot agent-person-avatar-dot--${person.status}`} />
-                  </span>
+                  </SiliconPersonAvatar>
                   <span className="agent-person-main">
                     <strong>{person.name}</strong>
                     <em>{STATUS_LABEL[person.status] ?? person.status}</em>
@@ -584,6 +584,9 @@ export default function AgentTeamDock() {
           font-size: 13px;
           font-weight: 800;
         }
+        .agent-person-avatar .fallback-avatar__initials {
+          line-height: 1;
+        }
         .agent-person-avatar-dot {
           position: absolute;
           right: -1px;
@@ -632,6 +635,7 @@ export default function AgentTeamDock() {
           flex-shrink: 0;
         }
         .agent-avatar-initial {
+          position: relative;
           width: 34px;
           height: 34px;
           display: inline-flex;
@@ -643,6 +647,9 @@ export default function AgentTeamDock() {
           color: var(--text-primary);
           font-size: 13px;
           font-weight: 800;
+        }
+        .agent-avatar-initial .fallback-avatar__initials {
+          line-height: 1;
         }
         .agent-avatar-status {
           position: absolute;

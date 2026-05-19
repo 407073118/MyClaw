@@ -208,6 +208,10 @@ export type ModelCapability = {
   maxInputTokens?: number;
   maxOutputTokens?: number;
   supportsTools?: boolean;
+  supportsStreamingToolCalls?: boolean;
+  supportsParallelToolCalls?: boolean;
+  supportsStrictToolSchema?: boolean;
+  supportsToolChoiceForced?: boolean;
   supportsReasoning?: boolean;
   supportsStreaming?: boolean;
   supportsPromptCaching?: boolean;
@@ -220,6 +224,7 @@ export type ModelCapability = {
   supportsBackgroundMode?: boolean;
   supportsContinuation?: boolean;
   supportsToolSearch?: boolean;
+  supportsAnthropicToolResultBlocks?: boolean;
   supportsCompaction?: boolean;
   thinkingControlKind?: ThinkingControlKind;
   toolChoiceConstraint?: ToolChoiceConstraint;

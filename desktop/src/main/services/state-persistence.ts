@@ -60,6 +60,8 @@ export type AppSettings = {
   personalPrompt: PersonalPromptProfile;
   /** ASR 服务配置（会议录音）。 */
   asrConfig?: AsrConfig;
+  /** Files 产物目录覆盖路径，目录服务启动时会读取。 */
+  artifactsRootPath?: string | null;
 };
 
 export type PersistedState = {
@@ -550,7 +552,8 @@ export async function saveSettings(
   settings: AppSettings,
 ): Promise<void> {
   ensureDir(paths.myClawDir);
-  await atomicWriteFile(paths.settingsFile, JSON.stringify(settings, null, 2));
+  const previousSettings = tryReadJson<Partial<AppSettings>>(paths.settingsFile) ?? {};
+  await atomicWriteFile(paths.settingsFile, JSON.stringify({ ...previousSettings, ...settings }, null, 2));
 }
 
 /** 初始化或获取指定硅基员工的运行时数据库。 */

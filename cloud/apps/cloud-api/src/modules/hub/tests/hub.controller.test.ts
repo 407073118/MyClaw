@@ -83,6 +83,7 @@ describe("hub controller", () => {
       artifact: {
         fileName: "employee-onboarding.zip",
         fileSize: 256,
+        sha256: "b".repeat(64),
         downloadUrl: "/api/artifacts/download/release-employee-onboarding-assistant-1.1.0",
         expiresIn: 300,
       },
@@ -183,6 +184,7 @@ describe("hub controller", () => {
       artifact: {
         fileName: "workflow-onboarding.zip",
         fileSize: 256,
+        sha256: "b".repeat(64),
         downloadUrl: "/api/artifacts/download/release-workflow-onboarding-1.1.0",
         expiresIn: 300,
       },
@@ -219,6 +221,61 @@ describe("hub controller", () => {
       version: "1.1.0",
     });
     expect(publishWorkflowPackageRelease).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows package release publish without a user-provided version", async () => {
+    const publishWorkflowPackageRelease = vi.fn(async () => ({
+      itemId: "workflow-onboarding",
+      releaseId: "release-workflow-onboarding-1.0.2",
+      version: "1.0.2",
+      latestVersion: "1.0.2",
+      manifest: {
+        kind: "workflow-package",
+        name: "Onboarding Workflow",
+        version: "1.0.2",
+        description: "Workflow package",
+        entryWorkflowId: "workflow-onboarding",
+      },
+      artifact: {
+        fileName: "workflow-onboarding.zip",
+        fileSize: 256,
+        sha256: "b".repeat(64),
+        downloadUrl: "/api/artifacts/download/release-workflow-onboarding-1.0.2",
+        expiresIn: 300,
+      },
+    }));
+
+    const controller = new HubController(
+      {
+        list: async () => [],
+        findById: async () => null,
+        publishWorkflowPackageRelease,
+      } as unknown as HubService,
+      {
+        getManifest: () => {
+          throw new Error("not used");
+        },
+        createDownloadToken: async () => {
+          throw new Error("not used");
+        },
+      } as unknown as ArtifactService,
+    );
+
+    await controller.publishWorkflowRelease(
+      "workflow-onboarding",
+      { releaseNotes: "Workflow package update" },
+      {
+        buffer: Buffer.from("zip-data"),
+        mimetype: "application/zip",
+        originalname: "workflow-onboarding.zip",
+        size: 256,
+      },
+    );
+
+    expect(publishWorkflowPackageRelease).toHaveBeenCalledWith("workflow-onboarding", expect.objectContaining({
+      version: undefined,
+      releaseNotes: "Workflow package update",
+    }));
   });
 
   it("rejects icon requests with a stable not-found code", async () => {

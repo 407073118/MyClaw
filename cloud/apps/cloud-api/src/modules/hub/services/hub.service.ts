@@ -11,6 +11,7 @@ import type {
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 
 import { ArtifactService } from "../../artifact/services/artifact.service";
+import { resolveReleaseVersion } from "../../releases/versioning";
 import { HUB_REPOSITORY, type HubRepository } from "../ports/hub.repository";
 
 type PublishPackageReleaseInput = {
@@ -18,7 +19,7 @@ type PublishPackageReleaseInput = {
   fileBytes: Buffer;
   fileName: string;
   releaseNotes: string;
-  version: string;
+  version?: string;
 };
 
 @Injectable()
@@ -58,10 +59,10 @@ export class HubService {
       input,
       "employee-package",
       "hub_item_not_employee_package",
-      (item) => ({
+      (item, version) => ({
         kind: "employee-package",
         name: item.name,
-        version: input.version.trim(),
+        version,
         description: item.description,
         role: item.id
       })
@@ -77,10 +78,10 @@ export class HubService {
       input,
       "workflow-package",
       "hub_item_not_workflow_package",
-      (item) => ({
+      (item, version) => ({
         kind: "workflow-package",
         name: item.name,
-        version: input.version.trim(),
+        version,
         description: item.description,
         entryWorkflowId: item.id
       })
@@ -98,7 +99,7 @@ export class HubService {
     input: PublishPackageReleaseInput,
     expectedType: Exclude<HubItemType, "mcp">,
     typeErrorCode: string,
-    createManifest: (item: HubItemDetail) => TManifest
+    createManifest: (item: HubItemDetail, version: string) => TManifest
   ): Promise<HubReleaseUploadResponse<TManifest>> {
     const item = await this.hubRepository.findById(itemId);
     if (!item) {
@@ -113,10 +114,20 @@ export class HubService {
       throw new BadRequestException("hub_package_must_be_zip");
     }
 
-    const version = input.version.trim();
+    const version = resolveReleaseVersion({
+      requestedVersion: input.version,
+      latestVersion: item.latestVersion
+    });
+    console.info("[hub-service] 解析 Hub 包发布版本号", {
+      itemId,
+      expectedType,
+      requestedVersion: input.version ?? null,
+      latestVersion: item.latestVersion ?? null,
+      resolvedVersion: version
+    });
     const releaseNotes = input.releaseNotes.trim();
     const releaseId = this.buildReleaseId(itemId, version);
-    const manifest = createManifest(item);
+    const manifest = createManifest(item, version);
 
     const storedArtifact = await this.artifactService.storeSkillArtifact({
       releaseId,
@@ -129,6 +140,7 @@ export class HubService {
       artifact: {
         fileName: storedArtifact.fileName,
         fileSize: storedArtifact.fileSize,
+        sha256: storedArtifact.sha256,
         storagePath: storedArtifact.storageKey,
         downloadUrl: downloadToken.downloadUrl,
         downloadExpiresIn: downloadToken.expiresIn
@@ -150,6 +162,7 @@ export class HubService {
       artifact: {
         fileName: storedArtifact.fileName,
         fileSize: storedArtifact.fileSize,
+        sha256: storedArtifact.sha256,
         downloadUrl: downloadToken.downloadUrl,
         expiresIn: downloadToken.expiresIn
       }

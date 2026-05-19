@@ -137,6 +137,7 @@ export class PrismaSkillsRepository implements SkillsRepository {
           manifestJson: input.manifest,
           artifactFileName: input.artifact.fileName,
           artifactFileSize: input.artifact.fileSize,
+          artifactSha256: input.artifact.sha256,
           artifactStoragePath: input.artifact.storagePath,
           artifactDownloadUrl: input.artifact.downloadUrl,
           artifactDownloadExpires: input.artifact.downloadExpiresIn
@@ -161,6 +162,7 @@ export class PrismaSkillsRepository implements SkillsRepository {
       artifact: {
         fileName: input.artifact.fileName,
         fileSize: input.artifact.fileSize,
+        sha256: input.artifact.sha256,
         downloadUrl: input.artifact.downloadUrl,
         expiresIn: input.artifact.downloadExpiresIn
       }

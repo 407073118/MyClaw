@@ -68,6 +68,7 @@ describe("fastdfs artifact storage", () => {
     expect(stored).toMatchObject({
       fileName: "security-audit.zip",
       fileSize: 32,
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       storageKey: "/group1/M00/00/16/security-audit.zip",
       storageUrl: "http://127.0.0.1:8080/group1/M00/00/16/security-audit.zip"
     });
@@ -92,6 +93,7 @@ describe("fastdfs artifact storage", () => {
     const readStream = await storage.openSkillArtifactReadStream({
       fileName: "security-audit.zip",
       fileSize: 13,
+      sha256: "a".repeat(64),
       storageKey: "/group1/M00/00/16/security-audit.zip",
       storageUrl: "http://127.0.0.1:8080/group1/M00/00/16/security-audit.zip"
     });

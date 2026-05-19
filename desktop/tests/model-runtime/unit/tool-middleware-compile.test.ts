@@ -7,7 +7,19 @@ const specs: CanonicalToolSpec[] = [{
   id: "fs_read",
   name: "fs_read",
   description: "Read file",
-  parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+  parameters: {
+    type: "object",
+    properties: {
+      path: { type: "string" },
+      locator: {
+        type: "object",
+        properties: {
+          line: { type: "number" },
+        },
+      },
+    },
+    required: ["path"],
+  },
   source: "builtin",
 }];
 
@@ -22,6 +34,9 @@ describe("tool middleware compile", () => {
 
     expect(bundle.compileMode).toBe("openai-strict");
     expect(parameters.additionalProperties).toBe(false);
+    expect(parameters.required).toEqual(["path", "locator"]);
+    expect((parameters.properties as any).locator.additionalProperties).toBe(false);
+    expect((parameters.properties as any).locator.required).toEqual(["line"]);
   });
 
   it("emits anthropic input_schema for anthropic-native", () => {

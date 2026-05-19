@@ -7,13 +7,13 @@ import { Plug, Plus, Download, X, Settings2, RefreshCw, Power, AlertCircle } fro
 // ── 辅助方法 ──────────────────────────────────────────────────────────────────
 
 function toServerConfig(server: McpServer, enabled = server.enabled): McpServerConfig {
-  if (server.transport === "http") {
+  if (server.transport !== "stdio") {
     return {
       id: server.id,
       name: server.name,
       source: server.source,
       enabled,
-      transport: "http",
+      transport: server.transport,
       url: server.url,
       ...(server.headers ? { headers: server.headers } : {}),
     };

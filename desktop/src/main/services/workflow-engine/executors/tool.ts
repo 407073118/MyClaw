@@ -4,7 +4,7 @@ import { resolveLegacyInputBindings } from "../variable-resolver";
 
 export type ToolExecutorFn = (
   toolId: string,
-  label: string,
+  args: Record<string, unknown>,
   workingDir: string,
 ) => Promise<{ success: boolean; output: string; error?: string }>;
 
@@ -15,8 +15,20 @@ export type McpToolCallerFn = (
 ) => Promise<string>;
 
 export function parseMcpToolId(toolId: string): { serverId: string; toolName: string } {
-  const parts = toolId.split("__");
-  return { serverId: parts[1] ?? "", toolName: parts[2] ?? "" };
+  // MCP 工具名本身允许包含 "__"，这里只切第一处分隔符，避免破坏真实工具名。
+  const prefix = "mcp__";
+  if (!toolId.startsWith(prefix)) {
+    return { serverId: "", toolName: toolId };
+  }
+  const rest = toolId.slice(prefix.length);
+  const separatorIndex = rest.indexOf("__");
+  if (separatorIndex < 0) {
+    return { serverId: rest, toolName: "" };
+  }
+  return {
+    serverId: rest.slice(0, separatorIndex),
+    toolName: rest.slice(separatorIndex + 2),
+  };
 }
 
 export class ToolNodeExecutor implements NodeExecutor {
@@ -40,8 +52,7 @@ export class ToolNodeExecutor implements NodeExecutor {
       const { serverId, toolName } = parseMcpToolId(toolId);
       output = await this.mcpCaller(serverId, toolName, args);
     } else {
-      const label = `${toolId}(${JSON.stringify(args).slice(0, 100)})`;
-      const result = await this.toolExecutor(toolId, label, ctx.config.workingDirectory);
+      const result = await this.toolExecutor(toolId, args, ctx.config.workingDirectory);
       output = result.success ? result.output : `[错误] ${result.error ?? "unknown"}`;
     }
     const outputKey = node.tool.outputKey

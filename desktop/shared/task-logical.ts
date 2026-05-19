@@ -4,7 +4,10 @@ const TASK_STATUS_PRIORITY: Record<TaskStatus, number> = {
   pending: 0,
   in_progress: 1,
   waiting_user: 1,
+  blocked: 1,
+  failed: 2,
   completed: 2,
+  cancelled: 2,
 };
 
 const ORDER_PREFIX_PATTERNS = [

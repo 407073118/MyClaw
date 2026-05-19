@@ -59,12 +59,29 @@ type ToolPreferenceMap = Record<string, {
   approvalModeOverride: unknown;
 }>;
 
+function assertToolPreferenceInput(input: { enabled: boolean; exposedToModel: boolean; approvalModeOverride: unknown }): void {
+  if (typeof input.enabled !== "boolean" || typeof input.exposedToModel !== "boolean") {
+    throw new Error("Invalid tool preference boolean fields");
+  }
+  if (
+    input.approvalModeOverride !== null
+    && input.approvalModeOverride !== "inherit"
+    && input.approvalModeOverride !== "always-ask"
+    && input.approvalModeOverride !== "always-allow"
+  ) {
+    throw new Error(`Invalid tool approvalModeOverride: ${String(input.approvalModeOverride)}`);
+  }
+}
+
 function loadToolPreferences(prefsPath: string): ToolPreferenceMap {
   try {
     if (existsSync(prefsPath)) {
       return JSON.parse(readFileSync(prefsPath, "utf8"));
     }
-  } catch { /* ignore */ }
+  } catch (error) {
+    console.error("[tools] 读取工具偏好失败，已拒绝覆盖原偏好", { prefsPath, error: String(error) });
+    throw error;
+  }
   return {};
 }
 
@@ -74,7 +91,8 @@ async function saveToolPreferences(prefsPath: string, prefs: ToolPreferenceMap):
     await mkdir(dir, { recursive: true });
     await writeFile(prefsPath, JSON.stringify(prefs, null, 2), "utf8");
   } catch (err) {
-    console.error("[tools] failed to persist tool preferences", err);
+    console.error("[tools] 保存工具偏好失败，已向界面返回真实错误", { prefsPath, error: String(err) });
+    throw err;
   }
 }
 
@@ -102,6 +120,7 @@ export function registerToolHandlers(ctx: RuntimeContext): void {
       if (!existing) {
         throw new Error(`Builtin tool not found: ${toolId}`);
       }
+      assertToolPreferenceInput(input);
       const updated = { ...existing, ...input } as ResolvedBuiltinTool;
 
       // Persist preference to disk
@@ -127,6 +146,7 @@ export function registerToolHandlers(ctx: RuntimeContext): void {
       if (!existing) {
         throw new Error(`MCP tool not found: ${toolId}`);
       }
+      assertToolPreferenceInput(input);
       const updated = { ...existing, ...input } as ResolvedMcpTool;
 
       // Persist preference to disk

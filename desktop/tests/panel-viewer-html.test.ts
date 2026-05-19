@@ -56,6 +56,55 @@ describe("Panel viewer HTML", () => {
     expect(invokeAction).toHaveBeenCalledWith("file-viewer:reveal", { path: "F:/tmp/README.md" });
   });
 
+  it("renders markdown tables, fenced code blocks, and emphasis in the file preview", () => {
+    let onMessage: ((message: unknown) => void) | null = null;
+    const dom = new JSDOM(buildPanelViewerHtml(), {
+      runScripts: "dangerously",
+      beforeParse(window) {
+        Object.assign(window, {
+          myClawPanel: {
+            onMessage(callback: (message: unknown) => void) {
+              onMessage = callback;
+            },
+            invokeAction: vi.fn(),
+          },
+        });
+      },
+    });
+
+    onMessage?.({
+      type: "skill-data",
+      payload: {
+        panelKind: "file-viewer",
+        fileName: "report.md",
+        path: "F:/tmp/report.md",
+        viewerKind: "markdown",
+        sizeBytes: 128,
+        content: [
+          "## 调研概述",
+          "",
+          "| 维度 | 内容 |",
+          "|------|------|",
+          "| **调研目标** | 了解主流产品 |",
+          "",
+          "```",
+          "选型决策树：",
+          "├── 团队技术栈是 JavaScript/TypeScript？",
+          "```",
+        ].join("\n"),
+      },
+    });
+
+    const document = dom.window.document;
+
+    expect(document.querySelector("h2")?.textContent).toBe("调研概述");
+    expect(document.querySelector("table")).not.toBeNull();
+    expect(document.querySelector("th")?.textContent).toBe("维度");
+    expect(document.querySelector("td strong")?.textContent).toBe("调研目标");
+    expect(document.querySelector("pre code")?.textContent).toContain("选型决策树");
+    expect(document.body.textContent).not.toContain("```");
+  });
+
   it("mounts code and PDF viewers through Monaco and PDF.js placeholders", () => {
     let onMessage: ((message: unknown) => void) | null = null;
     const dom = new JSDOM(buildPanelViewerHtml(), {

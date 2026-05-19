@@ -35,6 +35,8 @@ describe("WebPanel layout controls", () => {
         title: "Preview",
         data: null,
         panelWidth: 420,
+        tabs: [],
+        activeTabId: null,
       },
     }));
   });
@@ -50,6 +52,8 @@ describe("WebPanel layout controls", () => {
         title: "",
         data: null,
         panelWidth: 420,
+        tabs: [],
+        activeTabId: null,
       },
     }));
   });
@@ -64,6 +68,21 @@ describe("WebPanel layout controls", () => {
     fireEvent.mouseUp(document);
 
     expect(useWorkspaceStore.getState().webPanel.panelWidth).toBe(1120);
+  });
+
+  it("keeps the resize hit target outside the native WebContentsView", async () => {
+    const { container } = render(<WebPanel />);
+
+    const dragHandle = screen.getByRole("separator", { name: "调整右侧 WebPanel 宽度" });
+    const cssText = container.querySelector("style")?.textContent ?? "";
+
+    expect(dragHandle.getAttribute("aria-orientation")).toBe("vertical");
+    expect(dragHandle.getAttribute("data-testid")).toBe("web-panel-resize-handle");
+    expect(cssText).toContain("overflow: visible;");
+    expect(cssText).toContain("left: -12px;");
+    expect(cssText).toContain("width: 16px;");
+    expect(cssText).toContain("z-index: 2300;");
+    await waitFor(() => expect(container.querySelector(".web-panel")?.classList.contains("is-ready")).toBe(true));
   });
 
   it("converts zoomed renderer coordinates before reporting native surface bounds", async () => {
@@ -110,6 +129,39 @@ describe("WebPanel layout controls", () => {
     }));
   });
 
+  it("keeps the blank WebPanel workspace compact and uses an icon-only add tab action", () => {
+    useWorkspaceStore.setState((state) => ({
+      webPanel: {
+        ...state.webPanel,
+        isOpen: true,
+        viewPath: null,
+        title: "新面板",
+        data: null,
+        panelWidth: 420,
+        tabs: [{
+          id: "empty-tab-1",
+          viewPath: null,
+          title: "新面板",
+          data: null,
+          createdAt: "2026-05-18T00:00:00.000Z",
+        }],
+        activeTabId: "empty-tab-1",
+      },
+    }));
+
+    render(<WebPanel />);
+
+    const addTabButton = screen.getByTestId("web-panel-tab-add");
+    const refreshButton = screen.getByRole("button", { name: "刷新" }) as HTMLButtonElement;
+    expect(addTabButton.textContent).toBe("");
+    expect(refreshButton.disabled).toBe(true);
+    expect(screen.getByTestId("web-panel-empty-state").textContent).toContain("右侧 WebPanel");
+
+    fireEvent.click(addTabButton);
+
+    expect(useWorkspaceStore.getState().webPanel.tabs).toHaveLength(2);
+  });
+
   it("reports only the native surface bounds so toolbar controls stay outside WebContentsView", async () => {
     const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
       if (this.classList.contains("wp-native-surface")) {
@@ -134,7 +186,7 @@ describe("WebPanel layout controls", () => {
     }
   });
 
-  it("keeps fullscreen fallback bounds below the toolbar while layout settles", async () => {
+  it("keeps fullscreen fallback bounds below the app titlebar and WebPanel toolbar while layout settles", async () => {
     const originalInnerWidth = window.innerWidth;
     const originalInnerHeight = window.innerHeight;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
@@ -156,9 +208,9 @@ describe("WebPanel layout controls", () => {
       fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
       await waitFor(() => expect(panelSetBounds).toHaveBeenLastCalledWith({
         x: 0,
-        y: 44,
+        y: 80,
         width: 1280,
-        height: 676,
+        height: 640,
       }));
     } finally {
       rectSpy.mockRestore();
@@ -178,23 +230,24 @@ describe("WebPanel layout controls", () => {
     expect(panel?.classList.contains("fullscreen")).toBe(false);
   });
 
-  it("shows a floating fullscreen exit above the native surface", () => {
+  it("shows the fullscreen toolbar exit below the app titlebar and above the native surface", () => {
     const { container } = render(<WebPanel />);
     const panel = container.querySelector(".web-panel");
 
     fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
     const toolbarExit = screen.getByTestId("web-panel-fullscreen-exit");
-    const floatingExit = screen.getByTestId("web-panel-floating-fullscreen-exit");
     const nativeSurface = container.querySelector(".wp-native-surface");
+    const cssText = container.querySelector("style")?.textContent ?? "";
 
     expect(toolbarExit.textContent).toContain("退出全屏");
     expect(Boolean(nativeSurface?.compareDocumentPosition(toolbarExit) & Node.DOCUMENT_POSITION_PRECEDING)).toBe(true);
-    expect(floatingExit.textContent).toContain("退出全屏");
-    expect(Boolean(nativeSurface?.compareDocumentPosition(floatingExit) & Node.DOCUMENT_POSITION_PRECEDING)).toBe(true);
-
-    fireEvent.click(floatingExit);
-    expect(panel?.classList.contains("fullscreen")).toBe(false);
     expect(screen.queryByTestId("web-panel-floating-fullscreen-exit")).toBeNull();
+    expect(cssText).toContain("top: 36px;");
+    expect(cssText).toContain(".web-panel.fullscreen .wp-empty-panel");
+    expect(cssText).toContain("top: 44px;");
+
+    fireEvent.click(toolbarExit);
+    expect(panel?.classList.contains("fullscreen")).toBe(false);
   });
 
   it("updates the native panel data without reopening the surface", async () => {
@@ -245,11 +298,9 @@ describe("WebPanel layout controls", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "全屏展示" }));
     const exitButton = screen.getByTestId("web-panel-fullscreen-exit");
-    const floatingExit = screen.getByTestId("web-panel-floating-fullscreen-exit");
     expect(exitButton.textContent).toContain("退出全屏");
-    expect(floatingExit.textContent).toContain("退出全屏");
 
-    fireEvent.click(floatingExit);
+    fireEvent.click(exitButton);
     expect(panel?.classList.contains("fullscreen")).toBe(false);
   });
 });

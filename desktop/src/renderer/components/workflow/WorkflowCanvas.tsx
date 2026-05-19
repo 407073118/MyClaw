@@ -10,7 +10,7 @@ import {
   type WorkflowCanvasNodeLayout,
   type WorkflowCanvasPoint,
 } from "./workflow-canvas-geometry";
-import { getWorkflowNodeKindLabel, isGeneratedScopedReference } from "./workflow-node-factory";
+import { WORKFLOW_CREATABLE_NODE_KINDS, getWorkflowNodeKindLabel, isGeneratedScopedReference } from "./workflow-node-factory";
 
 const NODE_WIDTH = 260;
 const NODE_HEIGHT = 88;
@@ -85,7 +85,7 @@ interface WorkflowCanvasProps {
   debugNodeStatuses?: Map<string, DebugNodeStatus>;
 }
 
-const NODE_KIND_LIST: WorkflowNodeKind[] = ["start", "llm", "tool", "http-request", "human-input", "condition", "subgraph", "join", "end"];
+const NODE_KIND_LIST: WorkflowNodeKind[] = WORKFLOW_CREATABLE_NODE_KINDS;
 
 const nodeKindMap: Record<string, string> = Object.fromEntries(
   NODE_KIND_LIST.map((kind) => [kind, getWorkflowNodeKindLabel(kind)]),

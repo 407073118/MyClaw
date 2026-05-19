@@ -97,7 +97,7 @@ describe("ChatPage Qwen runtime status", () => {
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });
 
-  it("shows the active Qwen vendor, protocol, model, and thinking semantics near the composer", async () => {
+  it("does not show runtime model status pills near the composer", async () => {
     const sessionStreamUnsubscribe = vi.fn();
     const webPanelUnsubscribe = vi.fn();
 
@@ -112,10 +112,10 @@ describe("ChatPage Qwen runtime status", () => {
     const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
     render(React.createElement(ChatPage));
 
-    const status = screen.getByTestId("chat-runtime-model-status");
-    expect(status.textContent).toContain("Qwen");
-    expect(status.textContent).toContain("qwen-max");
-    expect(status.textContent).toContain("OpenAI Responses");
-    expect(status.textContent).toContain("Thinking Budget");
+    expect(screen.queryByTestId("chat-runtime-model-status")).toBeNull();
+    expect(screen.queryByText("Qwen")).toBeNull();
+    expect(screen.queryByText("qwen-max")).toBeNull();
+    expect(screen.queryByText("OpenAI Responses")).toBeNull();
+    expect(screen.queryByText("Thinking Budget")).toBeNull();
   });
 });

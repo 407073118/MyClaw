@@ -24,6 +24,9 @@ import { saveSiliconPerson, saveWorkflow } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
 import { deriveSiliconPersonPaths } from "../services/directory-service";
 import { getOrCreateWorkspace, initializeWorkspaceDirectories, refreshWorkspaceSkills } from "../services/silicon-person-workspace";
+import { normalizeMcpManifestConfig } from "../services/mcp-config-normalizer";
+import { createLocalPublishDraft } from "../services/publish-draft-service";
+import { resolveWorkflowPackageDefinition } from "../services/workflow-package-installer";
 
 // ---------------------------------------------------------------------------
 // Hub types (subset of what CloudHubProxy returns)
@@ -52,6 +55,21 @@ type HubManifest = {
   kind: "skill" | "workflow" | "employee";
   entrypoint?: string;
   files?: string[];
+};
+
+type CloudProjectSummary = {
+  id: number;
+  code: string;
+  name: string;
+  description: string | null;
+  ownerAccount: string;
+  status: "active" | "archived";
+  version: number;
+  repositoryCount: number;
+  apiCount: number;
+  skillCount: number;
+  mcpCount: number;
+  updatedAt: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -118,11 +136,24 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
     },
   );
 
-  // Get a single cloud skill detail
+  // 查询单个云端 Skill 详情，404 视为资源已下架，避免 Electron IPC 打印异常栈。
   ipcMain.handle("cloud:skill-detail", async (_event, skillId: string) => {
     const res = await cloudFetch(`/skills/${encodeURIComponent(skillId)}`);
-    if (!res.ok) throw new Error(`Skill not found: ${skillId}`);
+    if (res.status === 404) {
+      console.info("[cloud] 云端 Skill 详情不存在或已下架", { skillId });
+      return null;
+    }
+    if (!res.ok) throw new Error(`Cloud skill detail request failed: ${res.status}`);
     return res.json();
+  });
+
+  // 查询 Cloud 项目摘要列表，用于 Hub 下载、更新和绑定本地项目。
+  ipcMain.handle("cloud:projects", async () => {
+    console.info("[cloud] 查询 Cloud 项目列表");
+    const res = await cloudFetch("/projects");
+    if (!res.ok) throw new Error(`Cloud projects request failed: ${res.status}`);
+    const payload = await res.json() as { items: CloudProjectSummary[] };
+    return payload.items;
   });
 
   // Get local skill detail by ID (includes SKILL.md content)
@@ -159,16 +190,17 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
   ipcMain.handle(
     "publish:create-draft",
     async (_event, input: Record<string, unknown>): Promise<{ draft: Record<string, unknown> }> => {
-      // Stub: real impl creates a draft on cloud API
-      console.log("[publish:create-draft] stub", input);
-      return {
-        draft: {
-          id: `draft-${Date.now()}`,
-          status: "draft",
-          ...input,
-          createdAt: new Date().toISOString(),
-        },
-      };
+      const result = await createLocalPublishDraft(input, {
+        artifactsDir: ctx.runtime.paths.artifactsDir,
+        siliconPersons: ctx.state.siliconPersons,
+        workflows: ctx.state.getWorkflows(),
+        workflowDefinitions: ctx.state.workflowDefinitions,
+      });
+      console.info("[publish:create-draft] 已返回真实发布草稿 artifact", {
+        draftId: result.draft.id,
+        filePath: result.draft.filePath,
+      });
+      return result;
     },
   );
 
@@ -252,26 +284,7 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
     "cloud:import-mcp",
     async (_event, input: { manifest: Record<string, unknown>; siliconPersonId?: string }) => {
       const manifest = input.manifest ?? input;
-
-      const transport = (manifest.transport as string) ?? "stdio";
-      const name = (manifest.name as string) ?? "Cloud MCP";
-      const config = transport === "http"
-        ? {
-            name,
-            source: "manual" as const,
-            transport: "http" as const,
-            url: (manifest.endpoint as string) ?? "",
-            headers: (manifest.headers as Record<string, string>) ?? undefined,
-            enabled: true,
-          }
-        : {
-            name,
-            source: "manual" as const,
-            transport: "stdio" as const,
-            command: (manifest.command as string) ?? "",
-            args: (manifest.args as string[]) ?? [],
-            enabled: true,
-          };
+      const config = normalizeMcpManifestConfig(manifest);
 
       // 全局或硅基员工的 MCP 管理器
       let mcpManager: typeof ctx.services.mcpManager;
@@ -329,35 +342,33 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
   ipcMain.handle(
     "cloud:import-workflow-package",
     async (_event, input: Record<string, unknown>) => {
-      const manifest = input.manifest as Record<string, unknown> | undefined;
-      const workflow: WorkflowSummary = {
-        id: `workflow-${crypto.randomUUID()}`,
-        name: ((input.name as string) ?? "").trim(),
-        description: (manifest?.description as string) || ((input.summary as string) ?? "").trim() || ((input.name as string) ?? "").trim(),
-        status: "draft",
-        source: "hub",
-        updatedAt: new Date().toISOString(),
-        version: 1,
-        nodeCount: 0,
-        edgeCount: 0,
-        libraryRootId: "",
-      };
+      const manifest = input.manifest as { kind: "workflow-package"; name?: string; version?: string; description?: string; entryWorkflowId?: string } | undefined;
+      const downloadUrl = typeof input.downloadUrl === "string" ? input.downloadUrl.trim() : "";
+      if (!manifest || manifest.kind !== "workflow-package") {
+        throw new Error("Cloud manifest is not a workflow package.");
+      }
+      if (!downloadUrl) {
+        throw new Error("Workflow package downloadUrl is required.");
+      }
 
+      const { workflow, definition } = await resolveWorkflowPackageDefinition({
+        name: typeof input.name === "string" ? input.name : manifest.name,
+        summary: typeof input.summary === "string" ? input.summary : undefined,
+        downloadUrl,
+        manifest,
+      });
       ctx.state.getWorkflows().push(workflow);
-
-      const definition: WorkflowDefinition = {
-        ...workflow,
-        entryNodeId: "",
-        nodes: [],
-        edges: [],
-        stateSchema: [],
-      };
       ctx.state.workflowDefinitions[workflow.id] = definition;
       trackSave(
         saveWorkflow(ctx.runtime.paths, definition).catch((err) => {
           console.error("[cloud:import-workflow-package] persist failed", err);
         }),
       );
+      console.info("[cloud:import-workflow-package] 已安装真实 workflow package artifact", {
+        workflowId: workflow.id,
+        nodeCount: workflow.nodeCount,
+        edgeCount: workflow.edgeCount,
+      });
 
       return { workflow, items: [...ctx.state.getWorkflows()] };
     },

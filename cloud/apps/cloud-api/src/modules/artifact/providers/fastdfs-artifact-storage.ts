@@ -1,4 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
+import { createHash } from "node:crypto";
 
 import type {
   ArtifactDownloadDescriptor,
@@ -46,6 +47,7 @@ export class FastdfsArtifactStorage implements ArtifactStoragePort {
     return {
       fileName: uploadResult.fileName,
       fileSize: uploadResult.fileSize,
+      sha256: createHash("sha256").update(input.fileBytes).digest("hex"),
       storageKey: uploadResult.storageKey,
       storageUrl: uploadResult.storageUrl
     };

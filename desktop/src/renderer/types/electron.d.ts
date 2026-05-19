@@ -12,6 +12,7 @@ import type {
   BuiltinToolApprovalMode,
   CalendarEvent,
   ChatSession,
+  CloudProjectBinding,
   ExecutionRun,
   McpServer,
   McpServerConfig,
@@ -38,6 +39,8 @@ import type {
   ModelProfile,
   ModelRouteProbeResult,
   PersonalPromptProfile,
+  ProjectCapabilityDetail,
+  ProjectCapabilityLocalState,
   Reminder,
   ResolvedBuiltinTool,
   ResolvedMcpTool,
@@ -45,8 +48,11 @@ import type {
   SkillDefinition,
   SiliconPerson,
   SuggestedTimebox,
+  Task,
   StructuredTranscript,
   TaskCommitment,
+  TaskInterruptRequest,
+  TaskResumeInput,
   TodayBrief,
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
@@ -58,6 +64,7 @@ import type {
   CloudHubItemDetail,
   CloudHubItemType,
   CloudHubManifest,
+  CloudProjectSummary,
   CloudSkillCategory,
   CloudSkillDetail,
   CloudSkillSummary,
@@ -76,6 +83,7 @@ type AuthLoginResponse = {
     account: string;
     displayName: string;
     roles: string[];
+    avatarDataUrl?: string | null;
     [key: string]: unknown;
   };
 };
@@ -113,6 +121,7 @@ type BootstrapPayload = {
   cloudHubItems?: CloudHubItem[];
   cloudHubDetail?: CloudHubItemDetail | null;
   cloudHubManifest?: CloudHubManifest | null;
+  cloudProjects?: CloudProjectSummary[];
   approvals: ApprovalPolicy;
   approvalRequests: ApprovalRequest[];
   personalPrompt: PersonalPromptProfile;
@@ -210,6 +219,24 @@ declare global {
         introspect: (accessToken: string) => Promise<AuthIntrospectResponse>;
       };
 
+      // --- Projects ---
+      projects: {
+        listLocal: () => Promise<{ items: CloudProjectBinding[] }>;
+        getDetail: (localProjectId: string) => Promise<ProjectCapabilityDetail>;
+        bindSession: (input: { sessionId: string; localProjectId: string | null }) => Promise<{ ok: boolean; localProjectId: string | null }>;
+        getSessionBinding: (sessionId: string) => Promise<{ localProjectId: string | null }>;
+        setCapabilityState: (input: { capabilityRefId: string; localState: ProjectCapabilityLocalState }) => Promise<ProjectCapabilityDetail>;
+        bindCloudProject: (input: { cloudProjectId: string; sessionId?: string; accessToken?: string; accountId?: string }) => Promise<ProjectCapabilityDetail>;
+        sync: (input: { localProjectId: string; accessToken?: string; accountId?: string }) => Promise<ProjectCapabilityDetail>;
+        installCapability: (input: { capabilityRefId: string }) => Promise<{ installation: unknown }>;
+        confirmMcpCapability: (input: {
+          capabilityRefId: string;
+          localConfirmed: boolean;
+          secretsConfigured: boolean;
+          allowExposeToModel: boolean;
+        }) => Promise<ProjectCapabilityDetail>;
+      };
+
       // --- Bootstrap ---
       bootstrap: () => Promise<BootstrapPayload>;
       getAppUpdateState: () => Promise<AppUpdateState>;
@@ -280,6 +307,7 @@ declare global {
         attachedDirectory?: string | null;
       }) => Promise<SessionPayload>;
       deleteSession: (sessionId: string) => Promise<SessionsPayload>;
+      taskResume: (input: TaskResumeInput) => Promise<{ task: Task; request: TaskInterruptRequest }>;
       sendMessage: (
         sessionId: string,
         content: string,
@@ -333,6 +361,8 @@ declare global {
       ) => Promise<import("@shared/contracts").ChatMessage[]>;
       listArtifactsByScope: (scope: ArtifactScopeRef) => Promise<ArtifactRecord[]>;
       listRecentArtifacts: (input?: { limit?: number }) => Promise<ArtifactRecord[]>;
+      updateArtifactsRootPath: (path: string) => Promise<{ artifactsRootPath: string }>;
+      openLocalDirectory: (path: string) => Promise<{ success: boolean }>;
       markArtifactFinal: (artifactId: string, scope?: ArtifactScopeRef) => Promise<ArtifactRecord>;
       openArtifact: (artifactId: string) => Promise<{ success: boolean }>;
       revealArtifact: (artifactId: string) => Promise<{ success: boolean }>;
@@ -414,6 +444,7 @@ declare global {
       fetchCloudHubDetail: (itemId: string) => Promise<CloudHubItemDetail>;
       fetchCloudHubManifest: (releaseId: string) => Promise<CloudHubManifest>;
       fetchCloudHubDownloadToken: (releaseId: string) => Promise<CloudDownloadToken>;
+      fetchCloudProjects: () => Promise<CloudProjectSummary[]>;
 
       // --- Cloud Skills ---
       fetchCloudSkills: (query?: {
@@ -422,16 +453,19 @@ declare global {
         sort?: "latest" | "downloads" | "name";
         tag?: string;
       }) => Promise<CloudSkillSummary[]>;
-      fetchCloudSkillDetail: (skillId: string) => Promise<CloudSkillDetail>;
+      fetchCloudSkillDetail: (skillId: string) => Promise<CloudSkillDetail | null>;
 
       // --- Cloud imports ---
       importCloudSkill: (input: {
         releaseId: string;
         skillName: string;
+        siliconPersonId?: string;
       }) => Promise<{ skills: { items: SkillDefinition[] } }>;
       importCloudMcp: (input: {
-        releaseId: string;
-        servers: McpServerConfig[];
+        releaseId?: string;
+        servers?: McpServerConfig[];
+        manifest?: CloudHubManifest | Record<string, unknown>;
+        siliconPersonId?: string;
       }) => Promise<McpServersPayload>;
       importSiliconPersonPackage: (input: {
         itemId: string;
@@ -457,6 +491,8 @@ declare global {
         name: string;
         title?: string;
         description: string;
+        avatarDataUrl?: string | null;
+        modelProfileId?: string;
       }) => Promise<{ items: SiliconPerson[]; siliconPerson: SiliconPerson }>;
       updateSiliconPerson: (
         siliconPersonId: string,
@@ -548,7 +584,7 @@ declare global {
       panelRefresh: () => Promise<{ success: boolean; error?: string }>;
       fileViewerOpenExternal: (path: string) => Promise<{ success: boolean }>;
       fileViewerReveal: (path: string) => Promise<{ success: boolean }>;
-      fileViewerPreview: (input: { path: string; baseDirectory?: string | null }) => Promise<{
+      fileViewerPreview: (input: { path: string; baseDirectory?: string | null; candidateBaseDirectories?: string[] | null }) => Promise<{
         success: boolean;
         error?: string;
         resolvedPath?: string;

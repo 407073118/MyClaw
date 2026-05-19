@@ -1,6 +1,6 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
-import { FileText, Save, Sparkles, Tag, UserRound } from "lucide-react";
-import { UNSAFE_NavigationContext, useBeforeUnload } from "react-router-dom";
+import { ChevronLeft, FileText, Save, Sparkles, Tag, UserRound } from "lucide-react";
+import { Link, UNSAFE_NavigationContext, useBeforeUnload } from "react-router-dom";
 
 import { useWorkspaceStore } from "../stores/workspace";
 import {
@@ -139,27 +139,33 @@ export default function PersonalPromptPage() {
   return (
     <div data-testid="personal-prompt-view" className="page-shell personal-prompt-page">
       <header className="page-header page-header--sticky personal-prompt-header">
-        <div className="page-header__lead personal-prompt-header-text">
-          <div className="page-header__eyebrow">
-            <Sparkles size={14} />
-            <span>Personality</span>
-          </div>
-          <div className="title-row">
-            <h2 className="page-header__title">我的个性</h2>
-            <span className={`tag ${isDirty ? "tag--yellow" : "tag--green"}`}>
-              {isDirty ? "未保存" : "已同步"}
-            </span>
-          </div>
-          <p className="page-header__subtitle personal-prompt-subtitle">
-            维护一段长期说明，让助手持续理解你的角色、职责和协作方式。
-          </p>
-          <div className="header-meta-inline">
-            <span className="meta-inline-item">最近更新: {updatedAtLabel}</span>
-            <span className="meta-inline-item">系统会自动提炼摘要和标签</span>
+        <div className="page-header__lead personal-prompt-header-lead">
+          <div className="personal-prompt-header-text">
+            <div className="page-header__eyebrow">
+              <Sparkles size={14} />
+              <span>Personality</span>
+            </div>
+            <div className="title-row">
+              <h2 className="page-header__title">我的个性</h2>
+              <span className={`tag ${isDirty ? "tag--yellow" : "tag--green"}`}>
+                {isDirty ? "未保存" : "已同步"}
+              </span>
+            </div>
+            <p className="page-header__subtitle personal-prompt-subtitle">
+              维护一段长期说明，让助手持续理解你的角色、职责和协作方式。
+            </p>
+            <div className="header-meta-inline">
+              <span className="meta-inline-item">最近更新: {updatedAtLabel}</span>
+              <span className="meta-inline-item">系统会自动提炼摘要和标签</span>
+            </div>
           </div>
         </div>
         <div className="page-header__actions personal-prompt-actions">
           <span className="char-count">{draft.trim().length} 字</span>
+          <Link to="/settings" className="personal-prompt-back-button" aria-label="返回设置" title="返回设置">
+            <ChevronLeft size={15} aria-hidden="true" />
+            <span>返回设置</span>
+          </Link>
           <button
             data-testid="personal-prompt-save"
             className="btn-primary save-button"
@@ -271,8 +277,48 @@ export default function PersonalPromptPage() {
           align-items: flex-end;
         }
 
+        .personal-prompt-header-lead {
+          display: flex;
+          flex-direction: row;
+          align-items: flex-start;
+          gap: 14px;
+        }
+
         .personal-prompt-header-text {
+          min-width: 0;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
           gap: 8px;
+        }
+
+        .personal-prompt-back-button {
+          flex-shrink: 0;
+          min-height: 32px;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 0 10px 0 8px;
+          border: 1px solid var(--glass-border);
+          border-radius: var(--radius-md);
+          background: rgba(255,255,255,0.03);
+          color: var(--text-secondary);
+          font-size: 12px;
+          font-weight: 600;
+          text-decoration: none;
+          transition: color 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+        }
+
+        .personal-prompt-back-button:hover,
+        .personal-prompt-back-button:focus-visible {
+          color: var(--text-primary);
+          border-color: rgba(255,255,255,0.14);
+          background: rgba(255,255,255,0.07);
+        }
+
+        .personal-prompt-back-button:focus-visible {
+          outline: 2px solid rgba(45, 212, 191, 0.35);
+          outline-offset: 2px;
         }
 
         .title-row {
@@ -285,6 +331,7 @@ export default function PersonalPromptPage() {
         .personal-prompt-actions {
           flex-wrap: wrap;
           justify-content: flex-end;
+          align-items: center;
         }
 
         .personal-prompt-subtitle {
@@ -500,6 +547,10 @@ export default function PersonalPromptPage() {
             justify-content: flex-start;
           }
 
+          .personal-prompt-header-lead {
+            width: 100%;
+          }
+
           .header-meta-inline {
             justify-content: flex-start;
           }
@@ -515,6 +566,11 @@ export default function PersonalPromptPage() {
             grid-template-columns: minmax(0, 1fr);
             height: auto;
             overflow: visible;
+          }
+
+          .personal-prompt-header-lead {
+            flex-direction: column;
+            gap: 10px;
           }
 
           .prompt-side-panel {

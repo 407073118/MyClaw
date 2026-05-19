@@ -595,6 +595,7 @@ export function buildOpenAiResponsesRequestBody(
     providerFamily?: BackgroundTaskHandle["providerFamily"];
     deploymentProfile?: string | null;
     disableResponseStorage?: boolean;
+    enableParallelToolCalls?: boolean;
     previousResponseId?: string | null;
     capabilityRoutes?: CapabilityExecutionRoute[];
     toolRegistry?: CanonicalToolSpec[] | null;
@@ -634,7 +635,7 @@ export function buildOpenAiResponsesRequestBody(
       input,
       tools: normalizedTools,
       stream: true,
-      ...(normalizedTools.length > 0 ? { parallel_tool_calls: true } : {}),
+      ...(options?.enableParallelToolCalls === true && normalizedTools.length > 0 ? { parallel_tool_calls: true } : {}),
       ...(qwenThinkingBudget !== undefined
         ? {
             enable_thinking: true,
@@ -657,7 +658,7 @@ export function buildOpenAiResponsesRequestBody(
     input,
     tools: normalizedTools,
     stream: options?.backgroundMode?.enabled ? false : true,
-    ...(enableBrMiniMaxParallelToolCalls ? { parallel_tool_calls: true } : {}),
+    ...((options?.enableParallelToolCalls === true || enableBrMiniMaxParallelToolCalls) ? { parallel_tool_calls: true } : {}),
     ...(options?.backgroundMode?.enabled ? { background: true } : {}),
     ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
     ...(store !== undefined ? { store } : {}),
@@ -1022,6 +1023,7 @@ export const openAiResponsesDriver: ProtocolDriver = {
         providerFamily: input.plan.providerFamily,
         deploymentProfile: input.plan.deploymentProfile ?? null,
         disableResponseStorage: input.profile.responsesApiConfig?.disableResponseStorage,
+        enableParallelToolCalls: input.toolBundle.providerToolPolicy?.parallelToolCalls === "supported",
         previousResponseId: input.profile.responsesApiConfig?.useServerState ? input.previousResponseId ?? null : null,
         capabilityRoutes: input.plan.capabilityRoutes,
         toolRegistry: input.toolBundle.registry,
@@ -1078,6 +1080,7 @@ export const openAiResponsesDriver: ProtocolDriver = {
         providerFamily: input.plan.providerFamily,
         deploymentProfile: input.plan.deploymentProfile ?? null,
         disableResponseStorage: input.profile.responsesApiConfig?.disableResponseStorage,
+        enableParallelToolCalls: input.toolBundle.providerToolPolicy?.parallelToolCalls === "supported",
         previousResponseId: input.profile.responsesApiConfig?.useServerState ? input.previousResponseId ?? null : null,
         capabilityRoutes: input.plan.capabilityRoutes,
         toolRegistry: input.toolBundle.registry,
