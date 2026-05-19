@@ -20,5 +20,9 @@ describe("prisma mysql compatibility", () => {
     expect(schema).toMatch(/model ProjectSkillRef\s*{[\s\S]*?id Int @id @default\(autoincrement\(\)\)/);
     expect(schema).toMatch(/model ProjectMcpRef\s*{[\s\S]*?id Int @id @default\(autoincrement\(\)\)/);
     expect(schema).toMatch(/model ProjectApi\s*{[\s\S]*?projectId Int @map\("project_id"\)/);
+    expect(schema).toMatch(/model ProjectApi\s*{[\s\S]*?parametersJson Json\? @map\("parameters_json"\)/);
+    expect(schema).toMatch(/model ProjectApi\s*{[\s\S]*?requestBodyType String @default\("none"\) @map\("request_body_type"\)/);
+    expect(schema).toMatch(/model ProjectApi\s*{[\s\S]*?requestBodyContentType String\? @map\("request_body_content_type"\)/);
+    expect(schema).toMatch(/model ProjectApi\s*{[\s\S]*?requestBodyExampleJson Json\? @map\("request_body_example_json"\)/);
   });
 });
