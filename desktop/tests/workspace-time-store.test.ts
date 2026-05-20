@@ -32,7 +32,7 @@ function buildBootstrapPayload() {
     workflows: [],
     workflowRuns: [],
     approvals: {
-      mode: "prompt",
+      mode: "auto-read-only",
       autoApproveReadOnly: true,
       autoApproveSkills: true,
       alwaysAllowedTools: [],

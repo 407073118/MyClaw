@@ -192,6 +192,24 @@ function hydrateSession(
 
 // dehydrateSession 已移除：会话数据通过 SessionDatabase 统一序列化
 
+/** 迁移历史默认审批策略，避免旧版本保存的 prompt + 只读自动允许在新语义下退化成全部询问。 */
+function normalizeApprovalPolicyOnLoad(policy: ApprovalPolicy): ApprovalPolicy {
+  if (policy.mode !== "prompt" || policy.autoApproveReadOnly !== true) {
+    return policy;
+  }
+
+  const normalized: ApprovalPolicy = {
+    ...policy,
+    mode: "auto-read-only",
+  };
+  console.info("[state-persistence] 已将历史默认审批策略迁移为仅高风险审批", {
+    fromMode: policy.mode,
+    toMode: normalized.mode,
+    autoApproveReadOnly: normalized.autoApproveReadOnly,
+  });
+  return normalized;
+}
+
 // ---------------------------------------------------------------------------
 // 从磁盘加载全部状态（同步执行，仅在启动时调用一次）
 // ---------------------------------------------------------------------------
@@ -216,6 +234,7 @@ export async function loadPersistedState(paths: MyClawPaths): Promise<PersistedS
       asrConfig = { ...asrConfig, ...settings.asrConfig };
     }
   }
+  approvalPolicy = normalizeApprovalPolicyOnLoad(approvalPolicy);
 
   // ---- models ------------------------------------------------------------
   const models: ModelProfile[] = [];

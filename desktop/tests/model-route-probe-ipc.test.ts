@@ -56,7 +56,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -102,7 +102,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -152,7 +152,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -208,7 +208,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -266,7 +266,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -326,7 +326,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -384,7 +384,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -437,7 +437,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -492,7 +492,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -534,7 +534,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -579,7 +579,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {
@@ -631,7 +631,7 @@ describe("model route probe ipc", () => {
         sessions: [],
         getDefaultModelProfileId: () => null,
         setDefaultModelProfileId: () => {},
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },
       runtime: {

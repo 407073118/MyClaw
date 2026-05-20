@@ -36,6 +36,35 @@ afterEach(() => {
 });
 
 describe("Phase 2 session persistence", () => {
+  it("migrates the legacy prompt plus read-only default approval policy to high-risk-only", async () => {
+    const paths = createPaths(testRootDir);
+    mkdirSync(paths.myClawDir, { recursive: true });
+    writeFileSync(paths.settingsFile, JSON.stringify({
+      defaultModelProfileId: null,
+      approvalPolicy: {
+        mode: "prompt",
+        autoApproveReadOnly: true,
+        autoApproveSkills: true,
+        alwaysAllowedTools: ["web.search"],
+      },
+      personalPrompt: {
+        prompt: "",
+        summary: "",
+        tags: [],
+        updatedAt: null,
+      },
+    }, null, 2), "utf8");
+
+    const persisted = await loadPersistedState(paths);
+
+    expect(persisted.approvalPolicy).toMatchObject({
+      mode: "auto-read-only",
+      autoApproveReadOnly: true,
+      autoApproveSkills: true,
+      alwaysAllowedTools: ["web.search"],
+    });
+  });
+
   it("round-trips executionPlan and runtime metadata through disk persistence", async () => {
     const paths = createPaths(testRootDir);
     const executionPlan: ResolvedExecutionPlan = {

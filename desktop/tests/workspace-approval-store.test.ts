@@ -7,7 +7,7 @@ describe("workspace approval store", () => {
     vi.unstubAllGlobals();
     useWorkspaceStore.setState({
       approvals: {
-        mode: "prompt",
+        mode: "auto-read-only",
         autoApproveReadOnly: true,
         autoApproveSkills: true,
         alwaysAllowedTools: [],
@@ -32,7 +32,7 @@ describe("workspace approval store", () => {
 
   it("syncs persisted path grants returned after resolving external-path approval", async () => {
     const nextApprovals = {
-      mode: "prompt",
+      mode: "auto-read-only",
       autoApproveReadOnly: true,
       autoApproveSkills: true,
       alwaysAllowedTools: [],

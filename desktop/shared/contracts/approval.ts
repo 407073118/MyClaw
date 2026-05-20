@@ -79,7 +79,7 @@ export type ExecutionIntentResult = {
 
 export function createDefaultApprovalPolicy(): ApprovalPolicy {
   return {
-    mode: "prompt",
+    mode: "auto-read-only",
     autoApproveReadOnly: true,
     autoApproveSkills: true,
     alwaysAllowedTools: [],
@@ -119,6 +119,11 @@ export function shouldRequestApproval(input: {
 
   if (input.policy.alwaysAllowedTools.includes(input.toolId)) {
     return false;
+  }
+
+  // prompt 模式表示所有未单独放行的工具都需要审批，用于最保守的全询问策略。
+  if (input.policy.mode === "prompt") {
+    return true;
   }
 
   if (input.source === "skill" && input.policy.autoApproveSkills) {

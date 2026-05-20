@@ -51,7 +51,7 @@ function buildContext(input?: {
       setDefaultModelProfileId: () => {},
       getWorkflows: () => [],
       getApprovals: () => ({
-        mode: "prompt",
+        mode: "auto-read-only",
         autoApproveReadOnly: true,
         autoApproveSkills: true,
         alwaysAllowedTools: [],

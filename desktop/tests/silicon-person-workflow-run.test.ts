@@ -263,9 +263,13 @@ vi.mock("../src/main/services/workflow-engine", () => ({
     register(): void {}
   },
   StartNodeExecutor: class {},
+  AnswerNodeExecutor: class {},
+  CodeNodeExecutor: class {},
   EndNodeExecutor: class {},
   ConditionNodeExecutor: class {},
   LlmNodeExecutor: class {},
+  TemplateNodeExecutor: class {},
+  VariableAssignerNodeExecutor: class {},
   ToolNodeExecutor: class {},
   HttpRequestNodeExecutor: class {},
   HumanInputNodeExecutor: class {},
@@ -454,7 +458,7 @@ function buildContext(): RuntimeContext {
         },
       ],
       getApprovals: () => ({
-        mode: "prompt",
+        mode: "auto-read-only",
         autoApproveReadOnly: true,
         autoApproveSkills: true,
         alwaysAllowedTools: [],

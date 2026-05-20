@@ -20,9 +20,16 @@ import type { ApprovalPolicy } from "../shared/contracts/approval";
 // ---------------------------------------------------------------------------
 
 describe("Phase 3: Read-only tools auto-approved", () => {
+  it("should default to the high-risk-only approval mode", () => {
+    const policy = createDefaultApprovalPolicy();
+
+    expect(policy.mode).toBe("auto-read-only");
+    expect(policy.autoApproveReadOnly).toBe(true);
+  });
+
   it("should NOT request approval for read-only tools with default policy", () => {
     const policy = createDefaultApprovalPolicy();
-    // Default policy: mode=prompt, autoApproveReadOnly=true
+    // Default policy: mode=auto-read-only, autoApproveReadOnly=true
 
     expect(shouldRequestApproval({
       policy,
@@ -147,6 +154,22 @@ describe("Phase 3: High-risk tools require approval", () => {
 // ---------------------------------------------------------------------------
 
 describe("Phase 3: Approval mode configurable", () => {
+  it("prompt mode should request approval even for read-only tools", () => {
+    const policy: ApprovalPolicy = {
+      mode: "prompt",
+      autoApproveReadOnly: true,
+      autoApproveSkills: true,
+      alwaysAllowedTools: [],
+    };
+
+    expect(shouldRequestApproval({
+      policy,
+      source: "builtin-tool",
+      toolId: "fs.read",
+      risk: ToolRiskCategory.Read,
+    })).toBe(true);
+  });
+
   it("per-tool always-ask should require approval even for read-only tools", () => {
     const policy = createDefaultApprovalPolicy();
 

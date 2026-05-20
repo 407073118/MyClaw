@@ -19,8 +19,8 @@ import { Box, Sliders, ShieldCheck, Mic, ChevronRight, CheckCircle2, AlertCircle
 type ApprovalMode = "prompt" | "auto-read-only" | "auto-allow-all" | "unrestricted";
 
 const DEFAULT_APPROVAL_POLICY = {
-  mode: "prompt" as ApprovalMode,
-  autoApproveReadOnly: false,
+  mode: "auto-read-only" as ApprovalMode,
+  autoApproveReadOnly: true,
   autoApproveSkills: true,
   alwaysAllowedTools: [] as string[],
 };

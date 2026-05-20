@@ -81,7 +81,7 @@ vi.mock("../src/main/services/builtin-tool-executor", () => ({
 
 function buildContext(): RuntimeContext {
   const approvalPolicy = {
-    mode: "prompt" as const,
+    mode: "auto-read-only" as const,
     autoApproveReadOnly: true,
     autoApproveSkills: true,
     alwaysAllowedTools: [] as string[],

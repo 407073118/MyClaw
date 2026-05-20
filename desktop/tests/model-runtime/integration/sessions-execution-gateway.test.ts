@@ -50,7 +50,14 @@ vi.mock("../../../src/main/services/reasoning-runtime", () => ({
   resolveSessionRuntimeIntent: resolveSessionRuntimeIntentMock,
   buildExecutionPlan: buildExecutionPlanMock,
 }));
-vi.mock("../../../src/main/services/state-persistence", () => ({ saveSession: vi.fn(), saveSiliconPerson: vi.fn(), saveWorkflowRun: vi.fn(), deleteWorkflowRunFile: vi.fn(), deleteSessionFiles: vi.fn() }));
+vi.mock("../../../src/main/services/state-persistence", () => ({
+  saveSession: vi.fn(),
+  saveSettings: vi.fn(() => Promise.resolve()),
+  saveSiliconPerson: vi.fn(),
+  saveWorkflowRun: vi.fn(),
+  deleteWorkflowRunFile: vi.fn(),
+  deleteSessionFiles: vi.fn(),
+}));
 vi.mock("../../../src/main/services/model-runtime/turn-outcome-store", () => ({
   updateTurnOutcome: updateTurnOutcomeMock,
   loadTurnOutcome: loadTurnOutcomeMock,
@@ -63,6 +70,8 @@ vi.mock("../../../src/main/services/builtin-tool-executor", () => ({ BuiltinTool
   setPathAudit() {}
   setFileActionHandlers() {}
   setDocCacheRoot() {}
+  // 测试里默认让内置工具执行成功，聚焦运行时审批流。
+  async execute() { return { success: true, output: "ok" }; }
   getBrowserService() {
     return {};
   }
@@ -134,7 +143,7 @@ describe("sessions execution gateway", () => {
         sessions: [{ id: "session-1", title: "Test", modelProfileId: "profile-1", attachedDirectory: null, createdAt: "2026-04-10T00:00:00.000Z", messages: [] }],
         siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
         getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => [], setApprovalRequests: () => {},
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
       },
@@ -193,7 +202,7 @@ describe("sessions execution gateway", () => {
         }],
         siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
         getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => [], setApprovalRequests: () => {},
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
       },
@@ -261,7 +270,7 @@ describe("sessions execution gateway", () => {
         }],
         siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
         getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => [],
         setApprovalRequests: () => {},
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
@@ -365,7 +374,7 @@ describe("sessions execution gateway", () => {
         }],
         siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
         getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => [], setApprovalRequests: () => {},
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
       },
@@ -444,7 +453,7 @@ describe("sessions execution gateway", () => {
         }],
         siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
         getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => [], setApprovalRequests: () => {},
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
       },
@@ -508,7 +517,7 @@ describe("sessions execution gateway", () => {
         }],
         siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
         getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => approvalRequests,
         setApprovalRequests: (next: Array<Record<string, unknown>>) => { approvalRequests = next; },
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
@@ -612,6 +621,73 @@ describe("sessions execution gateway", () => {
     }));
   });
 
+  it("auto-approves same-tool queued approvals after choosing always allow", async () => {
+    let approvalRequests: Array<Record<string, unknown>> = [];
+    const approvalPolicy = {
+      mode: "prompt",
+      autoApproveReadOnly: false,
+      autoApproveSkills: true,
+      alwaysAllowedTools: [] as string[],
+    };
+
+    gatewayExecuteMock
+      .mockResolvedValueOnce({
+        content: "",
+        reasoning: "need parallel search",
+        toolCalls: [
+          { id: "tool-search-1", name: "web.search", argumentsJson: "{\"query\":\"alpha\"}", input: { query: "alpha" } },
+          { id: "tool-search-2", name: "web.search", argumentsJson: "{\"query\":\"beta\"}", input: { query: "beta" } },
+        ],
+        finishReason: "tool_calls",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-1" },
+      })
+      .mockResolvedValueOnce({
+        content: "done",
+        toolCalls: [],
+        finishReason: "stop",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-2" },
+      });
+
+    const ctx: any = {
+      runtime: { myClawRootPath: "/tmp", skillsRootPath: "/tmp/skills", sessionsRootPath: "/tmp/sessions", paths: { myClawDir: "/tmp" } },
+      state: {
+        models: [makeProfile()],
+        sessions: [{ id: "session-1", title: "Test", modelProfileId: "profile-1", attachedDirectory: null, createdAt: "2026-04-10T00:00:00.000Z", messages: [] }],
+        siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
+        getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
+        getApprovals: () => approvalPolicy,
+        getApprovalRequests: () => approvalRequests,
+        setApprovalRequests: (next: Array<Record<string, unknown>>) => { approvalRequests = next; },
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
+        getAsrConfig: () => ({}),
+      },
+      services: { refreshSkills: async () => [], listMcpServers: () => [], mcpManager: null, appUpdater: { getSnapshot: () => ({ status: "idle" }) } },
+      tools: { resolveBuiltinTools: () => [], resolveMcpTools: () => [] },
+    };
+
+    registerSessionHandlers(ctx);
+    const sendMessageHandler = ipcHandleRegistry.get("session:send-message");
+    const sendPromise = sendMessageHandler?.({}, "session-1", { content: "search both", attachedDirectory: null });
+
+    await vi.waitFor(() => expect(approvalRequests).toHaveLength(2), { timeout: 5000 });
+    expect(approvalRequests.map((request) => request.toolId)).toEqual(["web.search", "web.search"]);
+
+    const resolveHandler = ipcHandleRegistry.get("session:resolve-approval");
+    await expect(resolveHandler?.({}, approvalRequests[0]?.id, "always-allow-tool")).resolves.toEqual({
+      success: true,
+      approvals: approvalPolicy,
+      approvalRequests: [],
+    });
+
+    await expect(sendPromise).resolves.toEqual(expect.objectContaining({
+      session: expect.objectContaining({ id: "session-1" }),
+    }));
+    expect(approvalPolicy.alwaysAllowedTools).toEqual(["web.search"]);
+    expect(approvalRequests).toEqual([]);
+  });
+
   it("does not execute tool calls from an incomplete stream result", async () => {
     let approvalRequests: Array<Record<string, unknown>> = [];
 
@@ -634,7 +710,7 @@ describe("sessions execution gateway", () => {
         sessions: [{ id: "session-1", title: "Test", modelProfileId: "profile-1", attachedDirectory: null, createdAt: "2026-04-10T00:00:00.000Z", messages: [] }],
         siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
         getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => approvalRequests,
         setApprovalRequests: (next: Array<Record<string, unknown>>) => { approvalRequests = next; },
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
@@ -772,7 +848,7 @@ describe("sessions execution gateway", () => {
         }],
         siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
         getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => [], setApprovalRequests: () => {},
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
       },

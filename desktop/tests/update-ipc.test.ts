@@ -54,7 +54,7 @@ describe("update IPC handlers", () => {
         workflowRuns: [],
         getDefaultModelProfileId: () => null,
         getWorkflows: () => [],
-        getApprovals: () => ({ mode: "prompt", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
+        getApprovals: () => ({ mode: "auto-read-only", autoApproveReadOnly: true, autoApproveSkills: true, alwaysAllowedTools: [] }),
         getApprovalRequests: () => [],
         getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }),
       },

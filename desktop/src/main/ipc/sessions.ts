@@ -588,6 +588,38 @@ export function releasePendingApprovalsForRun(
   run.pendingApprovalIds = [];
 }
 
+/**
+ * 自动放行同一会话、同一来源、同一工具的已排队审批。
+ * 这用于处理并发只读工具批次：用户点“始终允许此工具”后，已经弹出的同工具卡片也应立即继续执行。
+ */
+function approveQueuedRequestsForSameTool(ctx: RuntimeContext, request: ApprovalRequest): string[] {
+  const approvedIds: string[] = [];
+  for (const item of ctx.state.getApprovalRequests()) {
+    if (item.source === "external-path") continue;
+    if (item.sessionId !== request.sessionId) continue;
+    if (item.source !== request.source) continue;
+    if (item.toolId !== request.toolId) continue;
+
+    const pending = pendingApprovals.get(item.id);
+    if (!pending) continue;
+    clearTimeout(pending.timeout);
+    pending.resolve("approve");
+    pendingApprovals.delete(item.id);
+    approvedIds.push(item.id);
+  }
+
+  if (approvedIds.length > 1) {
+    console.info("[approval] 已自动放行同工具排队审批", {
+      sessionId: request.sessionId,
+      toolId: request.toolId,
+      source: request.source,
+      approvalIds: approvedIds,
+      count: approvedIds.length,
+    });
+  }
+  return approvedIds;
+}
+
 /** 持久化当前审批策略，确保路径授权设置重启后仍然可见。 */
 function persistApprovalPolicy(ctx: RuntimeContext, source: string): void {
   trackSave(
@@ -4852,17 +4884,32 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         persistApprovalPolicy(ctx, "session:resolve-approval");
       }
 
+      const shouldApproveSameToolQueue = !!request
+        && request.source !== "external-path"
+        && (decision === "always-allow-tool" || decision === "allow-session");
+      const autoApprovedIds = shouldApproveSameToolQueue
+        ? approveQueuedRequestsForSameTool(ctx, request)
+        : [];
+      const currentWasAutoApproved = autoApprovedIds.includes(approvalId);
+
       // 用户已响应，清理自动拒绝超时定时器
-      clearTimeout(pending.timeout);
-      const approvalRequestsAfterResolve = ctx.state.getApprovalRequests().filter((r) => r.id !== approvalId);
+      if (!currentWasAutoApproved) {
+        clearTimeout(pending.timeout);
+        pendingApprovals.delete(approvalId);
+      }
+      const resolvedApprovalIds = autoApprovedIds.length > 0 ? autoApprovedIds : [approvalId];
+      const approvalRequestsAfterResolve = ctx.state.getApprovalRequests().filter((r) => !resolvedApprovalIds.includes(r.id));
+      if (autoApprovedIds.length > 0) {
+        ctx.state.setApprovalRequests(approvalRequestsAfterResolve);
+      }
 
       // external-path: 原样传递决策 kind；其它：映射为 approve/deny
       if (request?.source === "external-path") {
         pending.resolve(decision as PendingApprovalDecision);
-      } else {
+      } else if (!currentWasAutoApproved) {
         pending.resolve(decision === "deny" ? "deny" : "approve");
       }
-      if (request?.source === "external-path" || policyChanged) {
+      if (request?.source === "external-path" || policyChanged || autoApprovedIds.length > 0) {
         return {
           success: true,
           approvals: ctx.state.getApprovals(),

@@ -157,7 +157,7 @@ vi.mock("../src/main/services/pending-saves", () => ({
 
 function buildContext(): RuntimeContext {
   const approvalPolicy = {
-    mode: "prompt" as const,
+    mode: "auto-read-only" as const,
     autoApproveReadOnly: true,
     autoApproveSkills: true,
     alwaysAllowedTools: [] as string[],
