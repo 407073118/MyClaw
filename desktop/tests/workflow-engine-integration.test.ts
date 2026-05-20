@@ -14,10 +14,14 @@ import type { WorkflowStreamEvent } from "@shared/contracts/workflow-stream";
 import { PregelRunner } from "../src/main/services/workflow-engine/pregel-runner";
 import { NodeExecutorRegistry } from "../src/main/services/workflow-engine/node-executor";
 import { StartNodeExecutor } from "../src/main/services/workflow-engine/executors/start";
+import { AnswerNodeExecutor } from "../src/main/services/workflow-engine/executors/answer";
+import { CodeNodeExecutor } from "../src/main/services/workflow-engine/executors/code";
 import { EndNodeExecutor } from "../src/main/services/workflow-engine/executors/end";
 import { ConditionNodeExecutor } from "../src/main/services/workflow-engine/executors/condition";
 import { LlmNodeExecutor } from "../src/main/services/workflow-engine/executors/llm";
 import type { ModelCaller, ModelProfileResolver } from "../src/main/services/workflow-engine/executors/llm";
+import { TemplateNodeExecutor } from "../src/main/services/workflow-engine/executors/template";
+import { VariableAssignerNodeExecutor } from "../src/main/services/workflow-engine/executors/variable-assigner";
 import { ToolNodeExecutor } from "../src/main/services/workflow-engine/executors/tool";
 import type { ToolExecutorFn } from "../src/main/services/workflow-engine/executors/tool";
 import { HttpRequestNodeExecutor } from "../src/main/services/workflow-engine/executors/http-request";
@@ -54,9 +58,13 @@ const stubToolExecutor: ToolExecutorFn = async (toolId, args, _workingDir) => {
 function buildRegistry(modelCaller?: ModelCaller): NodeExecutorRegistry {
   const registry = new NodeExecutorRegistry();
   registry.register(new StartNodeExecutor());
+  registry.register(new AnswerNodeExecutor());
+  registry.register(new CodeNodeExecutor());
   registry.register(new EndNodeExecutor());
   registry.register(new ConditionNodeExecutor());
   registry.register(new LlmNodeExecutor(modelCaller ?? createStubModelCaller(), stubProfileResolver));
+  registry.register(new TemplateNodeExecutor());
+  registry.register(new VariableAssignerNodeExecutor());
   registry.register(new ToolNodeExecutor(stubToolExecutor, null));
   registry.register(new HttpRequestNodeExecutor(async () => ({
     ok: true,
@@ -190,6 +198,59 @@ describe("Workflow Engine Integration — Linear Pipeline", () => {
     expect((result.finalState.toolOutput as string).length).toBeGreaterThan(0);
     expect(result.totalSteps).toBeGreaterThanOrEqual(4);
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("executes Template → Code → Answer → End and exposes the chat answer", async () => {
+    const nodes: WorkflowNode[] = [
+      { id: "start-1", kind: "start", label: "Start" },
+      {
+        id: "template-1",
+        kind: "template",
+        label: "Format",
+        template: { template: "{{ inputs.city }} 天气", outputKey: "weatherTitle" },
+      },
+      {
+        id: "code-1",
+        kind: "code",
+        label: "Score",
+        inputSources: {
+          title: { mode: "variable", ref: { scope: "node", nodeId: "template-1", path: "content", valueType: "string" } },
+        },
+        code: {
+          language: "javascript",
+          source: "return { text: `${inputs.title}: 晴，22℃` };",
+          outputKey: "weather",
+        },
+      },
+      {
+        id: "answer-1",
+        kind: "answer",
+        label: "Reply",
+        answer: { template: "{{ nodes.code-1.result.text }}", outputKey: "answer" },
+      },
+      { id: "end-1", kind: "end", label: "Done" },
+    ];
+    const edges: WorkflowEdge[] = [
+      { id: "e1", fromNodeId: "start-1", toNodeId: "template-1", kind: "normal" },
+      { id: "e2", fromNodeId: "template-1", toNodeId: "code-1", kind: "normal" },
+      { id: "e3", fromNodeId: "code-1", toNodeId: "answer-1", kind: "normal" },
+      { id: "e4", fromNodeId: "answer-1", toNodeId: "end-1", kind: "normal" },
+    ];
+    const def: WorkflowDefinition = {
+      ...definitionBase("wf-answer", "Answer Flow"),
+      entryNodeId: "start-1",
+      nodes,
+      edges,
+      stateSchema: [],
+      nodeCount: nodes.length,
+      edgeCount: edges.length,
+    };
+    const runner = new PregelRunner(def, defaultRunConfig(), { executorRegistry: buildRegistry() });
+
+    const result = await runner.run({ city: "上海" });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.finalState.outputs).toEqual({ answer: "上海 天气: 晴，22℃" });
   });
 
   it("should emit run-start, node-start/node-complete for each node, and run-complete events", async () => {

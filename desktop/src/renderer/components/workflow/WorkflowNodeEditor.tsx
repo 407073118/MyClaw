@@ -131,6 +131,14 @@ function kindLabel(kind: WorkflowNode["kind"]): string {
       return "结束";
     case "llm":
       return "对话";
+    case "answer":
+      return "回复";
+    case "template":
+      return "模板转换";
+    case "code":
+      return "代码执行";
+    case "variable-assigner":
+      return "变量赋值";
     case "tool":
       return "工具调用";
     case "http-request":
@@ -332,6 +340,18 @@ export default function WorkflowNodeEditor({
       const body = `${node.httpRequest.body ?? ""}${node.httpRequest.body ? " " : ""}${token}`;
       console.info("[workflow] 向 HTTP 请求体插入变量", { nodeId: node.id, token });
       onUpdateNode({ ...node, httpRequest: { ...node.httpRequest, body } });
+      return;
+    }
+    if (node.kind === "answer") {
+      const template = `${node.answer.template.trimEnd()}${node.answer.template.trimEnd() ? " " : ""}${token}`;
+      console.info("[workflow] 向回复节点插入变量", { nodeId: node.id, token });
+      onUpdateNode({ ...node, answer: { ...node.answer, template } });
+      return;
+    }
+    if (node.kind === "template") {
+      const template = `${node.template.template.trimEnd()}${node.template.template.trimEnd() ? " " : ""}${token}`;
+      console.info("[workflow] 向模板节点插入变量", { nodeId: node.id, token });
+      onUpdateNode({ ...node, template: { ...node.template, template } });
     }
   }
 
@@ -363,6 +383,62 @@ export default function WorkflowNodeEditor({
     const outputKey = e.target.value.trim() || undefined;
     console.info("[workflow] 更新对话节点输出字段", { nodeId: node.id, outputKey: outputKey ?? null });
     onUpdateNode({ ...node, llm: { ...node.llm, outputKey } });
+  }
+
+  /** 更新回复节点模板，支持引用上游变量生成 Chatflow 风格的最终话术。 */
+  function handleAnswerTemplateInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    if (node.kind !== "answer") return;
+    const template = e.target.value;
+    console.info("[workflow] 更新回复节点模板", { nodeId: node.id, templateLength: template.length });
+    onUpdateNode({ ...node, answer: { ...node.answer, template } });
+  }
+
+  /** 更新回复节点写入 outputs 的字段名，默认 answer 会被对话回流优先展示。 */
+  function handleAnswerOutputKeyInput(e: React.ChangeEvent<HTMLInputElement>) {
+    if (node.kind !== "answer") return;
+    const outputKey = e.target.value.trim() || undefined;
+    console.info("[workflow] 更新回复节点输出字段", { nodeId: node.id, outputKey: outputKey ?? "answer" });
+    onUpdateNode({ ...node, answer: { ...node.answer, outputKey } });
+  }
+
+  /** 更新模板转换节点文本，用于确定性拼接和格式化上游结果。 */
+  function handleTemplateTemplateInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    if (node.kind !== "template") return;
+    const template = e.target.value;
+    console.info("[workflow] 更新模板转换节点模板", { nodeId: node.id, templateLength: template.length });
+    onUpdateNode({ ...node, template: { ...node.template, template } });
+  }
+
+  /** 更新模板转换节点输出字段名。 */
+  function handleTemplateOutputKeyInput(e: React.ChangeEvent<HTMLInputElement>) {
+    if (node.kind !== "template") return;
+    const outputKey = e.target.value.trim() || undefined;
+    console.info("[workflow] 更新模板转换节点输出字段", { nodeId: node.id, outputKey: outputKey ?? null });
+    onUpdateNode({ ...node, template: { ...node.template, outputKey } });
+  }
+
+  /** 更新代码节点源码，运行时会在受限上下文中接收 inputs 和 state。 */
+  function handleCodeSourceInput(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    if (node.kind !== "code") return;
+    const source = e.target.value;
+    console.info("[workflow] 更新代码节点源码", { nodeId: node.id, sourceLength: source.length });
+    onUpdateNode({ ...node, code: { ...node.code, source } });
+  }
+
+  /** 更新代码节点输出字段名。 */
+  function handleCodeOutputKeyInput(e: React.ChangeEvent<HTMLInputElement>) {
+    if (node.kind !== "code") return;
+    const outputKey = e.target.value.trim() || undefined;
+    console.info("[workflow] 更新代码节点输出字段", { nodeId: node.id, outputKey: outputKey ?? null });
+    onUpdateNode({ ...node, code: { ...node.code, outputKey } });
+  }
+
+  /** 更新变量赋值节点的目标 channel，支持写入运行变量或最终输出。 */
+  function handleVariableAssignerTargetChange(e: React.ChangeEvent<HTMLSelectElement>) {
+    if (node.kind !== "variable-assigner") return;
+    const target = e.target.value === "outputs" ? "outputs" : "vars";
+    console.info("[workflow] 更新变量赋值节点目标", { nodeId: node.id, target });
+    onUpdateNode({ ...node, variableAssigner: { ...node.variableAssigner, target } });
   }
 
   /** 复制变量 token，方便用户把上游输出粘贴到 Prompt、条件或其它节点配置中。 */
@@ -564,6 +640,158 @@ export default function WorkflowNodeEditor({
       option.ref.path === source.ref.path
     ));
     return matched?.id ?? "";
+  }
+
+  /** 新增结束节点输出映射，默认把第一个可见变量绑定到 answer 字段。 */
+  function buildDefaultEndOutputSource(): WorkflowNodeInputSource {
+    const firstOption = variableSourceOptions[0];
+    return firstOption
+      ? { mode: "variable", ref: { ...firstOption.ref } }
+      : { mode: "static", value: "" };
+  }
+
+  /** 生成结束节点 outputSources 的下一版对象，空字段名会删除该行。 */
+  function patchEndOutputSources(
+    index: number,
+    patch: { key?: string; source?: WorkflowNodeInputSource },
+  ): Record<string, WorkflowNodeInputSource> | undefined {
+    if (node.kind !== "end") return undefined;
+    const entries = Object.entries(node.outputSources ?? {});
+    const nextEntries = [...entries];
+    const currentEntry = nextEntries[index] ?? ["answer", buildDefaultEndOutputSource()];
+    const nextKey = patch.key ?? currentEntry[0];
+    const nextSource = patch.source ?? currentEntry[1];
+    if (!nextKey.trim()) {
+      nextEntries.splice(index, 1);
+    } else {
+      nextEntries[index] = [nextKey.trim(), nextSource];
+    }
+    return nextEntries.length > 0 ? Object.fromEntries(nextEntries) : undefined;
+  }
+
+  /** 为结束节点追加一个最终输出字段，供 workflow run 完成后写入 outputs channel。 */
+  function handleAddEndOutputSource() {
+    if (node.kind !== "end") return;
+    const current = node.outputSources ?? {};
+    const nextKey = current.answer ? `output_${Object.keys(current).length + 1}` : "answer";
+    const firstOption = variableSourceOptions[0];
+    console.info("[workflow] 新增结束节点最终输出字段", {
+      nodeId: node.id,
+      key: nextKey,
+      variable: firstOption?.id ?? null,
+    });
+    onUpdateNode({
+      ...node,
+      outputSources: {
+        ...current,
+        [nextKey]: buildDefaultEndOutputSource(),
+      },
+    });
+  }
+
+  /** 更新结束节点最终输出字段名称。 */
+  function handleEndOutputSourceKeyChange(index: number, e: React.ChangeEvent<HTMLInputElement>) {
+    if (node.kind !== "end") return;
+    const nextSources = patchEndOutputSources(index, { key: e.target.value });
+    console.info("[workflow] 更新结束节点最终输出字段名", {
+      nodeId: node.id,
+      index,
+      sourceCount: Object.keys(nextSources ?? {}).length,
+    });
+    onUpdateNode({ ...node, outputSources: nextSources });
+  }
+
+  /** 将结束节点最终输出绑定到变量中心中的某个结构化变量引用。 */
+  function handleEndOutputSourceRefChange(index: number, e: React.ChangeEvent<HTMLSelectElement>) {
+    if (node.kind !== "end") return;
+    const option = variableSourceOptions.find((item) => item.id === e.target.value);
+    const nextSource: WorkflowNodeInputSource = option
+      ? { mode: "variable", ref: { ...option.ref } }
+      : { mode: "static", value: "" };
+    const nextSources = patchEndOutputSources(index, { source: nextSource });
+    console.info("[workflow] 更新结束节点最终输出变量来源", {
+      nodeId: node.id,
+      index,
+      variable: option?.id ?? null,
+    });
+    onUpdateNode({ ...node, outputSources: nextSources });
+  }
+
+  /** 更新结束节点静态输出文本，便于直接写固定的最终回复。 */
+  function handleEndOutputSourceStaticValueChange(index: number, e: React.ChangeEvent<HTMLInputElement>) {
+    if (node.kind !== "end") return;
+    const nextSources = patchEndOutputSources(index, {
+      source: { mode: "static", value: e.target.value },
+    });
+    console.info("[workflow] 更新结束节点静态最终输出", {
+      nodeId: node.id,
+      index,
+      valueLength: e.target.value.length,
+    });
+    onUpdateNode({ ...node, outputSources: nextSources });
+  }
+
+  /** 新增变量赋值字段，默认读取第一个可见变量来源。 */
+  function handleAddVariableAssignment() {
+    if (node.kind !== "variable-assigner") return;
+    const current = node.variableAssigner.assignments ?? {};
+    const nextKey = `field_${Object.keys(current).length + 1}`;
+    const firstOption = variableSourceOptions[0];
+    const source: WorkflowNodeInputSource = firstOption
+      ? { mode: "variable", ref: { ...firstOption.ref } }
+      : { mode: "static", value: "" };
+    console.info("[workflow] 新增变量赋值字段", {
+      nodeId: node.id,
+      nextKey,
+      target: node.variableAssigner.target,
+      variable: firstOption?.id ?? null,
+    });
+    onUpdateNode({
+      ...node,
+      variableAssigner: {
+        ...node.variableAssigner,
+        assignments: { ...current, [nextKey]: source },
+      },
+    });
+  }
+
+  /** 更新变量赋值字段名或来源，空字段名会删除该赋值。 */
+  function patchVariableAssignments(
+    index: number,
+    patch: { key?: string; source?: WorkflowNodeInputSource },
+  ): Record<string, WorkflowNodeInputSource> | undefined {
+    if (node.kind !== "variable-assigner") return undefined;
+    return patchInputSources(node.variableAssigner.assignments, index, patch);
+  }
+
+  /** 更新变量赋值字段名。 */
+  function handleVariableAssignmentKeyChange(index: number, e: React.ChangeEvent<HTMLInputElement>) {
+    if (node.kind !== "variable-assigner") return;
+    const assignments = patchVariableAssignments(index, { key: e.target.value }) ?? {};
+    console.info("[workflow] 更新变量赋值字段名", { nodeId: node.id, index, count: Object.keys(assignments).length });
+    onUpdateNode({ ...node, variableAssigner: { ...node.variableAssigner, assignments } });
+  }
+
+  /** 更新变量赋值来源。 */
+  function handleVariableAssignmentRefChange(index: number, e: React.ChangeEvent<HTMLSelectElement>) {
+    if (node.kind !== "variable-assigner") return;
+    const option = variableSourceOptions.find((item) => item.id === e.target.value);
+    const source: WorkflowNodeInputSource = option
+      ? { mode: "variable", ref: { ...option.ref } }
+      : { mode: "static", value: "" };
+    const assignments = patchVariableAssignments(index, { source }) ?? {};
+    console.info("[workflow] 更新变量赋值来源", { nodeId: node.id, index, variable: option?.id ?? null });
+    onUpdateNode({ ...node, variableAssigner: { ...node.variableAssigner, assignments } });
+  }
+
+  /** 更新变量赋值静态文本。 */
+  function handleVariableAssignmentStaticValueChange(index: number, e: React.ChangeEvent<HTMLInputElement>) {
+    if (node.kind !== "variable-assigner") return;
+    const assignments = patchVariableAssignments(index, {
+      source: { mode: "static", value: e.target.value },
+    }) ?? {};
+    console.info("[workflow] 更新变量赋值静态值", { nodeId: node.id, index, valueLength: e.target.value.length });
+    onUpdateNode({ ...node, variableAssigner: { ...node.variableAssigner, assignments } });
   }
 
   function handleWorkflowCandidateChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -789,6 +1017,230 @@ export default function WorkflowNodeEditor({
         <section className="subsection">
           <h5 className="subtitle">阶段说明</h5>
           <p className="meta" data-testid="workflow-node-editor-stage-hint">{stageHint(node.kind)}</p>
+        </section>
+      )}
+
+      {node.kind === "end" && (
+        <section className="subsection">
+          <div className="binding-header">
+            <div>
+              <h5 className="subtitle">最终输出</h5>
+              <p className="meta">把上游节点结果映射成 workflow outputs，answer 字段会优先回到对话。</p>
+            </div>
+            <button
+              type="button"
+              className="ghost"
+              data-testid="workflow-node-editor-end-add-output-source"
+              onClick={handleAddEndOutputSource}
+            >
+              新增输出
+            </button>
+          </div>
+          {Object.entries(node.outputSources ?? {}).length === 0 ? (
+            <p className="meta">尚未配置最终输出。</p>
+          ) : (
+            <div className="input-source-list">
+              {Object.entries(node.outputSources ?? {}).map(([outputName, source], index) => (
+                <div key={`end-output-${outputName}-${index}`} className="input-source-row">
+                  <input
+                    data-testid={`workflow-node-editor-end-output-key-${index}`}
+                    type="text"
+                    value={outputName}
+                    onChange={(event) => handleEndOutputSourceKeyChange(index, event)}
+                  />
+                  <span className="binding-arrow">←</span>
+                  <select
+                    data-testid={`workflow-node-editor-end-output-source-${index}`}
+                    value={readInputSourceOptionId(source)}
+                    disabled={source.mode !== "variable" && variableSourceOptions.length === 0}
+                    onChange={(event) => handleEndOutputSourceRefChange(index, event)}
+                  >
+                    <option value="">
+                      {source.mode === "variable" ? "(选择变量)" : "静态文本"}
+                    </option>
+                    {variableSourceOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.group} / {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {source.mode === "static" && (
+                    <input
+                      data-testid={`workflow-node-editor-end-output-static-${index}`}
+                      type="text"
+                      value={typeof source.value === "string" ? source.value : ""}
+                      placeholder="静态输出文本"
+                      onChange={(event) => handleEndOutputSourceStaticValueChange(index, event)}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {node.kind === "answer" && (
+        <section className="subsection">
+          <div className="binding-header">
+            <div>
+              <h5 className="subtitle">回复输出</h5>
+              <p className="meta">把模板渲染为 outputs.answer，工作流完成后会优先回到对话。</p>
+            </div>
+            <button type="button" className="ghost" onClick={() => handleInsertVariableToken("{{ lastLlmOutput }}")}>
+              插入上次对话输出
+            </button>
+          </div>
+          <label className="field">
+            输出字段
+            <input
+              data-testid="workflow-node-editor-answer-output-key"
+              type="text"
+              value={node.answer.outputKey ?? "answer"}
+              placeholder="answer"
+              onChange={handleAnswerOutputKeyInput}
+            />
+          </label>
+          <label className="field">
+            回复模板
+            <textarea
+              data-testid="workflow-node-editor-answer-template"
+              value={node.answer.template}
+              rows={6}
+              onChange={handleAnswerTemplateInput}
+            />
+          </label>
+        </section>
+      )}
+
+      {node.kind === "template" && (
+        <section className="subsection">
+          <div className="binding-header">
+            <div>
+              <h5 className="subtitle">模板转换</h5>
+              <p className="meta">用变量模板拼装文本，适合格式化 API、工具或模型节点的结果。</p>
+            </div>
+          </div>
+          <label className="field">
+            输出字段
+            <input
+              data-testid="workflow-node-editor-template-output-key"
+              type="text"
+              value={node.template.outputKey ?? ""}
+              placeholder="templateOutput"
+              onChange={handleTemplateOutputKeyInput}
+            />
+          </label>
+          <label className="field">
+            模板
+            <textarea
+              data-testid="workflow-node-editor-template-body"
+              value={node.template.template}
+              rows={6}
+              onChange={handleTemplateTemplateInput}
+            />
+          </label>
+        </section>
+      )}
+
+      {node.kind === "code" && (
+        <section className="subsection">
+          <div className="binding-header">
+            <div>
+              <h5 className="subtitle">代码执行</h5>
+              <p className="meta">在受限 JavaScript 上下文中执行，使用 inputs 和 state 读取参数。</p>
+            </div>
+          </div>
+          <label className="field">
+            输出字段
+            <input
+              data-testid="workflow-node-editor-code-output-key"
+              type="text"
+              value={node.code.outputKey ?? ""}
+              placeholder="codeOutput"
+              onChange={handleCodeOutputKeyInput}
+            />
+          </label>
+          <label className="field">
+            JavaScript
+            <textarea
+              data-testid="workflow-node-editor-code-source"
+              value={node.code.source}
+              rows={9}
+              spellCheck={false}
+              onChange={handleCodeSourceInput}
+            />
+          </label>
+        </section>
+      )}
+
+      {node.kind === "variable-assigner" && (
+        <section className="subsection">
+          <div className="binding-header">
+            <div>
+              <h5 className="subtitle">变量赋值</h5>
+              <p className="meta">把上游结果写入运行变量或最终输出，供后续节点继续引用。</p>
+            </div>
+            <button
+              type="button"
+              className="ghost"
+              data-testid="workflow-node-editor-variable-add-assignment"
+              onClick={handleAddVariableAssignment}
+            >
+              新增字段
+            </button>
+          </div>
+          <label className="field">
+            写入目标
+            <select
+              data-testid="workflow-node-editor-variable-target"
+              value={node.variableAssigner.target}
+              onChange={handleVariableAssignerTargetChange}
+            >
+              <option value="vars">运行变量 vars</option>
+              <option value="outputs">最终输出 outputs</option>
+            </select>
+          </label>
+          {Object.entries(node.variableAssigner.assignments ?? {}).length === 0 ? (
+            <p className="meta">尚未配置赋值字段。</p>
+          ) : (
+            <div className="input-source-list">
+              {Object.entries(node.variableAssigner.assignments ?? {}).map(([assignmentName, source], index) => (
+                <div key={`variable-assignment-${assignmentName}-${index}`} className="input-source-row">
+                  <input
+                    data-testid={`workflow-node-editor-variable-key-${index}`}
+                    type="text"
+                    value={assignmentName}
+                    onChange={(event) => handleVariableAssignmentKeyChange(index, event)}
+                  />
+                  <span className="binding-arrow">←</span>
+                  <select
+                    data-testid={`workflow-node-editor-variable-source-${index}`}
+                    value={readInputSourceOptionId(source)}
+                    onChange={(event) => handleVariableAssignmentRefChange(index, event)}
+                  >
+                    <option value="">
+                      {source.mode === "variable" ? "(选择变量)" : "静态文本"}
+                    </option>
+                    {variableSourceOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.group} / {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  {source.mode === "static" && (
+                    <input
+                      data-testid={`workflow-node-editor-variable-static-${index}`}
+                      type="text"
+                      value={typeof source.value === "string" ? source.value : ""}
+                      placeholder="静态变量值"
+                      onChange={(event) => handleVariableAssignmentStaticValueChange(index, event)}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 

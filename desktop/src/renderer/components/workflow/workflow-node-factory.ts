@@ -25,6 +25,10 @@ type WorkflowConditionNodeConfig = {
 export const WORKFLOW_NODE_KIND_LABELS: Record<WorkflowNodeKind, string> = {
   start: "开始",
   llm: "对话",
+  answer: "回复",
+  template: "模板",
+  code: "代码",
+  "variable-assigner": "变量赋值",
   tool: "工具",
   "http-request": "HTTP 调用",
   "human-input": "人工输入",
@@ -38,6 +42,10 @@ export const WORKFLOW_NODE_KIND_LABELS: Record<WorkflowNodeKind, string> = {
 export const WORKFLOW_CREATABLE_NODE_KINDS: WorkflowNodeKind[] = [
   "start",
   "llm",
+  "answer",
+  "template",
+  "code",
+  "variable-assigner",
   "tool",
   "http-request",
   "human-input",
@@ -84,6 +92,10 @@ export function createWorkflowNode(options: CreateWorkflowNodeOptions): Workflow
   const labelMap: Record<WorkflowNodeKind, string> = {
     start: "Start",
     llm: "LLM",
+    answer: "Answer",
+    template: "Template",
+    code: "Code",
+    "variable-assigner": "Variable Assigner",
     tool: "Tool",
     "http-request": "HTTP Request",
     "human-input": "Human Input",
@@ -106,6 +118,41 @@ export function createWorkflowNode(options: CreateWorkflowNodeOptions): Workflow
         kind: options.kind,
         label: labelMap[options.kind],
         llm: { prompt: "请补充“对话”节点要完成的具体任务。", outputKey: undefined },
+      };
+    case "answer":
+      return {
+        id: options.nodeId,
+        kind: options.kind,
+        label: labelMap[options.kind],
+        answer: { template: "{{ lastLlmOutput }}", outputKey: "answer" },
+      };
+    case "template":
+      return {
+        id: options.nodeId,
+        kind: options.kind,
+        label: labelMap[options.kind],
+        template: { template: "请在这里拼装输出：{{ inputs.query }}", outputKey: "templateOutput" },
+      };
+    case "code":
+      return {
+        id: options.nodeId,
+        kind: options.kind,
+        label: labelMap[options.kind],
+        code: {
+          language: "javascript",
+          source: "return inputs;",
+          outputKey: "codeOutput",
+        },
+      };
+    case "variable-assigner":
+      return {
+        id: options.nodeId,
+        kind: options.kind,
+        label: labelMap[options.kind],
+        variableAssigner: {
+          target: "vars",
+          assignments: {},
+        },
       };
     case "tool":
       return {

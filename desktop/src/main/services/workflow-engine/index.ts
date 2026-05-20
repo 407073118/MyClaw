@@ -49,10 +49,14 @@ export {
 
 // ── Executors ──
 export { StartNodeExecutor } from "./executors/start";
+export { AnswerNodeExecutor } from "./executors/answer";
+export { CodeNodeExecutor } from "./executors/code";
 export { EndNodeExecutor } from "./executors/end";
 export { ConditionNodeExecutor, resolveJsonPath, evaluateCondition } from "./executors/condition";
 export type { ModelCaller, ModelProfileResolver } from "./executors/llm";
 export { LlmNodeExecutor } from "./executors/llm";
+export { TemplateNodeExecutor } from "./executors/template";
+export { VariableAssignerNodeExecutor } from "./executors/variable-assigner";
 export type { ToolExecutorFn, McpToolCallerFn } from "./executors/tool";
 export { ToolNodeExecutor, parseMcpToolId } from "./executors/tool";
 export { HttpRequestNodeExecutor } from "./executors/http-request";

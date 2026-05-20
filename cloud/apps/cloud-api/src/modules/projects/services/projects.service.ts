@@ -1,6 +1,9 @@
 import type {
   CreateProjectInput,
   ProjectApiInput,
+  ProjectApiParameterInfo,
+  ProjectApiParameterLocation,
+  ProjectApiRequestBodyType,
   ProjectDetail,
   ProjectId,
   ProjectMcpRefInput,
@@ -16,6 +19,17 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from "@nes
 
 import { DatabaseService } from "../../database/services/database.service";
 import { PROJECTS_REPOSITORY, type ProjectsRepository } from "../ports/projects.repository";
+
+const API_PARAMETER_LOCATIONS: ProjectApiParameterLocation[] = ["path", "query", "header", "cookie"];
+const API_REQUEST_BODY_TYPES: ProjectApiRequestBodyType[] = [
+  "none",
+  "json",
+  "form-data",
+  "x-www-form-urlencoded",
+  "raw",
+  "binary",
+  "graphql"
+];
 
 @Injectable()
 export class ProjectsService {
@@ -215,6 +229,10 @@ export class ProjectsService {
       source: item.source ?? "manual",
       owner: this.trimNullable(item.owner),
       tagsJson: this.normalizeStringArray(item.tagsJson, "project_api_tags_invalid"),
+      parametersJson: this.normalizeApiParameters(item.parametersJson),
+      requestBodyType: this.normalizeApiRequestBodyType(item.requestBodyType),
+      requestBodyContentType: this.trimNullable(item.requestBodyContentType),
+      requestBodyExampleJson: this.normalizeJsonValue(item.requestBodyExampleJson),
       requestSchemaJson: this.normalizeJsonObject(item.requestSchemaJson, "project_api_request_schema_invalid"),
       responseSchemaJson: this.normalizeJsonObject(item.responseSchemaJson, "project_api_response_schema_invalid"),
       enabled: item.enabled ?? true
@@ -474,6 +492,74 @@ export class ProjectsService {
     }
 
     return value.map((item) => item.trim()).filter(Boolean);
+  }
+
+  /** 标准化接口请求参数，兼容 path、query、header、cookie 四类 HTTP 参数。 */
+  private normalizeApiParameters(value: unknown): ProjectApiParameterInfo[] | null | undefined {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    if (value === null) {
+      return null;
+    }
+
+    if (!Array.isArray(value)) {
+      console.warn("[projects-service] 接口请求参数不是数组，拒绝保存");
+      throw new BadRequestException("project_api_parameters_invalid");
+    }
+
+    console.info("[projects-service] 标准化接口请求参数", { parameterCount: value.length });
+    return value.map((raw) => {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        throw new BadRequestException("project_api_parameters_invalid");
+      }
+
+      const item = raw as Partial<ProjectApiParameterInfo>;
+      const location = item.in;
+      if (!location || !API_PARAMETER_LOCATIONS.includes(location)) {
+        throw new BadRequestException("project_api_parameter_location_invalid");
+      }
+
+      const required = item.required ?? (location === "path");
+      if (location === "path" && !required) {
+        console.warn("[projects-service] 路径参数被标记为非必填，拒绝保存", { parameterName: item.name });
+        throw new BadRequestException("project_api_path_parameter_required");
+      }
+
+      return {
+        name: this.required(item.name, "project_api_parameter_name_required"),
+        in: location,
+        required,
+        type: this.trimNullable(item.type),
+        description: this.trimNullable(item.description),
+        example: this.trimNullable(item.example),
+        enabled: item.enabled ?? true
+      };
+    });
+  }
+
+  /** 标准化接口请求 Body 类型，避免未知类型进入数据库。 */
+  private normalizeApiRequestBodyType(value: unknown): ProjectApiRequestBodyType {
+    if (value === undefined || value === null || value === "") {
+      return "none";
+    }
+
+    if (typeof value !== "string" || !API_REQUEST_BODY_TYPES.includes(value as ProjectApiRequestBodyType)) {
+      console.warn("[projects-service] 接口请求 Body 类型不合法，拒绝保存", { bodyType: value });
+      throw new BadRequestException("project_api_request_body_type_invalid");
+    }
+
+    return value as ProjectApiRequestBodyType;
+  }
+
+  /** 标准化任意 JSON 值，保留 Body 示例中的对象、数组、字符串、数字和布尔值。 */
+  private normalizeJsonValue(value: unknown): unknown {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    return value;
   }
 
   /** 检查列表内指定字段是否重复。 */

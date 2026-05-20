@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { WorkflowDefinition, WorkflowNode, WorkflowNodeKind } from "@shared/contracts";
-import { Play, MessageCircle, Wrench, Globe, User, GitBranch, Network, Merge, Square, Check, AlertCircle, Loader, Pause, Trash2 } from "lucide-react";
+import { Play, MessageCircle, TextCursorInput, Braces, Code2, Variable, Wrench, Globe, User, GitBranch, Network, Merge, Square, Check, AlertCircle, Loader, Pause, Trash2 } from "lucide-react";
 import type { DebugNodeStatus } from "../../pages/WorkflowStudioPage";
 
 import {
@@ -76,7 +76,7 @@ interface WorkflowCanvasProps {
   headerLeading?: React.ReactNode;
   onSelectNode: (nodeId: string) => void;
   onSelectEdge: (edgeId: string) => void;
-  onAddNode: (kind: WorkflowNodeKind) => void;
+  onAddNode: (kind: WorkflowNodeKind, position?: WorkflowCanvasPoint) => void;
   onConnectNode: (payload: { fromNodeId: string; toNodeId: string }) => void;
   onDeleteNode: (nodeId: string) => void;
   onDeleteEdge: (edgeId: string) => void;
@@ -94,6 +94,10 @@ const nodeKindMap: Record<string, string> = Object.fromEntries(
 const nodeIconMap: Record<string, React.ElementType> = {
   start: Play,
   llm: MessageCircle,
+  answer: TextCursorInput,
+  template: Braces,
+  code: Code2,
+  "variable-assigner": Variable,
   tool: Wrench,
   "http-request": Globe,
   "human-input": User,
@@ -196,6 +200,20 @@ function nodeSummary(node: WorkflowNode): string {
       return "待配置对话";
     }
     return clipSummary(llm.prompt || "未配置对话");
+  }
+  if (node.kind === "answer") {
+    return clipSummary(node.answer?.template || "未配置回复模板");
+  }
+  if (node.kind === "template") {
+    return clipSummary(node.template?.template || "未配置模板");
+  }
+  if (node.kind === "code") {
+    return clipSummary(node.code?.source || "未配置代码");
+  }
+  if (node.kind === "variable-assigner") {
+    const target = node.variableAssigner?.target === "outputs" ? "最终输出" : "运行变量";
+    const count = Object.keys(node.variableAssigner?.assignments ?? {}).length;
+    return `${target} · ${count} 个字段`;
   }
   if (node.kind === "tool") {
     const tool = node.tool ?? { toolId: "" };
@@ -575,6 +593,46 @@ export default function WorkflowCanvas({
     };
   }
 
+  /** 读取拖拽节点类型，保证只有工作流节点库的拖拽可以在画布上创建节点。 */
+  function readDraggedNodeKind(dataTransfer: DataTransfer): WorkflowNodeKind | null {
+    const rawKind = dataTransfer.getData("application/x-myclaw-workflow-node") || dataTransfer.getData("text/plain");
+    if (!NODE_KIND_LIST.includes(rawKind as WorkflowNodeKind)) return null;
+    return rawKind as WorkflowNodeKind;
+  }
+
+  /** 开始从左侧节点库拖拽节点，实际创建动作留到画布 drop 时执行。 */
+  function handlePaletteDragStart(kind: WorkflowNodeKind, event: React.DragEvent<HTMLButtonElement>) {
+    event.dataTransfer.effectAllowed = "copy";
+    event.dataTransfer.setData("application/x-myclaw-workflow-node", kind);
+    event.dataTransfer.setData("text/plain", kind);
+    console.info("[workflow] 开始拖拽节点库节点", { kind });
+  }
+
+  /** 允许节点库拖拽项投放到画布，并把鼠标位置转换成画布坐标。 */
+  function handleStageDragOver(event: React.DragEvent<HTMLDivElement>) {
+    const kind = readDraggedNodeKind(event.dataTransfer);
+    if (!kind || isAddDisabled(kind)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  /** 在画布落点创建节点，避免点击节点库时意外生成节点。 */
+  function handleStageDrop(event: React.DragEvent<HTMLDivElement>) {
+    const kind = readDraggedNodeKind(event.dataTransfer);
+    if (!kind || isAddDisabled(kind)) return;
+    event.preventDefault();
+    const rect = stageRef.current?.getBoundingClientRect();
+    const fallbackClientPoint = rect
+      ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+      : { x: 0, y: 0 };
+    const position = resolveCanvasPoint({
+      x: Number.isFinite(event.clientX) ? event.clientX : fallbackClientPoint.x,
+      y: Number.isFinite(event.clientY) ? event.clientY : fallbackClientPoint.y,
+    });
+    console.info("[workflow] 从节点库拖拽创建节点", { kind, x: Math.round(position.x), y: Math.round(position.y) });
+    onAddNode(kind, position);
+  }
+
   const handleWindowPointerMove = useCallback((event: MouseEvent) => {
     const point = extractClientPoint(event);
     const ds = dragStateRef.current;
@@ -790,7 +848,10 @@ export default function WorkflowCanvas({
                   type="button"
                   className="palette-item"
                   disabled={disabled}
-                  onClick={() => onAddNode(kind)}
+                  draggable={!disabled}
+                  aria-label={`拖拽创建${getWorkflowNodeKindLabel(kind)}节点`}
+                  data-testid={`workflow-palette-item-${kind}`}
+                  onDragStart={(event) => handlePaletteDragStart(kind, event)}
                   title={getWorkflowNodeKindLabel(kind)}
                 >
                   {Icon && <Icon className="kind-icon-svg" data-kind={kind} size={18} />}
@@ -823,6 +884,8 @@ export default function WorkflowCanvas({
             className="graph-stage"
             data-testid="workflow-canvas-stage"
             onMouseDown={handleStageMouseDown}
+            onDragOver={handleStageDragOver}
+            onDrop={handleStageDrop}
             onWheel={handleStageWheel}
             onDoubleClick={handleStageDoubleClick}
           >
@@ -1122,7 +1185,7 @@ export default function WorkflowCanvas({
           align-items: center;
           gap: 0px;
           padding: 4px;
-          cursor: pointer;
+          cursor: grab;
           width: 100%;
           transition: all 0.2s;
         }
@@ -1155,6 +1218,9 @@ export default function WorkflowCanvas({
         }
         .palette-item:hover .kind-label {
           color: #a1a1aa;
+        }
+        .palette-item:active {
+          cursor: grabbing;
         }
         .graph-stage-wrapper {
           flex: 1;

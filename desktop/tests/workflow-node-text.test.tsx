@@ -13,6 +13,10 @@ import {
 describe("workflow node text", () => {
   it("renders readable Chinese labels for workflow node kinds", () => {
     expect(getWorkflowNodeKindLabel("start")).toBe("开始");
+    expect(getWorkflowNodeKindLabel("answer")).toBe("回复");
+    expect(getWorkflowNodeKindLabel("template")).toBe("模板");
+    expect(getWorkflowNodeKindLabel("code")).toBe("代码");
+    expect(getWorkflowNodeKindLabel("variable-assigner")).toBe("变量赋值");
     expect(getWorkflowNodeKindLabel("tool")).toBe("工具");
     expect(getWorkflowNodeKindLabel("http-request")).toBe("HTTP 调用");
     expect(getWorkflowNodeKindLabel("human-input")).toBe("人工输入");
@@ -20,6 +24,97 @@ describe("workflow node text", () => {
     expect(getWorkflowNodeKindLabel("subgraph")).toBe("子工作流");
     expect(getWorkflowNodeKindLabel("join")).toBe("汇聚");
     expect(getWorkflowNodeKindLabel("end")).toBe("结束");
+  });
+
+  it("lets users add variable assignment fields from visible variables", () => {
+    const onUpdateNode = vi.fn();
+    render(
+      React.createElement(WorkflowNodeEditor, {
+        node: {
+          id: "node-assign",
+          kind: "variable-assigner",
+          label: "Assign",
+          variableAssigner: {
+            target: "vars",
+            assignments: {},
+          },
+        },
+        variableSourceOptions: [
+          {
+            id: "nodes.node-llm.content",
+            group: "节点输出",
+            label: "模型.content",
+            ref: { scope: "node", nodeId: "node-llm", path: "content", valueType: "string" },
+          },
+        ],
+        onUpdateNode,
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId("workflow-node-editor-variable-add-assignment"));
+
+    expect(onUpdateNode).toHaveBeenCalledWith(expect.objectContaining({
+      variableAssigner: expect.objectContaining({
+        target: "vars",
+        assignments: {
+          field_1: {
+            mode: "variable",
+            ref: { scope: "node", nodeId: "node-llm", path: "content", valueType: "string" },
+          },
+        },
+      }),
+    }));
+  });
+
+  it("shows editable answer, template, and code node configuration", () => {
+    const onUpdateNode = vi.fn();
+    const { rerender } = render(
+      React.createElement(WorkflowNodeEditor, {
+        node: {
+          id: "node-answer",
+          kind: "answer",
+          label: "Answer",
+          answer: { template: "回复 {{ lastLlmOutput }}", outputKey: "answer" },
+        },
+        onUpdateNode,
+      }),
+    );
+
+    fireEvent.change(screen.getByTestId("workflow-node-editor-answer-template"), {
+      target: { value: "最终：{{ nodes.llm.content }}" },
+    });
+    expect(onUpdateNode).toHaveBeenCalledWith(expect.objectContaining({
+      answer: expect.objectContaining({ template: "最终：{{ nodes.llm.content }}" }),
+    }));
+
+    expect(screen.getByTestId("workflow-node-editor-answer-output-key").closest("label")?.className).toContain("field");
+    expect(screen.getByTestId("workflow-node-editor-answer-template").closest("label")?.className).toContain("field");
+
+    rerender(
+      React.createElement(WorkflowNodeEditor, {
+        node: {
+          id: "node-template",
+          kind: "template",
+          label: "Template",
+          template: { template: "标题：{{ inputs.title }}", outputKey: "titleText" },
+        },
+        onUpdateNode,
+      }),
+    );
+    expect(screen.getByTestId("workflow-node-editor-template-output-key")).toBeTruthy();
+
+    rerender(
+      React.createElement(WorkflowNodeEditor, {
+        node: {
+          id: "node-code",
+          kind: "code",
+          label: "Code",
+          code: { language: "javascript", source: "return inputs;", outputKey: "codeOutput" },
+        },
+        onUpdateNode,
+      }),
+    );
+    expect(screen.getByTestId("workflow-node-editor-code-source")).toBeTruthy();
   });
 
   it("does not offer subgraph as a creatable workflow node while the executor is unavailable", () => {

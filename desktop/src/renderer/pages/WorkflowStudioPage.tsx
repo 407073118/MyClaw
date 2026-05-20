@@ -538,12 +538,12 @@ export default function WorkflowStudioPage() {
     }
   }
 
-  async function handleAddNode(kind: WorkflowNodeKind) {
+  async function handleAddNode(kind: WorkflowNodeKind, dropPosition?: { x: number; y: number }) {
     if (!workflowId || !workflowDefinition) return;
 
     const nodeId = `node-${kind}-${Date.now().toString(36)}`;
     const existingLayouts = (workflowDefinition.editor?.canvas.nodes ?? []) as WorkflowCanvasNodeLayout[];
-    const position = computeNextNodePosition({
+    const position = dropPosition ?? computeNextNodePosition({
       layouts: existingLayouts,
       upstreamNodeId: selectedNodeId ?? undefined,
       fallbackIndex: workflowDefinition.nodes.length,

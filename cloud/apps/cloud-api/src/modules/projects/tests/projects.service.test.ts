@@ -351,6 +351,73 @@ describe("projects service", () => {
     });
   });
 
+  it("替换项目配置时会标准化接口请求参数和 Body 配置", async () => {
+    const repository = createRepository({
+      findById: vi.fn(async () => ({ id: 1, code: "customer-service" }))
+    });
+    const service = new ProjectsService(repository as never, createDatabaseService() as never);
+
+    await service.replaceProjectConfig(1, {
+      updatedBy: "admin",
+      apis: [
+        {
+          name: " 查询客户 ",
+          protocol: "http",
+          method: "POST",
+          path: "/api/customers/{id}",
+          parametersJson: [
+            { name: " id ", in: "path", required: true, type: " string ", description: " 客户 ID ", example: " c-1 " },
+            { name: " Authorization ", in: "header", required: true, type: "string", description: " 访问令牌 ", example: "Bearer token" },
+            { name: " page ", in: "query", type: "number", enabled: false }
+          ],
+          requestBodyType: "json",
+          requestBodyContentType: " application/json ",
+          requestBodyExampleJson: { keyword: "张三" }
+        }
+      ]
+    });
+
+    expect(repository.replaceProjectConfig).toHaveBeenCalledWith(1, expect.objectContaining({
+      apis: [
+        expect.objectContaining({
+          name: "查询客户",
+          parametersJson: [
+            expect.objectContaining({ name: "id", in: "path", required: true, type: "string", description: "客户 ID", example: "c-1", enabled: true }),
+            expect.objectContaining({ name: "Authorization", in: "header", required: true, description: "访问令牌", example: "Bearer token", enabled: true }),
+            expect.objectContaining({ name: "page", in: "query", required: false, type: "number", enabled: false })
+          ],
+          requestBodyType: "json",
+          requestBodyContentType: "application/json",
+          requestBodyExampleJson: { keyword: "张三" }
+        })
+      ]
+    }));
+  });
+
+  it("替换项目配置时如果路径参数被标记为非必填则拒绝保存", async () => {
+    const repository = createRepository({
+      findById: vi.fn(async () => ({ id: 1, code: "customer-service" }))
+    });
+    const service = new ProjectsService(repository as never, createDatabaseService() as never);
+
+    await expect(
+      service.replaceProjectConfig(1, {
+        updatedBy: "admin",
+        apis: [
+          {
+            name: "查询客户",
+            protocol: "http",
+            method: "GET",
+            path: "/api/customers/{id}",
+            parametersJson: [{ name: "id", in: "path", required: false }]
+          }
+        ]
+      })
+    ).rejects.toMatchObject({
+      message: "project_api_path_parameter_required"
+    });
+  });
+
   it("替换项目配置时如果 MCP release 不属于当前 MCP 则拒绝保存", async () => {
     const repository = createRepository({
       findById: vi.fn(async () => ({ id: 1, code: "customer-service" }))

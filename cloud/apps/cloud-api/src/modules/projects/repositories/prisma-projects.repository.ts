@@ -567,6 +567,10 @@ export class PrismaProjectsRepository implements ProjectsRepository {
         source: item.source ?? "manual",
         owner: item.owner ?? null,
         tagsJson: item.tagsJson === undefined ? undefined : item.tagsJson as object,
+        parametersJson: item.parametersJson === undefined ? undefined : item.parametersJson as object,
+        requestBodyType: item.requestBodyType ?? "none",
+        requestBodyContentType: item.requestBodyContentType ?? null,
+        requestBodyExampleJson: item.requestBodyExampleJson === undefined ? undefined : item.requestBodyExampleJson as object,
         requestSchemaJson: item.requestSchemaJson === undefined ? undefined : item.requestSchemaJson as object,
         responseSchemaJson: item.responseSchemaJson === undefined ? undefined : item.responseSchemaJson as object,
         enabled: item.enabled ?? true
@@ -697,6 +701,10 @@ export class PrismaProjectsRepository implements ProjectsRepository {
         source: item.source ?? "manual",
         owner: item.owner ?? null,
         tagsJson: item.tagsJson === undefined ? undefined : item.tagsJson as object,
+        parametersJson: item.parametersJson === undefined ? undefined : item.parametersJson as object,
+        requestBodyType: item.requestBodyType ?? "none",
+        requestBodyContentType: item.requestBodyContentType ?? null,
+        requestBodyExampleJson: item.requestBodyExampleJson === undefined ? undefined : item.requestBodyExampleJson as object,
         requestSchemaJson: item.requestSchemaJson === undefined ? undefined : item.requestSchemaJson as object,
         responseSchemaJson: item.responseSchemaJson === undefined ? undefined : item.responseSchemaJson as object,
         enabled: item.enabled ?? true
@@ -797,6 +805,10 @@ export class PrismaProjectsRepository implements ProjectsRepository {
         source: item.source,
         owner: item.owner,
         tagsJson: item.tagsJson ?? null,
+        parametersJson: item.parametersJson ?? null,
+        requestBodyType: item.requestBodyType ?? "none",
+        requestBodyContentType: item.requestBodyContentType ?? null,
+        requestBodyExampleJson: item.requestBodyExampleJson ?? null,
         requestSchemaJson: item.requestSchemaJson ?? null,
         responseSchemaJson: item.responseSchemaJson ?? null,
         enabled: item.enabled

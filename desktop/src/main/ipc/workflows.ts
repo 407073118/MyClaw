@@ -12,11 +12,13 @@ import type {
   WorkflowRunSummary,
   WorkflowSummary,
 } from "@shared/contracts";
+import { EventType } from "@shared/contracts";
 
 import type { RuntimeContext } from "../services/runtime-context";
 import { createLogger } from "../services/logger";
 import { saveSession, saveWorkflow, saveWorkflowRun, deleteWorkflowFile } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
+import { buildWorkflowOutputMessageContent } from "../services/workflow-output-message";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { builtinToolIdToFunctionName } from "../services/builtin-tool-registry";
 import { buildToolLabel } from "../services/tool-schemas";
@@ -32,9 +34,13 @@ import {
   PregelRunner,
   NodeExecutorRegistry,
   StartNodeExecutor,
+  AnswerNodeExecutor,
+  CodeNodeExecutor,
   EndNodeExecutor,
   ConditionNodeExecutor,
   LlmNodeExecutor,
+  TemplateNodeExecutor,
+  VariableAssignerNodeExecutor,
   ToolNodeExecutor,
   HttpRequestNodeExecutor,
   HumanInputNodeExecutor,
@@ -278,6 +284,55 @@ function syncSiliconPersonWorkflowTasks(
   broadcastSessionTasksUpdated(session.id, tasks);
 }
 
+/** 将绑定到硅基员工会话的 workflow 最终输出追加为 assistant 消息。 */
+function appendWorkflowOutputToSiliconPersonSession(input: {
+  ctx: RuntimeContext;
+  session: ChatSession | null;
+  workflow: WorkflowDefinition;
+  runId: string;
+  outputs: unknown;
+}): void {
+  const { ctx, session, workflow, runId, outputs } = input;
+  if (!session) return;
+
+  const content = buildWorkflowOutputMessageContent({
+    workflowName: workflow.name,
+    outputs,
+  });
+  if (!content) return;
+
+  const message = {
+    id: randomUUID(),
+    role: "assistant" as const,
+    content,
+    createdAt: new Date().toISOString(),
+  };
+  session.messages = [...session.messages, message];
+
+  console.info("[workflow:output] 工作流输出已追加到硅基员工对话", {
+    workflowId: workflow.id,
+    workflowName: workflow.name,
+    runId,
+    sessionId: session.id,
+    messageId: message.id,
+    outputLength: content.length,
+  });
+
+  trackSave(saveSession(ctx.runtime.paths, session).catch((err) => {
+    console.error("[workflow:output] 保存工作流对话输出失败", {
+      workflowId: workflow.id,
+      runId,
+      sessionId: session.id,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }));
+
+  broadcastToRenderers("session:stream", {
+    type: EventType.SessionUpdated,
+    session,
+  });
+}
+
 /**
  * 创建桥接真实基础设施的节点执行器注册表。
  *
@@ -291,9 +346,13 @@ function createRealExecutorRegistry(ctx: RuntimeContext): NodeExecutorRegistry {
     artifactManager: ctx.services.artifactManager,
   });
 
-  // ── Start / End ──
+  // ── Start / Answer / End ──
   registry.register(new StartNodeExecutor());
+  registry.register(new AnswerNodeExecutor());
   registry.register(new EndNodeExecutor());
+  registry.register(new TemplateNodeExecutor());
+  registry.register(new CodeNodeExecutor());
+  registry.register(new VariableAssignerNodeExecutor());
 
   // ── Condition ──
   registry.register(new ConditionNodeExecutor());
@@ -794,6 +853,15 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
             },
           });
           syncSiliconPersonWorkflowTasks(ctx, siliconPersonSession, settledTasks, `workflow-run:${result.status}`);
+          if (result.status === "succeeded") {
+            appendWorkflowOutputToSiliconPersonSession({
+              ctx,
+              session: siliconPersonSession,
+              workflow: definition,
+              runId,
+              outputs: completedRun.outputs,
+            });
+          }
         }
 
         // 清理活跃运行

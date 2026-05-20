@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -157,6 +157,54 @@ describe("WorkflowCanvas interactions", () => {
     expect(afterTransform).not.toBe(beforeTransform);
     expect(afterTransform).toContain("scale(");
     expect(screen.getByTestId("workflow-canvas-zoom-label").textContent).toContain("%");
+  });
+
+  it("creates palette nodes only after dragging them onto the canvas", async () => {
+    const { default: WorkflowCanvas } = await import("../src/renderer/components/workflow/WorkflowCanvas");
+    render(
+      React.createElement(WorkflowCanvas, {
+        definition: mocks.definition,
+        selectedNodeId: null,
+        selectedEdgeId: null,
+        feedbackMessage: null,
+        onSelectNode: mocks.onSelectNode,
+        onSelectEdge: mocks.onSelectEdge,
+        onAddNode: mocks.onAddNode,
+        onConnectNode: mocks.onConnectNode,
+        onDeleteNode: mocks.onDeleteNode,
+        onDeleteEdge: mocks.onDeleteEdge,
+        onUpdateEditor: mocks.onUpdateEditor,
+      }),
+    );
+
+    const paletteItem = screen.getByTestId("workflow-palette-item-llm");
+    fireEvent.click(paletteItem);
+    expect(mocks.onAddNode).not.toHaveBeenCalled();
+
+    const dataTransfer = {
+      data: {} as Record<string, string>,
+      effectAllowed: "",
+      dropEffect: "",
+      setData(type: string, value: string) {
+        this.data[type] = value;
+      },
+      getData(type: string) {
+        return this.data[type] ?? "";
+      },
+    };
+    fireEvent.dragStart(paletteItem, { dataTransfer });
+    const stage = screen.getByTestId("workflow-canvas-stage");
+    fireEvent.dragOver(stage, {
+      dataTransfer,
+      clientX: 320,
+      clientY: 240,
+    });
+    const dropEvent = createEvent.drop(stage, { dataTransfer });
+    Object.defineProperty(dropEvent, "clientX", { value: 320 });
+    Object.defineProperty(dropEvent, "clientY", { value: 240 });
+    fireEvent(stage, dropEvent);
+
+    expect(mocks.onAddNode).toHaveBeenCalledWith("llm", { x: 320, y: 240 });
   });
 
   it("describes graph issues with node names instead of raw node ids", async () => {

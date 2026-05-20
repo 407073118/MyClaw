@@ -16,7 +16,7 @@ function collectInputSourceChannels(node: WorkflowNode): string[] {
     if (source.mode !== "variable") continue;
     if (source.ref.scope === "input") channels.add("inputs");
     if (source.ref.scope === "system") channels.add("sys");
-    if (source.ref.scope === "node") channels.add("nodes");
+    // 节点输出依赖由显式连线和 producer outputs 驱动，避免订阅聚合 nodes 后被无关节点输出反复触发。
     if (source.ref.scope === "output") channels.add("outputs");
     if (source.ref.scope === "secret") channels.add("secrets");
     if (source.ref.scope === "run") channels.add("vars");
@@ -63,6 +63,14 @@ export function compileGraph(def: WorkflowDefinition): CompiledGraph {
     }
     if (node.kind === "llm" && node.llm?.outputKey) {
       const key = node.llm.outputKey;
+      if (!outputs.includes(key)) outputs.push(key);
+    }
+    if (node.kind === "template" && node.template?.outputKey) {
+      const key = node.template.outputKey;
+      if (!outputs.includes(key)) outputs.push(key);
+    }
+    if (node.kind === "code" && node.code?.outputKey) {
+      const key = node.code.outputKey;
       if (!outputs.includes(key)) outputs.push(key);
     }
     if (node.kind === "tool" && node.tool?.outputKey) {

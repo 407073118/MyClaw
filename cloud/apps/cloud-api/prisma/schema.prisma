@@ -357,6 +357,18 @@ model ProjectApi {
   /// 标签 JSON。
   tagsJson Json? @map("tags_json")
 
+  /// 请求参数 JSON：按 path、query、header、cookie 统一保存。
+  parametersJson Json? @map("parameters_json")
+
+  /// 请求 Body 类型：none、json、form-data、x-www-form-urlencoded、raw、binary、graphql。
+  requestBodyType String @default("none") @map("request_body_type") @db.VarChar(40)
+
+  /// 请求 Body 的 Content-Type。
+  requestBodyContentType String? @map("request_body_content_type") @db.VarChar(120)
+
+  /// 请求 Body 示例 JSON。
+  requestBodyExampleJson Json? @map("request_body_example_json")
+
   /// 请求结构 JSON。
   requestSchemaJson Json? @map("request_schema_json")
 

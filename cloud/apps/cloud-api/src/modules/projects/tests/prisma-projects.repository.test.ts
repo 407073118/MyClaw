@@ -222,7 +222,23 @@ describe("prisma projects repository", () => {
         projectCode: "RZL-CS",
         projectName: "客服项目"
       },
-      apis: [],
+      apis: [
+        {
+          name: "查询客户",
+          serviceName: "customer-api",
+          direction: "provided",
+          protocol: "http",
+          method: "POST",
+          path: "/api/customers/{id}",
+          parametersJson: [
+            { name: "id", in: "path", required: true, type: "string", description: "客户 ID", example: "c-1", enabled: true },
+            { name: "Authorization", in: "header", required: true, type: "string", description: "访问令牌", example: "Bearer token", enabled: true }
+          ],
+          requestBodyType: "json",
+          requestBodyContentType: "application/json",
+          requestBodyExampleJson: { keyword: "张三" }
+        }
+      ],
       skills: [],
       mcps: [],
       workflows: [],
@@ -245,6 +261,19 @@ describe("prisma projects repository", () => {
         }),
         rongzhiLink: expect.objectContaining({
           create: expect.objectContaining({ projectCode: "RZL-CS" })
+        }),
+        apis: expect.objectContaining({
+          create: expect.arrayContaining([
+            expect.objectContaining({
+              name: "查询客户",
+              parametersJson: expect.arrayContaining([
+                expect.objectContaining({ name: "Authorization", in: "header" })
+              ]),
+              requestBodyType: "json",
+              requestBodyContentType: "application/json",
+              requestBodyExampleJson: { keyword: "张三" }
+            })
+          ])
         })
       })
     }));
@@ -323,6 +352,23 @@ describe("prisma projects repository", () => {
           defaultBranch: "master"
         }
       ],
+      apis: [
+        {
+          name: "查询客户",
+          serviceName: "customer-api",
+          direction: "provided",
+          protocol: "http",
+          method: "POST",
+          path: "/api/customers/{id}",
+          parametersJson: [
+            { name: "id", in: "path", required: true, type: "string", description: "客户 ID", example: "c-1", enabled: true },
+            { name: "Authorization", in: "header", required: true, type: "string", description: "访问令牌", example: "Bearer token", enabled: true }
+          ],
+          requestBodyType: "json",
+          requestBodyContentType: "application/json",
+          requestBodyExampleJson: { keyword: "张三" }
+        }
+      ],
       workflows: [
         {
           workflowId: "workflow-release-check",
@@ -349,6 +395,20 @@ describe("prisma projects repository", () => {
     expect(transaction.projectRepository.createMany).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.arrayContaining([
         expect.objectContaining({ projectId: 1, name: "backend" })
+      ])
+    }));
+    expect(transaction.projectApi.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          projectId: 1,
+          name: "查询客户",
+          parametersJson: expect.arrayContaining([
+            expect.objectContaining({ name: "Authorization", in: "header" })
+          ]),
+          requestBodyType: "json",
+          requestBodyContentType: "application/json",
+          requestBodyExampleJson: { keyword: "张三" }
+        })
       ])
     }));
     expect(transaction.projectWorkflowRef.createMany).toHaveBeenCalledWith(expect.objectContaining({

@@ -3,7 +3,9 @@ import type {
   McpItemDetail,
   McpItemSummary,
   ProjectApiDirection,
+  ProjectApiParameterInfo,
   ProjectApiProtocol,
+  ProjectApiRequestBodyType,
   ProjectApiSource,
   ProjectDetail,
   ProjectRepositoryType,
@@ -39,6 +41,10 @@ type ProjectApiFormItem = {
   owner: string;
   path: string;
   protocol: ProjectApiProtocol;
+  parametersText: string;
+  requestBodyContentType: string;
+  requestBodyExampleText: string;
+  requestBodyType: ProjectApiRequestBodyType;
   requestSchemaText: string;
   responseSchemaText: string;
   serviceName: string;
@@ -94,6 +100,16 @@ const API_DIRECTION_OPTIONS: { label: string; value: ProjectApiDirection }[] = [
 ];
 
 const API_METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
+
+const API_BODY_TYPE_OPTIONS: { label: string; value: ProjectApiRequestBodyType }[] = [
+  { value: "none", label: "无 Body" },
+  { value: "json", label: "JSON" },
+  { value: "form-data", label: "Form Data" },
+  { value: "x-www-form-urlencoded", label: "x-www-form-urlencoded" },
+  { value: "raw", label: "Raw" },
+  { value: "binary", label: "Binary" },
+  { value: "graphql", label: "GraphQL" }
+];
 
 const MCP_RISK_OPTIONS = [
   { value: "", label: "未标注" },
@@ -223,6 +239,10 @@ function createApiFormItem(api?: ProjectDetail["apis"][number]): ProjectApiFormI
     owner: api?.owner ?? "",
     path: api?.path ?? "",
     protocol: api?.protocol ?? "http",
+    parametersText: stringifyJson(api?.parametersJson),
+    requestBodyContentType: api?.requestBodyContentType ?? "",
+    requestBodyExampleText: stringifyJson(api?.requestBodyExampleJson),
+    requestBodyType: api?.requestBodyType ?? "none",
     requestSchemaText: stringifyJson(api?.requestSchemaJson),
     responseSchemaText: stringifyJson(api?.responseSchemaJson),
     serviceName: api?.serviceName ?? "",
@@ -615,6 +635,10 @@ function apiToInput(item: ProjectDetail["apis"][number]): NonNullable<ReplacePro
     source: item.source,
     owner: item.owner,
     tagsJson: item.tagsJson,
+    parametersJson: item.parametersJson,
+    requestBodyType: item.requestBodyType,
+    requestBodyContentType: item.requestBodyContentType,
+    requestBodyExampleJson: item.requestBodyExampleJson,
     requestSchemaJson: item.requestSchemaJson,
     responseSchemaJson: item.responseSchemaJson,
     enabled: item.enabled
@@ -635,6 +659,10 @@ function apiDraftToInput(item: ProjectApiFormItem): NonNullable<ReplaceProjectCo
     source: item.source,
     owner: nullableText(item.owner),
     tagsJson: parseTags(item.tagsText),
+    parametersJson: parseJsonArrayText(item.parametersText, "请求参数 JSON"),
+    requestBodyType: item.requestBodyType,
+    requestBodyContentType: nullableText(item.requestBodyContentType),
+    requestBodyExampleJson: parseJsonAnyText(item.requestBodyExampleText, "请求 Body 示例 JSON"),
     requestSchemaJson: parseJsonObjectText(item.requestSchemaText, "请求 Schema JSON"),
     responseSchemaJson: parseJsonObjectText(item.responseSchemaText, "响应 Schema JSON"),
     enabled: item.enabled
@@ -703,6 +731,22 @@ function displayServiceBaseUrl(serviceName: string | null | undefined): string {
   console.info("[项目详情] 查找接口服务 Base URL", { serviceName });
   const service = selectedProject.value?.services.find((item) => item.name === serviceName);
   return displayNullable(service?.baseUrl);
+}
+
+/** 中文说明：格式化接口请求配置摘要，突出 Header、Query、Path 和 Body 是否已维护。 */
+function formatApiRequestConfig(api: ProjectDetail["apis"][number]): string {
+  const parameters = Array.isArray(api.parametersJson) ? api.parametersJson : [];
+  const enabledParameters = parameters.filter((item) => item.enabled !== false);
+  const groups = ["header", "query", "path", "cookie"]
+    .map((location) => {
+      const count = enabledParameters.filter((item) => item.in === location).length;
+      return count > 0 ? `${location} ${count}` : "";
+    })
+    .filter(Boolean);
+  const bodyType = api.requestBodyType && api.requestBodyType !== "none" ? `Body ${api.requestBodyType}` : "";
+  const summary = [...groups, bodyType].filter(Boolean).join(" · ");
+  console.info("[项目详情] 格式化接口请求配置摘要", { apiName: api.name, summary });
+  return summary || "未配置请求参数";
 }
 
 /** 中文说明：格式化 JSON 预览，保证接口、Skill 和 MCP 配置在详情页可读。 */
@@ -835,6 +879,43 @@ function parseJsonObjectText(raw: string, label: string): Record<string, unknown
   }
 }
 
+/** 中文说明：把文本解析为 JSON 数组，供接口请求参数配置保存。 */
+function parseJsonArrayText(raw: string, label: string): ProjectApiParameterInfo[] | null {
+  const value = raw.trim();
+  console.info("[项目详情] 解析 JSON 数组文本", { label, hasValue: Boolean(value) });
+  if (!value) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      console.warn("[项目详情] JSON 文本不是数组结构", { label });
+      throw new Error(`${label} 必须是 JSON 数组。`);
+    }
+    return parsed as ProjectApiParameterInfo[];
+  } catch (error: any) {
+    console.error("[项目详情] JSON 数组文本解析失败", { label, error });
+    throw new Error(error?.message || `${label} 解析失败。`);
+  }
+}
+
+/** 中文说明：把文本解析为任意 JSON 值，供接口 Body 示例保存。 */
+function parseJsonAnyText(raw: string, label: string): unknown {
+  const value = raw.trim();
+  console.info("[项目详情] 解析任意 JSON 文本", { label, hasValue: Boolean(value) });
+  if (!value) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(value) as unknown;
+  } catch (error: any) {
+    console.error("[项目详情] 任意 JSON 文本解析失败", { label, error });
+    throw new Error(error?.message || `${label} 解析失败。`);
+  }
+}
+
 /** 中文说明：把标签文本拆成字符串数组，支持逗号和换行输入。 */
 function parseTags(raw: string): string[] | null {
   const value = raw.trim();
@@ -856,7 +937,7 @@ function parseTags(raw: string): string[] | null {
 /** 中文说明：把 JSON 值格式化为多行文本，供局部编辑弹窗回填使用。 */
 function stringifyJson(value: unknown): string {
   console.info("[项目详情] 回填 JSON 文本", { hasValue: value !== null && value !== undefined });
-  if (!value || typeof value !== "object") {
+  if (value === null || value === undefined) {
     return "";
   }
   return JSON.stringify(value, null, 2);
@@ -1099,7 +1180,7 @@ function resolveOperatorAccount(project: ProjectDetail): string {
                 <span>接口</span>
                 <span>方法 / 路径</span>
                 <span>服务</span>
-                <span>Schema JSON</span>
+                <span>请求配置</span>
                 <span>状态</span>
                 <span class="sr-only">操作</span>
               </div>
@@ -1110,9 +1191,7 @@ function resolveOperatorAccount(project: ProjectDetail): string {
                 </div>
                 <span class="resource-url">{{ displayNullable(api.method, "GET") }} {{ displayNullable(api.path) }}</span>
                 <span>{{ displayNullable(api.serviceName) }}</span>
-                <span class="resource-muted">
-                  {{ api.requestSchemaJson || api.responseSchemaJson ? "已配置 JSON" : "未配置 JSON" }}
-                </span>
+                <span class="resource-muted">{{ formatApiRequestConfig(api) }}</span>
                 <span class="mini-pill" :class="{ disabled: !api.enabled }">{{ api.enabled ? "启用" : "停用" }}</span>
                 <div class="resource-actions">
                   <button type="button" class="icon-action" :aria-label="`编辑接口 ${api.name}`" title="编辑" @click="openProjectConfigEditModal('api', api.id)">
@@ -1350,6 +1429,28 @@ function resolveOperatorAccount(project: ProjectDetail): string {
                   <div class="form-group wide">
                     <label>路径</label>
                     <input v-model="addModalDraft.api.path" type="text" placeholder="/api/orders/:id" />
+                  </div>
+                  <div class="form-group">
+                    <label>Body 类型</label>
+                    <select v-model="addModalDraft.api.requestBodyType">
+                      <option v-for="option in API_BODY_TYPE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Content-Type</label>
+                    <input v-model="addModalDraft.api.requestBodyContentType" type="text" placeholder="application/json" />
+                  </div>
+                  <div class="form-group wide">
+                    <label>请求参数 JSON</label>
+                    <textarea
+                      v-model="addModalDraft.api.parametersText"
+                      rows="6"
+                      placeholder='[{"name":"Authorization","in":"header","required":true,"type":"string"},{"name":"page","in":"query","required":false,"type":"number"}]'
+                    ></textarea>
+                  </div>
+                  <div class="form-group wide">
+                    <label>Body 示例 JSON</label>
+                    <textarea v-model="addModalDraft.api.requestBodyExampleText" rows="5" placeholder='{"keyword":"订单号"}'></textarea>
                   </div>
                   <div class="form-group wide">
                     <label>接口说明</label>

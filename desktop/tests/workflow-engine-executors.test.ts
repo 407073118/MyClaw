@@ -1,9 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { StartNodeExecutor } from "../src/main/services/workflow-engine/executors/start";
 import { EndNodeExecutor } from "../src/main/services/workflow-engine/executors/end";
+import { AnswerNodeExecutor } from "../src/main/services/workflow-engine/executors/answer";
+import { CodeNodeExecutor } from "../src/main/services/workflow-engine/executors/code";
 import { ConditionNodeExecutor } from "../src/main/services/workflow-engine/executors/condition";
 import { LlmNodeExecutor } from "../src/main/services/workflow-engine/executors/llm";
+import { TemplateNodeExecutor } from "../src/main/services/workflow-engine/executors/template";
 import { ToolNodeExecutor, parseMcpToolId } from "../src/main/services/workflow-engine/executors/tool";
+import { VariableAssignerNodeExecutor } from "../src/main/services/workflow-engine/executors/variable-assigner";
 import { WorkflowEventEmitter } from "../src/main/services/workflow-engine/event-emitter";
 import type { WorkflowConditionNode, WorkflowLlmNode, WorkflowToolNode } from "@shared/contracts";
 
@@ -60,6 +64,108 @@ describe("EndNodeExecutor", () => {
       { channelName: "__done__", value: true },
     ]);
     expect(result.outputs).toEqual({ summary: "分析完成", title: "标题：季度复盘" });
+  });
+});
+
+describe("AnswerNodeExecutor", () => {
+  it("renders an explicit chatflow answer into outputs.answer", async () => {
+    const exec = new AnswerNodeExecutor();
+    const result = await exec.execute(makeCtx(
+      {
+        id: "answer-1",
+        kind: "answer",
+        label: "Answer",
+        answer: {
+          template: "天气：{{ nodes.weather.content }}",
+        },
+      },
+      {
+        nodes: { weather: { content: "晴，22℃" } },
+      },
+    ));
+
+    expect(result.writes).toEqual([{ channelName: "outputs", value: { answer: "天气：晴，22℃" } }]);
+    expect(result.outputs).toEqual({ answer: "天气：晴，22℃" });
+  });
+});
+
+describe("TemplateNodeExecutor", () => {
+  it("renders a template transform node and writes to its output key", async () => {
+    const exec = new TemplateNodeExecutor();
+    const result = await exec.execute(makeCtx(
+      {
+        id: "template-1",
+        kind: "template",
+        label: "Template",
+        template: {
+          template: "用户 {{ inputs.user }}：{{ nodes.llm.content }}",
+          outputKey: "summaryText",
+        },
+      },
+      {
+        inputs: { user: "小张" },
+        nodes: { llm: { content: "任务完成" } },
+      },
+    ));
+
+    expect(result.writes).toEqual([{ channelName: "summaryText", value: "用户 小张：任务完成" }]);
+    expect(result.outputs).toEqual({ content: "用户 小张：任务完成" });
+  });
+});
+
+describe("CodeNodeExecutor", () => {
+  it("runs a bounded javascript transform with resolved inputs", async () => {
+    const exec = new CodeNodeExecutor();
+    const result = await exec.execute(makeCtx(
+      {
+        id: "code-1",
+        kind: "code",
+        label: "Code",
+        code: {
+          language: "javascript",
+          source: "return { total: inputs.price * inputs.count, label: `${inputs.name}:${state.inputs.trace}` };",
+          outputKey: "calc",
+        },
+      },
+      {
+        inputs: { trace: "T1" },
+      },
+      {
+        price: 12,
+        count: 3,
+        name: "订单",
+      },
+    ));
+
+    expect(result.writes).toEqual([{ channelName: "calc", value: { total: 36, label: "订单:T1" } }]);
+    expect(result.outputs).toEqual({ result: { total: 36, label: "订单:T1" } });
+  });
+});
+
+describe("VariableAssignerNodeExecutor", () => {
+  it("assigns resolved values into the vars channel", async () => {
+    const exec = new VariableAssignerNodeExecutor();
+    const result = await exec.execute(makeCtx(
+      {
+        id: "assign-1",
+        kind: "variable-assigner",
+        label: "Assign",
+        variableAssigner: {
+          target: "vars",
+          assignments: {
+            city: { mode: "variable", ref: { scope: "input", path: "city", valueType: "string" } },
+            summary: { mode: "expression", expression: "{{ nodes.weather.content }}" },
+          },
+        },
+      },
+      {
+        inputs: { city: "上海" },
+        nodes: { weather: { content: "小雨" } },
+      },
+    ));
+
+    expect(result.writes).toEqual([{ channelName: "vars", value: { city: "上海", summary: "小雨" } }]);
+    expect(result.outputs).toEqual({ assigned: { city: "上海", summary: "小雨" }, target: "vars" });
   });
 });
 

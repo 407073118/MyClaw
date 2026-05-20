@@ -16,6 +16,27 @@ export type ProjectApiProtocol = "http" | "rpc" | "graphql" | "event" | "other";
 
 export type ProjectApiSource = "manual" | "openapi" | "repo-scan" | "rongzhi";
 
+export type ProjectApiParameterLocation = "path" | "query" | "header" | "cookie";
+
+export type ProjectApiRequestBodyType =
+  | "none"
+  | "json"
+  | "form-data"
+  | "x-www-form-urlencoded"
+  | "raw"
+  | "binary"
+  | "graphql";
+
+export type ProjectApiParameterInfo = {
+  name: string;
+  in: ProjectApiParameterLocation;
+  required: boolean;
+  type: string | null;
+  description: string | null;
+  example: string | null;
+  enabled: boolean;
+};
+
 export type ProjectSummary = {
   id: ProjectId;
   code: string;
@@ -72,6 +93,10 @@ export type ProjectApiInfo = {
   source: ProjectApiSource;
   owner: string | null;
   tagsJson: unknown;
+  parametersJson: ProjectApiParameterInfo[] | null;
+  requestBodyType: ProjectApiRequestBodyType;
+  requestBodyContentType: string | null;
+  requestBodyExampleJson: unknown;
   requestSchemaJson: unknown;
   responseSchemaJson: unknown;
   enabled: boolean;
@@ -228,6 +253,10 @@ export type ProjectApiInput = {
   source?: ProjectApiSource;
   owner?: string | null;
   tagsJson?: unknown;
+  parametersJson?: ProjectApiParameterInfo[] | null;
+  requestBodyType?: ProjectApiRequestBodyType;
+  requestBodyContentType?: string | null;
+  requestBodyExampleJson?: unknown;
   requestSchemaJson?: unknown;
   responseSchemaJson?: unknown;
   enabled?: boolean;

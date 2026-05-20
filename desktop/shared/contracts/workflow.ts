@@ -20,6 +20,10 @@ export type WorkflowStatus = (typeof WorkflowStatus)[keyof typeof WorkflowStatus
 export const WorkflowNodeKind = {
   Start: "start",
   Llm: "llm",
+  Answer: "answer",
+  Template: "template",
+  Code: "code",
+  VariableAssigner: "variable-assigner",
   Tool: "tool",
   HttpRequest: "http-request",
   HumanInput: "human-input",
@@ -246,6 +250,37 @@ export type WorkflowToolNode = WorkflowNodeBase & {
   };
 };
 
+export type WorkflowAnswerNode = WorkflowNodeBase & {
+  kind: "answer";
+  answer: {
+    template: string;
+    outputKey?: string;
+  };
+};
+
+export type WorkflowTemplateNode = WorkflowNodeBase & {
+  kind: "template";
+  template: WorkflowNodeOutputBinding & {
+    template: string;
+  };
+};
+
+export type WorkflowCodeNode = WorkflowNodeBase & {
+  kind: "code";
+  code: WorkflowNodeOutputBinding & {
+    language: "javascript";
+    source: string;
+  };
+};
+
+export type WorkflowVariableAssignerNode = WorkflowNodeBase & {
+  kind: "variable-assigner";
+  variableAssigner: {
+    target: "vars" | "outputs";
+    assignments: Record<string, WorkflowNodeInputSource>;
+  };
+};
+
 export type WorkflowHttpRequestNode = WorkflowNodeBase & {
   kind: "http-request";
   httpRequest: WorkflowNodeOutputBinding & {
@@ -294,6 +329,10 @@ export type WorkflowEndNode = WorkflowNodeBase & {
 export type WorkflowNode =
   | WorkflowStartNode
   | WorkflowLlmNode
+  | WorkflowAnswerNode
+  | WorkflowTemplateNode
+  | WorkflowCodeNode
+  | WorkflowVariableAssignerNode
   | WorkflowToolNode
   | WorkflowHttpRequestNode
   | WorkflowHumanInputNode
