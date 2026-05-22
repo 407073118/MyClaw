@@ -16,6 +16,15 @@ const NON_RUNNABLE_TERMINAL_STATUSES = new Set<TaskStatus>([
   "failed",
   "cancelled",
 ]);
+const TASK_STORE_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_TASK_STORE === "1";
+
+/** 输出 Task V2 调试日志，默认关闭以避免 workflow 高频任务更新写 console。 */
+function logTaskStoreDebug(message: string, detail: Record<string, unknown>): void {
+  if (!TASK_STORE_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
 
 /** 判断任务是否已经不可继续，避免复用失败、取消或阻塞的旧逻辑任务。 */
 function isNonRunnableTerminalStatus(status: TaskStatus): boolean {
@@ -76,7 +85,7 @@ export function createTask(
     (task) => !isNonRunnableTerminalStatus(task.status) && buildTaskFingerprint(task) === inputFingerprint,
   );
   if (existing) {
-    console.info("[task-store] 复用已有逻辑任务，跳过重复创建", {
+    logTaskStoreDebug("[task-store] 复用已有逻辑任务，跳过重复创建", {
       taskId: existing.id,
       subject: existing.subject,
       fingerprint: inputFingerprint,
@@ -104,7 +113,7 @@ export function createTask(
   };
 
   let next = [...normalizedTasks, created];
-  console.info("[task-store] 创建新任务", {
+  logTaskStoreDebug("[task-store] 创建新任务", {
     taskId: created.id,
     subject: created.subject,
     blockedBy: created.blockedBy,
@@ -127,7 +136,7 @@ export function createTask(
 /** 列出所有任务（原样返回，不过滤）。 */
 export function listTasks(tasks: Task[]): Task[] {
   const compacted = coalesceTasks(tasks).tasks;
-  console.info("[task-store] 列出任务", {
+  logTaskStoreDebug("[task-store] 列出任务", {
     rawCount: tasks.length,
     compactedCount: compacted.length,
   });
@@ -139,7 +148,7 @@ export function getTask(tasks: Task[], taskId: string): Task | null {
   const compacted = coalesceTasks(tasks);
   const resolvedTaskId = compacted.aliasMap[taskId] ?? taskId;
   const found = compacted.tasks.find((t) => t.id === resolvedTaskId) ?? null;
-  console.info("[task-store] 查询任务", {
+  logTaskStoreDebug("[task-store] 查询任务", {
     requestedTaskId: taskId,
     resolvedTaskId,
     found: !!found,
@@ -196,7 +205,7 @@ export function updateTask(
     );
   }
 
-  console.info("[task-store] 更新任务", {
+  logTaskStoreDebug("[task-store] 更新任务", {
     requestedTaskId: taskId,
     resolvedTaskId,
     status: updated.status,
@@ -212,7 +221,7 @@ export function clearCompletedTasks(tasks: Task[]): {
 } {
   const compacted = coalesceTasks(tasks).tasks;
   const remaining = compacted.filter((t) => !isNonRunnableTerminalStatus(t.status));
-  console.info("[task-store] 清理已完成任务", {
+  logTaskStoreDebug("[task-store] 清理已完成任务", {
     rawCount: tasks.length,
     compactedCount: compacted.length,
     cleared: compacted.length - remaining.length,

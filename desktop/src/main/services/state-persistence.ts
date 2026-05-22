@@ -101,6 +101,13 @@ export function resetSessionDatabase(): void {
   }
 }
 
+/** 立即 flush 会话数据库中的待落盘写入，供关键路径和退出流程调用。 */
+export function flushSessionDatabaseNow(): void {
+  if (!_sessionDb) return;
+  console.info("[state-persistence] 正在立即落盘会话数据库待处理写入");
+  _sessionDb.flushNow("state-persistence-flush-now");
+}
+
 /**
  * 确保 SessionDatabase 单例可用。
  * 正常启动后直接返回 loadPersistedState 创建的实例；

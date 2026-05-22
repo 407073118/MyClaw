@@ -5,6 +5,7 @@ export const FILE_VIEWER_PANEL_PATH = "builtin:file-viewer";
 export type FileViewerKind =
   | "markdown"
   | "text"
+  | "html"
   | "code"
   | "json"
   | "table"

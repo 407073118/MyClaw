@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowUp, BellRing, Boxes, FolderKanban, PanelRightClose, PanelRightOpen, Plug, Square, Wrench, X } from "lucide-react";
 import { marked } from "marked";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useWorkspaceStore, bufferStreamingDelta, getCachedMarkdown, flushStreamingBufferNow } from "../stores/workspace";
+import { useWorkspaceStore, bufferStreamingDelta, flushStreamingBufferNow } from "../stores/workspace";
 import { useShallow } from "zustand/react/shallow";
 type ChatReminderBannerPayload = {
   id?: string;
@@ -38,9 +38,11 @@ import type {
   TaskResumeInput,
   ExecutionIntent,
   McpServer,
+  SessionPatchPayload,
 } from "@shared/contracts";
 import { ToolRiskCategory, resolveSiliconPersonCurrentSessionId } from "@shared/contracts";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
+import { renderMessageForDisplay } from "../utils/message-render-cache";
 
 const AGENT_TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
   queued: "排队中",
@@ -53,6 +55,24 @@ const AGENT_TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
 
 const TASK_PANEL_DISMISS_PREFIX = "myclaw:task-panel-dismissed:";
 const AGENT_TASK_CARD_DISMISS_PREFIX = "myclaw:agent-task-card-dismissed:";
+const CHAT_PAGE_STREAM_DEBUG_LOGGING = resolveChatPageStreamDebugLogging();
+
+/** 读取 ChatPage 实时流调试日志开关，默认关闭以避免高频 session 事件刷屏。 */
+function resolveChatPageStreamDebugLogging(): boolean {
+  try {
+    return globalThis.localStorage?.getItem("MYCLAW_DEBUG_CHAT_PAGE_STREAM") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 输出 ChatPage 实时流调试日志，仅在显式开启时写入 console。 */
+function logChatPageStreamDebug(message: string, detail: Record<string, unknown>): void {
+  if (!CHAT_PAGE_STREAM_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
 
 const APPROVAL_SOURCE_LABELS: Record<string, string> = {
   "builtin-tool": "内置工具",
@@ -312,6 +332,25 @@ function ToolLogContent({ content, messageId }: { content: string; messageId: st
   return <span className="tool-log-text">{content}</span>;
 }
 
+/** 记忆化消息正文，避免输入框草稿变化时重复处理行内文件引用。 */
+const MemoInlineFileReferenceContent = memo(function MemoInlineFileReferenceContent({
+  className,
+  html,
+  baseDirectory,
+}: {
+  className: string;
+  html: string;
+  baseDirectory: string | null;
+}) {
+  return (
+    <InlineFileReferenceContent
+      className={className}
+      html={html}
+      baseDirectory={baseDirectory}
+    />
+  );
+});
+
 // ─── 辅助方法 ─────────────────────────────────────────────────────────────────
 
 /** 安全提取消息正文文本，兼容字符串和多模态数组两种结构。 */
@@ -405,6 +444,38 @@ function formatToolArgs(argsJson: string): string {
   } catch {
     return argsJson;
   }
+}
+
+/** 从 session.patched 事件中读取增量补丁，兼容扁平事件和 envelope payload。 */
+function readSessionPatch(event: Record<string, unknown>): SessionPatchPayload | null {
+  const payload = event.patch && typeof event.patch === "object"
+    ? event.patch as Record<string, unknown>
+    : event.payload && typeof event.payload === "object"
+    ? event.payload as Record<string, unknown>
+    : event;
+  if (typeof payload.sessionId !== "string" || typeof payload.kind !== "string") return null;
+  if (typeof payload.revision !== "number") return null;
+  return payload as SessionPatchPayload;
+}
+
+/** 构造工具启动时的轻量参数展示，避免 renderer 读取和持有完整 arguments。 */
+function buildToolStartedArgsPreview(event: Record<string, unknown>): Record<string, unknown> | undefined {
+  const inputPreview = typeof event.inputPreview === "string" ? event.inputPreview : undefined;
+  const inputBytes = typeof event.inputBytes === "number" ? event.inputBytes : undefined;
+  const inputHash = typeof event.inputHash === "string" ? event.inputHash : undefined;
+  if (inputPreview === undefined && inputBytes === undefined && inputHash === undefined) {
+    return undefined;
+  }
+  logChatPageStreamDebug("[chat-page] 使用轻量工具参数预览", {
+    inputBytes,
+    inputHash,
+    previewLength: inputPreview?.length ?? 0,
+  });
+  return {
+    ...(inputPreview !== undefined ? { inputPreview } : {}),
+    ...(inputBytes !== undefined ? { inputBytes } : {}),
+    ...(inputHash !== undefined ? { inputHash } : {}),
+  };
 }
 
 /** 格式化模型 token 与缓存用量，便于在消息徽标中快速判断缓存是否命中。 */
@@ -718,6 +789,7 @@ export default function ChatPage() {
     markSiliconPersonSessionRead: s.markSiliconPersonSessionRead,
     updateSessionRuntimeIntent: s.updateSessionRuntimeIntent,
     applySessionUpdate: s.applySessionUpdate,
+    applySessionPatch: s.applySessionPatch,
     cancelSessionRun: s.cancelSessionRun,
     approvePlan: s.approvePlan,
     cancelPlanMode: s.cancelPlanMode,
@@ -1190,34 +1262,24 @@ export default function ChatPage() {
     const streamingId = streamingMessageIdRef.current;
     return sessionMessages.map((msg: ChatMessage) => {
       if (!msg || typeof msg.content !== "string") return msg;
-      const a2uiSubmitMatch = msg.content.match(/^\[A2UI_FORM:([a-zA-Z0-9_-]+)\]\s*(.*)$/);
-      if (a2uiSubmitMatch && msg.role === "user") {
-        return { ...msg, content: "", uiSubmitResult: { id: a2uiSubmitMatch[1], pairs: a2uiSubmitMatch[2] }, renderedHtml: "" };
-      }
-      const a2uiMatch = msg.content.match(/```a2ui\s*([\s\S]*?)\s*```/);
-      if (!a2uiMatch) {
-        const isStreaming = msg.id === streamingId;
-        return {
-          ...msg,
-          renderedHtml: isStreaming
-            ? escapeHtml(msg.content)
-            : getCachedMarkdown(msg.id, msg.content, renderMarkdown),
-          renderedReasoningHtml: msg.reasoning
-            ? (isStreaming ? escapeHtml(msg.reasoning) : getCachedMarkdown(msg.id + "-r", msg.reasoning, renderMarkdown))
-            : "",
-          _isStreaming: isStreaming,
-        };
-      }
-      try {
-        const parsed = JSON.parse(a2uiMatch[1]);
-        const replacedContent = msg.content.replace(a2uiMatch[0], "").trim();
-        let finalUi = (msg as any).ui;
-        if (!finalUi && parsed.ui) finalUi = { ...parsed.ui, id: parsed.ui.id || msg.id };
-        const finalContent = replacedContent || parsed.text || "";
-        return { ...msg, content: finalContent, ui: finalUi, renderedHtml: getCachedMarkdown(msg.id, finalContent, renderMarkdown), renderedReasoningHtml: msg.reasoning ? getCachedMarkdown(msg.id + "-r", msg.reasoning, renderMarkdown) : "" };
-      } catch {
-        return { ...msg, renderedHtml: getCachedMarkdown(msg.id, textOf(msg.content), renderMarkdown), renderedReasoningHtml: msg.reasoning ? getCachedMarkdown(msg.id + "-r", msg.reasoning, renderMarkdown) : "" };
-      }
+      const rendered = renderMessageForDisplay({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        reasoning: msg.reasoning ?? undefined,
+        ui: (msg as any).ui,
+        isStreaming: msg.id === streamingId,
+        renderMarkdown,
+      });
+      return {
+        ...msg,
+        content: rendered.content,
+        ui: rendered.ui,
+        uiSubmitResult: rendered.uiSubmitResult,
+        renderedHtml: rendered.renderedHtml,
+        renderedReasoningHtml: rendered.renderedReasoningHtml,
+        _isStreaming: rendered._isStreaming,
+      };
     });
   }, [sessionMessages]);
 
@@ -1469,6 +1531,7 @@ export default function ChatPage() {
     const unsubscribe = window.myClawAPI.onSessionStream((event) => {
       const ws = useWorkspaceStore.getState();
       const runtimeStatus = readRuntimeStatus(event);
+      const sessionPatch = readSessionPatch(event);
       const {
         type, sessionId, messageId, delta,
         session: updatedSession,
@@ -1487,7 +1550,7 @@ export default function ChatPage() {
         error?: string;
         round?: number;
       };
-      const eventSessionId = runtimeStatus?.sessionId ?? sessionId ?? updatedSession?.id;
+      const eventSessionId = runtimeStatus?.sessionId ?? sessionPatch?.sessionId ?? sessionId ?? updatedSession?.id;
 
       // 判断事件 sessionId 是否属于当前活跃视图。
       const isActiveViewSession = (sid: string): boolean => {
@@ -1522,6 +1585,13 @@ export default function ChatPage() {
         bufferStreamingDelta(eventSessionId, messageId, delta.content ?? null, delta.reasoning ?? null);
         // 流式输出时持续滚动到底部，避免用户需要手动滚动查看新内容。
         scrollToBottomRef.current("smooth");
+      } else if (type === "session.patched" && sessionPatch) {
+        logChatPageStreamDebug("[chat-page] 应用会话增量补丁", {
+          sessionId: sessionPatch.sessionId,
+          kind: sessionPatch.kind,
+          revision: sessionPatch.revision,
+        });
+        ws.applySessionPatch(sessionPatch);
       } else if (type === "session.updated" && updatedSession) {
         streamingMessageIdRef.current = null;
         flushStreamingBufferNow();
@@ -1565,7 +1635,7 @@ export default function ChatPage() {
             toolId: toolId ?? "",
             toolName: toolName ?? "",
             startTime: Date.now(),
-            args: (event as any).arguments,
+            args: buildToolStartedArgsPreview(event as Record<string, unknown>),
           });
           return next;
         });
@@ -2621,7 +2691,7 @@ export default function ChatPage() {
                         )}
 
                         {message.content && (
-                          <InlineFileReferenceContent
+                          <MemoInlineFileReferenceContent
                             className={`message-content${(message as any)._isStreaming ? " message-content--streaming" : ""}`}
                             html={message.renderedHtml}
                             baseDirectory={inlineFileBaseDirectory}
@@ -2776,6 +2846,9 @@ export default function ChatPage() {
                                   <span className="execution-chain-badge">执行中</span>
                                   <div className="execution-chain-main">
                                     <span className="execution-chain-text">{info.toolName?.replace(/_/g, ".") ?? info.toolId}</span>
+                                    {info.args && (
+                                      <pre className="tool-args-json">{JSON.stringify(info.args, null, 2)}</pre>
+                                    )}
                                   </div>
                                 </li>
                               ))}

@@ -261,6 +261,23 @@ describe("Phase 3: Approval mode configurable", () => {
     })).toBe(true);
   });
 
+  it("alwaysAllowedTools should override default always-ask tools after user allowed the tool", () => {
+    const policy: ApprovalPolicy = {
+      mode: "prompt",
+      autoApproveReadOnly: false,
+      autoApproveSkills: true,
+      alwaysAllowedTools: ["fs.write"],
+    };
+
+    expect(shouldRequestApproval({
+      policy,
+      source: "builtin-tool",
+      toolId: "fs.write",
+      risk: ToolRiskCategory.Write,
+      toolApprovalMode: "always-ask",
+    })).toBe(false);
+  });
+
   it("skills should auto-approve when autoApproveSkills=true", () => {
     const policy = createDefaultApprovalPolicy();
     // Default has autoApproveSkills: true

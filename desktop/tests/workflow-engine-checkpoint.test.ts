@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type {
   WorkflowDefinition,
   WorkflowRunConfig,
@@ -11,6 +11,7 @@ import type {
 import { GraphInterrupt } from "../src/main/services/workflow-engine/errors";
 import type { WorkflowStreamEvent } from "@shared/contracts/workflow-stream";
 import { PregelRunner } from "../src/main/services/workflow-engine/pregel-runner";
+import type { CheckpointData, WorkflowCheckpointer } from "../src/main/services/workflow-engine/pregel-runner";
 import { NodeExecutorRegistry } from "../src/main/services/workflow-engine/node-executor";
 import { StartNodeExecutor } from "../src/main/services/workflow-engine/executors/start";
 import { EndNodeExecutor } from "../src/main/services/workflow-engine/executors/end";
@@ -79,6 +80,33 @@ function collectEvents(runner: PregelRunner): WorkflowStreamEvent[] {
   return events;
 }
 
+class CountingCheckpointer implements WorkflowCheckpointer {
+  public readonly saved: CheckpointData[] = [];
+  public readonly statusUpdates: Array<{ runId: string; status: string }> = [];
+
+  get saveCount(): number {
+    return this.saved.length;
+  }
+
+  get lastSaveReason(): unknown {
+    return this.saved.at(-1)?.reason;
+  }
+
+  async createRun(): Promise<void> {}
+
+  async updateRunStatus(runId: string, status: string): Promise<void> {
+    this.statusUpdates.push({ runId, status });
+  }
+
+  async saveCheckpoint(data: CheckpointData): Promise<void> {
+    this.saved.push(data);
+  }
+
+  async loadLatestCheckpoint(): Promise<CheckpointData | null> {
+    return null;
+  }
+}
+
 function definitionBase(id: string, name: string): Omit<WorkflowDefinition, "entryNodeId" | "nodes" | "edges" | "stateSchema"> {
   return {
     id,
@@ -93,6 +121,62 @@ function definitionBase(id: string, name: string): Omit<WorkflowDefinition, "ent
     libraryRootId: "root",
   };
 }
+
+function buildThreeStepCheckpointPolicyDefinition(): WorkflowDefinition {
+  const nodes: WorkflowNode[] = [
+    { id: "start-1", kind: "start", label: "Start" },
+    {
+      id: "llm-1",
+      kind: "llm",
+      label: "Write",
+      llm: { prompt: "Say {{topic}}", outputKey: "draft" },
+    } as WorkflowLlmNode,
+    { id: "end-1", kind: "end", label: "Done" },
+  ];
+  const edges: WorkflowEdge[] = [
+    { id: "edge-1", fromNodeId: "start-1", toNodeId: "llm-1", kind: "normal" },
+    { id: "edge-2", fromNodeId: "llm-1", toNodeId: "end-1", kind: "normal" },
+  ];
+  return {
+    ...definitionBase("wf-checkpoint-policy", "Checkpoint policy"),
+    entryNodeId: "start-1",
+    nodes,
+    edges,
+    stateSchema: [],
+  };
+}
+
+describe("Workflow checkpoint policy", () => {
+  it("saves only the run-complete checkpoint when no policy is configured", async () => {
+    const checkpointer = new CountingCheckpointer();
+    const runner = new PregelRunner(
+      buildThreeStepCheckpointPolicyDefinition(),
+      { ...defaultRunConfig(), checkpointPolicy: undefined as unknown as WorkflowRunConfig["checkpointPolicy"] },
+      { executorRegistry: buildRegistry(), checkpointer },
+    );
+
+    const result = await runner.run({ topic: "policy" });
+
+    expect(result.status).toBe("succeeded");
+    expect(checkpointer.saveCount).toBe(1);
+    expect(checkpointer.lastSaveReason).toBe("run-complete");
+  });
+
+  it("keeps every-step checkpointing available for rollback diagnostics", async () => {
+    const checkpointer = new CountingCheckpointer();
+    const runner = new PregelRunner(
+      buildThreeStepCheckpointPolicyDefinition(),
+      defaultRunConfig({ checkpointPolicy: "every-step" }),
+      { executorRegistry: buildRegistry(), checkpointer },
+    );
+
+    await runner.run({ topic: "policy" });
+
+    expect(checkpointer.saved.some((item) => item.reason === "step")).toBe(true);
+    expect(checkpointer.lastSaveReason).toBe("run-complete");
+    expect(checkpointer.saveCount).toBeGreaterThanOrEqual(3);
+  });
+});
 
 // ════════════════════════════════════════════════════════════════════════
 // 1. Channel checkpoint / restore roundtrip
@@ -912,6 +996,69 @@ describe("SqliteCheckpointer", () => {
     it("should return null for non-existent run", () => {
       const run = checkpointer.getRun("non-existent");
       expect(run).toBeNull();
+    });
+
+    it("coalesces normal flushes and flushes terminal checkpoints immediately", async () => {
+      vi.useFakeTimers();
+      checkpointer.close();
+      if (existsSync(dbPath)) {
+        unlinkSync(dbPath);
+      }
+      checkpointer = new SqliteCheckpointer(dbPath, { flushDebounceMs: 50 });
+      await checkpointer.init();
+
+      checkpointer.createRun({
+        id: "run-flush-policy",
+        workflowId: "wf-1",
+        workflowVersion: 1,
+        config: null,
+      });
+      checkpointer.saveCheckpoint({
+        runId: "run-flush-policy",
+        checkpointId: "cp-running-1",
+        parentId: null,
+        step: 1,
+        status: "running",
+        channelVersions: { topic: 1 },
+        versionsSeen: {},
+        triggeredNodes: ["node-1"],
+        durationMs: 1,
+        channelData: new Map([["topic", { version: 1, value: "draft" }]]),
+      });
+      checkpointer.saveCheckpoint({
+        runId: "run-flush-policy",
+        checkpointId: "cp-running-2",
+        parentId: "cp-running-1",
+        step: 2,
+        status: "running",
+        channelVersions: { topic: 2 },
+        versionsSeen: {},
+        triggeredNodes: ["node-2"],
+        durationMs: 1,
+        channelData: new Map([["topic", { version: 2, value: "draft-2" }]]),
+      });
+
+      expect(checkpointer.getFlushCountForTest()).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(55);
+      expect(checkpointer.getFlushCountForTest()).toBe(1);
+
+      checkpointer.saveCheckpoint({
+        runId: "run-flush-policy",
+        checkpointId: "cp-done",
+        parentId: "cp-running-2",
+        step: 3,
+        status: "succeeded",
+        channelVersions: { topic: 3 },
+        versionsSeen: {},
+        triggeredNodes: ["end-1"],
+        durationMs: 1,
+        reason: "run-complete",
+        channelData: new Map([["topic", { version: 3, value: "done" }]]),
+      });
+
+      expect(checkpointer.getFlushCountForTest()).toBe(2);
+      vi.useRealTimers();
     });
   });
 

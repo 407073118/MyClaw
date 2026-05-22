@@ -27,6 +27,16 @@ const USER_WAITING_PATTERNS = [
   /？\s*$/u,
 ] as const;
 
+const TASK_CONTINUATION_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_TASK_CONTINUATION === "1";
+
+/** 输出 Task V2 自动续行门禁调试日志，默认关闭以避免每轮响应刷屏。 */
+function logTaskContinuationDebug(message: string, detail?: Record<string, unknown>): void {
+  if (!TASK_CONTINUATION_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
+
 /** 统一判定 Task V2 是否允许自动续跑，所有 runtime 分支必须走这里。 */
 export function canAutoContinueTaskChain(
   tasks: Task[],
@@ -34,7 +44,7 @@ export function canAutoContinueTaskChain(
 ): { allowed: boolean; reason: string } {
   const activeInterrupt = options.taskInterrupts?.find((request) => request.status === "active");
   if (activeInterrupt) {
-    console.info("[task-continuation] 自动续跑被 active interrupt 门禁拦截", {
+    logTaskContinuationDebug("[task-continuation] 自动续跑被 active interrupt 门禁拦截", {
       taskId: activeInterrupt.taskId,
       requestId: activeInterrupt.requestId,
     });
@@ -43,26 +53,26 @@ export function canAutoContinueTaskChain(
 
   const blockingTask = tasks.find((task) => AUTO_CONTINUATION_BLOCKING_STATUSES.has(task.status));
   if (blockingTask) {
-    console.info("[task-continuation] 自动续跑被任务状态门禁拦截", {
+    logTaskContinuationDebug("[task-continuation] 自动续跑被任务状态门禁拦截", {
       taskId: blockingTask.id,
       status: blockingTask.status,
     });
     return { allowed: false, reason: `task_${blockingTask.status}` };
   }
   if (options.isWaitingForUserInput) {
-    console.info("[task-continuation] 自动续跑被模型等待用户输入门禁拦截");
+    logTaskContinuationDebug("[task-continuation] 自动续跑被模型等待用户输入门禁拦截");
     return { allowed: false, reason: "assistant_waiting_for_user_input" };
   }
   if (options.isBackgroundHandoff) {
-    console.info("[task-continuation] 自动续跑被后台交接门禁拦截");
+    logTaskContinuationDebug("[task-continuation] 自动续跑被后台交接门禁拦截");
     return { allowed: false, reason: "background_handoff" };
   }
   if (options.isPlanModeManagingExecution) {
-    console.info("[task-continuation] 自动续跑被 Plan Mode 门禁拦截");
+    logTaskContinuationDebug("[task-continuation] 自动续跑被 Plan Mode 门禁拦截");
     return { allowed: false, reason: "plan_mode_managing_execution" };
   }
   if (options.continuationCount >= options.maxContinuations) {
-    console.info("[task-continuation] 自动续跑达到次数上限", {
+    logTaskContinuationDebug("[task-continuation] 自动续跑达到次数上限", {
       continuationCount: options.continuationCount,
       maxContinuations: options.maxContinuations,
     });
@@ -71,11 +81,11 @@ export function canAutoContinueTaskChain(
 
   const runnable = tasks.some((task) => task.status === "pending" || task.status === "in_progress");
   if (!runnable) {
-    console.info("[task-continuation] 自动续跑没有可运行任务", { total: tasks.length });
+    logTaskContinuationDebug("[task-continuation] 自动续跑没有可运行任务", { total: tasks.length });
     return { allowed: false, reason: "no_runnable_task" };
   }
 
-  console.info("[task-continuation] 自动续跑通过统一门禁", { total: tasks.length });
+  logTaskContinuationDebug("[task-continuation] 自动续跑通过统一门禁", { total: tasks.length });
   return { allowed: true, reason: "runnable_task_available" };
 }
 
@@ -84,12 +94,12 @@ export function isAssistantWaitingForUserInput(content: string): boolean {
   const normalized = content.trim();
   if (!normalized) return false;
   if (/```a2ui\s*[\s\S]*?```/iu.test(normalized)) {
-    console.info("[task-continuation] 检测到 A2UI 结构化表单，进入等待用户状态");
+    logTaskContinuationDebug("[task-continuation] 检测到 A2UI 结构化表单，进入等待用户状态");
     return true;
   }
   const matched = USER_WAITING_PATTERNS.some((pattern) => pattern.test(normalized));
   if (matched) {
-    console.info("[task-continuation] 检测到澄清/选择类回复，进入等待用户状态", {
+    logTaskContinuationDebug("[task-continuation] 检测到澄清/选择类回复，进入等待用户状态", {
       preview: normalized.slice(0, 120),
     });
   }
@@ -100,7 +110,7 @@ export function isAssistantWaitingForUserInput(content: string): boolean {
 export function getContinuableTasks(tasks: Task[]): Task[] {
   const blockingTask = tasks.find((task) => AUTO_CONTINUATION_BLOCKING_STATUSES.has(task.status));
   if (blockingTask) {
-    console.info("[task-continuation] 检测到阻塞自动续行的任务，暂停自动续行", {
+    logTaskContinuationDebug("[task-continuation] 检测到阻塞自动续行的任务，暂停自动续行", {
       total: tasks.length,
       waitingUser: tasks.filter((task) => task.status === "waiting_user").length,
       blockingTaskId: blockingTask.id,
@@ -110,7 +120,7 @@ export function getContinuableTasks(tasks: Task[]): Task[] {
   }
 
   const continuable = tasks.filter((task) => task.status === "pending" || task.status === "in_progress");
-  console.info("[task-continuation] 计算可自动续行任务", {
+  logTaskContinuationDebug("[task-continuation] 计算可自动续行任务", {
     total: tasks.length,
     continuable: continuable.length,
   });
@@ -132,7 +142,7 @@ export function markActiveTasksWaitingForUser(
       : [];
 
   if (targetIds.length === 0) {
-    console.info("[task-continuation] 没有需要切换为等待用户的任务", { reason });
+    logTaskContinuationDebug("[task-continuation] 没有需要切换为等待用户的任务", { reason });
     return { tasks, changed: false };
   }
 
@@ -151,7 +161,7 @@ export function markActiveTasksWaitingForUser(
     };
   });
 
-  console.info("[task-continuation] 已将任务切换为等待用户", {
+  logTaskContinuationDebug("[task-continuation] 已将任务切换为等待用户", {
     taskIds: targetIds,
     reason,
   });

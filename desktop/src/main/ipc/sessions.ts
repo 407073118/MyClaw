@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { exec as execCb } from "node:child_process";
 import { promisify } from "node:util";
 
-import type { ArtifactRecord, CapabilityBundle, ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, ResolvedSessionRuntimeIntent, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, TaskResumeInput, ExperienceProfileId, PromptSection, ProtocolTarget, ProviderFamily, TurnOutcome, McpTool, BuiltinToolApprovalMode } from "@shared/contracts";
+import type { ArtifactRecord, CapabilityBundle, ChatSession, ChatMessage as SessionChatMessage, ExecutionIntent, SkillDefinition, ApprovalRequest, ApprovalPolicy, ModelProfile, ApprovalDecision, ApprovalMode, PersonalPromptProfile, ResolvedExecutionPlan, ResolvedSessionRuntimeIntent, SessionRuntimeIntent, StructuredPlan, PlanModeState, PlanWorkstream, WorkflowRunSummary, ChatRunPhase, ChatRunStatus, ChatRunRuntimeStatusPayload, Task, TaskResumeInput, ExperienceProfileId, PromptSection, ProtocolTarget, ProviderFamily, TurnOutcome, McpTool, BuiltinToolApprovalMode, PayloadPreview, SessionPatchPayload } from "@shared/contracts";
 import { EventType, SESSION_RUNTIME_VERSION, ToolRiskCategory, shouldRequestApproval, allowsExternalPaths } from "@shared/contracts";
+import { buildPayloadPreview } from "@shared/contracts/session-stream";
 import { buildTaskDisplayItems } from "@shared/task-logical";
 
 import type { ActiveSessionRun, RuntimeContext } from "../services/runtime-context";
@@ -504,17 +505,69 @@ function broadcastChatRunStatus(payload: ChatRunRuntimeStatusPayload): void {
   });
 }
 
+const sessionPatchRevisions = new Map<string, number>();
+const SESSION_PATCH_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_SESSION_PATCH_STREAM === "1";
+const SESSION_RUNTIME_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_SESSION_RUNTIME === "1";
+type SessionPatchInput = SessionPatchPayload extends infer T
+  ? T extends unknown
+    ? Omit<T, "sessionId" | "revision">
+    : never
+  : never;
+
+/** 输出会话增量流调试日志，默认关闭以免高频 runState 补丁拖慢主进程。 */
+function logSessionPatchDebug(message: string, detail: Record<string, unknown>): void {
+  if (!SESSION_PATCH_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
+
+/** 输出会话执行链路调试日志，默认关闭以免每轮模型执行和工具摘要拖慢主进程。 */
+function logSessionRuntimeDebug(message: string, detail: Record<string, unknown>): void {
+  if (!SESSION_RUNTIME_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
+
+/** 广播会话领域补丁，减少高频状态变化时对完整 session 的依赖。 */
+function broadcastSessionPatch(
+  sessionId: string,
+  patch: SessionPatchInput,
+): void {
+  const revision = (sessionPatchRevisions.get(sessionId) ?? 0) + 1;
+  sessionPatchRevisions.set(sessionId, revision);
+  logSessionPatchDebug("[session:stream] 广播会话增量补丁", {
+    sessionId,
+    revision,
+    kind: patch.kind,
+  });
+  broadcastToRenderers("session:stream", {
+    type: EventType.SessionPatched,
+    sessionId,
+    patch: {
+      ...patch,
+      sessionId,
+      revision,
+    },
+  });
+}
+
 /**
  * 广播 session tasklist 更新，让聊天页与硅基员工工作台复用同一条实时流。
  */
 export function broadcastSessionTasksUpdated(sessionId: string, tasks: Task[]): void {
-  console.info("[session:stream] 广播任务列表更新", {
+  logSessionPatchDebug("[session:stream] 广播任务列表更新", {
     sessionId,
     taskCount: tasks.length,
   });
   broadcastToRenderers("session:stream", {
     type: EventType.TasksUpdated,
     sessionId,
+    tasks,
+  });
+  broadcastSessionPatch(sessionId, {
+    kind: "tasks.replace",
     tasks,
   });
 }
@@ -559,6 +612,10 @@ function syncChatRunState(
       phase: input.phase,
       ...(input.messageId ? { messageId: input.messageId } : {}),
       ...(input.reason ? { reason: input.reason } : {}),
+    });
+    broadcastSessionPatch(sessionId, {
+      kind: "runState.set",
+      chatRunState: session.chatRunState,
     });
   }
 }
@@ -618,6 +675,49 @@ function approveQueuedRequestsForSameTool(ctx: RuntimeContext, request: Approval
     });
   }
   return approvedIds;
+}
+
+/** 读取当前运行内临时允许的工具列表，兼容旧测试里手工构造的运行对象。 */
+function getRunAllowedTools(run: ActiveSessionRun | null | undefined): string[] {
+  return run?.runAllowedTools ?? [];
+}
+
+/** 将工具加入当前运行的临时允许列表，用于实现“允许本次运行”的真实作用域。 */
+function allowToolForCurrentRun(run: ActiveSessionRun | null | undefined, toolId: string): void {
+  if (!run || !toolId) {
+    return;
+  }
+  run.runAllowedTools ??= [];
+  if (run.runAllowedTools.includes(toolId)) {
+    return;
+  }
+  run.runAllowedTools.push(toolId);
+  console.info("[approval] 已在当前运行内临时允许工具", {
+    runId: run.runId,
+    toolId,
+  });
+}
+
+/** 构建工具输入的实时事件摘要，避免大参数阻塞 IPC 与渲染进程。 */
+function buildToolInputPreview(input: unknown, omittedKey = "arguments"): PayloadPreview {
+  const preview = buildPayloadPreview(input, omittedKey);
+  if (preview.inputBytes > 16 * 1024) {
+    console.info("[session-stream] 已截断大型工具输入实时载荷", {
+      inputBytes: preview.inputBytes,
+      inputHash: preview.inputHash,
+      omittedKeys: preview.omittedKeys,
+    });
+  }
+  return preview;
+}
+
+/** 构建审批流事件中的轻量请求，完整 arguments 留在 main 进程按需读取。 */
+function buildApprovalRequestForStream(request: ApprovalRequest): ApprovalRequest & PayloadPreview {
+  const { arguments: _arguments, ...safeRequest } = request;
+  return {
+    ...safeRequest,
+    ...buildToolInputPreview(_arguments ?? {}, "arguments"),
+  };
 }
 
 /** 持久化当前审批策略，确保路径授权设置重启后仍然可见。 */
@@ -969,7 +1069,7 @@ function resolvePreviousResponseIdForSessionTurn(
     return null;
   }
 
-  console.info("[session:runtime] 已为 Responses 原生执行恢复 previous_response_id。", {
+  logSessionRuntimeDebug("[session:runtime] 已为 Responses 原生执行恢复 previous_response_id。", {
     sessionId: session.id,
     lastTurnOutcomeId: session.lastTurnOutcomeId,
     previousResponseId: lastOutcome.responseId,
@@ -2769,6 +2869,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         phase: initialPhase,
         currentMessageId: messageId,
         pendingApprovalIds: [],
+        runAllowedTools: [],
         cancelRequested: false,
         startedAt: new Date().toISOString(),
       };
@@ -2982,7 +3083,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         broadcastToRenderers("session:stream", {
           type: EventType.ApprovalRequested,
           sessionId,
-          approvalRequest,
+          approvalRequest: buildApprovalRequestForStream(approvalRequest),
         });
         activeRun.pendingApprovalIds.push(approvalId);
 
@@ -3071,7 +3172,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         },
       );
 
-      console.info("[session:send-message] tools summary", {
+      logSessionRuntimeDebug("[session:send-message] tools summary", {
         siliconPersonId: session.siliconPersonId ?? null,
         totalSkills: allSkills.length,
         enabledSkills: enabledSkills.length,
@@ -3147,6 +3248,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               source,
               toolId,
               risk,
+              runAllowedTools: getRunAllowedTools(activeRun),
               toolApprovalMode: resolveBuiltinToolApprovalMode(toolId),
             });
 
@@ -3178,7 +3280,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             broadcastToRenderers("session:stream", {
               type: EventType.ApprovalRequested,
               sessionId,
-              approvalRequest,
+              approvalRequest: buildApprovalRequestForStream(approvalRequest),
             });
 
             activeRun.pendingApprovalIds.push(approvalId);
@@ -3296,7 +3398,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           tasks: session.tasks,
           replayPolicy: turnExecutionPlan.legacyExecutionPlan.replayPolicy,
         });
-        console.info("[session:runtime] 已切换 canonical 计划执行入口", {
+        logSessionRuntimeDebug("[session:runtime] 已切换 canonical 计划执行入口", {
           sessionId,
           providerFamily: turnExecutionPlan.providerFamily,
           protocolTarget: turnExecutionPlan.protocolTarget,
@@ -3423,7 +3525,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           session.runtimeVersion = executionPlan.runtimeVersion;
           sessionWithExecutionPlan.executionPlan = executionPlan;
           session.turnExecutionPlan = turnExecutionPlan;
-          console.info("[session:runtime] 已生成执行计划", {
+          logSessionRuntimeDebug("[session:runtime] 已生成执行计划", {
             sessionId,
             round,
             runtimeIntent: resolvedRunRuntimeIntent,
@@ -3501,7 +3603,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             tasks: session.tasks,
             replayPolicy: turnExecutionPlan.legacyExecutionPlan.replayPolicy,
           });
-          console.info("[session:runtime] 已切换 canonical 执行入口", {
+          logSessionRuntimeDebug("[session:runtime] 已切换 canonical 执行入口", {
             sessionId,
             round,
             providerFamily: turnExecutionPlan.providerFamily,
@@ -3718,7 +3820,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 broadcastToRenderers("session:stream", {
                   type: EventType.ApprovalRequested,
                   sessionId,
-                  approvalRequest: item.approvalRequest,
+                  approvalRequest: buildApprovalRequestForStream(item.approvalRequest),
                 });
               }
 
@@ -3780,8 +3882,10 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 : toolId.startsWith("fs.")
                   ? label.split("\n")[0].trim()
                   : "";
+              // fs.* 的外部路径由 BuiltinToolExecutor 内的 PathAccessPolicy 生成专用路径审批，
+              // 这里仅保留不走该执行器路径策略的 artifact.register 预审批，避免同一动作双审批。
               const isOutsideWorkspace = !!pathForWorkspaceCheck
-                && (toolId.startsWith("fs.") || toolId === "artifact.register")
+                && toolId === "artifact.register"
                 && toolExecutor.isOutsideWorkspace(workingDir, pathForWorkspaceCheck);
               const needsApproval = shouldRequestApproval({
                 policy,
@@ -3789,6 +3893,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 toolId,
                 risk,
                 isOutsideWorkspace,
+                runAllowedTools: getRunAllowedTools(activeRun),
                 toolApprovalMode: source === "mcp-tool"
                   ? (mcpDescriptor?.effectiveApprovalMode as BuiltinToolApprovalMode | undefined) ?? "inherit"
                   : resolveBuiltinToolApprovalMode(toolId),
@@ -3829,7 +3934,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 broadcastToRenderers("session:stream", {
                   type: EventType.ApprovalRequested,
                   sessionId,
-                  approvalRequest,
+                  approvalRequest: buildApprovalRequestForStream(approvalRequest),
                 });
 
                 activeRun.pendingApprovalIds.push(approvalId);
@@ -3904,7 +4009,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                 toolCallId,
                 toolId,
                 toolName: toolCall.name,
-                arguments: toolCall.input,
+                ...buildToolInputPreview(toolCall.input),
               });
 
               let toolOutput: string;
@@ -4431,7 +4536,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             const isBackgroundHandoff = result.finishReason === "background" && !!result.backgroundTask;
             if (isBackgroundHandoff) {
               syncSessionBackgroundTaskSnapshot(ctx.runtime.paths, session, result.outcome);
-              console.info("[session:runtime] 已切换到后台任务执行", {
+              logSessionRuntimeDebug("[session:runtime] 已切换到后台任务执行", {
                 sessionId,
                 outcomeId: result.outcome.id,
                 responseId: result.backgroundTask?.providerResponseId ?? null,
@@ -4679,7 +4784,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
         sessionId,
         session,
       });
-      console.info("[session:runtime] 已刷新后台任务状态", {
+      logSessionRuntimeDebug("[session:runtime] 已刷新后台任务状态", {
         sessionId,
         outcomeId: updatedOutcome.id,
         responseId: snapshot.task?.providerResponseId ?? outcome.backgroundTask?.providerResponseId ?? null,
@@ -4818,6 +4923,26 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
     },
   );
 
+  ipcMain.handle(
+    "approval:get-detail",
+    async (_event, approvalId: string): Promise<{ success: boolean; approvalId: string; arguments?: Record<string, unknown>; error?: string }> => {
+      const request = ctx.state.getApprovalRequests().find((item) => item.id === approvalId);
+      if (!request) {
+        console.warn("[approval] 按需读取审批详情失败：未找到审批请求", { approvalId });
+        return { success: false, approvalId, error: "approval-not-found" };
+      }
+      console.info("[approval] 已按需返回审批详情参数", {
+        approvalId,
+        hasArguments: request.arguments != null,
+      });
+      return {
+        success: true,
+        approvalId,
+        arguments: request.arguments,
+      };
+    },
+  );
+
   // 按完整 ApprovalDecision 语义处理待审批请求
   ipcMain.handle(
     "session:resolve-approval",
@@ -4833,19 +4958,29 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
 
       const request = ctx.state.getApprovalRequests().find((r) => r.id === approvalId);
       let policyChanged = false;
+      const activeRunForRequest = request ? getActiveSessionRuns(ctx).get(request.sessionId) : null;
 
-      // "always-allow-tool" / "allow-session" for 普通工具：将 toolId 加入 alwaysAllowedTools
+      // 普通工具的 allow-session 只在当前运行内生效，避免“允许本次运行”污染持久策略。
       if (
-        request?.source !== "external-path" &&
-        (decision === "always-allow-tool" || decision === "allow-session")
+        request
+        && request.source !== "external-path"
+        && decision === "allow-session"
       ) {
-        if (request) {
-          const policy = ctx.state.getApprovals();
-          if (!policy.alwaysAllowedTools.includes(request.toolId)) {
-            policy.alwaysAllowedTools.push(request.toolId);
-            policyChanged = true;
-            console.info(`[approval] Added ${request.toolId} to alwaysAllowedTools (${decision})`);
-          }
+        allowToolForCurrentRun(activeRunForRequest, request.toolId);
+      }
+
+      // 普通工具的 always-allow-tool 才写入持久工具 allowlist。
+      if (
+        request
+        && request.source !== "external-path" &&
+        decision === "always-allow-tool"
+      ) {
+        allowToolForCurrentRun(activeRunForRequest, request.toolId);
+        const policy = ctx.state.getApprovals();
+        if (!policy.alwaysAllowedTools.includes(request.toolId)) {
+          policy.alwaysAllowedTools.push(request.toolId);
+          policyChanged = true;
+          console.info(`[approval] Added ${request.toolId} to alwaysAllowedTools (${decision})`);
         }
       }
 
@@ -4909,12 +5044,26 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
       } else if (!currentWasAutoApproved) {
         pending.resolve(decision === "deny" ? "deny" : "approve");
       }
+      if (request) {
+        const resolvedPayload = {
+          type: EventType.ApprovalResolved,
+          sessionId: request.sessionId,
+          approvalId,
+          decision,
+          approvalRequests: approvalRequestsAfterResolve.map(buildApprovalRequestForStream),
+        };
+        broadcastToRenderers("session:stream", resolvedPayload);
+        broadcastToRenderers("approval:resolved", resolvedPayload);
+      }
       if (request?.source === "external-path" || policyChanged || autoApprovedIds.length > 0) {
-        return {
+        const payload: { success: boolean; approvals?: ApprovalPolicy; approvalRequests?: ApprovalRequest[] } = {
           success: true,
-          approvals: ctx.state.getApprovals(),
           approvalRequests: approvalRequestsAfterResolve,
         };
+        if (request?.source === "external-path" || policyChanged) {
+          payload.approvals = ctx.state.getApprovals();
+        }
+        return payload;
       }
       return { success: true };
     },

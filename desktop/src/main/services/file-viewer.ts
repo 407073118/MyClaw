@@ -16,6 +16,7 @@ const MARKDOWN_EXTS = new Set([".md", ".markdown", ".mdown"]);
 const TEXT_EXTS = new Set([".txt", ".log", ".env", ".ini", ".conf", ".properties"]);
 const JSON_EXTS = new Set([".json", ".jsonc"]);
 const TABLE_EXTS = new Set([".csv", ".tsv"]);
+const HTML_EXTS = new Set([".html", ".htm"]);
 const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif"]);
 const MEDIA_EXTS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".mp4", ".webm", ".mov"]);
 const DOCUMENT_EXTS = new Set([".docx"]);
@@ -32,8 +33,6 @@ const CODE_EXTS = new Set([
   ".css",
   ".scss",
   ".less",
-  ".html",
-  ".htm",
   ".xml",
   ".svg",
   ".yaml",
@@ -88,6 +87,7 @@ export function inferFileViewerKind(path: string, isDirectory = false): FileView
   if (JSON_EXTS.has(ext)) return "json";
   if (TABLE_EXTS.has(ext)) return "table";
   if (TEXT_EXTS.has(ext)) return "text";
+  if (HTML_EXTS.has(ext)) return "html";
   if (CODE_EXTS.has(ext)) return "code";
   if (IMAGE_EXTS.has(ext)) return "image";
   if (ext === ".pdf") return "pdf";
@@ -103,6 +103,7 @@ export function inferFileViewerKind(path: string, isDirectory = false): FileView
 export function inferFileViewerMimeType(path: string, kind: FileViewerKind): string | null {
   const ext = extname(path).toLowerCase();
   if (kind === "markdown") return "text/markdown";
+  if (kind === "html") return "text/html";
   if (kind === "json") return "application/json";
   if (kind === "table") return ext === ".tsv" ? "text/tab-separated-values" : "text/csv";
   if (kind === "text" || kind === "code") return "text/plain";
@@ -124,7 +125,7 @@ export function inferFileViewerMimeType(path: string, kind: FileViewerKind): str
 
 /** 判断当前类型是否适合把小体积文本作为面板数据传给渲染层。 */
 function shouldInlineText(kind: FileViewerKind): boolean {
-  return kind === "markdown" || kind === "text" || kind === "code" || kind === "json" || kind === "table";
+  return kind === "markdown" || kind === "text" || kind === "html" || kind === "code" || kind === "json" || kind === "table";
 }
 
 /** 构建右侧文件阅览 payload；正文只进 UI 数据，不进入工具输出。 */
@@ -146,7 +147,7 @@ export async function buildFileViewerPayload(resolvedPath: string): Promise<File
     },
   };
 
-  if (kind === "image" || kind === "pdf" || kind === "media") {
+  if (kind === "html" || kind === "image" || kind === "pdf" || kind === "media") {
     payload.previewUrl = pathToFileURL(resolvedPath).toString();
   }
 

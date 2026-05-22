@@ -66,8 +66,13 @@ export type SaveCheckpointInput = {
   versionsSeen: Record<string, Record<string, number>>;
   triggeredNodes: string[];
   durationMs: number;
+  reason?: string;
   interruptPayload?: unknown;
   channelData: Map<string, { version: number; value: unknown }>;
+};
+
+export type SqliteCheckpointerOptions = {
+  flushDebounceMs?: number;
 };
 
 export type LatestCheckpointResult = {
@@ -82,6 +87,16 @@ export type LatestCheckpointResult = {
   createdAt: string;
   interruptPayload?: unknown;
 };
+
+const WORKFLOW_CHECKPOINT_FLUSH_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_WORKFLOW_CHECKPOINT_FLUSH === "1";
+
+/** 输出 workflow checkpoint flush 调试日志，默认关闭以避免 checkpoint 热路径刷屏。 */
+function logWorkflowCheckpointFlushDebug(message: string, detail: Record<string, unknown>): void {
+  if (!WORKFLOW_CHECKPOINT_FLUSH_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
 
 /** 从 checkpoint 的 nodes channel 中提取本轮触发节点的返回值。 */
 function extractTriggeredNodeOutputs(
@@ -106,9 +121,13 @@ export class SqliteCheckpointer {
   private db: Database | null = null;
   private dbPath: string;
   private dirty = false;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly flushDebounceMs: number;
+  private flushCountForTest = 0;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: SqliteCheckpointerOptions = {}) {
     this.dbPath = dbPath;
+    this.flushDebounceMs = options.flushDebounceMs ?? 750;
   }
 
   /** 必须在任何操作前调用一次，加载 WASM 并初始化数据库 */
@@ -132,16 +151,70 @@ export class SqliteCheckpointer {
     this.ensureDb().exec(SCHEMA_SQL);
   }
 
-  /** 将数据库内容持久化到磁盘 */
+  /** 将数据库内容持久化到磁盘；公开方法保留立即 flush 的旧语义。 */
   flush(): void {
-    if (!this.db || !this.dirty) return;
-    const data = this.db.export();
-    const dir = dirname(this.dbPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    this.flushNow("manual flush");
+  }
+
+  /** 标记数据库已变更，并根据回滚开关决定立即 flush 或 debounce flush。 */
+  private markDirty(reason: string): void {
+    this.dirty = true;
+    if (process.env.MYCLAW_WORKFLOW_CHECKPOINT_DEBOUNCE === "0") {
+      console.info("[sqlite-checkpointer] 已按回滚开关立即 flush", { reason });
+      this.flushNow(reason);
+      return;
     }
-    writeFileSync(this.dbPath, Buffer.from(data));
-    this.dirty = false;
+    this.scheduleFlush(reason);
+  }
+
+  /** 合并普通 flush 请求，避免每个 checkpoint 都同步导出 sql.js 数据库。 */
+  private scheduleFlush(reason: string): void {
+    if (this.flushTimer) {
+      logWorkflowCheckpointFlushDebug("[sqlite-checkpointer] 已合并 workflow checkpoint flush", { reason });
+      return;
+    }
+    logWorkflowCheckpointFlushDebug("[sqlite-checkpointer] 已计划 workflow checkpoint flush", {
+      reason,
+      flushDebounceMs: this.flushDebounceMs,
+    });
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushNow(`debounced:${reason}`);
+    }, this.flushDebounceMs);
+  }
+
+  /** 立即将脏数据库导出到磁盘，供终态、中断和关闭路径使用。 */
+  flushNow(reason: string): void {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (!this.db || !this.dirty) return;
+    try {
+      const data = this.db.export();
+      const dir = dirname(this.dbPath);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+      writeFileSync(this.dbPath, Buffer.from(data));
+      this.dirty = false;
+      this.flushCountForTest += 1;
+      logWorkflowCheckpointFlushDebug("[sqlite-checkpointer] workflow checkpoint 已立即 flush", {
+        reason,
+        dbPath: this.dbPath,
+      });
+    } catch (error) {
+      console.warn("[sqlite-checkpointer] workflow checkpoint flush 失败，保留 dirty 等待下次重试", {
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.dirty = true;
+    }
+  }
+
+  /** 测试专用：返回真实导出到磁盘的次数，用于验证 debounce 合并。 */
+  getFlushCountForTest(): number {
+    return this.flushCountForTest;
   }
 
   // ── Run management ──
@@ -162,8 +235,7 @@ export class SqliteCheckpointer {
         now,
       ],
     );
-    this.dirty = true;
-    this.flush();
+    this.markDirty("create-run");
   }
 
   updateRunStatus(
@@ -192,8 +264,10 @@ export class SqliteCheckpointer {
         runId,
       ],
     );
-    this.dirty = true;
-    this.flush();
+    this.markDirty(`update-run:${status}`);
+    if (isTerminalStatus(status)) {
+      this.flushNow(`terminal-run:${status}`);
+    }
   }
 
   getRun(runId: string): WorkflowRunSummary | null {
@@ -285,8 +359,10 @@ export class SqliteCheckpointer {
       db.run("ROLLBACK");
       throw err;
     }
-    this.dirty = true;
-    this.flush();
+    this.markDirty(`save-checkpoint:${input.reason ?? input.status}`);
+    if (shouldFlushCheckpointImmediately(input)) {
+      this.flushNow(`checkpoint:${input.reason ?? input.status}`);
+    }
   }
 
   getLatestCheckpoint(runId: string): LatestCheckpointResult | null {
@@ -397,8 +473,7 @@ export class SqliteCheckpointer {
       db.run("ROLLBACK");
       throw err;
     }
-    this.dirty = true;
-    this.flush();
+    this.markDirty("delete-run-data");
   }
 
   /** 保留最近 keepLastN 条 checkpoint，删除更早的及其 channel blob */
@@ -479,12 +554,11 @@ export class SqliteCheckpointer {
       db.run("ROLLBACK");
       throw err;
     }
-    this.dirty = true;
-    this.flush();
+    this.markDirty("cleanup");
   }
 
   close(): void {
-    this.flush();
+    this.flushNow("close");
     this.db?.close();
     this.db = null;
   }
@@ -503,6 +577,18 @@ export class SqliteCheckpointer {
 
 function isTerminalStatus(status: string): boolean {
   return status === "succeeded" || status === "failed" || status === "canceled";
+}
+
+/** 判断 checkpoint 是否属于必须立即落盘的中断或终态路径。 */
+function shouldFlushCheckpointImmediately(input: SaveCheckpointInput): boolean {
+  return (
+    input.reason === "interrupt"
+    || input.reason === "run-complete"
+    || input.reason === "terminal"
+    || input.reason === "before-quit"
+    || input.status === "interrupted"
+    || isTerminalStatus(input.status)
+  );
 }
 
 function rowToRunSummary(row: Record<string, unknown>): WorkflowRunSummary {

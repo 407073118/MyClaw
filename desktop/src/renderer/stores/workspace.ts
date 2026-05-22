@@ -36,6 +36,26 @@ import type {
   WorkflowDefinitionSummary,
 } from "../../../shared/contracts";
 import type { BrMiniMaxRuntimeDiagnostics } from "../../../shared/br-minimax";
+import type { SessionPatchPayload } from "../../../shared/contracts/session-stream";
+
+const WORKSPACE_SESSION_PATCH_DEBUG_LOGGING = resolveWorkspaceSessionPatchDebugLogging();
+
+/** 读取 workspace 会话补丁调试日志开关，默认关闭以避免每个增量 patch 写 console。 */
+function resolveWorkspaceSessionPatchDebugLogging(): boolean {
+  try {
+    return globalThis.localStorage?.getItem("MYCLAW_DEBUG_WORKSPACE_SESSION_PATCH") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 输出 workspace 会话补丁调试日志，仅在显式开启时写入 console。 */
+function logWorkspaceSessionPatchDebug(message: string, detail: Record<string, unknown>): void {
+  if (!WORKSPACE_SESSION_PATCH_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
 
 // ---------------------------------------------------------------------------
 // Cloud Hub types (mirror of desktop cloud-hub-client)
@@ -433,6 +453,8 @@ type WorkspaceState = {
   pushAssistantMessage: (sessionId: string, content: string) => void;
   patchStreamingMessage: (sessionId: string, messageId: string, deltaContent: string | null, deltaReasoning?: string | null) => void;
   applySessionUpdate: (session: ChatSession) => void;
+  /** 应用 main 进程发来的会话增量补丁，避免实时流全量替换 ChatSession。 */
+  applySessionPatch: (patch: SessionPatchPayload) => void;
   patchSessionTasks: (sessionId: string, tasks: import("@shared/contracts").Task[]) => void;
   requestExecutionIntent: (intent: any) => Promise<void>;
   testModelProfileConnectivity: (profileId: string) => Promise<{
@@ -1905,7 +1927,10 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
 
   addApprovalRequest(request: ApprovalRequest) {
     set((s) => ({
-      approvalRequests: [...s.approvalRequests, request],
+      approvalRequests: [
+        ...s.approvalRequests.filter((item) => item.id !== request.id),
+        request,
+      ],
     }));
   },
 
@@ -2497,6 +2522,55 @@ export const useWorkspaceStore = create<WorkspaceState>()((rawSet, get) => {
       };
       const siliconPersons = s.siliconPersons.map((p, i) => (i === personIndex ? nextPerson : p));
       return { sessions, siliconPersons };
+    });
+  },
+
+  applySessionPatch(patch) {
+    set((s) => {
+      const patchSession = (session: ChatSession): ChatSession => {
+        if (session.id !== patch.sessionId) {
+          return session;
+        }
+        switch (patch.kind) {
+          case "session.fields":
+            return { ...session, ...patch.fields, id: session.id };
+          case "messages.append": {
+            const existingIds = new Set(session.messages.map((message) => message.id));
+            const appended = patch.messages.filter((message) => !existingIds.has(message.id));
+            return appended.length > 0
+              ? { ...session, messages: [...session.messages, ...appended] }
+              : session;
+          }
+          case "messages.update":
+            return {
+              ...session,
+              messages: session.messages.map((message) =>
+                message.id === patch.messageId ? { ...message, ...patch.fields, id: message.id } : message,
+              ),
+            };
+          case "tasks.replace":
+            return { ...session, tasks: patch.tasks };
+          case "runState.set":
+            return { ...session, chatRunState: patch.chatRunState };
+          default:
+            console.warn("[workspace] 收到未知会话补丁，已忽略", {
+              sessionId: (patch as { sessionId?: string }).sessionId,
+              kind: (patch as { kind?: string }).kind,
+            });
+            return session;
+        }
+      };
+
+      const sessions = s.sessions.map(patchSession);
+      const currentSession = s.currentSession?.id === patch.sessionId
+        ? patchSession(s.currentSession)
+        : s.currentSession;
+      logWorkspaceSessionPatchDebug("[workspace] 已应用会话增量补丁", {
+        sessionId: patch.sessionId,
+        kind: patch.kind,
+        revision: patch.revision,
+      });
+      return { sessions, currentSession };
     });
   },
 

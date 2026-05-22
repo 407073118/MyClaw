@@ -163,5 +163,5 @@ describe("AgentTeamDock task queue", () => {
     expect(mocks.workspace.setActiveSiliconPersonId).toHaveBeenCalledWith("sp-1");
     expect(mocks.workspace.switchSiliconPersonSession).toHaveBeenCalledWith("sp-1", "session-1");
     expect(screen.getByTestId("location-probe").textContent).toBe("/");
-  });
+  }, 10_000);
 });

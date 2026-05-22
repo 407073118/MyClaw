@@ -28,16 +28,36 @@ import {
   X,
 } from "lucide-react";
 import type { ApprovalDecision, ApprovalRequest, ExecutionRun, McpServer, ModelProfile, ScheduleJob, SiliconPersonApprovalMode, SkillDefinition, Task } from "@shared/contracts";
-import MarkdownView from "../components/MarkdownView";
 import ReasoningPresetPanel from "../components/ReasoningPresetPanel";
 import SiliconPersonAvatar from "../components/SiliconPersonAvatar";
+import SiliconMessageContent from "../components/silicon/SiliconMessageContent";
 import ScheduleJobEditor, { type ScheduleJobEditorSubmitInput } from "../components/time/ScheduleJobEditor";
 import { useWorkspaceStore } from "../stores/workspace";
+import { useShallow } from "zustand/react/shallow";
 import { formatJobFrequency } from "../utils/frequency";
 import { buildModelRuntimeStatusItems } from "../utils/model-profile-display";
 import { resolveReasoningControlSpec } from "../utils/reasoning-controls";
 import { readAvatarFileAsDataUrl } from "../utils/silicon-person-avatar";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
+
+const SILICON_PERSON_STREAM_DEBUG_LOGGING = resolveSiliconPersonStreamDebugLogging();
+
+/** 读取硅基员工工作台实时流调试日志开关，默认关闭以免会话流事件拖慢页面。 */
+function resolveSiliconPersonStreamDebugLogging(): boolean {
+  try {
+    return globalThis.localStorage?.getItem("MYCLAW_DEBUG_SILICON_PERSON_STREAM") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 输出硅基员工工作台实时流调试日志，仅在显式开启时写入 console。 */
+function logSiliconPersonStreamDebug(message: string, detail: Record<string, unknown>): void {
+  if (!SILICON_PERSON_STREAM_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
 
 /** 把消息内容转成可直接展示的文本，兼容字符串和富结构内容。 */
 function textOf(content: unknown): string {
@@ -219,7 +239,35 @@ function readWorkflowRunSummary(value: unknown): {
 export default function SiliconPersonWorkspacePage() {
   const { id: siliconPersonId = "" } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const workspace = useWorkspaceStore();
+  const workspace = useWorkspaceStore(useShallow((state) => ({
+    approvalRequests: state.approvalRequests,
+    siliconPersons: state.siliconPersons,
+    sessions: state.sessions,
+    workflows: state.workflows,
+    workflowSummaries: state.workflowSummaries,
+    workflowRuns: state.workflowRuns,
+    models: state.models,
+    defaultModelProfileId: state.defaultModelProfileId,
+    time: state.time,
+    webPanel: state.webPanel,
+    createWebPanelTab: state.createWebPanelTab,
+    closeWebPanel: state.closeWebPanel,
+    loadSiliconPersonById: state.loadSiliconPersonById,
+    loadWorkflows: state.loadWorkflows,
+    updateSiliconPerson: state.updateSiliconPerson,
+    createSiliconPersonSession: state.createSiliconPersonSession,
+    switchSiliconPersonSession: state.switchSiliconPersonSession,
+    deleteSession: state.deleteSession,
+    sendSiliconPersonMessage: state.sendSiliconPersonMessage,
+    startSiliconPersonWorkflowRun: state.startSiliconPersonWorkflowRun,
+    markSiliconPersonSessionRead: state.markSiliconPersonSessionRead,
+    resolveApproval: state.resolveApproval,
+    acknowledgeAwarenessSignal: state.acknowledgeAwarenessSignal,
+    updateScheduleJob: state.updateScheduleJob,
+    createScheduleJob: state.createScheduleJob,
+    deleteScheduleJob: state.deleteScheduleJob,
+    executeScheduleJobNow: state.executeScheduleJobNow,
+  })));
   const [viewVersion, setViewVersion] = useState(0);
 
   const siliconPerson = useMemo(
@@ -525,7 +573,7 @@ export default function SiliconPersonWorkspacePage() {
           (person) => person.id === siliconPersonId && person.sessions.some((summary) => summary.id === payload.session?.id),
         );
         if (!belongsToCurrentPerson) return;
-        console.info("[silicon-person-studio] 收到会话更新事件", {
+        logSiliconPersonStreamDebug("[silicon-person-studio] 收到会话更新事件", {
           siliconPersonId,
           sessionId: payload.session.id,
         });
@@ -537,7 +585,7 @@ export default function SiliconPersonWorkspacePage() {
           (person) => person.id === siliconPersonId && person.sessions.some((summary) => summary.id === sessionId),
         );
         if (!belongsToCurrentPerson) return;
-        console.info("[silicon-person-studio] 收到任务更新事件", {
+        logSiliconPersonStreamDebug("[silicon-person-studio] 收到任务更新事件", {
           siliconPersonId,
           sessionId,
           taskCount: payload.tasks.length,
@@ -550,7 +598,7 @@ export default function SiliconPersonWorkspacePage() {
           (person) => person.id === siliconPersonId && person.sessions.some((summary) => summary.id === payload.approvalRequest?.sessionId),
         );
         if (!belongsToCurrentPerson) return;
-        console.info("[silicon-person-studio] 收到审批请求事件", {
+        logSiliconPersonStreamDebug("[silicon-person-studio] 收到审批请求事件", {
           siliconPersonId,
           approvalId: payload.approvalRequest.id,
           sessionId: payload.approvalRequest.sessionId,
@@ -559,7 +607,7 @@ export default function SiliconPersonWorkspacePage() {
         setViewVersion((value) => value + 1);
         refreshSiliconPersonSummary();
       } else if (type === "approval.resolved" && sessionId) {
-        console.info("[silicon-person-studio] 收到审批处理完成事件", {
+        logSiliconPersonStreamDebug("[silicon-person-studio] 收到审批处理完成事件", {
           siliconPersonId,
           sessionId,
         });
@@ -1293,17 +1341,10 @@ export default function SiliconPersonWorkspacePage() {
                                        </span>
                                      )}
                                    </div>
-                                   {(() => {
-                                     const renderedMessage = (message as { renderedHtml?: string }).renderedHtml
-                                       ?? textOf(message.content);
-                                     return renderedMessage ? (
-                                       <MarkdownView source={renderedMessage} className="message-content" />
-                                     ) : (
-                                       <div className="message-content">
-                                         <p>暂不支持展示的消息内容</p>
-                                       </div>
-                                     );
-                                   })()}
+                                   <SiliconMessageContent
+                                     content={message.content}
+                                     renderedHtml={(message as { renderedHtml?: string }).renderedHtml}
+                                   />
                                  </div>
                                </article>
                              </React.Fragment>
@@ -1330,7 +1371,7 @@ export default function SiliconPersonWorkspacePage() {
                               <p>{request.detail || "当前会话有一条待处理审批请求。"}</p>
                             </div>
                             <div className="ws-approval-actions">
-                              <button type="button" className="btn-primary" onClick={() => void handleResolveApproval(request.id, "allow-once")}>批准</button>
+                              <button type="button" className="btn-primary" onClick={() => void handleResolveApproval(request.id, "allow-session")}>批准</button>
                               <button type="button" className="btn-ghost btn-ghost--danger" onClick={() => void handleResolveApproval(request.id, "deny")}>拒绝</button>
                             </div>
                           </div>

@@ -27,6 +27,8 @@ export type WorkflowRunResult = {
 
 // ── Checkpointer interface ──
 
+export type CheckpointSaveReason = "step" | "interrupt" | "run-complete" | "terminal" | "before-quit";
+
 export type CheckpointData = {
   runId: string;
   checkpointId: string;
@@ -37,6 +39,7 @@ export type CheckpointData = {
   versionsSeen: Record<string, Record<string, number>>;
   triggeredNodes: string[];
   durationMs: number;
+  reason?: CheckpointSaveReason;
   interruptPayload?: unknown;
   channelData: Map<string, { version: number; value: unknown }>;
 };
@@ -48,6 +51,8 @@ export interface WorkflowCheckpointer {
   updateRunStatus(runId: string, status: WorkflowRunStatus, extra: { totalSteps?: number; error?: string; finishedAt?: string }): Promise<void>;
   /** 保存 checkpoint 快照 */
   saveCheckpoint(data: CheckpointData): Promise<void>;
+  /** 立即落盘脏数据，供终态 checkpoint 或退出路径跳过 debounce。 */
+  flushNow?(reason: string): Promise<void> | void;
   /** 加载最近一次 checkpoint（用于冷恢复） */
   loadLatestCheckpoint(runId: string): Promise<CheckpointData | null>;
 }
@@ -55,6 +60,31 @@ export interface WorkflowCheckpointer {
 // ── Internal bookkeeping ──
 
 type NodeVersionMap = Map<string, number>;
+const PREGEL_CHECKPOINT_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_WORKFLOW_CHECKPOINT === "1";
+
+/** 输出 Pregel checkpoint 调试日志，默认关闭以避免每步 checkpoint 刷屏。 */
+function logPregelCheckpointDebug(message: string, detail: Record<string, unknown>): void {
+  if (!PREGEL_CHECKPOINT_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
+
+/** 解析 checkpoint 策略，缺省时使用 on-interrupt 作为性能修复后的默认值。 */
+function resolveCheckpointPolicy(
+  policy: WorkflowRunConfig["checkpointPolicy"] | undefined,
+): WorkflowRunConfig["checkpointPolicy"] {
+  if (policy === "none" || policy === "on-interrupt" || policy === "every-step") {
+    return policy;
+  }
+  const envPolicy = process.env.MYCLAW_WORKFLOW_CHECKPOINT_POLICY;
+  if (envPolicy === "none" || envPolicy === "on-interrupt" || envPolicy === "every-step") {
+    console.info("[PregelRunner] 已从环境变量读取 checkpoint 策略", { checkpointPolicy: envPolicy });
+    return envPolicy;
+  }
+  console.info("[PregelRunner] 使用默认 checkpoint 策略", { checkpointPolicy: "on-interrupt" });
+  return "on-interrupt";
+}
 
 // ── PregelRunner constructor options ──
 
@@ -75,6 +105,7 @@ export class PregelRunner {
   private readonly config: WorkflowRunConfig;
   private readonly executorRegistry: NodeExecutorRegistry;
   private readonly checkpointer?: WorkflowCheckpointer;
+  private readonly checkpointPolicy: WorkflowRunConfig["checkpointPolicy"];
   private readonly graph: CompiledGraph;
   private channels: Map<string, Channel>;
   private _runId: string;
@@ -99,6 +130,7 @@ export class PregelRunner {
     this.config = config;
     this.executorRegistry = opts.executorRegistry;
     this.checkpointer = opts.checkpointer;
+    this.checkpointPolicy = resolveCheckpointPolicy(config.checkpointPolicy);
     this.graph = compileGraph(definition);
     this.channels = compileChannels(definition.stateSchema);
     this._runId = opts.runId ?? `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -115,6 +147,7 @@ export class PregelRunner {
 
   // ── Public API ──
 
+  /** 执行工作流主循环，并按 checkpoint policy 控制普通快照频率。 */
   async run(input?: Record<string, unknown>): Promise<WorkflowRunResult> {
     const runStart = Date.now();
     this.status = "running";
@@ -251,7 +284,7 @@ export class PregelRunner {
         if (hasError) {
           // Save interrupt checkpoint before breaking
           if (this.checkpointer && this.status === "waiting-input") {
-            await this.saveCheckpoint(readyNodes.map((n) => n.id), Date.now() - stepStart, interruptPayload);
+            await this.saveCheckpoint(readyNodes.map((n) => n.id), Date.now() - stepStart, "interrupt", interruptPayload);
           }
           break;
         }
@@ -287,7 +320,7 @@ export class PregelRunner {
 
         // Save checkpoint after successful superstep
         if (this.checkpointer) {
-          await this.saveCheckpoint(readyNodes.map((n) => n.id), stepDuration);
+          await this.saveCheckpoint(readyNodes.map((n) => n.id), stepDuration, "step");
         }
 
         this.step++;
@@ -305,6 +338,10 @@ export class PregelRunner {
 
     const durationMs = Date.now() - runStart;
     const finalState = this.getCurrentState();
+
+    if (this.checkpointer && this.status !== "waiting-input") {
+      await this.saveCheckpoint([...this.executedPreviousStep], durationMs, "run-complete");
+    }
 
     // Update run record in checkpointer
     if (this.checkpointer) {
@@ -547,7 +584,7 @@ export class PregelRunner {
           recursionLimit: this.config.recursionLimit,
           workingDirectory: this.config.workingDirectory,
           modelProfileId: this.config.modelProfileId,
-          checkpointPolicy: this.config.checkpointPolicy,
+          checkpointPolicy: this.checkpointPolicy,
           maxParallelNodes: this.config.maxParallelNodes,
           variables: this.config.variables,
         },
@@ -624,7 +661,7 @@ export class PregelRunner {
       this.channels.set("vars", varsChannel);
     }
     varsChannel.update([mergedVariables]);
-    console.info("[PregelRunner] 已写入运行级全局变量", {
+    logPregelCheckpointDebug("[PregelRunner] 已写入运行级全局变量", {
       runId: this.runId,
       variableNames: Object.keys(mergedVariables),
     });
@@ -638,7 +675,7 @@ export class PregelRunner {
     const legacyInputs = resolveLegacyInputBindings(node.inputBindings, stateSnapshot);
     const typedInputs = resolveWorkflowInputSources(node.inputSources, stateSnapshot, legacyInputs);
     const resolvedInputs = { ...legacyInputs, ...typedInputs };
-    console.info("[PregelRunner] 已解析节点输入变量", {
+    logPregelCheckpointDebug("[PregelRunner] 已解析节点输入变量", {
       runId: this.runId,
       nodeId: node.id,
       inputNames: Object.keys(resolvedInputs),
@@ -702,12 +739,34 @@ export class PregelRunner {
 
   // ── Checkpoint persistence ──
 
+  /** 判断当前 checkpoint 原因是否应该持久化，普通 step 会按策略降频。 */
+  private shouldSaveCheckpoint(reason: CheckpointSaveReason): boolean {
+    if (reason === "interrupt" || reason === "run-complete" || reason === "terminal" || reason === "before-quit") {
+      return true;
+    }
+    if (this.checkpointPolicy === "every-step") {
+      return true;
+    }
+    const shouldSave = false;
+    logPregelCheckpointDebug("[PregelRunner] 已按策略跳过普通 checkpoint", {
+      runId: this.runId,
+      step: this.step,
+      reason,
+      checkpointPolicy: this.checkpointPolicy,
+      shouldSave,
+    });
+    return shouldSave;
+  }
+
+  /** 保存当前通道状态快照；终态和中断会强制保存并触发立即 flush。 */
   private async saveCheckpoint(
     triggeredNodes: string[],
     durationMs: number,
+    reason: CheckpointSaveReason,
     interruptPayload?: unknown,
   ): Promise<void> {
     if (!this.checkpointer) return;
+    if (!this.shouldSaveCheckpoint(reason)) return;
 
     const checkpointId = `ckpt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -741,12 +800,16 @@ export class PregelRunner {
       ),
       triggeredNodes,
       durationMs,
+      reason,
       interruptPayload,
       channelData,
     };
 
     try {
       await this.checkpointer.saveCheckpoint(data);
+      if (reason !== "step") {
+        await this.checkpointer.flushNow?.(`workflow checkpoint ${reason}`);
+      }
       this.lastCheckpointId = checkpointId;
       this.emitter.emit({
         type: "checkpoint-saved",
@@ -754,6 +817,13 @@ export class PregelRunner {
         checkpointId,
         step: this.step,
         status: checkpointStatus,
+      });
+      logPregelCheckpointDebug("[PregelRunner] 已保存 workflow checkpoint", {
+        runId: this.runId,
+        step: this.step,
+        checkpointId,
+        reason,
+        checkpointPolicy: this.checkpointPolicy,
       });
     } catch (err) {
       console.error("[PregelRunner] 保存 checkpoint 失败", {

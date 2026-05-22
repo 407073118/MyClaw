@@ -137,6 +137,7 @@ const mocks = vi.hoisted(() => {
     sendSiliconPersonMessage: vi.fn().mockResolvedValue(null),
     startSiliconPersonWorkflowRun: vi.fn().mockResolvedValue(null),
     markSiliconPersonSessionRead: vi.fn().mockResolvedValue(null),
+    resolveApproval: vi.fn().mockResolvedValue({ success: true }),
   };
 
   const useWorkspaceStoreMock = Object.assign(
@@ -195,6 +196,7 @@ describe("Silicon person studio page", () => {
     mocks.workspace.sendSiliconPersonMessage.mockClear();
     mocks.workspace.startSiliconPersonWorkflowRun.mockClear();
     mocks.workspace.markSiliconPersonSessionRead.mockClear();
+    mocks.workspace.resolveApproval.mockClear();
     mocks.workspace.createWebPanelTab.mockClear();
     mocks.workspace.closeWebPanel.mockClear();
     mocks.workspace.webPanel.isOpen = false;
@@ -417,6 +419,26 @@ describe("Silicon person studio page", () => {
       expect(mocks.workspace.sendSiliconPersonMessage).toHaveBeenCalledWith("sp-1", "Please continue with the next step.");
     });
   });
+
+  it("uses the visible approve action to remember tool approval for the current run", async () => {
+    mocks.workspace.approvalRequests = [{
+      id: "approval-1",
+      sessionId: "session-1",
+      source: "builtin-tool",
+      toolId: "fs.write",
+      label: "写入文件",
+      risk: "write",
+      detail: "需要写入报告文件。",
+    }];
+
+    await renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "批准" }));
+
+    await waitFor(() => {
+      expect(mocks.workspace.resolveApproval).toHaveBeenCalledWith("approval-1", "allow-session");
+    });
+  }, 10000);
 
   it("shows capabilities tab with skills, MCP, and workflow bindings", async () => {
     await renderPage();

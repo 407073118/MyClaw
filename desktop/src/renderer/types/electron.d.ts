@@ -368,6 +368,13 @@ declare global {
       revealArtifact: (artifactId: string) => Promise<{ success: boolean }>;
       /** Subscribe to real-time session streaming events (deltas, completion, etc.) */
       onSessionStream: (callback: (event: Record<string, unknown>) => void) => () => void;
+      /** 按需读取审批详情，实时事件只携带预览，完整参数通过该接口获取。 */
+      getApprovalDetail: (approvalId: string) => Promise<{
+        success: boolean;
+        approvalId: string;
+        arguments?: Record<string, unknown>;
+        error?: string;
+      }>;
 
       // --- Model profiles ---
       createModelProfile: (input: Omit<ModelProfile, "id">) => Promise<ModelProfilePayload>;

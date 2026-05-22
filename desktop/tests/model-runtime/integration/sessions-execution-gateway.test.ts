@@ -11,6 +11,7 @@ const {
   createComputerActionHarnessMock,
   resolveSessionRuntimeIntentMock,
   buildExecutionPlanMock,
+  isOutsideWorkspaceMock,
 } = vi.hoisted(() => ({
   loadTurnOutcomeMock: vi.fn(),
   updateTurnOutcomeMock: vi.fn(() => Promise.resolve()),
@@ -20,6 +21,7 @@ const {
   createComputerActionHarnessMock: vi.fn(),
   resolveSessionRuntimeIntentMock: vi.fn(),
   buildExecutionPlanMock: vi.fn(),
+  isOutsideWorkspaceMock: vi.fn(() => false),
 }));
 
 vi.mock("electron", () => ({
@@ -76,7 +78,7 @@ vi.mock("../../../src/main/services/builtin-tool-executor", () => ({ BuiltinTool
     return {};
   }
   async shutdown() {}
-  isOutsideWorkspace() { return false; }
+  isOutsideWorkspace(base: string, targetPath: string) { return isOutsideWorkspaceMock(base, targetPath); }
 } }));
 
 import { registerSessionHandlers } from "../../../src/main/ipc/sessions";
@@ -94,6 +96,8 @@ describe("sessions execution gateway", () => {
     createComputerActionHarnessMock.mockReset();
     resolveSessionRuntimeIntentMock.mockReset();
     buildExecutionPlanMock.mockReset();
+    isOutsideWorkspaceMock.mockReset();
+    isOutsideWorkspaceMock.mockReturnValue(false);
     createExecutionGatewayMock.mockImplementation(() => ({ executeTurn: gatewayExecuteMock }));
     createComputerActionHarnessMock.mockImplementation((options: any) => ({ ...options }));
     resolveSessionRuntimeIntentMock.mockImplementation((sessionLike?: { runtimeIntent?: Record<string, unknown> | null }) => {
@@ -686,6 +690,330 @@ describe("sessions execution gateway", () => {
     }));
     expect(approvalPolicy.alwaysAllowedTools).toEqual(["web.search"]);
     expect(approvalRequests).toEqual([]);
+  });
+
+  it("honors always allow for default always-ask builtin tools", async () => {
+    let approvalRequests: Array<Record<string, unknown>> = [];
+    const approvalPolicy = {
+      mode: "prompt",
+      autoApproveReadOnly: false,
+      autoApproveSkills: true,
+      alwaysAllowedTools: [] as string[],
+    };
+    const execTool = {
+      id: "exec.command",
+      name: "执行命令",
+      description: "在当前附加工作目录下执行命令。",
+      group: "exec",
+      risk: "exec",
+      requiresAttachedDirectory: false,
+      enabled: true,
+      exposedToModel: true,
+      effectiveApprovalMode: "always-ask",
+    };
+
+    gatewayExecuteMock
+      .mockResolvedValueOnce({
+        content: "",
+        reasoning: "need first command",
+        toolCalls: [
+          { id: "tool-exec-1", name: "exec.command", argumentsJson: "{\"command\":\"echo alpha\"}", input: { command: "echo alpha" } },
+        ],
+        finishReason: "tool_calls",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-1" },
+      })
+      .mockResolvedValueOnce({
+        content: "",
+        reasoning: "need second command",
+        toolCalls: [
+          { id: "tool-exec-2", name: "exec.command", argumentsJson: "{\"command\":\"echo beta\"}", input: { command: "echo beta" } },
+        ],
+        finishReason: "tool_calls",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-2" },
+      })
+      .mockResolvedValueOnce({
+        content: "done",
+        toolCalls: [],
+        finishReason: "stop",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-3" },
+      });
+
+    const ctx: any = {
+      runtime: { myClawRootPath: "/tmp", skillsRootPath: "/tmp/skills", sessionsRootPath: "/tmp/sessions", paths: { myClawDir: "/tmp" } },
+      state: {
+        models: [makeProfile()],
+        sessions: [{ id: "session-1", title: "Test", modelProfileId: "profile-1", attachedDirectory: "/tmp/work", createdAt: "2026-04-10T00:00:00.000Z", messages: [] }],
+        siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
+        getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
+        getApprovals: () => approvalPolicy,
+        getApprovalRequests: () => approvalRequests,
+        setApprovalRequests: (next: Array<Record<string, unknown>>) => { approvalRequests = next; },
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
+        getAsrConfig: () => ({}),
+      },
+      services: { refreshSkills: async () => [], listMcpServers: () => [], mcpManager: null, appUpdater: { getSnapshot: () => ({ status: "idle" }) } },
+      tools: { resolveBuiltinTools: () => [execTool], resolveMcpTools: () => [] },
+    };
+
+    registerSessionHandlers(ctx);
+    const sendMessageHandler = ipcHandleRegistry.get("session:send-message");
+    const sendPromise = sendMessageHandler?.({}, "session-1", { content: "run twice", attachedDirectory: "/tmp/work" });
+
+    await vi.waitFor(() => expect(approvalRequests).toHaveLength(1), { timeout: 5000 });
+    const resolveHandler = ipcHandleRegistry.get("session:resolve-approval");
+    await expect(resolveHandler?.({}, approvalRequests[0]?.id, "always-allow-tool")).resolves.toEqual(expect.objectContaining({
+      success: true,
+      approvals: approvalPolicy,
+    }));
+
+    await expect(sendPromise).resolves.toEqual(expect.objectContaining({
+      session: expect.objectContaining({ id: "session-1" }),
+    }));
+    expect(approvalPolicy.alwaysAllowedTools).toEqual(["exec.command"]);
+    expect(approvalRequests).toEqual([]);
+  });
+
+  it("defers fs external path approval to the path policy instead of generic tool approval", async () => {
+    let approvalRequests: Array<Record<string, unknown>> = [];
+    isOutsideWorkspaceMock.mockReturnValue(true);
+    const approvalPolicy = {
+      mode: "auto-allow-all",
+      autoApproveReadOnly: true,
+      autoApproveSkills: true,
+      alwaysAllowedTools: [] as string[],
+    };
+    const fsEditTool = {
+      id: "fs.edit",
+      name: "编辑文件",
+      description: "编辑当前附加工作目录下的文本文件。",
+      group: "fs",
+      risk: "write",
+      requiresAttachedDirectory: true,
+      enabled: true,
+      exposedToModel: true,
+      effectiveApprovalMode: "always-allow",
+    };
+
+    gatewayExecuteMock
+      .mockResolvedValueOnce({
+        content: "",
+        reasoning: "need edit outside path",
+        toolCalls: [
+          { id: "tool-edit-1", name: "fs.edit", argumentsJson: "{\"path\":\"../outside.txt\"}", input: { path: "../outside.txt", old_string: "alpha", new_string: "beta" } },
+        ],
+        finishReason: "tool_calls",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-1" },
+      })
+      .mockResolvedValueOnce({
+        content: "done",
+        toolCalls: [],
+        finishReason: "stop",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-2" },
+      });
+
+    const ctx: any = {
+      runtime: { myClawRootPath: "/tmp", skillsRootPath: "/tmp/skills", sessionsRootPath: "/tmp/sessions", paths: { myClawDir: "/tmp" } },
+      state: {
+        models: [makeProfile()],
+        sessions: [{ id: "session-1", title: "Test", modelProfileId: "profile-1", attachedDirectory: "/tmp/work", createdAt: "2026-04-10T00:00:00.000Z", messages: [] }],
+        siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
+        getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
+        getApprovals: () => approvalPolicy,
+        getApprovalRequests: () => approvalRequests,
+        setApprovalRequests: (next: Array<Record<string, unknown>>) => { approvalRequests = next; },
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
+        getAsrConfig: () => ({}),
+      },
+      services: { refreshSkills: async () => [], listMcpServers: () => [], mcpManager: null, appUpdater: { getSnapshot: () => ({ status: "idle" }) } },
+      tools: { resolveBuiltinTools: () => [fsEditTool], resolveMcpTools: () => [] },
+    };
+
+    registerSessionHandlers(ctx);
+    const sendMessageHandler = ipcHandleRegistry.get("session:send-message");
+
+    await expect(sendMessageHandler?.({}, "session-1", { content: "write outside", attachedDirectory: "/tmp/work" })).resolves.toEqual(expect.objectContaining({
+      session: expect.objectContaining({ id: "session-1" }),
+    }));
+    expect(approvalRequests).toEqual([]);
+  });
+
+  it("keeps allow-session scoped to the active run without persisting the tool", async () => {
+    let approvalRequests: Array<Record<string, unknown>> = [];
+    const approvalPolicy = {
+      mode: "prompt",
+      autoApproveReadOnly: false,
+      autoApproveSkills: true,
+      alwaysAllowedTools: [] as string[],
+    };
+
+    gatewayExecuteMock
+      .mockResolvedValueOnce({
+        content: "",
+        reasoning: "need first search",
+        toolCalls: [
+          { id: "tool-search-1", name: "web.search", argumentsJson: "{\"query\":\"alpha\"}", input: { query: "alpha" } },
+        ],
+        finishReason: "tool_calls",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-1" },
+      })
+      .mockResolvedValueOnce({
+        content: "",
+        reasoning: "need second search",
+        toolCalls: [
+          { id: "tool-search-2", name: "web.search", argumentsJson: "{\"query\":\"beta\"}", input: { query: "beta" } },
+        ],
+        finishReason: "tool_calls",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-2" },
+      })
+      .mockResolvedValueOnce({
+        content: "done",
+        toolCalls: [],
+        finishReason: "stop",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-3" },
+      });
+
+    const ctx: any = {
+      runtime: { myClawRootPath: "/tmp", skillsRootPath: "/tmp/skills", sessionsRootPath: "/tmp/sessions", paths: { myClawDir: "/tmp" } },
+      state: {
+        models: [makeProfile()],
+        sessions: [{ id: "session-1", title: "Test", modelProfileId: "profile-1", attachedDirectory: null, createdAt: "2026-04-10T00:00:00.000Z", messages: [] }],
+        siliconPersons: [], skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
+        getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
+        getApprovals: () => approvalPolicy,
+        getApprovalRequests: () => approvalRequests,
+        setApprovalRequests: (next: Array<Record<string, unknown>>) => { approvalRequests = next; },
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
+        getAsrConfig: () => ({}),
+      },
+      services: { refreshSkills: async () => [], listMcpServers: () => [], mcpManager: null, appUpdater: { getSnapshot: () => ({ status: "idle" }) } },
+      tools: { resolveBuiltinTools: () => [], resolveMcpTools: () => [] },
+    };
+
+    registerSessionHandlers(ctx);
+    const sendMessageHandler = ipcHandleRegistry.get("session:send-message");
+    const sendPromise = sendMessageHandler?.({}, "session-1", { content: "search twice", attachedDirectory: null });
+
+    await vi.waitFor(() => expect(approvalRequests).toHaveLength(1), { timeout: 5000 });
+    const resolveHandler = ipcHandleRegistry.get("session:resolve-approval");
+    await expect(resolveHandler?.({}, approvalRequests[0]?.id, "allow-session")).resolves.toEqual(expect.objectContaining({
+      success: true,
+    }));
+
+    await expect(sendPromise).resolves.toEqual(expect.objectContaining({
+      session: expect.objectContaining({ id: "session-1" }),
+    }));
+    expect(approvalPolicy.alwaysAllowedTools).toEqual([]);
+    expect(approvalRequests).toEqual([]);
+  });
+
+  it("honors allow-session within a silicon person always-ask run", async () => {
+    let approvalRequests: Array<Record<string, unknown>> = [];
+    const approvalPolicy = {
+      mode: "auto-read-only",
+      autoApproveReadOnly: true,
+      autoApproveSkills: true,
+      alwaysAllowedTools: [] as string[],
+    };
+
+    gatewayExecuteMock
+      .mockResolvedValueOnce({
+        content: "",
+        reasoning: "need first search",
+        toolCalls: [
+          { id: "tool-search-1", name: "web.search", argumentsJson: "{\"query\":\"alpha\"}", input: { query: "alpha" } },
+        ],
+        finishReason: "tool_calls",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-1" },
+      })
+      .mockResolvedValueOnce({
+        content: "",
+        reasoning: "need second search",
+        toolCalls: [
+          { id: "tool-search-2", name: "web.search", argumentsJson: "{\"query\":\"beta\"}", input: { query: "beta" } },
+        ],
+        finishReason: "tool_calls",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-2" },
+      })
+      .mockResolvedValueOnce({
+        content: "done",
+        toolCalls: [],
+        finishReason: "stop",
+        plan: { providerFamily: "generic-openai-compatible", protocolTarget: "openai-chat-compatible" },
+        outcome: { id: "outcome-3" },
+      });
+
+    const ctx: any = {
+      runtime: { myClawRootPath: "/tmp", skillsRootPath: "/tmp/skills", sessionsRootPath: "/tmp/sessions", paths: { myClawDir: "/tmp" } },
+      state: {
+        models: [makeProfile()],
+        sessions: [{
+          id: "session-1",
+          title: "Test",
+          modelProfileId: "profile-1",
+          attachedDirectory: null,
+          siliconPersonId: "sp-1",
+          createdAt: "2026-04-10T00:00:00.000Z",
+          messages: [],
+        }],
+        siliconPersons: [{
+          id: "sp-1",
+          name: "小王",
+          title: "硅基运营",
+          description: "负责日常运营跟进",
+          status: "idle",
+          source: "personal",
+          approvalMode: "always_ask",
+          currentSessionId: "session-1",
+          sessions: [],
+          unreadCount: 0,
+          hasUnread: false,
+          needsApproval: false,
+          workflowIds: [],
+          updatedAt: "2026-04-08T00:00:00.000Z",
+        }],
+        skills: [], workflowDefinitions: {}, workflowRuns: [], activeWorkflowRuns: new Map(), activeSessionRuns: new Map(),
+        getDefaultModelProfileId: () => "profile-1", setDefaultModelProfileId: () => {}, getWorkflows: () => [],
+        getApprovals: () => approvalPolicy,
+        getApprovalRequests: () => approvalRequests,
+        setApprovalRequests: (next: Array<Record<string, unknown>>) => { approvalRequests = next; },
+        getPersonalPromptProfile: () => ({ prompt: "", summary: "", tags: [], updatedAt: null }), setPersonalPromptProfile: () => {},
+        getAsrConfig: () => ({}),
+      },
+      services: { refreshSkills: async () => [], listMcpServers: () => [], mcpManager: null, appUpdater: { getSnapshot: () => ({ status: "idle" }) } },
+      tools: { resolveBuiltinTools: () => [], resolveMcpTools: () => [] },
+    };
+
+    registerSessionHandlers(ctx);
+    const sendMessageHandler = ipcHandleRegistry.get("session:send-message");
+    const sendPromise = sendMessageHandler?.({}, "session-1", { content: "search twice", attachedDirectory: null });
+
+    await vi.waitFor(() => expect(approvalRequests).toHaveLength(1), { timeout: 5000 });
+    const resolveHandler = ipcHandleRegistry.get("session:resolve-approval");
+    await expect(resolveHandler?.({}, approvalRequests[0]?.id, "allow-session")).resolves.toEqual(expect.objectContaining({
+      success: true,
+    }));
+
+    try {
+      await vi.waitFor(() => expect(approvalRequests).toEqual([]), { timeout: 1000 });
+      await expect(sendPromise).resolves.toEqual(expect.objectContaining({
+        session: expect.objectContaining({ id: "session-1" }),
+      }));
+    } finally {
+      if (approvalRequests[0]?.id) {
+        await resolveHandler?.({}, approvalRequests[0].id, "deny");
+      }
+    }
+    expect(approvalPolicy.alwaysAllowedTools).toEqual([]);
   });
 
   it("does not execute tool calls from an incomplete stream result", async () => {

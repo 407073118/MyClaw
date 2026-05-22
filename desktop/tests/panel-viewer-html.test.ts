@@ -6,8 +6,9 @@ import { buildPanelViewerHtml } from "../src/main/services/panel-viewer-html";
 describe("Panel viewer HTML", () => {
   it("keeps the file viewer inside the native panel contract without iframe content", () => {
     const html = buildPanelViewerHtml();
+    const dom = new JSDOM(html);
 
-    expect(html).not.toContain("<iframe");
+    expect(dom.window.document.querySelector("iframe")).toBeNull();
     expect(html).toContain("myclaw-vendor://monaco/vs/loader.js");
     expect(html).toContain("myclaw-vendor://pdfjs/pdf.min.js");
     expect(html).toContain("file-viewer:open-external");
@@ -148,5 +149,41 @@ describe("Panel viewer HTML", () => {
     });
     expect(dom.window.document.querySelector("#pdfStatus")?.textContent).toContain("PDF.js");
     expect(dom.window.document.querySelector("#pdfPages")).not.toBeNull();
+  });
+
+  it("renders html files in a sandboxed preview frame instead of showing source code", () => {
+    let onMessage: ((message: unknown) => void) | null = null;
+    const dom = new JSDOM(buildPanelViewerHtml(), {
+      runScripts: "dangerously",
+      beforeParse(window) {
+        Object.assign(window, {
+          myClawPanel: {
+            onMessage(callback: (message: unknown) => void) {
+              onMessage = callback;
+            },
+            invokeAction: vi.fn(),
+          },
+        });
+      },
+    });
+
+    onMessage?.({
+      type: "skill-data",
+      payload: {
+        panelKind: "file-viewer",
+        fileName: "interview-final-report.html",
+        path: "F:/tmp/interview-final-report.html",
+        viewerKind: "html",
+        sizeBytes: 128,
+        previewUrl: "myclaw-file://panel/token",
+        content: "<!doctype html><html><body><h1>Interview Report</h1></body></html>",
+      },
+    });
+
+    const frame = dom.window.document.querySelector<HTMLIFrameElement>("[data-testid='html-preview-frame']");
+    expect(frame).not.toBeNull();
+    expect(frame?.getAttribute("sandbox")).toBe("");
+    expect(frame?.getAttribute("src")).toBe("myclaw-file://panel/token");
+    expect(dom.window.document.querySelector("[data-editor='monaco']")).toBeNull();
   });
 });

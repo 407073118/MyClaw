@@ -17,6 +17,9 @@ interface WorkflowDebugPanelProps {
 
 type TabKey = "state" | "nodeOutputs" | "timeline" | "logs";
 
+const WORKFLOW_DEBUG_RENDER_LIMIT = 300;
+const DEBUG_PREVIEW_LIMIT = 4096;
+
 const eventBadgeColors: Record<string, string> = {
   "run-start": "#3b82f6",
   "run-complete": "#10b981",
@@ -41,6 +44,21 @@ function relativeTime(timestamp: number, origin: number): string {
 /** 截断字符串到指定长度。*/
 function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) + "..." : value;
+}
+
+/** 将调试值转换为有限预览，避免渲染阶段全量 stringify 大对象。 */
+function formatDebugPreview(value: unknown, maxLength = DEBUG_PREVIEW_LIMIT): string {
+  if (typeof value === "string") {
+    return truncate(value, maxLength);
+  }
+  try {
+    return truncate(JSON.stringify(value, null, 2), maxLength);
+  } catch (error) {
+    console.warn("[workflow-debug-panel] 调试值序列化失败，改用摘要显示", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "[unserializable]";
+  }
 }
 
 /** 将运行状态转成中文，减少调试面板里的协议字段感。 */
@@ -96,7 +114,11 @@ export function WorkflowDebugPanel({
     return [] as Array<readonly [string, unknown]>;
   }, [state.outputs, state.lastLlmOutput]);
 
-  const timelineEvents = useMemo(() => [...events].reverse(), [events]);
+  const renderedEvents = useMemo(
+    () => events.slice(-WORKFLOW_DEBUG_RENDER_LIMIT),
+    [events],
+  );
+  const timelineEvents = useMemo(() => [...renderedEvents].reverse(), [renderedEvents]);
   const originTs = useMemo(() => events[0]?.timestamp ?? Date.now(), [events]);
 
   /** 根据节点 ID 返回节点名称，只有技术信息才保留原始 ID。 */
@@ -144,7 +166,7 @@ export function WorkflowDebugPanel({
           {finalOutputEntries.map(([key, value]) => (
             <div key={key} className="wf-debug-panel__final-row">
               <span>{key}</span>
-              <pre>{typeof value === "string" ? value : JSON.stringify(value, null, 2)}</pre>
+              <pre>{formatDebugPreview(value)}</pre>
             </div>
           ))}
         </section>
@@ -185,9 +207,7 @@ export function WorkflowDebugPanel({
                   <span className="wf-debug-panel__node-output-id" title={nodeId}>
                     {resolveNodeLabel(nodeId)}
                   </span>
-                  <pre className="wf-debug-panel__node-output-json">
-                    {JSON.stringify(value, null, 2)}
-                  </pre>
+                  <pre className="wf-debug-panel__node-output-json">{formatDebugPreview(value)}</pre>
                 </div>
               ))
             )}
@@ -200,7 +220,7 @@ export function WorkflowDebugPanel({
               <div className="wf-debug-panel__empty">暂无事件</div>
             ) : (
               timelineEvents.map((evt, idx) => (
-                <div key={idx} className="wf-debug-panel__tl-row">
+                <div key={idx} className="wf-debug-panel__tl-row" data-testid="workflow-debug-event">
                   <span
                     className="wf-debug-panel__tl-badge"
                     style={{ background: eventBadgeColors[evt.type] ?? "#52525b" }}
@@ -228,14 +248,14 @@ export function WorkflowDebugPanel({
 
         {activeTab === "logs" && (
           <div className="wf-debug-panel__logs">
-            {events.length === 0 ? (
+            {renderedEvents.length === 0 ? (
               <div className="wf-debug-panel__empty">暂无日志</div>
             ) : (
-              events.map((evt, idx) => (
-                <div key={idx} className="wf-debug-panel__log-row">
+              renderedEvents.map((evt, idx) => (
+                <div key={idx} className="wf-debug-panel__log-row" data-testid="workflow-debug-event">
                   <span className="wf-debug-panel__log-type">[{evt.type}]</span>
                   <pre className="wf-debug-panel__log-json">
-                    {JSON.stringify(evt, null, 2)}
+                    {formatDebugPreview(evt)}
                   </pre>
                 </div>
               ))
@@ -498,7 +518,7 @@ function StateEntry({ stateKey, value }: { stateKey: string; value: unknown }) {
   const isObject = typeof value === "object" && value !== null;
   const displayValue = isString
     ? (isLongString && !expanded ? truncate(value, 100) : value)
-    : JSON.stringify(value, null, 2);
+    : formatDebugPreview(value);
 
   return (
     <div style={{

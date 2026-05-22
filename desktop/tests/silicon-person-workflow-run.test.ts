@@ -614,4 +614,51 @@ describe("silicon person workflow run", () => {
       ]));
     });
   });
+
+  it("skips task projection for noisy workflow stream events", async () => {
+    const projectionModule = await import("../src/main/services/silicon-person-workflow");
+    const projectionSpy = vi.spyOn(projectionModule, "applyWorkflowEventToSessionTasks");
+    const { registerWorkflowHandlers } = await import("../src/main/ipc/workflows");
+    const ctx = buildContext();
+
+    registerWorkflowHandlers(ctx);
+
+    const startRunHandler = ipcHandleRegistry.get("workflow:start-run");
+    expect(startRunHandler).toBeTypeOf("function");
+
+    await startRunHandler?.({}, {
+      workflowId: "workflow-1",
+      initialState: {
+        siliconPersonId: "sp-1",
+        sessionId: "session-1",
+      },
+    });
+
+    projectionSpy.mockClear();
+    saveSessionMock.mockClear();
+
+    lastRunner?.emitter.emit({
+      type: "checkpoint-saved",
+      runId: "workflow-run-1",
+      checkpointId: "cp-1",
+      step: 1,
+      status: "running",
+    });
+    lastRunner?.emitter.emit({
+      type: "state-updated",
+      runId: "workflow-run-1",
+      channelName: "large",
+      value: { payload: "x".repeat(1000) },
+      version: 1,
+    });
+    lastRunner?.emitter.emit({
+      type: "node-streaming",
+      runId: "workflow-run-1",
+      nodeId: "node-plan",
+      chunk: { content: "partial" },
+    });
+
+    expect(projectionSpy).not.toHaveBeenCalled();
+    expect(saveSessionMock).not.toHaveBeenCalled();
+  });
 });

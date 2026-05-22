@@ -11,10 +11,20 @@ type WorkflowTaskMetadata = {
   lastError?: string;
 };
 
+const SILICON_PERSON_WORKFLOW_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_SILICON_PERSON_WORKFLOW === "1";
+
+/** 输出硅基员工 workflow 投影调试日志，默认关闭以避免每个节点事件都写 console。 */
+function logSiliconPersonWorkflowDebug(message: string, detail: Record<string, unknown>): void {
+  if (!SILICON_PERSON_WORKFLOW_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
+
 /** 判断一个 workflow 节点是否应该投影到 session tasklist，避免把起止节点也变成任务。 */
 function shouldProjectWorkflowNode(node: WorkflowNode): boolean {
   const shouldProject = node.kind !== "start" && node.kind !== "end";
-  console.info("[silicon-person-workflow] 判断节点是否投影为任务", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 判断节点是否投影为任务", {
     nodeId: node.id,
     nodeKind: node.kind,
     shouldProject,
@@ -26,7 +36,7 @@ function shouldProjectWorkflowNode(node: WorkflowNode): boolean {
 function readWorkflowTaskMetadata(task: Task): WorkflowTaskMetadata | null {
   const metadata = task.metadata;
   if (!metadata || typeof metadata !== "object") {
-    console.info("[silicon-person-workflow] 任务缺少 workflow 元数据，按普通任务处理", {
+    logSiliconPersonWorkflowDebug("[silicon-person-workflow] 任务缺少 workflow 元数据，按普通任务处理", {
       taskId: task.id,
       subject: task.subject,
     });
@@ -39,7 +49,7 @@ function readWorkflowTaskMetadata(task: Task): WorkflowTaskMetadata | null {
     || typeof metadata.workflowNodeId !== "string"
     || typeof metadata.workflowNodeKind !== "string"
   ) {
-    console.info("[silicon-person-workflow] 任务元数据不是 workflow 投影任务", {
+    logSiliconPersonWorkflowDebug("[silicon-person-workflow] 任务元数据不是 workflow 投影任务", {
       taskId: task.id,
       subject: task.subject,
     });
@@ -54,7 +64,7 @@ function findWorkflowTask(tasks: Task[], workflowId: string, nodeId: string): Ta
     const metadata = readWorkflowTaskMetadata(task);
     return metadata?.workflowId === workflowId && metadata.workflowNodeId === nodeId;
   }) ?? null;
-  console.info("[silicon-person-workflow] 查找 workflow 投影任务", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 查找 workflow 投影任务", {
     workflowId,
     nodeId,
     matchedTaskId: matched?.id ?? null,
@@ -65,7 +75,7 @@ function findWorkflowTask(tasks: Task[], workflowId: string, nodeId: string): Ta
 /** 统一构建 workflow 投影任务的描述，便于后续在 UI 上识别来源。 */
 function buildWorkflowTaskDescription(node: WorkflowNode, workflow: WorkflowDefinition): string {
   const description = `由工作流「${workflow.name}」节点「${node.label}」驱动`;
-  console.info("[silicon-person-workflow] 构建 workflow 任务描述", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 构建 workflow 任务描述", {
     workflowId: workflow.id,
     nodeId: node.id,
     description,
@@ -75,7 +85,7 @@ function buildWorkflowTaskDescription(node: WorkflowNode, workflow: WorkflowDefi
 
 /** 重置一个 workflow 投影任务到待办态，供每次新 run 启动前复用。 */
 function resetWorkflowTask(tasks: Task[], task: Task, node: WorkflowNode, workflow: WorkflowDefinition, workflowRunId: string): Task[] {
-  console.info("[silicon-person-workflow] 重置已有 workflow 投影任务", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 重置已有 workflow 投影任务", {
     taskId: task.id,
     workflowId: workflow.id,
     workflowRunId,
@@ -99,7 +109,7 @@ function resetWorkflowTask(tasks: Task[], task: Task, node: WorkflowNode, workfl
 
 /** 首次把 workflow 节点投影为 session task，确保手工 task 原样保留。 */
 function createWorkflowTask(tasks: Task[], node: WorkflowNode, workflow: WorkflowDefinition, workflowRunId: string): Task[] {
-  console.info("[silicon-person-workflow] 创建新的 workflow 投影任务", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 创建新的 workflow 投影任务", {
     workflowId: workflow.id,
     workflowRunId,
     nodeId: node.id,
@@ -127,7 +137,7 @@ export function seedWorkflowDrivenTasksForSession(input: {
   workflow: WorkflowDefinition;
   workflowRunId: string;
 }): Task[] {
-  console.info("[silicon-person-workflow] 启动 run 前同步 workflow 投影任务", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 启动 run 前同步 workflow 投影任务", {
     sessionId: input.session.id,
     workflowId: input.workflow.id,
     workflowRunId: input.workflowRunId,
@@ -145,7 +155,7 @@ export function seedWorkflowDrivenTasksForSession(input: {
       : createWorkflowTask(tasks, node, input.workflow, input.workflowRunId);
   }
 
-  console.info("[silicon-person-workflow] workflow 投影任务同步完成", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] workflow 投影任务同步完成", {
     sessionId: input.session.id,
     workflowId: input.workflow.id,
     workflowRunId: input.workflowRunId,
@@ -158,13 +168,13 @@ export function seedWorkflowDrivenTasksForSession(input: {
 function markWorkflowNodeInProgress(tasks: Task[], workflow: WorkflowDefinition, nodeId: string): Task[] {
   const task = findWorkflowTask(tasks, workflow.id, nodeId);
   if (!task) {
-    console.info("[silicon-person-workflow] 未找到待更新的运行中任务", {
+    logSiliconPersonWorkflowDebug("[silicon-person-workflow] 未找到待更新的运行中任务", {
       workflowId: workflow.id,
       nodeId,
     });
     return tasks;
   }
-  console.info("[silicon-person-workflow] 标记 workflow 投影任务为进行中", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 标记 workflow 投影任务为进行中", {
     taskId: task.id,
     workflowId: workflow.id,
     nodeId,
@@ -182,13 +192,13 @@ function markWorkflowNodeInProgress(tasks: Task[], workflow: WorkflowDefinition,
 function markWorkflowNodeCompleted(tasks: Task[], workflow: WorkflowDefinition, nodeId: string): Task[] {
   const task = findWorkflowTask(tasks, workflow.id, nodeId);
   if (!task) {
-    console.info("[silicon-person-workflow] 未找到待更新的已完成任务", {
+    logSiliconPersonWorkflowDebug("[silicon-person-workflow] 未找到待更新的已完成任务", {
       workflowId: workflow.id,
       nodeId,
     });
     return tasks;
   }
-  console.info("[silicon-person-workflow] 标记 workflow 投影任务为已完成", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 标记 workflow 投影任务为已完成", {
     taskId: task.id,
     workflowId: workflow.id,
     nodeId,
@@ -206,14 +216,14 @@ function markWorkflowNodeCompleted(tasks: Task[], workflow: WorkflowDefinition, 
 function markWorkflowNodeErrored(tasks: Task[], workflow: WorkflowDefinition, nodeId: string, error: string): Task[] {
   const task = findWorkflowTask(tasks, workflow.id, nodeId);
   if (!task) {
-    console.info("[silicon-person-workflow] 未找到待更新的异常任务", {
+    logSiliconPersonWorkflowDebug("[silicon-person-workflow] 未找到待更新的异常任务", {
       workflowId: workflow.id,
       nodeId,
       error,
     });
     return tasks;
   }
-  console.info("[silicon-person-workflow] 标记 workflow 投影任务异常回退", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 标记 workflow 投影任务异常回退", {
     taskId: task.id,
     workflowId: workflow.id,
     nodeId,
@@ -230,7 +240,7 @@ function markWorkflowNodeErrored(tasks: Task[], workflow: WorkflowDefinition, no
 
 /** 运行结束时统一回写同一 workflow 的投影任务，保持终态一致。 */
 function settleWorkflowRunTasks(tasks: Task[], workflow: WorkflowDefinition, status: string): Task[] {
-  console.info("[silicon-person-workflow] 统一回写 workflow run 终态", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 统一回写 workflow run 终态", {
     workflowId: workflow.id,
     status,
   });
@@ -276,7 +286,7 @@ export function applyWorkflowEventToSessionTasks(input: {
   workflow: WorkflowDefinition;
   event: WorkflowStreamEvent;
 }): Task[] {
-  console.info("[silicon-person-workflow] 按 workflow 事件更新 session 任务", {
+  logSiliconPersonWorkflowDebug("[silicon-person-workflow] 按 workflow 事件更新 session 任务", {
     sessionId: input.session.id,
     workflowId: input.workflow.id,
     eventType: input.event.type,
@@ -294,7 +304,7 @@ export function applyWorkflowEventToSessionTasks(input: {
     case "run-complete":
       return settleWorkflowRunTasks(tasks, input.workflow, input.event.status);
     default:
-      console.info("[silicon-person-workflow] 当前事件不需要改写任务列表", {
+      logSiliconPersonWorkflowDebug("[silicon-person-workflow] 当前事件不需要改写任务列表", {
         sessionId: input.session.id,
         workflowId: input.workflow.id,
         eventType: input.event.type,

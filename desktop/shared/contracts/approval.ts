@@ -63,6 +63,12 @@ export type ApprovalRequest = {
   pathMeta?: ExternalPathMeta;
 } & McpExecutionContext;
 
+/** 审批详情按需读取响应，避免实时事件默认携带大型工具参数。 */
+export type ApprovalDetailResponse = {
+  approvalId: string;
+  arguments?: Record<string, unknown>;
+};
+
 export type ExecutionIntent = {
   source: ApprovalRequestSource;
   toolId: string;
@@ -93,6 +99,7 @@ export function shouldRequestApproval(input: {
   risk: ToolRiskCategory;
   isOutsideWorkspace?: boolean;
   toolApprovalMode?: BuiltinToolApprovalMode | null;
+  runAllowedTools?: string[];
 }): boolean {
   // Unrestricted mode: never ask, even for external paths
   if (input.policy.mode === "unrestricted") {
@@ -104,8 +111,7 @@ export function shouldRequestApproval(input: {
     return true;
   }
 
-  // Auto-allow-all: workspace paths auto-approved; external paths need approval
-  if (input.policy.mode === "auto-allow-all") {
+  if (input.runAllowedTools?.includes(input.toolId) || input.policy.alwaysAllowedTools.includes(input.toolId)) {
     return false;
   }
 
@@ -113,12 +119,13 @@ export function shouldRequestApproval(input: {
     return false;
   }
 
-  if (input.toolApprovalMode === "always-ask") {
-    return true;
+  // Auto-allow-all: workspace paths auto-approved; external paths need approval
+  if (input.policy.mode === "auto-allow-all") {
+    return false;
   }
 
-  if (input.policy.alwaysAllowedTools.includes(input.toolId)) {
-    return false;
+  if (input.toolApprovalMode === "always-ask") {
+    return true;
   }
 
   // prompt 模式表示所有未单独放行的工具都需要审批，用于最保守的全询问策略。
