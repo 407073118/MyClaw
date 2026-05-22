@@ -2,6 +2,8 @@ import type { ArtifactLifecycle, ArtifactScopeKind, ArtifactStatus } from "./art
 
 export enum EventType {
   SessionUpdated = "session.updated",
+  SessionPatched = "session.patched",
+  SessionSnapshotAvailable = "session.snapshot.available",
   MessageDelta = "message.delta",
   MessageCompleted = "message.completed",
   RunStarted = "run.started",

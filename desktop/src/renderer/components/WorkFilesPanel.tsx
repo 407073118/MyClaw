@@ -9,7 +9,7 @@ import {
   ScrollText,
 } from "lucide-react";
 
-import type { ArtifactRecord, ArtifactScopeRef } from "@shared/contracts";
+import { EventType, type ArtifactRecord, type ArtifactScopeRef } from "@shared/contracts";
 
 import { useWorkspaceStore } from "../stores/workspace";
 import { formatRelativeTime } from "../utils/format-time";
@@ -21,6 +21,35 @@ type WorkFilesPanelProps = {
   mode?: "sidebar" | "page";
   emptyHint?: string;
 };
+
+const WORK_FILES_ARTIFACT_RELOAD_DEBOUNCE_MS = 150;
+const ARTIFACT_RELOAD_EVENT_TYPES = new Set<string>([
+  EventType.ArtifactCreated,
+  EventType.ArtifactUpdated,
+  EventType.ArtifactCompleted,
+  EventType.ArtifactFailed,
+  EventType.ArtifactLinked,
+  "artifact.changed",
+  "artifact.deleted",
+]);
+const WORK_FILES_PANEL_DEBUG_LOGGING = resolveWorkFilesPanelDebugLogging();
+
+/** 读取工作文件面板调试日志开关，默认关闭以免频繁 stream 事件刷屏。 */
+function resolveWorkFilesPanelDebugLogging(): boolean {
+  try {
+    return globalThis.localStorage?.getItem("MYCLAW_DEBUG_WORK_FILES_PANEL") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 输出工作文件面板调试日志，仅在显式打开开关时进入 console。 */
+function logWorkFilesPanelDebug(message: string, detail: Record<string, unknown>): void {
+  if (!WORK_FILES_PANEL_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
 
 /** 将字节数转换成更适合面板展示的文本。 */
 function formatBytes(sizeBytes: number | null): string {
@@ -72,33 +101,39 @@ function KindIcon({ kind, size = 18 }: { kind: ArtifactRecord["kind"]; size?: nu
   }
 }
 
-/** 从 session 流事件中解析当前面板需要比对的会话 ID。 */
-function readSessionStreamScopeId(event: Record<string, unknown>): string | null {
-  if (typeof event.sessionId === "string") {
-    return event.sessionId;
+/** 判断 artifact stream 事件是否命中当前面板 scope。 */
+function shouldReloadArtifactsForArtifactEvent(scope: ArtifactScopeRef, event: Record<string, unknown>): boolean {
+  const type = typeof event.type === "string" ? event.type : "";
+  const eventScopeKind = typeof event.scopeKind === "string"
+    ? event.scopeKind
+    : typeof event.sessionId === "string"
+      ? "session"
+      : typeof event.runId === "string"
+        ? "workflowRun"
+        : null;
+  const eventScopeId = typeof event.scopeId === "string"
+    ? event.scopeId
+    : typeof event.sessionId === "string"
+      ? event.sessionId
+      : typeof event.runId === "string"
+        ? event.runId
+        : null;
+  const shouldReload = (
+    eventScopeKind === scope.scopeKind
+    && eventScopeId === scope.scopeId
+    && ARTIFACT_RELOAD_EVENT_TYPES.has(type)
+  );
+  if (!shouldReload) {
+    logWorkFilesPanelDebug("[work-files-panel] 已忽略非当前 scope 的 artifact 事件", {
+      scopeKind: scope.scopeKind,
+      scopeId: scope.scopeId,
+      eventScopeKind,
+      eventScopeId,
+      eventType: type,
+      runId: typeof event.runId === "string" ? event.runId : null,
+    });
   }
-
-  if (event.session && typeof event.session === "object" && typeof (event.session as { id?: unknown }).id === "string") {
-    return (event.session as { id: string }).id;
-  }
-
-  if (
-    event.approvalRequest
-    && typeof event.approvalRequest === "object"
-    && typeof (event.approvalRequest as { sessionId?: unknown }).sessionId === "string"
-  ) {
-    return (event.approvalRequest as { sessionId: string }).sessionId;
-  }
-
-  return null;
-}
-
-/** 仅让命中当前 session scope 的流事件触发工件重载。 */
-function shouldReloadArtifactsForSessionEvent(scope: ArtifactScopeRef, event: Record<string, unknown>): boolean {
-  if (scope.scopeKind !== "session") {
-    return false;
-  }
-  return readSessionStreamScopeId(event) === scope.scopeId;
+  return shouldReload;
 }
 
 /** 渲染单个文件项。 */
@@ -248,32 +283,47 @@ export default function WorkFilesPanel({
 
   useEffect(() => {
     if (!stableScope) return;
+    let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    /** 合并短时间内的 artifact 刷新请求，避免 workflow 高频事件触发重复加载。 */
+    const scheduleArtifactReload = (reason: string): void => {
+      if (reloadTimer) {
+        clearTimeout(reloadTimer);
+      }
+      logWorkFilesPanelDebug("[work-files-panel] 已计划刷新工作文件列表", {
+        scopeKind: stableScope.scopeKind,
+        scopeId: stableScope.scopeId,
+        reason,
+      });
+      reloadTimer = setTimeout(() => {
+        reloadTimer = null;
+        void loadArtifactsByScope(stableScope);
+      }, WORK_FILES_ARTIFACT_RELOAD_DEBOUNCE_MS);
+    };
     const unsubscribeSession = window.myClawAPI.onSessionStream((event) => {
       const type = typeof event.type === "string" ? event.type : "";
-      if (type.startsWith("artifact.")) {
-        applyArtifactEvent(event);
-        void loadArtifactsByScope(stableScope);
+      if (ARTIFACT_RELOAD_EVENT_TYPES.has(type)) {
+        if (shouldReloadArtifactsForArtifactEvent(stableScope, event)) {
+          applyArtifactEvent(event);
+          scheduleArtifactReload(`session:${type}`);
+        }
         return;
       }
-      if (
-        type === "session.updated" ||
-        type === "tasks.updated" ||
-        type === "approval.requested" ||
-        type === "approval.resolved"
-      ) {
-        if (!shouldReloadArtifactsForSessionEvent(stableScope, event)) {
-          return;
-        }
-        void loadArtifactsByScope(stableScope);
-      }
+      logWorkFilesPanelDebug("[work-files-panel] 已忽略非 artifact 变更 session 事件", {
+        scopeKind: stableScope.scopeKind,
+        scopeId: stableScope.scopeId,
+        eventType: type,
+      });
     });
     const unsubscribeWorkflow = window.myClawAPI.onWorkflowStream?.((event: unknown) => {
       const payload = event && typeof event === "object" ? (event as Record<string, unknown>) : {};
-      if (stableScope.scopeKind === "workflowRun" && payload.runId === stableScope.scopeId) {
-        void loadArtifactsByScope(stableScope);
+      if (shouldReloadArtifactsForArtifactEvent(stableScope, payload)) {
+        scheduleArtifactReload(`workflow:${String(payload.type)}`);
       }
     });
     return () => {
+      if (reloadTimer) {
+        clearTimeout(reloadTimer);
+      }
       unsubscribeSession();
       unsubscribeWorkflow?.();
     };

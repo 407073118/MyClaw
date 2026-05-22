@@ -4,7 +4,7 @@ export function buildPanelViewerHtml(): string {
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' myclaw-file: myclaw-vendor: blob:; img-src 'self' myclaw-file: data:; media-src 'self' myclaw-file:; font-src 'self' myclaw-vendor: data:; worker-src 'self' myclaw-vendor: blob:; style-src 'unsafe-inline' myclaw-vendor:; script-src 'unsafe-inline' myclaw-vendor:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' myclaw-file: myclaw-vendor: blob:; frame-src 'self' myclaw-file: data: blob:; img-src 'self' myclaw-file: data:; media-src 'self' myclaw-file:; font-src 'self' myclaw-vendor: data:; worker-src 'self' myclaw-vendor: blob:; style-src 'unsafe-inline' myclaw-vendor:; script-src 'unsafe-inline' myclaw-vendor:;">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MyClaw Viewer</title>
   <style>
@@ -36,6 +36,8 @@ export function buildPanelViewerHtml(): string {
     .markdown-table-wrap table { min-width: 100%; }
     .markdown-table-wrap th, .markdown-table-wrap td { white-space: normal; vertical-align: top; }
     .code { margin: 0; min-height: 100%; padding: 16px 18px 36px; font-family: "Cascadia Code", "Fira Code", ui-monospace, monospace; font-size: 12px; line-height: 1.65; color: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .html-preview { min-height: 100%; height: 100%; background: #0c0c0d; }
+    .html-frame { display: block; width: 100%; height: 100%; min-height: calc(100vh - 84px); border: 0; background: #0c0c0d; color-scheme: dark; }
     .monaco-lite { display: grid; grid-template-columns: auto minmax(0, 1fr); min-height: 100%; font-family: "Cascadia Code", ui-monospace, monospace; font-size: 12px; line-height: 1.65; }
     .lines { padding: 16px 10px 36px 14px; color: #71717a; text-align: right; border-right: 1px solid rgba(255,255,255,.06); user-select: none; }
     .codepane { margin: 0; padding: 16px 18px 36px; color: var(--soft); white-space: pre; overflow: auto; }
@@ -94,6 +96,8 @@ export function buildPanelViewerHtml(): string {
           return content ? '<article class="markdown">' + markdown(content) + '</article>' : fallback(payload, "该文档可用本地应用打开。");
         case "json":
           return editor(formatJson(content), "json");
+        case "html":
+          return htmlPreview(payload);
         case "text":
         case "code":
           return editor(content, payload.viewerKind);
@@ -116,6 +120,17 @@ export function buildPanelViewerHtml(): string {
     function editor(content, kind) {
       const language = kind === "json" ? "json" : "plaintext";
       return '<div id="monacoHost" class="monaco-host" data-language="' + attr(language) + '" data-editor="monaco"></div><noscript>' + editorFallback(content) + '</noscript>';
+    }
+
+    function htmlPreview(payload) {
+      const title = attr(payload.fileName || "HTML preview");
+      if (payload.previewUrl) {
+        return '<div class="html-preview"><iframe data-testid="html-preview-frame" class="html-frame" sandbox title="' + title + '" src="' + attr(payload.previewUrl) + '"></iframe></div>';
+      }
+      if (payload.content) {
+        return '<div class="html-preview"><iframe data-testid="html-preview-frame" class="html-frame" sandbox title="' + title + '" srcdoc="' + attr(payload.content) + '"></iframe></div>';
+      }
+      return fallback(payload, "HTML 文件可用本地应用打开。");
     }
 
     function editorFallback(content) {

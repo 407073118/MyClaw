@@ -45,6 +45,8 @@ export type ActiveSessionRun = {
   phase: ChatRunPhase;
   currentMessageId: string;
   pendingApprovalIds: string[];
+  /** 当前运行内已临时允许的工具 ID，仅用于“允许本次运行”审批。 */
+  runAllowedTools?: string[];
   cancelRequested: boolean;
   /** 运行创建时间，用于 stuck 检测 */
   startedAt: string;
@@ -108,6 +110,11 @@ export type RuntimeContext = {
     capabilityBundles?: CapabilityBundleResolver;
     /** 项目 MCP 一次性运行时，只做本轮 list/call，不写入全局 MCP 配置。 */
     projectMcpRuntime?: ProjectMcpRuntimeService;
+    /** workflow checkpoint 数据库退出前 flush/close 钩子，避免 debounce 脏数据丢失。 */
+    workflowCheckpointer?: {
+      flushNow: (reason: string) => Promise<void> | void;
+      close: () => Promise<void> | void;
+    };
   };
   tools: {
     resolveBuiltinTools: () => ResolvedBuiltinTool[];

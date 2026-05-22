@@ -66,6 +66,151 @@ type WorkflowRunsState = {
 // Helpers
 // ---------------------------------------------------------------------------
 
+const DEFAULT_WORKFLOW_DEBUG_EVENT_LIMIT = 300;
+const WORKFLOW_STATE_EVENT_SUMMARY_LIMIT = 4096;
+const WORKFLOW_STREAMING_EVENT_PREVIEW_LIMIT = 4096;
+const WORKFLOW_RUNS_DEBUG_LOGGING = resolveWorkflowRunsDebugLogging();
+
+type WorkflowDebugEvent = LiveRunState["events"][number];
+
+/** 读取 workflow 调试日志开关，默认关闭以避免高频流式事件拖慢渲染进程。 */
+function resolveWorkflowRunsDebugLogging(): boolean {
+  try {
+    const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+    if (env?.MYCLAW_DEBUG_WORKFLOW_RUNS === "1") {
+      return true;
+    }
+    return globalThis.localStorage?.getItem("MYCLAW_DEBUG_WORKFLOW_RUNS") === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** 输出 workflow 调试日志，默认不进入热路径 console。 */
+function logWorkflowRunsDebug(message: string, detail: Record<string, unknown>): void {
+  if (!WORKFLOW_RUNS_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
+
+/** 读取 workflow debug 事件保留上限，设置为 0 时保留旧的无限列表行为。 */
+function resolveWorkflowDebugEventLimit(): number {
+  const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
+  const raw = env?.MYCLAW_WORKFLOW_DEBUG_EVENT_LIMIT;
+  if (raw === "0") return 0;
+  const parsed = raw ? Number.parseInt(raw, 10) : DEFAULT_WORKFLOW_DEBUG_EVENT_LIMIT;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_WORKFLOW_DEBUG_EVENT_LIMIT;
+}
+
+/** 截断长文本，避免调试事件因为流式 chunk 无限增长。 */
+function truncateDebugText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  logWorkflowRunsDebug("[workflow-runs] 已截断 workflow 调试文本", {
+    originalLength: value.length,
+    maxLength,
+  });
+  return `${value.slice(0, maxLength)}...`;
+}
+
+/** 安全估算对象大小，序列化失败时返回 Infinity 以强制摘要化。 */
+function estimateJsonLength(value: unknown): number {
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch (error) {
+    console.warn("[workflow-runs] 估算 workflow 事件大小失败，改存摘要", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+/** 为大型 state-updated 事件生成摘要，避免调试日志持有完整大对象。 */
+function summarizeWorkflowStateValue(value: unknown): unknown {
+  const jsonLength = estimateJsonLength(value);
+  if (jsonLength <= WORKFLOW_STATE_EVENT_SUMMARY_LIMIT) {
+    return value;
+  }
+  const valueType = Array.isArray(value) ? "array" : value === null ? "null" : typeof value;
+  const summary = {
+    kind: "summary",
+    valueType,
+    jsonLength,
+    keys: value && typeof value === "object" && !Array.isArray(value)
+      ? Object.keys(value as Record<string, unknown>).slice(0, 20)
+      : undefined,
+  };
+  logWorkflowRunsDebug("[workflow-runs] 已将大型 state-updated 事件压缩为摘要", summary);
+  return summary;
+}
+
+/** 对进入调试环形缓冲区的事件做瘦身，运行态 state 仍保留完整值。 */
+function slimWorkflowDebugEvent(event: WorkflowStreamEvent): Record<string, unknown> {
+  if (event.type === "state-updated") {
+    return {
+      ...event,
+      value: summarizeWorkflowStateValue(event.value),
+    };
+  }
+  if (event.type === "node-streaming") {
+    return {
+      ...event,
+      chunk: {
+        content: event.chunk.content
+          ? truncateDebugText(event.chunk.content, WORKFLOW_STREAMING_EVENT_PREVIEW_LIMIT)
+          : event.chunk.content,
+        reasoning: event.chunk.reasoning
+          ? truncateDebugText(event.chunk.reasoning, WORKFLOW_STREAMING_EVENT_PREVIEW_LIMIT)
+          : event.chunk.reasoning,
+      },
+    };
+  }
+  return event;
+}
+
+/** 合并连续 node-streaming 调试事件，降低日志行数和 React 渲染压力。 */
+function mergeStreamingDebugEvent(
+  previous: WorkflowDebugEvent,
+  event: Record<string, unknown>,
+  timestamp: number,
+): WorkflowDebugEvent | null {
+  if (
+    previous.type !== "node-streaming"
+    || event.type !== "node-streaming"
+    || previous.nodeId !== event.nodeId
+  ) {
+    return null;
+  }
+  const previousChunk = previous.chunk && typeof previous.chunk === "object"
+    ? previous.chunk as { content?: string; reasoning?: string }
+    : {};
+  const nextChunk = event.chunk && typeof event.chunk === "object"
+    ? event.chunk as { content?: string; reasoning?: string }
+    : {};
+  const merged = {
+    ...previous,
+    ...event,
+    timestamp,
+    chunk: {
+      content: truncateDebugText(
+        `${previousChunk.content ?? ""}${nextChunk.content ?? ""}`,
+        WORKFLOW_STREAMING_EVENT_PREVIEW_LIMIT,
+      ),
+      reasoning: truncateDebugText(
+        `${previousChunk.reasoning ?? ""}${nextChunk.reasoning ?? ""}`,
+        WORKFLOW_STREAMING_EVENT_PREVIEW_LIMIT,
+      ),
+    },
+    sampleCount: typeof previous.sampleCount === "number" ? previous.sampleCount + 1 : 2,
+  };
+  logWorkflowRunsDebug("[workflow-runs] 已合并 node-streaming 调试事件", {
+    runId: event.runId,
+    nodeId: event.nodeId,
+    sampleCount: merged.sampleCount,
+  });
+  return merged as WorkflowDebugEvent;
+}
+
 function createInitialLiveRun(runId: string, workflowId: string): LiveRunState {
   return {
     runId,
@@ -81,15 +226,36 @@ function createInitialLiveRun(runId: string, workflowId: string): LiveRunState {
   };
 }
 
-/** Append a timestamped event entry to the run's event log. */
+/** 追加带时间戳的调试事件，并执行环形缓冲、stream 合并和大 state 摘要化。 */
 function pushEvent(
   run: LiveRunState,
   event: WorkflowStreamEvent,
 ): Array<LiveRunState["events"][number]> {
-  return [
-    ...run.events,
-    { ...event, timestamp: Date.now() },
-  ];
+  const timestamp = Date.now();
+  const slimEvent = slimWorkflowDebugEvent(event);
+  const eventEntry = { ...slimEvent, timestamp } as WorkflowDebugEvent;
+  const previous = run.events.at(-1);
+  let nextEvents = run.events;
+  if (previous) {
+    const merged = mergeStreamingDebugEvent(previous, slimEvent, timestamp);
+    if (merged) {
+      nextEvents = [...run.events.slice(0, -1), merged];
+    } else {
+      nextEvents = [...run.events, eventEntry];
+    }
+  } else {
+    nextEvents = [eventEntry];
+  }
+  const limit = resolveWorkflowDebugEventLimit();
+  if (limit > 0 && nextEvents.length > limit) {
+    logWorkflowRunsDebug("[workflow-runs] workflow 调试事件超过上限，已丢弃最早事件", {
+      runId: run.runId,
+      eventLimit: limit,
+      droppedCount: nextEvents.length - limit,
+    });
+    return nextEvents.slice(-limit);
+  }
+  return nextEvents;
 }
 
 // ---------------------------------------------------------------------------

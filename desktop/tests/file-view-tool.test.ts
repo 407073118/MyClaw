@@ -129,6 +129,29 @@ describe("file_view tool wiring", () => {
     });
   });
 
+  it("opens html reports as rendered panel previews instead of code source", async () => {
+    const body = "<!doctype html><html><body><h1>Interview Report</h1></body></html>";
+    writeFileSync(join(tmpRoot, "interview-final-report.html"), body, "utf8");
+
+    const result = await buildFileViewerPreviewResult({
+      path: "interview-final-report.html",
+      baseDirectory: tmpRoot,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.viewMeta).toMatchObject({
+      viewPath: "builtin:file-viewer",
+      title: "interview-final-report.html",
+      data: {
+        panelKind: "file-viewer",
+        fileName: "interview-final-report.html",
+        viewerKind: "html",
+        mimeType: "text/html",
+      },
+    });
+    expect((result.viewMeta?.data as { previewUrl?: string }).previewUrl).toMatch(/^file:\/\//);
+  });
+
   it("resolves a bare file name from candidate directories mentioned in the chat message", async () => {
     const externalDir = join(tmpRoot, "external-skill");
     const fileName = "Skill表单开发规范.md";

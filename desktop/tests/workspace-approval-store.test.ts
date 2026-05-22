@@ -57,4 +57,19 @@ describe("workspace approval store", () => {
     expect(useWorkspaceStore.getState().approvalRequests).toEqual([]);
     expect(useWorkspaceStore.getState().approvals).toEqual(nextApprovals);
   });
+
+  it("deduplicates approval requests by id when stream events replay", () => {
+    const existing = useWorkspaceStore.getState().approvalRequests[0] as any;
+
+    useWorkspaceStore.getState().addApprovalRequest({
+      ...existing,
+      detail: "重复推送后的最新审批详情",
+    });
+
+    expect(useWorkspaceStore.getState().approvalRequests).toHaveLength(1);
+    expect(useWorkspaceStore.getState().approvalRequests[0]).toMatchObject({
+      id: "approval-1",
+      detail: "重复推送后的最新审批详情",
+    });
+  });
 });

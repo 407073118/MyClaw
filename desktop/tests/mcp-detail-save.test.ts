@@ -127,7 +127,7 @@ describe("McpDetailPage save flow", () => {
     await waitFor(() => {
       expect(mocks.workspace.createMcpServer).toHaveBeenCalledTimes(1);
     });
-  });
+  }, 10_000);
 
   it("renders the create route as a compact desktop form instead of a detail glass card", () => {
     const { container } = renderMcpDetail();

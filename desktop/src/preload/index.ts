@@ -291,7 +291,7 @@ const myClawAPI = {
   getSessionMessages: (sessionId: string) =>
     ipcRenderer.invoke("session:get-messages", sessionId) as Promise<import("../../shared/contracts").ChatMessage[]>,
 
-  // ---- 宸ヤ綔鏂囦欢 ------------------------------------------------------------
+  // ---- 工作文件 ------------------------------------------------------------
   listArtifactsByScope: (scope: ArtifactScopeRef) =>
     ipcRenderer.invoke("artifact:list-by-scope", scope) as Promise<ArtifactRecord[]>,
 
@@ -316,6 +316,15 @@ const myClawAPI = {
   /** 订阅会话流式事件，例如消息增量、工具调用等 */
   onSessionStream: (callback: (event: Record<string, unknown>) => void): UnsubscribeFn =>
     onChannel("session:stream", callback),
+
+  /** 按需读取审批详情，避免实时事件默认携带大型工具参数。 */
+  getApprovalDetail: (approvalId: string) =>
+    ipcRenderer.invoke("approval:get-detail", approvalId) as Promise<{
+      success: boolean;
+      approvalId: string;
+      arguments?: Record<string, unknown>;
+      error?: string;
+    }>,
 
   // ---- 模型 ----------------------------------------------------------------
   listModels: () => ipcRenderer.invoke("model:list"),

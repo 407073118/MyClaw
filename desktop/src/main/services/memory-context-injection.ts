@@ -19,6 +19,16 @@ const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{16,}/,
 ];
 
+const MEMORY_CONTEXT_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_MEMORY_CONTEXT === "1";
+
+/** 输出记忆注入调试日志，默认关闭以避免每轮会话在未开启记忆时刷屏。 */
+function logMemoryContextDebug(message: string, detail?: Record<string, unknown>): void {
+  if (!MEMORY_CONTEXT_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
+
 /** 检查证据包是否含有明显密钥或口令，命中时拒绝注入模型上下文。 */
 function containsObviousSecret(promptBlock: string): boolean {
   return SECRET_PATTERNS.some((pattern) => pattern.test(promptBlock));
@@ -36,17 +46,17 @@ function hasUsableEvidence(pack: MemoryContextPack): boolean {
  */
 export async function buildMemoryWorkingMemory(input: BuildMemoryWorkingMemoryInput): Promise<string | null> {
   if (!input.enabled) {
-    console.info("[memory-context] AI 记忆注入未开启，跳过记忆库检索");
+    logMemoryContextDebug("[memory-context] AI 记忆注入未开启，跳过记忆库检索");
     return null;
   }
   if (!input.memoryVault) {
-    console.info("[memory-context] 记忆库服务不可用，跳过记忆库检索");
+    logMemoryContextDebug("[memory-context] 记忆库服务不可用，跳过记忆库检索");
     return null;
   }
 
   const query = input.query.trim();
   if (!query) {
-    console.info("[memory-context] 当前用户消息为空，跳过记忆库检索");
+    logMemoryContextDebug("[memory-context] 当前用户消息为空，跳过记忆库检索");
     return null;
   }
 
@@ -57,7 +67,7 @@ export async function buildMemoryWorkingMemory(input: BuildMemoryWorkingMemoryIn
   };
   const pack = await input.memoryVault.getContextPack(request);
   if (!hasUsableEvidence(pack)) {
-    console.info("[memory-context] 未检索到可注入记忆证据", { query });
+    logMemoryContextDebug("[memory-context] 未检索到可注入记忆证据", { query });
     return null;
   }
   if (containsObviousSecret(pack.promptBlock)) {
@@ -65,7 +75,7 @@ export async function buildMemoryWorkingMemory(input: BuildMemoryWorkingMemoryIn
     return null;
   }
 
-  console.info("[memory-context] 已构建 AI 记忆证据包", {
+  logMemoryContextDebug("[memory-context] 已构建 AI 记忆证据包", {
     query,
     evidenceCount: pack.evidence?.length ?? 0,
     tokenEstimate: pack.tokenEstimate ?? null,

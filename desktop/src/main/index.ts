@@ -117,7 +117,7 @@ import { trackSave, waitForPendingSaves, getPendingSavesCount } from "./services
 export { trackSave };
 
 import type { MyClawPaths } from "./services/directory-service";
-import { getSessionDatabase, loadPersistedState, saveSession } from "./services/state-persistence";
+import { flushSessionDatabaseNow, getSessionDatabase, loadPersistedState, saveSession } from "./services/state-persistence";
 import { syncSessionBackgroundTaskSnapshot } from "./services/session-background-task";
 import { registerAllIpcHandlers } from "./ipc";
 import { McpServerManager } from "./services/mcp-server-manager";
@@ -910,11 +910,11 @@ let isQuitting = false;
 
 app.on("before-quit", (event) => {
   if (!runtimeContext) return;
+  if (isQuitting) return;
 
   // 阻止立即退出，等所有清理完成后再真正退出
   event.preventDefault();
 
-  if (isQuitting) return;
   isQuitting = true;
 
   // 关闭浏览器进程（如果存在），避免遗留孤儿 Chrome 进程
@@ -935,7 +935,16 @@ app.on("before-quit", (event) => {
     ? (log.info(`[shutdown] Waiting for ${pendingCount} pending save(s)...`), waitForPendingSaves())
     : Promise.resolve();
 
-  waitForSaves.then(() => {
+  /** 退出前立即落盘 debounce 数据库写入，避免 pending save resolve 后仍滞留内存。 */
+  const flushDebouncedStores = async (): Promise<void> => {
+    const ctx = runtimeContext;
+    flushSessionDatabaseNow();
+    await ctx?.services.workflowCheckpointer?.flushNow("before-quit");
+    await ctx?.services.workflowCheckpointer?.close();
+  };
+
+  waitForSaves.then(async () => {
+    await flushDebouncedStores();
     panelViewManager?.close();
     runtimeContext?.services.timeStore?.close();
     runtimeContext?.services.memoryVault?.close();
@@ -943,8 +952,13 @@ app.on("before-quit", (event) => {
     panelViewManager = null;
     runtimeContext = null;
     app.quit();
-  }).catch((err) => {
+  }).catch(async (err) => {
     log.warn("[shutdown] 等待 pending saves 失败，强制关闭", { error: err instanceof Error ? err.message : String(err) });
+    try {
+      await flushDebouncedStores();
+    } catch (flushErr) {
+      log.warn("[shutdown] 退出前 flush debounce 数据库失败", { error: flushErr instanceof Error ? flushErr.message : String(flushErr) });
+    }
     panelViewManager?.close();
     runtimeContext?.services.timeStore?.close();
     runtimeContext?.services.memoryVault?.close();

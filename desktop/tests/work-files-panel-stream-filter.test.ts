@@ -4,7 +4,7 @@ import React from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { FILE_VIEWER_PANEL_PATH, type ArtifactRecord } from "../shared/contracts";
+import { EventType, FILE_VIEWER_PANEL_PATH, type ArtifactRecord } from "../shared/contracts";
 
 const mocks = vi.hoisted(() => {
   const loadArtifactsByScope = vi.fn().mockResolvedValue([]);
@@ -108,7 +108,7 @@ describe("WorkFilesPanel stream filtering", () => {
     delete (window as Window & { myClawAPI?: unknown }).myClawAPI;
   });
 
-  it("reloads session-scoped artifacts only for matching session stream events", async () => {
+  it("reloads session-scoped artifacts only for artifact stream events", async () => {
     const { default: WorkFilesPanel } = await import("../src/renderer/components/WorkFilesPanel");
 
     render(
@@ -152,7 +152,73 @@ describe("WorkFilesPanel stream filtering", () => {
       });
     });
 
-    expect(mocks.loadArtifactsByScope).toHaveBeenCalledTimes(2);
+    expect(mocks.loadArtifactsByScope).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      sessionStreamHandler?.({
+        type: EventType.ArtifactCompleted,
+        scopeKind: "session",
+        scopeId: "session-other",
+        artifact: mocks.markdownArtifact,
+      });
+    });
+
+    expect(mocks.loadArtifactsByScope).toHaveBeenCalledTimes(1);
+    expect(mocks.applyArtifactEvent).not.toHaveBeenCalled();
+
+    await act(async () => {
+      sessionStreamHandler?.({
+        type: EventType.ArtifactCompleted,
+        scopeKind: "session",
+        scopeId: "session-1",
+        artifact: mocks.markdownArtifact,
+      });
+    });
+
+    await waitFor(() => expect(mocks.loadArtifactsByScope).toHaveBeenCalledTimes(2));
+    expect(mocks.applyArtifactEvent).toHaveBeenCalledWith({
+      type: EventType.ArtifactCompleted,
+      scopeKind: "session",
+      scopeId: "session-1",
+      artifact: mocks.markdownArtifact,
+    });
+    expect(workflowStreamHandler).toBeTypeOf("function");
+  });
+
+  it("ignores noisy workflow events and debounces artifact workflow reloads", async () => {
+    const { default: WorkFilesPanel } = await import("../src/renderer/components/WorkFilesPanel");
+
+    render(
+      React.createElement(WorkFilesPanel, {
+        scope: { scopeKind: "workflowRun", scopeId: "run-1" },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.loadArtifactsByScope).toHaveBeenCalledWith({ scopeKind: "workflowRun", scopeId: "run-1" }),
+    );
+    mocks.loadArtifactsByScope.mockClear();
+
+    await act(async () => {
+      workflowStreamHandler?.({ type: "checkpoint-saved", runId: "run-1" });
+      workflowStreamHandler?.({ type: "state-updated", runId: "run-1", value: { huge: true } });
+    });
+
+    expect(mocks.loadArtifactsByScope).not.toHaveBeenCalled();
+
+    await act(async () => {
+      workflowStreamHandler?.({ type: EventType.ArtifactCompleted, scopeKind: "workflowRun", scopeId: "run-other", artifactId: "a1" });
+    });
+
+    expect(mocks.loadArtifactsByScope).not.toHaveBeenCalled();
+
+    await act(async () => {
+      workflowStreamHandler?.({ type: EventType.ArtifactCompleted, scopeKind: "workflowRun", scopeId: "run-1", artifactId: "a1" });
+      workflowStreamHandler?.({ type: EventType.ArtifactCompleted, scopeKind: "workflowRun", scopeId: "run-1", artifactId: "a1" });
+    });
+
+    await waitFor(() => expect(mocks.loadArtifactsByScope).toHaveBeenCalledTimes(1));
+    expect(mocks.loadArtifactsByScope).toHaveBeenCalledWith({ scopeKind: "workflowRun", scopeId: "run-1" });
     expect(workflowStreamHandler).toBeTypeOf("function");
   });
 

@@ -33,6 +33,35 @@ import type { A2UiPayload } from "@shared/contracts";
 
 // ─── 序列化辅助 ──────────────────────────────────────────────────────────────
 
+type MessageWriteRow = {
+  id: string;
+  session_id: string;
+  seq: number;
+  role: ChatMessage["role"];
+  content: string;
+  content_text: string;
+  reasoning: string | null;
+  tool_calls: string | null;
+  tool_call_id: string | null;
+  ui_payload: string | null;
+  usage_prompt: number;
+  usage_completion: number;
+  usage_total: number;
+  usage_json: string | null;
+  created_at: string;
+};
+
+const DEFAULT_SESSION_FLUSH_DEBOUNCE_MS = 80;
+const SESSION_DATABASE_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_SESSION_DATABASE === "1";
+
+/** 输出会话数据库调试日志，默认关闭以避免每次保存和 flush 都写 console。 */
+function logSessionDatabaseDebug(message: string, detail: Record<string, unknown>): void {
+  if (!SESSION_DATABASE_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
+
 /** 将 ChatMessageContent 序列化为字符串，纯文本原样保存，多模态数组序列化为 JSON。 */
 function serializeContent(content: ChatMessageContent): string {
   if (typeof content === "string") return content;
@@ -110,6 +139,31 @@ function deriveTotalTokens(messages: ChatMessage[]): number {
     total += m.usage?.totalTokens ?? 0;
   }
   return total;
+}
+
+/** 判断是否启用会话消息增量保存，环境变量为 0 时回退全量重写。 */
+function isIncrementalSessionSaveEnabled(): boolean {
+  return process.env.MYCLAW_SESSION_INCREMENTAL_SAVE !== "0";
+}
+
+/** 判断是否启用 debounce flush，环境变量为 0 时立即同步写盘。 */
+function isDebouncedFlushEnabled(): boolean {
+  return process.env.MYCLAW_SESSION_DEBOUNCED_FLUSH !== "0";
+}
+
+/** 读取 flush debounce 间隔，非法配置回退到默认值。 */
+function resolveFlushDebounceMs(): number {
+  const raw = process.env.MYCLAW_SESSION_FLUSH_DEBOUNCE_MS;
+  if (!raw) return DEFAULT_SESSION_FLUSH_DEBOUNCE_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    console.warn("[session-database] 会话数据库 debounce flush 间隔配置无效，已使用默认值", {
+      raw,
+      defaultMs: DEFAULT_SESSION_FLUSH_DEBOUNCE_MS,
+    });
+    return DEFAULT_SESSION_FLUSH_DEBOUNCE_MS;
+  }
+  return parsed;
 }
 
 /** sql.js 绑定参数需要加 @ 前缀：{key: val} → {'@key': val}，undefined 转 null */
@@ -400,6 +454,8 @@ async function ensureSqlJs(): Promise<Awaited<ReturnType<typeof initSqlJs>>> {
 export class SessionDatabase {
   private db: Database;
   private dbPath: string;
+  private pendingFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private hasPendingFlush = false;
 
   private constructor(db: Database, dbPath: string) {
     this.db = db;
@@ -457,6 +513,41 @@ export class SessionDatabase {
     const tmpPath = `${this.dbPath}.${Date.now()}.tmp`;
     writeFileSync(tmpPath, Buffer.from(data));
     renameSync(tmpPath, this.dbPath);
+  }
+
+  /** 标记数据库已变更，并按配置决定立即写盘或 debounce 合并写盘。 */
+  private scheduleFlush(reason: string): void {
+    this.hasPendingFlush = true;
+    if (!isDebouncedFlushEnabled()) {
+      logSessionDatabaseDebug("[session-database] debounce flush 已关闭，立即写盘会话数据库", { reason });
+      this.flushNow(reason);
+      return;
+    }
+
+    const delayMs = resolveFlushDebounceMs();
+    if (this.pendingFlushTimer) {
+      logSessionDatabaseDebug("[session-database] 已合并会话数据库 flush 请求", { reason, delayMs });
+      return;
+    }
+
+    logSessionDatabaseDebug("[session-database] 已安排会话数据库 debounce flush", { reason, delayMs });
+    this.pendingFlushTimer = setTimeout(() => {
+      this.pendingFlushTimer = null;
+      this.flushNow("debounce-timer");
+    }, delayMs);
+    (this.pendingFlushTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+  }
+
+  /** 立即落盘所有待处理会话数据库写入，供关闭、关键路径和测试使用。 */
+  flushNow(reason = "manual"): void {
+    if (this.pendingFlushTimer) {
+      clearTimeout(this.pendingFlushTimer);
+      this.pendingFlushTimer = null;
+    }
+    if (!this.hasPendingFlush) return;
+    this.hasPendingFlush = false;
+    this.flush();
+    logSessionDatabaseDebug("[session-database] 已立即写盘会话数据库", { reason });
   }
 
   /** 执行写操作（INSERT/UPDATE/DELETE）。 */
@@ -558,7 +649,8 @@ export class SessionDatabase {
       { key: "version", value: String(SCHEMA_VERSION) },
     );
 
-    this.flush();
+    this.hasPendingFlush = true;
+    this.flushNow("schema-init");
   }
 
   /** 确保旧库也有完整 usage JSON 列，用于保留缓存命中、写入和原始厂商 usage。 */
@@ -583,9 +675,137 @@ export class SessionDatabase {
   /** 保存完整会话，包括元数据和消息列表。使用事务保证原子性。 */
   saveSession(session: ChatSession): void {
     this.transaction(() => this._saveSessionInner(session));
-    this.flush();
+    this.scheduleFlush("save-session");
   }
 
+  /** 将消息转换为数据库写入行，确保 diff 与 INSERT 使用同一套序列化规则。 */
+  private buildMessageWriteRow(sessionId: string, msg: ChatMessage, seq: number): MessageWriteRow {
+    return {
+      id: msg.id,
+      session_id: sessionId,
+      seq,
+      role: msg.role,
+      content: serializeContent(msg.content),
+      content_text: extractText(msg.content),
+      reasoning: msg.reasoning ?? null,
+      tool_calls: jsonOrNull(msg.tool_calls),
+      tool_call_id: msg.tool_call_id ?? null,
+      ui_payload: jsonOrNull(msg.ui),
+      usage_prompt: msg.usage?.promptTokens ?? 0,
+      usage_completion: msg.usage?.completionTokens ?? 0,
+      usage_total: msg.usage?.totalTokens ?? 0,
+      usage_json: jsonOrNull(msg.usage),
+      created_at: msg.createdAt,
+    };
+  }
+
+  /** 判断既有消息行是否与目标写入行完全一致。 */
+  private isSameMessageRow(existing: Record<string, unknown>, target: MessageWriteRow): boolean {
+    return (
+      existing.id === target.id &&
+      existing.seq === target.seq &&
+      existing.role === target.role &&
+      existing.content === target.content &&
+      existing.content_text === target.content_text &&
+      (existing.reasoning ?? null) === target.reasoning &&
+      (existing.tool_calls ?? null) === target.tool_calls &&
+      (existing.tool_call_id ?? null) === target.tool_call_id &&
+      (existing.ui_payload ?? null) === target.ui_payload &&
+      (existing.usage_prompt ?? 0) === target.usage_prompt &&
+      (existing.usage_completion ?? 0) === target.usage_completion &&
+      (existing.usage_total ?? 0) === target.usage_total &&
+      (existing.usage_json ?? null) === target.usage_json &&
+      existing.created_at === target.created_at
+    );
+  }
+
+  /** 插入单条消息行，供全量重写和增量后缀重写共用。 */
+  private insertMessageRow(row: MessageWriteRow): void {
+    this.run(INSERT_MESSAGE_SQL, row);
+  }
+
+  /** 使用旧路径全量替换消息，作为显式回滚和异常 fallback。 */
+  private saveMessagesFullRewrite(session: ChatSession): void {
+    this.run("DELETE FROM messages WHERE session_id = @session_id", { session_id: session.id });
+
+    for (let i = 0; i < session.messages.length; i++) {
+      this.insertMessageRow(this.buildMessageWriteRow(session.id, session.messages[i], i));
+    }
+  }
+
+  /** 增量保存消息：复用相同前缀，仅删除并重写第一个差异点之后的后缀。 */
+  private saveMessagesIncremental(session: ChatSession): void {
+    const targetRows = session.messages.map((msg, index) => this.buildMessageWriteRow(session.id, msg, index));
+    const existingRows = this.queryAll(
+      `SELECT
+        id, session_id, seq, role, content, content_text, reasoning, tool_calls,
+        tool_call_id, ui_payload, usage_prompt, usage_completion, usage_total,
+        usage_json, created_at
+       FROM messages
+       WHERE session_id = @session_id
+       ORDER BY seq ASC`,
+      { session_id: session.id },
+    );
+
+    let firstDiff = 0;
+    const sharedLength = Math.min(existingRows.length, targetRows.length);
+    while (firstDiff < sharedLength && this.isSameMessageRow(existingRows[firstDiff], targetRows[firstDiff])) {
+      firstDiff++;
+    }
+
+    if (firstDiff === existingRows.length && firstDiff === targetRows.length) {
+      logSessionDatabaseDebug("[session-database] 会话消息无差异，跳过消息表写入", {
+        sessionId: session.id,
+        messageCount: targetRows.length,
+      });
+      return;
+    }
+
+    if (firstDiff < existingRows.length) {
+      this.run(
+        "DELETE FROM messages WHERE session_id = @session_id AND seq >= @seq",
+        { session_id: session.id, seq: firstDiff },
+      );
+    }
+
+    for (let i = firstDiff; i < targetRows.length; i++) {
+      this.insertMessageRow(targetRows[i]);
+    }
+
+    logSessionDatabaseDebug("[session-database] 已增量保存会话消息后缀", {
+      sessionId: session.id,
+      firstDiff,
+      existingCount: existingRows.length,
+      targetCount: targetRows.length,
+      insertedCount: Math.max(targetRows.length - firstDiff, 0),
+      deletedSuffix: Math.max(existingRows.length - firstDiff, 0),
+    });
+  }
+
+  /** 保存会话消息，优先走增量路径，异常时回退到全量重写。 */
+  private saveMessages(session: ChatSession): void {
+    if (!isIncrementalSessionSaveEnabled()) {
+      logSessionDatabaseDebug("[session-database] 会话消息增量保存已关闭，使用全量重写", {
+        sessionId: session.id,
+        messageCount: session.messages.length,
+      });
+      this.saveMessagesFullRewrite(session);
+      return;
+    }
+
+    try {
+      this.saveMessagesIncremental(session);
+    } catch (err) {
+      console.warn("[session-database] 会话消息增量保存失败，已回退全量重写", {
+        sessionId: session.id,
+        messageCount: session.messages.length,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      this.saveMessagesFullRewrite(session);
+    }
+  }
+
+  /** 在事务内部保存会话元数据与消息，外层负责统一安排 flush。 */
   private _saveSessionInner(session: ChatSession): void {
     const updatedAt = deriveUpdatedAt(session);
     const totalTokens = deriveTotalTokens(session.messages);
@@ -616,29 +836,8 @@ export class SessionDatabase {
       updated_at: updatedAt,
     });
 
-    // 2. 全量替换消息（删除旧消息后重新插入）
-    this.run("DELETE FROM messages WHERE session_id = @session_id", { session_id: session.id });
-
-    for (let i = 0; i < session.messages.length; i++) {
-      const msg = session.messages[i];
-      this.run(INSERT_MESSAGE_SQL, {
-        id: msg.id,
-        session_id: session.id,
-        seq: i,
-        role: msg.role,
-        content: serializeContent(msg.content),
-        content_text: extractText(msg.content),
-        reasoning: msg.reasoning ?? null,
-        tool_calls: jsonOrNull(msg.tool_calls),
-        tool_call_id: msg.tool_call_id ?? null,
-        ui_payload: jsonOrNull(msg.ui),
-        usage_prompt: msg.usage?.promptTokens ?? 0,
-        usage_completion: msg.usage?.completionTokens ?? 0,
-        usage_total: msg.usage?.totalTokens ?? 0,
-        usage_json: jsonOrNull(msg.usage),
-        created_at: msg.createdAt,
-      });
-    }
+    // 2. 增量保存消息，回退开关或异常时仍可使用旧全量重写路径
+    this.saveMessages(session);
   }
 
   // ─── 加载会话 ──────────────────────────────────────────────────────────────
@@ -822,7 +1021,7 @@ export class SessionDatabase {
   /** 删除会话及其所有消息（CASCADE 自动清理消息和 FTS）。 */
   deleteSession(id: string): void {
     this.run("DELETE FROM sessions WHERE id = @id", { id });
-    this.flush();
+    this.scheduleFlush("delete-session");
   }
 
   // ─── 会话管理 ──────────────────────────────────────────────────────────────
@@ -833,7 +1032,7 @@ export class SessionDatabase {
       id,
       is_pinned: pinned ? 1 : 0,
     });
-    this.flush();
+    this.scheduleFlush("pin-session");
   }
 
   /** 归档/取消归档。 */
@@ -842,7 +1041,7 @@ export class SessionDatabase {
       id,
       is_archived: archived ? 1 : 0,
     });
-    this.flush();
+    this.scheduleFlush("archive-session");
   }
 
   /** 重命名会话。 */
@@ -852,7 +1051,7 @@ export class SessionDatabase {
       title,
       updated_at: new Date().toISOString(),
     });
-    this.flush();
+    this.scheduleFlush("rename-session");
   }
 
   /** 更新硅基员工会话状态字段。 */
@@ -880,7 +1079,7 @@ export class SessionDatabase {
         sp_needs_approval: status.spNeedsApproval ? 1 : 0,
       },
     );
-    this.flush();
+    this.scheduleFlush("update-silicon-person-session-status");
   }
 
   // ─── 会话列表（元数据，不含消息） ──────────────────────────────────────────
@@ -1050,7 +1249,7 @@ export class SessionDatabase {
         open_count: artifact.openCount,
       },
     );
-    this.flush();
+    this.scheduleFlush("save-artifact");
   }
 
   /** 读取单个 artifact。 */
@@ -1111,7 +1310,7 @@ export class SessionDatabase {
         created_at: link.createdAt,
       },
     );
-    this.flush();
+    this.scheduleFlush("save-artifact-link");
   }
 
   /** 查询单个 artifact 的全部关联。 */
@@ -1140,7 +1339,7 @@ export class SessionDatabase {
         created_at: event.createdAt,
       },
     );
-    this.flush();
+    this.scheduleFlush("save-artifact-event");
   }
 
   /** 读取 artifact 生命周期事件。 */
@@ -1173,22 +1372,24 @@ export class SessionDatabase {
         opened_at: openedAt,
       },
     );
-    this.flush();
+    this.scheduleFlush("mark-artifact-opened");
   }
 
+  /** 从旧 JSON 会话批量导入，并合并安排一次数据库落盘。 */
   migrateFromJson(sessions: ChatSession[]): void {
     this.transaction(() => {
       for (const session of sessions) {
         this._saveSessionInner(session);
       }
     });
-    this.flush();
+    this.scheduleFlush("migrate-from-json");
   }
 
   // ─── 生命周期 ──────────────────────────────────────────────────────────────
 
   /** 关闭数据库连接。 */
   close(): void {
+    this.flushNow("close");
     this.db.close();
   }
 }

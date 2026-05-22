@@ -54,6 +54,7 @@ import type {
   NodeExecutionContext,
   NodeExecutionResult,
 } from "../services/workflow-engine";
+import type { WorkflowStreamEvent } from "@shared/contracts/workflow-stream";
 import { SqliteCheckpointer } from "../services/workflow-engine/sqlite-checkpointer";
 import { broadcastSessionTasksUpdated } from "./sessions";
 import {
@@ -65,6 +66,9 @@ type UpdateWorkflowInput = Partial<WorkflowDefinition>;
 type StartWorkflowRunInput = { workflowId: string; initialState?: Record<string, unknown> };
 
 const log = createLogger("desktop-workflows");
+const SILICON_WORKFLOW_TASK_SYNC_DEBOUNCE_MS = 150;
+const siliconWorkflowTaskSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const WORKFLOW_TASK_PROJECTION_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_WORKFLOW_TASK_PROJECTION === "1";
 
 let registeredWorkflowStartRunBridge:
   | ((input: StartWorkflowRunInput) => Promise<{ runId: string }>)
@@ -83,6 +87,25 @@ export async function invokeRegisteredWorkflowStartRun(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** 解析 workflow checkpoint 策略，默认使用 on-interrupt 以降低普通运行期写盘频率。 */
+function resolveWorkflowCheckpointPolicy(): "every-step" | "on-interrupt" | "none" {
+  const policy = process.env.MYCLAW_WORKFLOW_CHECKPOINT_POLICY;
+  if (policy === "every-step" || policy === "on-interrupt" || policy === "none") {
+    console.info("[workflow] 已使用环境变量指定 checkpoint 策略", { checkpointPolicy: policy });
+    return policy;
+  }
+  console.info("[workflow] 使用默认 workflow checkpoint 策略", { checkpointPolicy: "on-interrupt" });
+  return "on-interrupt";
+}
+
+/** 输出 workflow task 投影调试日志，默认关闭以避免高频事件拖慢主进程。 */
+function logWorkflowTaskProjectionDebug(message: string, detail: Record<string, unknown>): void {
+  if (!WORKFLOW_TASK_PROJECTION_DEBUG_LOGGING) {
+    return;
+  }
+  console.debug(message, detail);
+}
 
 /** 广播事件到所有渲染窗口 */
 function broadcastToRenderers(channel: string, ...args: unknown[]): void {
@@ -193,12 +216,53 @@ async function persistWorkflowTurnOutcomeMetrics(
 /** 判断两份 tasklist 是否真的发生了变化，避免 workflow 事件导致无意义的重复持久化。 */
 function didTasksChange(previous: Task[] | undefined, next: Task[]): boolean {
   const changed = JSON.stringify(previous ?? []) !== JSON.stringify(next);
-  console.info("[workflow] 对比 session 任务列表是否变化", {
+  logWorkflowTaskProjectionDebug("[workflow] 对比 session 任务列表是否变化", {
     previousCount: previous?.length ?? 0,
     nextCount: next.length,
     changed,
   });
   return changed;
+}
+
+/** 只允许会改变任务投影的 workflow 事件进入 task projection。 */
+function shouldProjectWorkflowEventToSessionTasks(event: WorkflowStreamEvent): boolean {
+  const shouldProject = (
+    event.type === "node-start"
+    || event.type === "node-complete"
+    || event.type === "node-error"
+    || event.type === "run-complete"
+  );
+  if (!shouldProject) {
+    logWorkflowTaskProjectionDebug("[workflow] 已跳过非 task projection workflow 事件", {
+      runId: event.runId,
+      eventType: event.type,
+    });
+  }
+  return shouldProject;
+}
+
+/** 终态和初始化路径需要立即写回，普通节点事件可以 debounce 合并。 */
+function shouldFlushSiliconWorkflowTasksImmediately(reason: string): boolean {
+  return reason === "run-seeded" || reason.startsWith("workflow-run:") || reason.includes("run-complete");
+}
+
+/** 持久化并广播硅基员工 workflow task 投影结果。 */
+function persistAndBroadcastSiliconPersonWorkflowTasks(
+  ctx: RuntimeContext,
+  session: ChatSession,
+  tasks: Task[],
+  reason: string,
+): void {
+  trackSave(
+    saveSession(ctx.runtime.paths, session).catch((err) => {
+      console.error("[workflow] 持久化 session tasklist 失败", {
+        sessionId: session.id,
+        reason,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }),
+  );
+  broadcastSessionTasksUpdated(session.id, tasks);
 }
 
 /** 从 workflow 启动参数里解析硅基员工 session 绑定，只在归属和绑定都正确时启用 task 驱动。 */
@@ -214,7 +278,7 @@ function resolveSiliconPersonWorkflowSession(
     : null;
 
   if (!siliconPersonId || !sessionId) {
-    console.info("[workflow] 当前 run 未绑定硅基员工 session，跳过 task 驱动", {
+    logWorkflowTaskProjectionDebug("[workflow] 当前 run 未绑定硅基员工 session，跳过 task 驱动", {
       workflowId: input.workflowId,
       siliconPersonId,
       sessionId,
@@ -259,7 +323,7 @@ function syncSiliconPersonWorkflowTasks(
   reason: string,
 ): void {
   if (!didTasksChange(session.tasks, tasks)) {
-    console.info("[workflow] tasklist 未变化，跳过 session 持久化", {
+    logWorkflowTaskProjectionDebug("[workflow] tasklist 未变化，跳过 session 持久化", {
       sessionId: session.id,
       reason,
     });
@@ -267,21 +331,34 @@ function syncSiliconPersonWorkflowTasks(
   }
 
   session.tasks = tasks;
-  console.info("[workflow] 已按 workflow 事件回写 session tasklist", {
+  logWorkflowTaskProjectionDebug("[workflow] 已按 workflow 事件回写 session tasklist", {
     sessionId: session.id,
     reason,
     taskCount: tasks.length,
   });
-  trackSave(
-    saveSession(ctx.runtime.paths, session).catch((err) => {
-      console.error("[workflow] 持久化 session tasklist 失败", {
-        sessionId: session.id,
-        reason,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }),
-  );
-  broadcastSessionTasksUpdated(session.id, tasks);
+  const existingTimer = siliconWorkflowTaskSyncTimers.get(session.id);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    siliconWorkflowTaskSyncTimers.delete(session.id);
+    logWorkflowTaskProjectionDebug("[workflow] 已合并 workflow tasklist 持久化请求", {
+      sessionId: session.id,
+      reason,
+    });
+  }
+  if (shouldFlushSiliconWorkflowTasksImmediately(reason)) {
+    persistAndBroadcastSiliconPersonWorkflowTasks(ctx, session, tasks, reason);
+    return;
+  }
+  const timer = setTimeout(() => {
+    siliconWorkflowTaskSyncTimers.delete(session.id);
+    persistAndBroadcastSiliconPersonWorkflowTasks(ctx, session, session.tasks ?? tasks, reason);
+  }, SILICON_WORKFLOW_TASK_SYNC_DEBOUNCE_MS);
+  siliconWorkflowTaskSyncTimers.set(session.id, timer);
+  logWorkflowTaskProjectionDebug("[workflow] 已计划 workflow tasklist debounce 持久化", {
+    sessionId: session.id,
+    reason,
+    debounceMs: SILICON_WORKFLOW_TASK_SYNC_DEBOUNCE_MS,
+  });
 }
 
 /** 将绑定到硅基员工会话的 workflow 最终输出追加为 assistant 消息。 */
@@ -531,6 +608,8 @@ class SubgraphStubExecutor implements NodeExecutor {
 // ---------------------------------------------------------------------------
 
 export function registerWorkflowHandlers(ctx: RuntimeContext): void {
+  // 兼容旧测试和轻量运行上下文：生产环境会注入完整 services，这里只补齐容器本身。
+  ctx.services = ctx.services ?? ({} as RuntimeContext["services"]);
   // ── Checkpointer 初始化 ──────────────────────────────────────────────────
 
   const checkpointer = new SqliteCheckpointer(
@@ -539,6 +618,20 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
   let checkpointerReady: Promise<void> | undefined = checkpointer.init().catch((err) => {
     console.error("[workflow] 初始化 checkpointer 失败", err);
   }) as Promise<void>;
+  ctx.services.workflowCheckpointer = {
+    /** 退出前立即 flush workflow checkpoint 数据库，避免 debounce 脏数据滞留内存。 */
+    async flushNow(reason: string): Promise<void> {
+      await checkpointerReady;
+      checkpointer.flushNow(reason);
+    },
+    /** 关闭 workflow checkpoint 数据库，供应用退出流程统一调用。 */
+    async close(): Promise<void> {
+      await checkpointerReady;
+      checkpointer.close();
+      checkpointerReady = undefined;
+      console.info("[workflow] workflow checkpoint 数据库已关闭");
+    },
+  };
 
   /**
    * 将 SqliteCheckpointer（同步 API）适配为 PregelRunner 所需的
@@ -570,9 +663,14 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         versionsSeen: data.versionsSeen,
         triggeredNodes: data.triggeredNodes,
         durationMs: data.durationMs,
+        reason: data.reason,
         interruptPayload: data.interruptPayload,
         channelData: data.channelData,
       });
+    },
+    async flushNow(reason) {
+      await checkpointerReady;
+      checkpointer.flushNow(reason);
     },
     async loadLatestCheckpoint(runId) {
       await checkpointerReady;
@@ -772,13 +870,16 @@ export function registerWorkflowHandlers(ctx: RuntimeContext): void {
         recursionLimit: 50,
         workingDirectory: ctx.runtime.myClawRootPath,
         modelProfileId: ctx.state.getDefaultModelProfileId() ?? "",
-        checkpointPolicy: "every-step",
+        checkpointPolicy: resolveWorkflowCheckpointPolicy(),
       }, { executorRegistry, checkpointer: checkpointerAdapter });
 
       // 桥接事件流到渲染层
       runner.emitter.on((event) => {
         broadcastToRenderers("workflow:stream", event);
         if (!siliconPersonSession) {
+          return;
+        }
+        if (!shouldProjectWorkflowEventToSessionTasks(event)) {
           return;
         }
         const nextTasks = applyWorkflowEventToSessionTasks({
