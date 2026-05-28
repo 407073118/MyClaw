@@ -8,13 +8,13 @@ import type {
   ExecutionPlan,
   ModelCapability,
   ContextBudgetPolicy,
+  ContextCheckpoint,
+  ContextCompactionMetadata,
+  CompiledContextSection,
   SessionReplayPolicy,
   SkillDefinition,
 } from "@shared/contracts";
-import { DEFAULT_CONTEXT_BUDGET_POLICY } from "@shared/contracts";
-import { buildBudgetSnapshot } from "./token-budget-manager";
-import { estimateTokenCount } from "./token-estimator";
-import { compactMessages } from "./context-compactor";
+import { compileContext } from "./context-compiler";
 
 // ---------------------------------------------------------------------------
 // 类型
@@ -36,6 +36,14 @@ export type AssembledContext = {
   maskedToolOutputCount: number;
   /** 是否建议用户新建对话 */
   shouldSuggestNewChat: boolean;
+  /** 本轮上下文编译的结构化元数据。 */
+  metadata?: ContextCompactionMetadata;
+  /** 本轮压缩生成的结构化检查点。 */
+  checkpoint?: ContextCheckpoint;
+  /** 本轮上下文编译的预算分段。 */
+  sections?: CompiledContextSection[];
+  /** 编译阶段产生的警告。 */
+  warnings?: string[];
 };
 
 export type AssembleInput = {
@@ -52,111 +60,32 @@ export type AssembleInput = {
   executionPlan?: Pick<ExecutionPlan, "replayPolicy"> | null;
   /** 已累计执行的压缩次数（由调用方跟踪，用于判断是否建议新建对话） */
   priorCompactionCount?: number;
+  /** 模型配置级压缩触发阈值，优先于 ratio 派生阈值，但不会放宽安全预算。 */
+  compactTriggerTokens?: number;
+  /** 当前轮次 ID，用于 checkpoint 和 metadata 关联。 */
+  turnId?: string;
 };
 
 // ---------------------------------------------------------------------------
 // 默认系统提示
 // ---------------------------------------------------------------------------
 
-const MESSAGE_OVERHEAD = 4;
-
-function resolveReplayPolicy(input: Pick<AssembleInput, "executionPlan" | "replayPolicy">): SessionReplayPolicy | null {
-  return input.executionPlan?.replayPolicy ?? input.replayPolicy ?? null;
-}
-
-/** 构建最小系统提示（用于测试和独立使用场景） */
-function buildDefaultSystemPrompt(session: ChatSession, workingDir: string): string {
-  return [
-    "You are MyClaw, an expert AI coding assistant.",
-    `Working directory: ${workingDir}`,
-    `Current date: ${new Date().toISOString().split("T")[0]}`,
-  ].join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// 核心组装逻辑
-// ---------------------------------------------------------------------------
-
 /**
  * 组装完整的模型请求上下文。
  *
  * 流程：
- * 1. 构建系统提示，估算固定开销
- * 2. 计算安全输入预算
- * 3. 将会话消息通过压缩器裁剪到预算内
- * 4. 拼接最终消息列表
+ * 1. 委托 Context Compiler 计算预算、checkpoint、记忆召回和压缩结果
+ * 2. 保持旧 AssembledContext 字段，兼容 sessions.ts 和既有测试
+ * 3. 透传 metadata/checkpoint/sections，供新 UI 和持久化链路使用
  */
 export function assembleContext(input: AssembleInput): AssembledContext {
-  const {
-    session,
-    capability,
-    workingDir,
-    skills,
-    systemPromptBuilder,
-    workingMemory,
-  } = input;
-  const policy = { ...DEFAULT_CONTEXT_BUDGET_POLICY, ...(input.policy ?? {}) };
-  const mode = capability.tokenCountingMode ?? "character-fallback";
-  const replayPolicy = resolveReplayPolicy(input);
-
-  // 构建预算快照
-  const budget = buildBudgetSnapshot(capability, policy);
-
-  // 构建系统提示
-  const buildPrompt = systemPromptBuilder ?? buildDefaultSystemPrompt;
-  const systemPrompt = buildPrompt(session, workingDir, skills);
-
-  // 如果有工作记忆，附加到系统提示中
-  const finalSystemPrompt = workingMemory
-    ? `${systemPrompt}\n\n# Working Memory\n${workingMemory}`
-    : systemPrompt;
-
-  // 估算系统提示的 token 开销
-  const systemTokens = estimateTokenCount(finalSystemPrompt, mode) + MESSAGE_OVERHEAD;
-
-  // 可用于会话消息的预算
-  const messageBudget = Math.max(0, budget.safeInputBudget - systemTokens);
-
-  // 通过压缩器处理会话消息
-  const compactionResult = compactMessages({
-    messages: session.messages,
-    budgetTokens: messageBudget,
-    capability,
-    policy,
-    replayPolicy: replayPolicy ?? undefined,
-    executionPlan: input.executionPlan,
-  });
-
-  // 组装最终消息列表
-  const finalMessages: AssembledContext["messages"] = [];
-
-  // 系统提示
-  finalMessages.push({
-    role: "system",
-    content: finalSystemPrompt,
-  });
-
-  // 会话消息
-  for (const msg of compactionResult.compacted) {
-    const entry: AssembledContext["messages"][0] = {
-      role: msg.role,
-      content: typeof msg.content === "string" ? msg.content : msg.content.filter((c): c is { type: "text"; text: string } => c.type === "text").map(c => c.text).join("\n"),
-    };
-    if ((replayPolicy === null || replayPolicy === "assistant-turn-with-reasoning") && msg.reasoning) {
-      entry.reasoning = msg.reasoning;
-    }
-    if (msg.tool_call_id) entry.tool_call_id = msg.tool_call_id;
-    if (msg.tool_calls && msg.tool_calls.length > 0) entry.tool_calls = msg.tool_calls;
-    finalMessages.push(entry);
-  }
-
-  // 判断是否建议新建对话
-  const wasCompacted = compactionResult.removedCount > 0 || compactionResult.maskedToolOutputCount > 0;
+  const compiled = compileContext(input);
+  const wasCompacted = compiled.metadata.removedMessageIds.length > 0 || compiled.metadata.maskedToolOutputIds.length > 0;
   const currentCompactionCount = (input.priorCompactionCount ?? 0) + (wasCompacted ? 1 : 0);
-  const suggestThreshold = policy.suggestNewChatAfterCompactions ?? 2;
-  const totalOriginalMessages = session.messages.length;
+  const suggestThreshold = input.policy?.suggestNewChatAfterCompactions ?? 2;
+  const totalOriginalMessages = input.session.messages.length;
   const removedRatio = totalOriginalMessages > 0
-    ? compactionResult.removedCount / totalOriginalMessages
+    ? compiled.metadata.removedMessageIds.length / totalOriginalMessages
     : 0;
   const shouldSuggestNewChat =
     currentCompactionCount >= suggestThreshold ||
@@ -164,12 +93,16 @@ export function assembleContext(input: AssembleInput): AssembledContext {
     removedRatio > 0.6;
 
   return {
-    messages: finalMessages,
-    budgetUsed: systemTokens + compactionResult.estimatedTokens,
+    messages: compiled.messages,
+    budgetUsed: compiled.metadata.budgetUsed,
     wasCompacted,
-    compactionReason: compactionResult.reason,
-    removedCount: compactionResult.removedCount,
-    maskedToolOutputCount: compactionResult.maskedToolOutputCount,
+    compactionReason: compiled.metadata.reason === "within-budget" ? null : compiled.metadata.reason,
+    removedCount: compiled.metadata.removedMessageIds.length,
+    maskedToolOutputCount: compiled.metadata.maskedToolOutputIds.length,
     shouldSuggestNewChat,
+    metadata: compiled.metadata,
+    checkpoint: compiled.checkpoint,
+    sections: compiled.sections,
+    warnings: compiled.warnings,
   };
 }

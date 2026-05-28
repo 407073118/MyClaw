@@ -56,10 +56,32 @@ import type {
 
 type UnsubscribeFn = () => void;
 
+type CloudIpcErrorPayload = {
+  __myclawCloudError: true;
+  message?: string;
+};
+
 function onChannel<T>(channel: string, callback: (payload: T) => void): UnsubscribeFn {
   const listener = (_event: Electron.IpcRendererEvent, payload: T) => callback(payload);
   ipcRenderer.on(channel, listener);
   return () => ipcRenderer.removeListener(channel, listener);
+}
+
+/** 判断主进程返回的 Cloud IPC 结果是否是可恢复错误。 */
+function isCloudIpcErrorPayload(payload: unknown): payload is CloudIpcErrorPayload {
+  return Boolean(
+    payload &&
+    typeof payload === "object" &&
+    (payload as { __myclawCloudError?: unknown }).__myclawCloudError === true,
+  );
+}
+
+/** 把主进程的可恢复错误还原成渲染层 Promise reject，供页面统一展示离线状态。 */
+function unwrapCloudIpcResult<T>(payload: T | CloudIpcErrorPayload): T {
+  if (isCloudIpcErrorPayload(payload)) {
+    throw new Error(payload.message || "Cloud API 请求失败");
+  }
+  return payload;
 }
 
 // ---------------------------------------------------------------------------
@@ -530,8 +552,8 @@ const myClawAPI = {
     ipcRenderer.invoke("cloud:hub-download-token", releaseId),
 
   // ---- 云端技能 ------------------------------------------------------------
-  fetchCloudSkills: (query?: Record<string, unknown>) =>
-    ipcRenderer.invoke("cloud:skills", query),
+  fetchCloudSkills: async (query?: Record<string, unknown>) =>
+    unwrapCloudIpcResult<unknown[]>(await ipcRenderer.invoke("cloud:skills", query)),
 
   fetchCloudSkillDetail: (skillId: string) => ipcRenderer.invoke("cloud:skill-detail", skillId),
 

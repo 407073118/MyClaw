@@ -99,6 +99,14 @@ function resolveExplicitProviderFamily(profile: FamilyPolicyResolutionInput["pro
   return explicitProviderFamily ?? null;
 }
 
+/** 识别 Claude Code 网关常见的 Anthropic 模型名包装前缀。 */
+function isAnthropicModelName(model: string): boolean {
+  return model.startsWith("claude")
+    || model.startsWith("global.anthropic.")
+    || model.startsWith("anthropic/")
+    || model.includes(".claude-");
+}
+
 /** 根据 profile/baseUrl/flavor 推断 provider family。 */
 export function inferProviderFamily(profile: FamilyPolicyResolutionInput["profile"]): ProviderFamily {
   const explicitProviderFamily = resolveExplicitProviderFamily(profile);
@@ -108,7 +116,7 @@ export function inferProviderFamily(profile: FamilyPolicyResolutionInput["profil
 
   const model = profile.model.toLowerCase();
 
-  if (model.startsWith("claude")) {
+  if (isAnthropicModelName(model)) {
     return "anthropic-native";
   }
 

@@ -17,6 +17,7 @@ const NON_RUNNABLE_TERMINAL_STATUSES = new Set<TaskStatus>([
   "cancelled",
 ]);
 const TASK_STORE_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_TASK_STORE === "1";
+const USER_WAIT_ACTIVE_FORM_PREFIX = "需要你回复：";
 
 /** 输出 Task V2 调试日志，默认关闭以避免 workflow 高频任务更新写 console。 */
 function logTaskStoreDebug(message: string, detail: Record<string, unknown>): void {
@@ -29,6 +30,38 @@ function logTaskStoreDebug(message: string, detail: Record<string, unknown>): vo
 /** 判断任务是否已经不可继续，避免复用失败、取消或阻塞的旧逻辑任务。 */
 function isNonRunnableTerminalStatus(status: TaskStatus): boolean {
   return NON_RUNNABLE_TERMINAL_STATUSES.has(status);
+}
+
+/** 判断任务是否正在离开等待用户状态，用于清理 UI 残留。 */
+function isLeavingUserWait(original: Task, input: TaskUpdateInput): boolean {
+  if (!input.status || input.status === "waiting_user") return false;
+  return original.status === "waiting_user" || original.metadata?.awaitingUser === true;
+}
+
+/** 从等待用户状态恢复时，清掉中断标记并还原可读的执行中文案。 */
+function normalizeUserWaitExit(
+  original: Task,
+  input: TaskUpdateInput,
+): { activeForm?: string; metadata?: Record<string, unknown> } {
+  const mergedMetadata = input.metadata !== undefined
+    ? { ...(original.metadata ?? {}), ...input.metadata }
+    : { ...(original.metadata ?? {}) };
+  const previousActiveForm = typeof mergedMetadata.previousActiveForm === "string"
+    ? mergedMetadata.previousActiveForm
+    : undefined;
+
+  delete mergedMetadata.awaitingUser;
+  delete mergedMetadata.waitingReason;
+  delete mergedMetadata.interruptRequestId;
+  delete mergedMetadata.previousActiveForm;
+
+  const activeForm = input.activeForm !== undefined
+    ? input.activeForm
+    : previousActiveForm
+      ?? (original.activeForm?.startsWith(USER_WAIT_ACTIVE_FORM_PREFIX) ? undefined : original.activeForm);
+  const metadata = Object.keys(mergedMetadata).length > 0 ? mergedMetadata : undefined;
+
+  return { activeForm, metadata };
 }
 
 // ---------------------------------------------------------------------------
@@ -170,16 +203,25 @@ export function updateTask(
   }
 
   const original = compacted.tasks[index]!;
+  const waitExit = isLeavingUserWait(original, input)
+    ? normalizeUserWaitExit(original, input)
+    : null;
   const updated: Task = {
     ...original,
     ...(input.subject !== undefined ? { subject: input.subject } : {}),
     ...(input.description !== undefined ? { description: input.description } : {}),
-    ...(input.activeForm !== undefined ? { activeForm: input.activeForm } : {}),
+    ...(waitExit
+      ? { activeForm: waitExit.activeForm }
+      : input.activeForm !== undefined
+        ? { activeForm: input.activeForm }
+        : {}),
     ...(input.owner !== undefined ? { owner: input.owner } : {}),
     ...(input.status !== undefined ? { status: input.status } : {}),
     ...(input.blocks !== undefined ? { blocks: input.blocks } : {}),
     ...(input.blockedBy !== undefined ? { blockedBy: input.blockedBy } : {}),
-    ...(input.metadata !== undefined
+    ...(waitExit
+      ? { metadata: waitExit.metadata }
+      : input.metadata !== undefined
       ? { metadata: { ...original.metadata, ...input.metadata } }
       : {}),
   };

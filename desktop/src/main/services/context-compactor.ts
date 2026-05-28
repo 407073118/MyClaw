@@ -38,8 +38,12 @@ export type CompactionResult = {
   compacted: ChatMessage[];
   /** 被移除的消息数 */
   removedCount: number;
+  /** 被移除的消息 ID 列表 */
+  removedMessageIds: string[];
   /** 被 Observation Masking 替换的工具输出数 */
   maskedToolOutputCount: number;
+  /** 被 Observation Masking 替换的工具输出 ID 列表 */
+  maskedToolOutputIds: string[];
   /** 压缩原因（null 表示未触发压缩） */
   reason: string | null;
   /** 压缩后的估算 token 数 */
@@ -139,7 +143,9 @@ export function compactMessages(input: CompactionInput): CompactionResult {
     return {
       compacted: messages,
       removedCount: 0,
+      removedMessageIds: [],
       maskedToolOutputCount: 0,
+      maskedToolOutputIds: [],
       reason: null,
       estimatedTokens: totalTokens,
     };
@@ -163,7 +169,9 @@ export function compactMessages(input: CompactionInput): CompactionResult {
     return {
       compacted: messages,
       removedCount: 0,
+      removedMessageIds: [],
       maskedToolOutputCount: 0,
+      maskedToolOutputIds: [],
       reason: "tool-output-trimmed",
       estimatedTokens: totalTokens,
     };
@@ -181,6 +189,7 @@ export function compactMessages(input: CompactionInput): CompactionResult {
   }
   // toolIndices 现在是倒序的（最新的在前），跳过最近 recentToolKeep 条
   let maskedCount = 0;
+  const maskedToolOutputIds: string[] = [];
   for (let k = recentToolKeep; k < toolIndices.length; k++) {
     const idx = toolIndices[k];
     const content = textOfContent(messages[idx].content);
@@ -195,6 +204,7 @@ export function compactMessages(input: CompactionInput): CompactionResult {
     );
     messages[idx].content = placeholder;
     maskedCount++;
+    maskedToolOutputIds.push(messages[idx].id);
 
     const newCount = estimateMessageTokens(messages[idx], mode);
     totalTokens += newCount - tokenCounts[idx];
@@ -209,7 +219,9 @@ export function compactMessages(input: CompactionInput): CompactionResult {
     return {
       compacted: messages,
       removedCount: 0,
+      removedMessageIds: [],
       maskedToolOutputCount: maskedCount,
+      maskedToolOutputIds,
       reason: "observation-masked",
       estimatedTokens: totalTokens,
     };
@@ -226,6 +238,7 @@ export function compactMessages(input: CompactionInput): CompactionResult {
     removeCount++;
   }
 
+  const removedMessageIds = messages.slice(0, removeCount).map((message) => message.id);
   if (removeCount > 0) {
     messages = messages.slice(removeCount);
   }
@@ -237,7 +250,9 @@ export function compactMessages(input: CompactionInput): CompactionResult {
   return {
     compacted: messages,
     removedCount: removeCount,
+    removedMessageIds,
     maskedToolOutputCount: maskedCount,
+    maskedToolOutputIds,
     reason: reasons.length > 0 ? reasons.join("；") : "tool-output-trimmed",
     estimatedTokens: totalTokens,
   };

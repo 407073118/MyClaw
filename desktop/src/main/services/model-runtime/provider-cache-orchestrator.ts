@@ -207,17 +207,20 @@ export function normalizeProviderCacheUsage(
     || rawUsage.cache_read_input_tokens !== undefined
     || rawUsage.cache_creation_input_tokens !== undefined
   ) {
+    const providerInputTokens = promptTokens;
     const cacheReadInputTokens = readNumber(rawUsage, "cache_read_input_tokens") ?? 0;
     const cacheWriteInputTokens = readNumber(rawUsage, "cache_creation_input_tokens") ?? 0;
+    const totalInputTokens = providerInputTokens + cacheReadInputTokens + cacheWriteInputTokens;
     return finalizeUsage({
       identity: vendorFamily,
       rawUsage,
-      promptTokens,
+      promptTokens: totalInputTokens,
       completionTokens,
-      totalTokens,
+      totalTokens: totalTokens ?? (totalInputTokens + completionTokens),
       reasoningTokens,
       cachedInputTokens: cacheReadInputTokens,
       cacheHitInputTokens: cacheReadInputTokens,
+      cacheMissInputTokens: providerInputTokens + cacheWriteInputTokens,
       cacheReadInputTokens,
       cacheWriteInputTokens,
       cacheObserved: true,

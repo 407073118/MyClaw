@@ -64,7 +64,13 @@ vi.mock("../../../src/main/services/model-runtime/turn-outcome-store", () => ({
   updateTurnOutcome: updateTurnOutcomeMock,
   loadTurnOutcome: loadTurnOutcomeMock,
 }));
-vi.mock("../../../src/main/services/tool-schemas", () => ({ buildToolSchemas: vi.fn(() => []), functionNameToToolId: vi.fn((name: string) => name), buildToolLabel: vi.fn((name: string) => name) }));
+vi.mock("../../../src/main/services/tool-schemas", () => ({
+  buildToolSchemas: vi.fn(() => []),
+  // 测试默认不暴露 MCP 工具，返回空映射即可覆盖 session 路由依赖。
+  buildMcpFunctionNameMap: vi.fn(() => new Map()),
+  functionNameToToolId: vi.fn((name: string) => name),
+  buildToolLabel: vi.fn((name: string) => name),
+}));
 vi.mock("../../../src/main/services/builtin-tool-executor", () => ({ BuiltinToolExecutor: class {
   setSkills() {}
   setAllowExternalPaths() {}

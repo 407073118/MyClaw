@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { loadSkillsFromDisk } from "../src/main/services/skill-loader";
+import { loadSkillsFromDisk, resolveBuiltinSkillsDirectory } from "../src/main/services/skill-loader";
 
 describe("skill loader agents directory", () => {
   let rootDir = "";
@@ -46,5 +46,15 @@ describe("skill loader agents directory", () => {
     const skills = loadSkillsFromDisk(rootDir);
 
     expect(skills.find((skill) => skill.id === "json-skill")?.hasAgentsDirectory).toBe(true);
+  });
+
+  it("resolves builtin skills from the desktop root when runtime code runs under dist", () => {
+    const appRoot = join(rootDir, "desktop");
+    const builtinDir = join(appRoot, "builtin-skills");
+    const runtimeDir = join(appRoot, "dist", "src", "main", "services");
+    mkdirSync(join(builtinDir, "skill-starter"), { recursive: true });
+    mkdirSync(runtimeDir, { recursive: true });
+
+    expect(resolveBuiltinSkillsDirectory("", runtimeDir)).toBe(builtinDir);
   });
 });

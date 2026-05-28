@@ -53,6 +53,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
     baseUrl: "https://api.anthropic.com",
     baseUrlMode: "provider-root",
     provider: "anthropic",
+    providerFlavor: "anthropic",
     modelPlaceholder: "claude-sonnet-4-20250514",
   },
   {

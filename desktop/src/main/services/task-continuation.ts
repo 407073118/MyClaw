@@ -21,10 +21,16 @@ const USER_WAITING_PATTERNS = [
   /(?:帮我|麻烦)(?:选择|确认|补充|澄清)/iu,
   /(?:等待|等)(?:你|您|用户)?(?:的)?(?:回复|指示|确认|选择|补充|提交|输入)/iu,
   /需要(?:你|您|用户)?(?:回复|指示|确认|选择|补充|提交|输入)/iu,
-  /(?:您的?|你(?:的)?)?(?:选择|偏好|需求|场景|技术栈|团队规模)/iu,
+  /(?:你的|您的|你们的|贵方的).{0,16}(?:选择|偏好|场景|技术栈|团队规模)/iu,
+  /(?:请|麻烦).{0,24}(?:说明|确认|选择|提供).{0,16}(?:需求|场景|技术栈|团队规模)/iu,
   /(?:是否|要不要|需不需要|希望|倾向|主要针对|主要用于)/iu,
   /\?\s*$/u,
   /？\s*$/u,
+] as const;
+
+const USER_NOT_WAITING_PATTERNS = [
+  /不需要(?:你|您|用户)?(?:回复|指示|确认|选择|补充|提交|输入)/iu,
+  /无需(?:你|您|用户)?(?:回复|指示|确认|选择|补充|提交|输入)/iu,
 ] as const;
 
 const TASK_CONTINUATION_DEBUG_LOGGING = process.env.MYCLAW_DEBUG_TASK_CONTINUATION === "1";
@@ -97,6 +103,10 @@ export function isAssistantWaitingForUserInput(content: string): boolean {
     logTaskContinuationDebug("[task-continuation] 检测到 A2UI 结构化表单，进入等待用户状态");
     return true;
   }
+  if (USER_NOT_WAITING_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    logTaskContinuationDebug("[task-continuation] 检测到明确无需用户补充的回复，保持自动续行");
+    return false;
+  }
   const matched = USER_WAITING_PATTERNS.some((pattern) => pattern.test(normalized));
   if (matched) {
     logTaskContinuationDebug("[task-continuation] 检测到澄清/选择类回复，进入等待用户状态", {
@@ -157,6 +167,7 @@ export function markActiveTasksWaitingForUser(
         ...(task.metadata ?? {}),
         awaitingUser: true,
         waitingReason: reason,
+        previousActiveForm: task.metadata?.previousActiveForm ?? task.activeForm,
       },
     };
   });

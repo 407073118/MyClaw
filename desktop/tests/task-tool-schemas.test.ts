@@ -39,4 +39,11 @@ describe("Task tool schemas", () => {
     expect(properties.choices?.type).toEqual(["array", "null"]);
     expect(properties.expiresAt?.type).toEqual(["string", "null"]);
   });
+
+  it("does not instruct models to create tasks for every ordinary request", () => {
+    const tool = buildToolSchemas("F:/workspace").find((item) => item.function.name === "task_create");
+
+    expect(tool?.function.description).not.toContain("When you receive a user request");
+    expect(tool?.function.description).not.toContain("BEFORE starting work");
+  });
 });

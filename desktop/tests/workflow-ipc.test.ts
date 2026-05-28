@@ -89,6 +89,8 @@ vi.mock("../src/main/services/artifact-context-builder", () => ({
 
 vi.mock("../src/main/services/model-runtime/canonical-turn-content", () => ({
   buildCanonicalTurnContent: vi.fn(() => ({ systemSections: [], userSections: [], messages: [], toolCalls: [], toolResults: [], approvalEvents: [], taskState: null, replayHints: {} })),
+  // 测试保留 legacy 消息原样回放，避免无关 canonical 过滤影响 workflow IPC 断言。
+  prepareLegacyMessagesForCanonicalReplay: vi.fn((messages) => messages),
 }));
 
 vi.mock("../src/main/services/model-runtime/execution-gateway", () => ({

@@ -202,6 +202,16 @@ describe("HubPage", () => {
     expect(styleText).not.toContain(".page-container");
   });
 
+  it("loads cloud skills once on first render instead of issuing duplicate IPC calls", async () => {
+    mockWorkspace.loadCloudSkills.mockClear();
+
+    render(React.createElement(HubPage));
+
+    await screen.findByTestId("hub-item-hub-skill-1");
+
+    expect(mockWorkspace.loadCloudSkills).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the silicon person scope when importing an MCP from the Hub query entry", async () => {
     mockRouterState.search = "?tab=mcp&siliconPersonId=sp-1";
     const manifest = { kind: "mcp", name: "Scoped MCP", config: { id: "scoped-mcp", transport: "stdio", command: "node" } };

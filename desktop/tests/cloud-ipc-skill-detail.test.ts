@@ -23,6 +23,19 @@ describe("cloud IPC skill detail", () => {
     vi.stubGlobal("fetch", vi.fn());
   });
 
+  it("returns a recoverable cloud skills error payload instead of rejecting through Electron", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("fetch failed"));
+
+    const { registerCloudHandlers } = await import("../src/main/ipc/cloud");
+    registerCloudHandlers({} as never);
+
+    await expect(findHandler("cloud:skills")(null, {})).resolves.toMatchObject({
+      __myclawCloudError: true,
+      channel: "cloud:skills",
+      message: expect.stringContaining("Cloud API"),
+    });
+  });
+
   it("returns null for missing cloud skill details instead of throwing through Electron", async () => {
     vi.mocked(fetch).mockResolvedValueOnce({
       ok: false,

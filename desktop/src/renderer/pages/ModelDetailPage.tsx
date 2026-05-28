@@ -38,7 +38,7 @@ const providerPresets: ProviderPreset[] = [
   { id: "qwen", label: "Qwen", baseUrl: "https://dashscope.aliyuncs.com", baseUrlMode: "provider-root", provider: "openai-compatible" },
   { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "deepseek", defaultModel: "deepseek-v4-pro" },
   { id: "volcengine-ark", label: "火山引擎 (Ark)", baseUrl: "https://ark.cn-beijing.volces.com", baseUrlMode: "provider-root", provider: "openai-compatible", providerFlavor: "volcengine-ark" },
-  { id: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com", baseUrlMode: "provider-root", provider: "anthropic" },
+  { id: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com", baseUrlMode: "provider-root", provider: "anthropic", providerFlavor: "anthropic" },
   { id: "custom", label: "Custom", baseUrl: "", baseUrlMode: "manual", provider: "openai-compatible" },
 ];
 

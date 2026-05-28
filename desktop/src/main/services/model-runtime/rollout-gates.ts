@@ -97,10 +97,10 @@ const DEFAULT_VENDOR_PROTOCOL_ROLLOUT_GATES: Partial<Record<`${VendorFamily}:${P
   "anthropic:anthropic-messages": {
     vendorFamily: "anthropic",
     protocolTarget: "anthropic-messages",
-    state: "beta",
-    enabled: false,
+    state: "stable",
+    enabled: true,
     rolloutOrder: 3,
-    reason: "disabled-until-explicit-rollout",
+    reason: "official-anthropic-route-enabled",
   },
   "qwen:openai-responses": {
     vendorFamily: "qwen",

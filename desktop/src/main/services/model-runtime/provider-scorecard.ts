@@ -21,6 +21,14 @@ function compareProviderFamilies(left: ProviderFamily, right: ProviderFamily): n
     - (PROVIDER_FAMILY_ORDER.get(right) ?? Number.MAX_SAFE_INTEGER);
 }
 
+/** 将缓存比例限制在可展示区间，避免旧 outcome 或不完整 usage 把命中率放大到 100% 以上。 */
+function clampRate(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(Math.max(value, 0), 1);
+}
+
 /** 汇总 outcome 中的缓存命中率，按输入 token 加权避免短请求放大影响。 */
 function calculateCacheHitRate(outcomes: TurnOutcome[]): number {
   const totals = outcomes.reduce(
@@ -34,7 +42,7 @@ function calculateCacheHitRate(outcomes: TurnOutcome[]): number {
     },
     { promptTokens: 0, cacheHitTokens: 0 },
   );
-  return totals.promptTokens > 0 ? totals.cacheHitTokens / totals.promptTokens : 0;
+  return totals.promptTokens > 0 ? clampRate(totals.cacheHitTokens / totals.promptTokens) : 0;
 }
 
 /** 汇总缓存写入占比，用于识别只写不读的高成本路线。 */
@@ -47,7 +55,7 @@ function calculateCacheWriteRate(outcomes: TurnOutcome[]): number {
     },
     { promptTokens: 0, cacheWriteTokens: 0 },
   );
-  return totals.promptTokens > 0 ? totals.cacheWriteTokens / totals.promptTokens : 0;
+  return totals.promptTokens > 0 ? clampRate(totals.cacheWriteTokens / totals.promptTokens) : 0;
 }
 
 /** 对 vendor route 做缓存感知评分；样本不足时由调用方决定是否应用推荐。 */
@@ -57,10 +65,10 @@ export function scoreProviderRoute(input: {
   latencyScore: number;
   estimatedCostScore: number;
 }): number {
-  return (input.successRate * 0.4)
-    + (input.cacheHitRate * 0.3)
-    + (input.latencyScore * 0.15)
-    + (input.estimatedCostScore * 0.15);
+  return (clampRate(input.successRate) * 0.4)
+    + (clampRate(input.cacheHitRate) * 0.3)
+    + (clampRate(input.latencyScore) * 0.15)
+    + (clampRate(input.estimatedCostScore) * 0.15);
 }
 
 /** 根据 TurnOutcome 聚合 family scorecard。 */

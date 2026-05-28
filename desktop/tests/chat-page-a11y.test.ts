@@ -519,6 +519,44 @@ describe("ChatPage", () => {
     expect(screen.getByTestId("reasoning-toggle-icon-assistant-msg-1").textContent).toContain("▸");
   });
 
+  it("keeps reasoning visible for task-only assistant tool calls", async () => {
+    const sessionStreamUnsubscribe = vi.fn();
+    const webPanelUnsubscribe = vi.fn();
+
+    mocks.workspace.currentSession = {
+      id: "chat-session-1",
+      title: "Demo Session",
+      messages: [
+        {
+          id: "assistant-task-reasoning",
+          role: "assistant",
+          content: "",
+          reasoning: "需要先拆解任务，再继续执行。",
+          tool_calls: [{
+            id: "toolu_task_1",
+            type: "function",
+            function: { name: "task_create", arguments: "{}" },
+          }],
+          createdAt: "2026-04-20T10:00:00.000Z",
+        },
+      ],
+    };
+    mocks.workspace.sessions = [mocks.workspace.currentSession];
+
+    Object.defineProperty(window, "myClawAPI", {
+      configurable: true,
+      value: {
+        onSessionStream: vi.fn(() => sessionStreamUnsubscribe),
+        onWebPanelOpen: vi.fn(() => webPanelUnsubscribe),
+      },
+    });
+
+    const { default: ChatPage } = await import("../src/renderer/pages/ChatPage");
+    render(React.createElement(ChatPage));
+
+    expect(await screen.findByTestId("reasoning-assistant-task-reasoning")).toBeTruthy();
+  });
+
   it("sends on plain Enter in the composer", async () => {
     const sessionStreamUnsubscribe = vi.fn();
     const webPanelUnsubscribe = vi.fn();

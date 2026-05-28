@@ -81,6 +81,38 @@ export function buildCanonicalMessages(messages: Array<ChatMessage | LegacyMessa
   return messages.map((message) => buildCanonicalMessage(message));
 }
 
+/** 准备 canonical replay 消息：去掉重复的开场 system prompt，但保留会话中的运行时续行指令。 */
+export function prepareLegacyMessagesForCanonicalReplay(messages: ModelChatMessage[]): ModelChatMessage[] {
+  const replayMessages: ModelChatMessage[] = [];
+  let hasConversationTurn = false;
+
+  for (const message of messages) {
+    if (message.role === "system") {
+      const text = typeof message.content === "string"
+        ? message.content
+        : message.content
+          .filter((part): part is { type: "text"; text: string } => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+      if (!hasConversationTurn) {
+        continue;
+      }
+      if (text.trim()) {
+        replayMessages.push({
+          role: "user",
+          content: text,
+        });
+      }
+      continue;
+    }
+
+    hasConversationTurn = true;
+    replayMessages.push(message);
+  }
+
+  return replayMessages;
+}
+
 /** 将解析后的 tool calls 标准化为 canonical 调用。 */
 export function buildCanonicalToolCalls(toolCalls: ResolvedToolCall[]): CanonicalToolCall[] {
   return toolCalls.map((toolCall) => ({

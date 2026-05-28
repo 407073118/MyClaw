@@ -126,6 +126,14 @@ function resolveExplicitVendorFamily(
   return explicitVendorFamily ?? null;
 }
 
+/** 识别 Anthropic 官方模型名以及 Claude Code 网关包装后的模型名。 */
+function isAnthropicModelName(model: string): boolean {
+  return model.startsWith("claude")
+    || model.startsWith("global.anthropic.")
+    || model.startsWith("anthropic/")
+    || model.includes(".claude-");
+}
+
 /** 根据 profile/baseUrl/model 推断厂商 family，作为多协议策略矩阵的归属键。 */
 export function inferVendorFamily(
   profile: ResolveVendorRuntimePolicyInput["profile"],
@@ -137,7 +145,7 @@ export function inferVendorFamily(
 
   const model = profile.model.toLowerCase();
 
-  if (model.startsWith("claude")) {
+  if (isAnthropicModelName(model)) {
     return "anthropic";
   }
 

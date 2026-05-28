@@ -36,7 +36,7 @@ function buildInferenceProfile(
 /** 归一化一等厂商身份字段，优先修正被旧 heuristics 写坏的 family/vendor。 */
 function resolveFirstClassVendorIdentityPatch(
   profile: Partial<ModelProfile>,
-): Pick<ModelProfile, "providerFamily" | "vendorFamily"> | null {
+): Pick<ModelProfile, "providerFamily" | "vendorFamily"> & Partial<Pick<ModelProfile, "providerFlavor">> | null {
   const inferenceProfile = buildInferenceProfile(profile);
   const providerFamily = inferProviderFamily({
     provider: inferenceProfile.provider,
@@ -54,11 +54,13 @@ function resolveFirstClassVendorIdentityPatch(
     && vendorFamily !== "kimi"
     && vendorFamily !== "volcengine-ark"
     && vendorFamily !== "deepseek"
+    && vendorFamily !== "anthropic"
   ) {
     return null;
   }
 
   return {
+    ...(vendorFamily === "anthropic" ? { providerFlavor: "anthropic" as const } : {}),
     providerFamily,
     vendorFamily,
   };
@@ -176,6 +178,14 @@ function resolveFirstClassVendorDefaultRoutePatch(
     };
   }
 
+  if (vendorFamily === "anthropic") {
+    return {
+      protocolTarget: "anthropic-messages" satisfies ProtocolTarget,
+      savedProtocolPreferences: ["anthropic-messages"],
+      protocolSelectionSource: "registry-default",
+    };
+  }
+
   return null;
 }
 
@@ -255,6 +265,7 @@ export function coerceManagedProfileWrite(
     } satisfies Partial<ModelProfile>);
     return {
       ...input,
+      ...(mergedCandidate.providerFlavor ? { providerFlavor: mergedCandidate.providerFlavor } : {}),
       ...(mergedCandidate.providerFamily ? { providerFamily: mergedCandidate.providerFamily } : {}),
       ...(mergedCandidate.vendorFamily ? { vendorFamily: mergedCandidate.vendorFamily } : {}),
       ...(mergedCandidate.protocolTarget ? { protocolTarget: mergedCandidate.protocolTarget } : {}),

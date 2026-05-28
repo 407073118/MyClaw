@@ -61,6 +61,8 @@ vi.mock("../src/main/services/state-persistence", () => ({
 
 vi.mock("../src/main/services/tool-schemas", () => ({
   buildToolSchemas: vi.fn(() => []),
+  // 测试默认不暴露 MCP 工具，返回空映射即可覆盖 session 路由依赖。
+  buildMcpFunctionNameMap: vi.fn(() => new Map()),
   functionNameToToolId: vi.fn((name: string) => name),
   buildToolLabel: vi.fn((name: string) => name),
 }));
@@ -85,6 +87,8 @@ vi.mock("../src/main/services/builtin-tool-executor", () => ({
 
 vi.mock("../src/main/services/model-runtime/canonical-turn-content", () => ({
   buildCanonicalTurnContent: vi.fn(() => ({ systemSections: [], userSections: [], messages: [], toolCalls: [], toolResults: [], approvalEvents: [], taskState: null, replayHints: {} })),
+  // 测试保留 legacy 消息原样回放，避免无关 canonical 过滤影响计划冻结断言。
+  prepareLegacyMessagesForCanonicalReplay: vi.fn((messages) => messages),
 }));
 vi.mock("../src/main/services/model-runtime/background-task-manager", () => ({
   createBackgroundTaskManager: vi.fn(() => ({ getSnapshot: () => null, reset: vi.fn(), poll: vi.fn(), cancel: vi.fn() })),

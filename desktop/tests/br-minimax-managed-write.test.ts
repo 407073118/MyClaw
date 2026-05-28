@@ -114,6 +114,29 @@ describe("coerceManagedProfileWrite", () => {
     });
   });
 
+  it("fills Anthropic identity for Claude Code proxy profiles without overwriting probed routes", () => {
+    const coerced = coerceManagedProfileWrite(null, {
+      name: "Claude Code Proxy",
+      provider: "anthropic",
+      baseUrl: "http://13.250.152.8:3000",
+      baseUrlMode: "provider-root",
+      apiKey: "anthropic-key",
+      model: "global.anthropic.claude-opus-4-7",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages"],
+      protocolSelectionSource: "probe",
+    });
+
+    expect(coerced).toMatchObject({
+      providerFlavor: "anthropic",
+      providerFamily: "anthropic-native",
+      vendorFamily: "anthropic",
+      protocolTarget: "anthropic-messages",
+      savedProtocolPreferences: ["anthropic-messages"],
+      protocolSelectionSource: "probe",
+    });
+  });
+
   it("preserves explicitly saved qwen routes instead of resetting them to registry defaults", () => {
     const normalized = normalizeFirstClassVendorRoute({
       name: "Qwen",

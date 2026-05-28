@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCanonicalTurnContent, materializeLegacyMessages } from "../../../src/main/services/model-runtime/canonical-turn-content";
+import {
+  buildCanonicalTurnContent,
+  materializeLegacyMessages,
+  prepareLegacyMessagesForCanonicalReplay,
+} from "../../../src/main/services/model-runtime/canonical-turn-content";
 
 describe("canonical turn content", () => {
   it("preserves multimodal parts, reasoning, and tool ledger", () => {
@@ -63,6 +67,21 @@ describe("canonical turn content", () => {
         output: "README content",
         success: true,
       }),
+    ]);
+  });
+
+  it("keeps runtime system reminders as user turns after assistant messages", () => {
+    const replayMessages = prepareLegacyMessagesForCanonicalReplay([
+      { role: "system", content: "You are MyClaw." },
+      { role: "user", content: "开始执行任务" },
+      { role: "assistant", content: "我已完成一部分。" },
+      { role: "system", content: "[任务未完成] 请继续按计划推进任务。" },
+    ]);
+
+    expect(replayMessages).toEqual([
+      { role: "user", content: "开始执行任务" },
+      { role: "assistant", content: "我已完成一部分。" },
+      { role: "user", content: "[任务未完成] 请继续按计划推进任务。" },
     ]);
   });
 });

@@ -5,6 +5,7 @@ export * from "./auth";
 export * from "./awareness";
 export * from "./builtin-tool";
 export * from "./calendar";
+export * from "./context";
 export * from "./document";
 
 export * from "./events";

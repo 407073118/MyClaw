@@ -350,6 +350,19 @@ describe("execution gateway", () => {
         }),
       }),
     ]);
+    const legacyCall = callModelMock.mock.calls.at(-1)?.[0];
+    expect(legacyCall?.protocolTarget).toBe("anthropic-messages");
+    expect(legacyCall?.tools).toEqual([
+      expect.objectContaining({
+        name: "fs_read",
+        input_schema: expect.objectContaining({
+          type: "object",
+          properties: {
+            path: { type: "string" },
+          },
+        }),
+      }),
+    ]);
   });
 
   it("compiles DeepSeek Anthropic-route tools as Anthropic input_schema instead of OpenAI function tools", async () => {

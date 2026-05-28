@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback, memo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowUp, BellRing, Boxes, FolderKanban, PanelRightClose, PanelRightOpen, Plug, Square, Wrench, X } from "lucide-react";
+import { AlertTriangle, ArrowUp, BellRing, Boxes, Eye, FolderKanban, MessageSquarePlus, PanelRightClose, PanelRightOpen, Plug, Square, Wrench, X } from "lucide-react";
 import { marked } from "marked";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore, bufferStreamingDelta, flushStreamingBufferNow } from "../stores/workspace";
@@ -39,10 +39,15 @@ import type {
   ExecutionIntent,
   McpServer,
   SessionPatchPayload,
+  ContextLimitWarningPayload,
 } from "@shared/contracts";
 import { ToolRiskCategory, resolveSiliconPersonCurrentSessionId } from "@shared/contracts";
 import { formatMessageTime, formatFullTime, formatDateSeparator, isDifferentDay } from "../utils/format-time";
 import { renderMessageForDisplay } from "../utils/message-render-cache";
+import {
+  buildContextLimitWarningViewModel,
+  type ContextLimitWarningViewModel,
+} from "../utils/context-ui-helpers";
 
 const AGENT_TASK_STATUS_LABEL: Record<AgentTask["status"], string> = {
   queued: "排队中",
@@ -841,6 +846,8 @@ export default function ChatPage() {
   const [showWorkFiles, setShowWorkFiles] = useState(false);
   const [projectPanelOpen, setProjectPanelOpen] = useState(false);
   const [showContextWarning, setShowContextWarning] = useState(false);
+  const [contextWarningDetail, setContextWarningDetail] = useState<ContextLimitWarningViewModel | null>(null);
+  const [showContextCheckpointPreview, setShowContextCheckpointPreview] = useState(false);
   const prevTaskCountRef = React.useRef(0);
   const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
@@ -1191,6 +1198,8 @@ export default function ChatPage() {
   // 切换 session 时重置上下文警告
   useEffect(() => {
     setShowContextWarning(false);
+    setContextWarningDetail(null);
+    setShowContextCheckpointPreview(false);
   }, [session?.id]);
 
   // 新 task 被创建时自动取消 dismissed，重新显示面板
@@ -1307,7 +1316,8 @@ export default function ChatPage() {
       if (message.role === "assistant" && Array.isArray((message as any).tool_calls) && (message as any).tool_calls.length > 0) {
         const calls = (message as any).tool_calls as Array<{ function: { name: string } }>;
         const allTask = calls.every((tc) => tc.function.name.startsWith("task_"));
-        if (allTask && !textOf(message.content).trim()) {
+        const hasReasoning = Boolean((message as any).reasoning?.trim());
+        if (allTask && !textOf(message.content).trim() && !hasReasoning) {
           continue;
         }
       }
@@ -1669,6 +1679,8 @@ export default function ChatPage() {
         });
       } else if (type === "context.limit_warning" && eventSessionId) {
         if (eventSessionId === activeViewSessionIdRef.current) {
+          setContextWarningDetail(buildContextLimitWarningViewModel(event as ContextLimitWarningPayload));
+          setShowContextCheckpointPreview(false);
           setShowContextWarning(true);
         }
       } else if (type === "approval.requested") {
@@ -1730,6 +1742,20 @@ export default function ChatPage() {
       reportChatError(error);
     } finally {
       setCreatingSession(false);
+    }
+  }
+
+  /** 使用当前 checkpoint 预览创建新会话，并把状态说明放入输入框等待用户确认发送。 */
+  async function createSessionWithContextCheckpoint() {
+    const preview = contextWarningDetail?.checkpointPreview;
+    console.info("[chat-page] 用户选择带上下文 checkpoint 新建会话", {
+      hasCheckpointPreview: Boolean(preview),
+    });
+    setShowContextWarning(false);
+    await createSession();
+    if (preview) {
+      setComposerDraft(`继续这个上下文检查点：\n${preview}`);
+      requestAnimationFrame(() => composerRef.current?.focus());
     }
   }
 
@@ -2568,19 +2594,38 @@ export default function ChatPage() {
               {showContextWarning && (
                 <div className="context-limit-warning">
                   <div className="context-limit-warning-content">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span>当前对话较长，上下文已多次压缩，回答质量可能下降。建议新建对话继续工作。</span>
+                    <AlertTriangle size={16} strokeWidth={2} aria-hidden />
+                    <div className="context-limit-warning-text">
+                      <span>{contextWarningDetail?.primaryText ?? "当前对话较长，上下文已多次压缩，回答质量可能下降。建议新建对话继续工作。"}</span>
+                      {contextWarningDetail?.detailItems.length ? (
+                        <div className="context-limit-warning-details">
+                          {contextWarningDetail.detailItems.map((item) => (
+                            <span key={item}>{item}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {showContextCheckpointPreview && contextWarningDetail?.checkpointPreview ? (
+                        <pre className="context-limit-warning-preview">{contextWarningDetail.checkpointPreview}</pre>
+                      ) : null}
+                    </div>
                     <div className="context-limit-warning-actions">
+                      {contextWarningDetail?.checkpointPreview ? (
+                        <button
+                          className="btn-dismiss"
+                          onClick={() => setShowContextCheckpointPreview((value) => !value)}
+                        >
+                          <Eye size={13} strokeWidth={2} aria-hidden />
+                          查看保留状态
+                        </button>
+                      ) : null}
                       <button
                         className="btn-new-chat"
                         onClick={async () => {
-                          setShowContextWarning(false);
-                          await createSession();
+                          await createSessionWithContextCheckpoint();
                         }}
                       >
-                        新建对话
+                        <MessageSquarePlus size={13} strokeWidth={2} aria-hidden />
+                        带状态新建
                       </button>
                       <button className="btn-dismiss" onClick={() => setShowContextWarning(false)}>
                         继续当前对话
@@ -3937,13 +3982,16 @@ export default function ChatPage() {
 
         /* ── 上下文压缩警告 ── */
         .context-limit-warning { padding: 0 48px 16px; max-width: 1200px; margin: 0 auto; }
-        .context-limit-warning-content { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 16px; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.25); border-radius: var(--radius-md); font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
+        .context-limit-warning-content { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; padding: 12px 16px; background: rgba(251,191,36,0.08); border: 1px solid rgba(251,191,36,0.25); border-radius: var(--radius-md); font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
         .context-limit-warning-content > svg { flex-shrink: 0; color: #f59e0b; }
-        .context-limit-warning-content > span { flex: 1; min-width: 200px; }
-        .context-limit-warning-actions { display: flex; gap: 8px; flex-shrink: 0; }
-        .btn-new-chat { padding: 5px 14px; border-radius: var(--radius-sm); border: none; background: var(--accent-cyan); color: #000; font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
+        .context-limit-warning-text { flex: 1; min-width: 240px; display: flex; flex-direction: column; gap: 6px; }
+        .context-limit-warning-details { display: flex; gap: 6px; flex-wrap: wrap; color: var(--text-muted); font-size: 12px; }
+        .context-limit-warning-details span { padding: 2px 6px; border: 1px solid rgba(251,191,36,0.18); border-radius: var(--radius-sm); background: rgba(0,0,0,0.12); }
+        .context-limit-warning-preview { max-height: 120px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; padding: 8px; border-radius: var(--radius-sm); background: rgba(0,0,0,0.18); color: var(--text-muted); font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11px; line-height: 1.45; }
+        .context-limit-warning-actions { display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+        .btn-new-chat { display: inline-flex; align-items: center; gap: 5px; padding: 5px 14px; border-radius: var(--radius-sm); border: none; background: var(--accent-cyan); color: #000; font-size: 12px; font-weight: 600; cursor: pointer; transition: opacity 0.15s; }
         .btn-new-chat:hover { opacity: 0.85; }
-        .btn-dismiss { padding: 5px 14px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: background 0.15s; }
+        .btn-dismiss { display: inline-flex; align-items: center; gap: 5px; padding: 5px 14px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: background 0.15s; }
         .btn-dismiss:hover { background: var(--glass-reflection); }
         .model-switch-notice { background: rgba(16,163,127,0.08); border-color: rgba(16,163,127,0.25); }
         .model-switch-notice > svg { color: var(--accent-cyan); }

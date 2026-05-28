@@ -196,6 +196,26 @@ export function loadSkillsFromDisk(skillsDir: string): SkillDefinition[] {
 }
 
 /** 将内置技能种子到目标目录（仅在不存在时复制）。 */
+/** 生成内置 Skill 的候选目录，覆盖源码运行、dist 运行和打包运行三种位置。 */
+function buildBuiltinSkillCandidates(appPath: string, runtimeDir = __dirname): string[] {
+  return [
+    ...(appPath ? [join(appPath, "builtin-skills")] : []),
+    join(runtimeDir, "../../builtin-skills"),
+    join(runtimeDir, "../../../builtin-skills"),
+    join(runtimeDir, "../../../../builtin-skills"),
+  ];
+}
+
+/** 解析第一个真实存在的内置 Skill 目录，便于测试覆盖 dist 路径回退。 */
+export function resolveBuiltinSkillsDirectory(appPath: string, runtimeDir = __dirname): string | null {
+  for (const candidate of buildBuiltinSkillCandidates(appPath, runtimeDir)) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 export function seedBuiltinSkills(skillsDir: string): void {
   let appPath: string;
   try {
@@ -205,16 +225,8 @@ export function seedBuiltinSkills(skillsDir: string): void {
     appPath = "";
   }
 
-  const candidates = [
-    ...(appPath ? [join(appPath, "builtin-skills")] : []),
-    join(__dirname, "../../builtin-skills"),
-    join(__dirname, "../../../builtin-skills"),
-  ];
-
-  let builtinDir: string | null = null;
-  for (const c of candidates) {
-    if (existsSync(c)) { builtinDir = c; break; }
-  }
+  const candidates = buildBuiltinSkillCandidates(appPath);
+  const builtinDir = resolveBuiltinSkillsDirectory(appPath);
   if (!builtinDir) {
     log.warn("No builtin-skills directory found", { candidates });
     return;

@@ -79,6 +79,45 @@ type CloudProjectSummary = {
 const CLOUD_API_BASE = process.env.MYCLAW_CLOUD_API_URL ?? appEnv.CLOUD_API_BASE;
 console.log(`[cloud] env=${APP_ENV_NAME} api=${CLOUD_API_BASE}`);
 
+type CloudIpcErrorPayload = {
+  __myclawCloudError: true;
+  channel: string;
+  message: string;
+  baseUrl: string;
+  cause?: string;
+  code?: string;
+};
+
+/** 提取底层网络错误码，方便日志直接定位是拒绝连接还是超时。 */
+function extractCloudErrorCode(error: unknown): string | undefined {
+  const cause = error instanceof Error ? error.cause : undefined;
+  if (cause && typeof cause === "object" && "code" in cause) {
+    const code = (cause as { code?: unknown }).code;
+    return typeof code === "string" ? code : undefined;
+  }
+  return undefined;
+}
+
+/** 生成可恢复的 Cloud IPC 错误，避免 Electron 把可预期离线状态打印成 handler 异常栈。 */
+function buildCloudIpcErrorPayload(channel: string, error: unknown): CloudIpcErrorPayload {
+  const cause = error instanceof Error ? error.message : String(error);
+  const code = extractCloudErrorCode(error);
+  console.warn("[cloud] Cloud API 请求失败，返回可恢复错误", {
+    channel,
+    api: CLOUD_API_BASE,
+    code: code ?? "unknown",
+    cause,
+  });
+  return {
+    __myclawCloudError: true,
+    channel,
+    message: `Cloud API 连接失败：无法访问 ${CLOUD_API_BASE}。请先启动 cloud-api，或设置 MYCLAW_CLOUD_API_URL 指向可用服务。`,
+    baseUrl: CLOUD_API_BASE,
+    cause,
+    ...(code ? { code } : {}),
+  };
+}
+
 async function cloudFetch(path: string, options?: RequestInit): Promise<Response> {
   return fetch(`${CLOUD_API_BASE}${path}`, {
     ...options,
@@ -123,16 +162,20 @@ export function registerCloudHandlers(ctx: RuntimeContext): void {
   ipcMain.handle(
     "cloud:skills",
     async (_event, query?: { category?: string; keyword?: string; sort?: string; tag?: string }) => {
-      const qs = new URLSearchParams();
-      if (query?.category) qs.set("category", query.category);
-      if (query?.keyword) qs.set("keyword", query.keyword);
-      if (query?.sort) qs.set("sort", query.sort);
-      if (query?.tag) qs.set("tag", query.tag);
-      const suffix = qs.toString() ? `?${qs}` : "";
-      const res = await cloudFetch(`/skills${suffix}`);
-      if (!res.ok) throw new Error(`Cloud skills request failed: ${res.status}`);
-      const payload = await res.json() as { skills: unknown[] };
-      return payload.skills;
+      try {
+        const qs = new URLSearchParams();
+        if (query?.category) qs.set("category", query.category);
+        if (query?.keyword) qs.set("keyword", query.keyword);
+        if (query?.sort) qs.set("sort", query.sort);
+        if (query?.tag) qs.set("tag", query.tag);
+        const suffix = qs.toString() ? `?${qs}` : "";
+        const res = await cloudFetch(`/skills${suffix}`);
+        if (!res.ok) throw new Error(`Cloud skills request failed: ${res.status}`);
+        const payload = await res.json() as { skills: unknown[] };
+        return payload.skills;
+      } catch (error) {
+        return buildCloudIpcErrorPayload("cloud:skills", error);
+      }
     },
   );
 

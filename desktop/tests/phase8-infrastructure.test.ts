@@ -220,6 +220,28 @@ describe("Model Client request headers", () => {
     });
   });
 
+  it("uses bearer auth for custom Anthropic-format Claude Code gateways", async () => {
+    const { buildProtocolRequestHeaders } = await import("../src/main/services/model-client");
+    const headers = buildProtocolRequestHeaders({
+      id: "test",
+      name: "Claude Code Gateway",
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "http://13.250.152.8:3000",
+      apiKey: "gateway-token",
+      model: "global.anthropic.claude-opus-4-7",
+      headers: {},
+    }, "anthropic-messages");
+
+    expect(headers).toMatchObject({
+      "content-type": "application/json",
+      authorization: "Bearer gateway-token",
+      "anthropic-version": "2023-06-01",
+    });
+    expect(headers).not.toHaveProperty("x-api-key");
+    expect(headers).not.toHaveProperty("anthropic-beta");
+  });
+
   it("adds the DashScope session cache header only on Qwen responses requests when configured", async () => {
     const { buildProtocolRequestHeaders } = await import("../src/main/services/model-client");
     const profile = {

@@ -187,6 +187,54 @@ describe("Task V2 CRUD (task-store)", () => {
     expect(result.updated.metadata).toEqual({ a: 1, b: 99, c: 3 });
   });
 
+  it("clears stale user-wait metadata when a task resumes execution", () => {
+    const tasks: Task[] = [
+      {
+        id: "t1",
+        subject: "搜索云南天气",
+        description: "查询天气数据",
+        activeForm: "需要你回复：搜索云南天气",
+        status: "waiting_user",
+        blocks: [],
+        blockedBy: [],
+        metadata: {
+          awaitingUser: true,
+          waitingReason: "误判等待用户",
+          interruptRequestId: "req-1",
+          previousActiveForm: "正在搜索云南天气",
+          keep: "value",
+        },
+      },
+    ];
+
+    const result = updateTask(tasks, "t1", { status: "in_progress" });
+
+    expect(result.updated.status).toBe("in_progress");
+    expect(result.updated.activeForm).toBe("正在搜索云南天气");
+    expect(result.updated.metadata).toEqual({ keep: "value" });
+  });
+
+  it("drops stale user-wait activeForm when no previous active form exists", () => {
+    const tasks: Task[] = [
+      {
+        id: "t1",
+        subject: "汇总天气",
+        description: "整理表格",
+        activeForm: "需要你回复：汇总天气",
+        status: "waiting_user",
+        blocks: [],
+        blockedBy: [],
+        metadata: { awaitingUser: true, waitingReason: "误判等待用户" },
+      },
+    ];
+
+    const result = updateTask(tasks, "t1", { status: "completed" });
+
+    expect(result.updated.status).toBe("completed");
+    expect(result.updated.activeForm).toBeUndefined();
+    expect(result.updated.metadata).toBeUndefined();
+  });
+
   it("updates the canonical task when the caller passes a duplicate alias ID", () => {
     const tasks: Task[] = [
       { id: "t1", subject: "Run lint", description: "Run lint before submit", status: "pending", blocks: [], blockedBy: [] },

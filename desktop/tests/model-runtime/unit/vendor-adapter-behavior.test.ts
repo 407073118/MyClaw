@@ -123,6 +123,226 @@ describe("vendor adapter behavior", () => {
         }],
       },
     });
+    expect(JSON.stringify(variants[0]?.body.tools)).toContain("cache_control");
+  });
+
+  it("does not send Anthropic cache_control to Moonshot-compatible legacy routes by default", () => {
+    const adapter = getProviderAdapter("anthropic-native");
+    const profile = makeProfile({
+      provider: "openai-compatible",
+      providerFlavor: "moonshot",
+      baseUrl: "https://api.moonshot.cn/v1",
+      model: "kimi-k2-0905-preview",
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile },
+      {
+        messages: [{ role: "user", content: "hello" }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "search",
+            description: "Search docs",
+            parameters: { type: "object", properties: {}, required: [] },
+          },
+        }],
+      },
+    );
+
+    expect(JSON.stringify(variants[0]?.body)).not.toContain("cache_control");
+  });
+
+  it("uses adaptive thinking for Claude Opus 4.7 in legacy anthropic adapter path", () => {
+    const adapter = getProviderAdapter("anthropic-native");
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "http://13.250.152.8:3000",
+      model: "global.anthropic.claude-opus-4-7",
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEffort: "high" },
+      {
+        messages: adapter.materializeReplayMessages(
+          { profile, reasoningEffort: "high" },
+          { messages: [{ role: "user", content: "hello" }] },
+        ),
+      },
+    );
+
+    expect(variants[0]?.body).toMatchObject({
+      thinking: {
+        type: "adaptive",
+        display: "summarized",
+      },
+      output_config: {
+        effort: "high",
+      },
+    });
+    expect(JSON.stringify(variants[0]?.body)).not.toContain("budget_tokens");
+  });
+
+  it("keeps precompiled anthropic input_schema tools in legacy anthropic adapter path", () => {
+    const adapter = getProviderAdapter("anthropic-native");
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile },
+      {
+        messages: [{ role: "user", content: "read package.json" }],
+        tools: [{
+          name: "fs_read",
+          description: "Read file contents",
+          input_schema: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+        } as never],
+      },
+    );
+
+    expect(variants[0]?.body.tools).toEqual([{
+      name: "fs_read",
+      description: "Read file contents",
+      input_schema: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      cache_control: { type: "ephemeral" },
+    }]);
+  });
+
+  it("materializes legacy anthropic replay with tool_use and tool_result blocks", () => {
+    const adapter = getProviderAdapter("anthropic-native");
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+      requestBody: {
+        temperature: 0.1,
+      },
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEffort: "high" },
+      {
+        messages: adapter.materializeReplayMessages(
+          { profile, reasoningEffort: "high" },
+          {
+            messages: [
+              { role: "user", content: "Read package metadata" },
+              {
+                role: "assistant",
+                content: "I will inspect it.",
+                tool_calls: [{
+                  id: "toolu_legacy",
+                  type: "function",
+                  function: {
+                    name: "fs_read",
+                    arguments: "{\"path\":\"package.json\"}",
+                  },
+                }],
+              },
+              {
+                role: "tool",
+                content: "{\"name\":\"myclaw\"}",
+                tool_call_id: "toolu_legacy",
+              },
+            ],
+          },
+        ),
+      },
+    );
+
+    const body = variants[0]?.body as Record<string, unknown>;
+    const messages = body.messages as unknown[];
+    expect(JSON.stringify(messages)).not.toContain("\"role\":\"tool\"");
+    expect(JSON.stringify(messages)).not.toContain("\"tool_calls\"");
+    expect(messages[1]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "text", text: "I will inspect it." },
+        {
+          type: "tool_use",
+          id: "toolu_legacy",
+          name: "fs_read",
+          input: { path: "package.json" },
+        },
+      ],
+    });
+    expect(messages[2]).toEqual({
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "toolu_legacy",
+        content: "{\"name\":\"myclaw\"}",
+      }],
+    });
+    expect(body.max_tokens).toBeGreaterThan(32768);
+    expect(body.temperature).toBe(0.1);
+  });
+
+  it("keeps legacy anthropic runtime system reminders in message order", () => {
+    const adapter = getProviderAdapter("anthropic-native");
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+    });
+
+    const variants = adapter.prepareRequest(
+      { profile, reasoningEffort: "medium" },
+      {
+        messages: [
+          { role: "system", content: "You are helpful" },
+          { role: "user", content: "开始执行任务" },
+          { role: "assistant", content: "我已经输出阶段性结果。" },
+          { role: "system", content: "[任务未完成] 请继续按计划推进任务。" },
+        ],
+      },
+    );
+
+    const body = variants[0]?.body as Record<string, unknown>;
+    const messages = body.messages as Array<{ role: string; content: unknown }>;
+
+    expect(body.system).toBe("You are helpful");
+    expect(messages.at(-1)).toEqual({
+      role: "user",
+      content: "[任务未完成] 请继续按计划推进任务。",
+    });
+  });
+
+  it("normalizes legacy Anthropic JSON usage with cache-aware token totals", () => {
+    const adapter = getProviderAdapter("anthropic-native");
+
+    const result = adapter.normalizeResponse({
+      content: [{ type: "text", text: "cached response" }],
+      stop_reason: "end_turn",
+      usage: {
+        input_tokens: 50,
+        cache_read_input_tokens: 100000,
+        cache_creation_input_tokens: 200,
+        output_tokens: 20,
+      },
+    });
+
+    expect(result.usage).toMatchObject({
+      promptTokens: 100250,
+      completionTokens: 20,
+      totalTokens: 100270,
+      cacheReadInputTokens: 100000,
+      cacheWriteInputTokens: 200,
+      cacheHitInputTokens: 100000,
+      cacheMissInputTokens: 250,
+    });
+    expect(result.usage?.cacheEfficiency).toBeCloseTo(100000 / 100250);
   });
 
   it("uses Qwen-native thinking fields, tool constraints, and clean fallback sanitization", () => {

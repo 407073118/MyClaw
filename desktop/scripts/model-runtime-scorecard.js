@@ -21,6 +21,16 @@ const PROVIDER_FAMILY_ROLLOUT_ORDER = [
 ];
 
 /**
+ * 将比例限制在 0 到 1，避免历史 usage 异常把路线分数放大。
+ */
+function clampRate(value) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.min(Math.max(value, 0), 1);
+}
+
+/**
  * 汇总 outcome 中的缓存命中率，按输入 token 加权。
  */
 function calculateCacheHitRate(outcomes) {
@@ -30,7 +40,7 @@ function calculateCacheHitRate(outcomes) {
     acc.cacheHitTokens += usage.cacheHitInputTokens ?? usage.cacheReadInputTokens ?? usage.cachedInputTokens ?? 0;
     return acc;
   }, { promptTokens: 0, cacheHitTokens: 0 });
-  return totals.promptTokens > 0 ? totals.cacheHitTokens / totals.promptTokens : 0;
+  return totals.promptTokens > 0 ? clampRate(totals.cacheHitTokens / totals.promptTokens) : 0;
 }
 
 /**
@@ -43,17 +53,17 @@ function calculateCacheWriteRate(outcomes) {
     acc.cacheWriteTokens += usage.cacheWriteInputTokens ?? 0;
     return acc;
   }, { promptTokens: 0, cacheWriteTokens: 0 });
-  return totals.promptTokens > 0 ? totals.cacheWriteTokens / totals.promptTokens : 0;
+  return totals.promptTokens > 0 ? clampRate(totals.cacheWriteTokens / totals.promptTokens) : 0;
 }
 
 /**
  * 使用缓存感知公式计算路线分数，和桌面端运行时保持一致。
  */
 function scoreProviderRoute(input) {
-  return (input.successRate * 0.4)
-    + (input.cacheHitRate * 0.3)
-    + (input.latencyScore * 0.15)
-    + (input.estimatedCostScore * 0.15);
+  return (clampRate(input.successRate) * 0.4)
+    + (clampRate(input.cacheHitRate) * 0.3)
+    + (clampRate(input.latencyScore) * 0.15)
+    + (clampRate(input.estimatedCostScore) * 0.15);
 }
 
 /**

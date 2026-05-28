@@ -327,13 +327,13 @@ function buildOutcomeCachePlanSnapshot(input: {
 function resolveLegacyShimTools(
   input: ExecutionGatewayInput,
   toolBundle: CompiledToolBundle,
-): Array<{
-  type: "function";
-  function: { name: string; description: string; parameters: Record<string, unknown> };
-}> {
+): unknown[] {
   const policy = toolBundle.providerToolPolicy;
   if (policy?.fallbackBehavior === "disable-tools" || policy?.unsupportedFields.includes("tools")) {
     return [];
+  }
+  if (policy?.toolDefinitionShape === "anthropicInputSchema") {
+    return toolBundle.tools;
   }
   if (policy?.toolDefinitionShape === "openaiChatFunction") {
     return toolBundle.tools as Array<{
@@ -402,6 +402,7 @@ export function createExecutionGateway(deps: ExecutionGatewayDeps = {}) {
               profile: input.profile,
               messages: legacyMessages,
               tools: resolveLegacyShimTools(input, toolBundle),
+              protocolTarget: plan.protocolTarget,
               executionPlan: plan.legacyExecutionPlan,
               signal: input.signal,
               onDelta: input.onDelta,

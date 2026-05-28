@@ -25,6 +25,8 @@ import type {
   ChatMessageContent,
   ChatMessageToolCall,
   ChatSession,
+  ContextCheckpoint,
+  ContextCompactionMetadata,
   MessageTokenUsage,
   SessionRuntimeVersion,
   Task,
@@ -215,7 +217,7 @@ export type SessionListItem = {
 
 // ─── 常量 ────────────────────────────────────────────────────────────────────
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 // ─── Schema SQL ──────────────────────────────────────────────────────────────
 
@@ -326,6 +328,32 @@ CREATE TABLE IF NOT EXISTS artifact_events (
 
 CREATE INDEX IF NOT EXISTS idx_artifact_events_artifact
   ON artifact_events(artifact_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS context_checkpoints (
+  id           TEXT PRIMARY KEY,
+  session_id   TEXT NOT NULL,
+  turn_id      TEXT NOT NULL,
+  created_at   TEXT NOT NULL,
+  checksum     TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_checkpoints_session
+  ON context_checkpoints(session_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS context_compaction_metadata (
+  id            TEXT PRIMARY KEY,
+  session_id    TEXT NOT NULL,
+  turn_id       TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  checkpoint_id TEXT,
+  budget_used   INTEGER NOT NULL DEFAULT 0,
+  budget_limit  INTEGER NOT NULL DEFAULT 0,
+  payload_json  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_compaction_metadata_session
+  ON context_compaction_metadata(session_id, created_at DESC);
 `;
 
 /**
@@ -1373,6 +1401,147 @@ export class SessionDatabase {
       },
     );
     this.scheduleFlush("mark-artifact-opened");
+  }
+
+  /** 保存上下文 checkpoint，供长会话恢复和 UI 查看保留状态。 */
+  saveContextCheckpoint(checkpoint: ContextCheckpoint): void {
+    this.run(
+      `INSERT INTO context_checkpoints (
+        id, session_id, turn_id, created_at, checksum, payload_json
+      ) VALUES (
+        @id, @session_id, @turn_id, @created_at, @checksum, @payload_json
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        session_id = excluded.session_id,
+        turn_id = excluded.turn_id,
+        created_at = excluded.created_at,
+        checksum = excluded.checksum,
+        payload_json = excluded.payload_json`,
+      {
+        id: checkpoint.id,
+        session_id: checkpoint.sessionId,
+        turn_id: checkpoint.turnId,
+        created_at: checkpoint.createdAt,
+        checksum: checkpoint.checksum,
+        payload_json: JSON.stringify(checkpoint),
+      },
+    );
+    console.info("[session-database] 已保存上下文 checkpoint", {
+      sessionId: checkpoint.sessionId,
+      checkpointId: checkpoint.id,
+      turnId: checkpoint.turnId,
+    });
+    this.scheduleFlush("save-context-checkpoint");
+  }
+
+  /** 按会话列出上下文 checkpoint，最新的排在最前。 */
+  listContextCheckpoints(sessionId: string): ContextCheckpoint[] {
+    const rows = this.queryAll(
+      `SELECT payload_json
+       FROM context_checkpoints
+       WHERE session_id = @session_id
+       ORDER BY created_at DESC`,
+      { session_id: sessionId },
+    );
+    console.info("[session-database] 已读取会话上下文 checkpoint 列表", {
+      sessionId,
+      count: rows.length,
+    });
+    return rows
+      .map((row) => parseJsonOrUndef<ContextCheckpoint>(row.payload_json as string))
+      .filter((item): item is ContextCheckpoint => Boolean(item));
+  }
+
+  /** 获取会话最新上下文 checkpoint，不存在时返回 null。 */
+  getLatestContextCheckpoint(sessionId: string): ContextCheckpoint | null {
+    const row = this.queryOne(
+      `SELECT payload_json
+       FROM context_checkpoints
+       WHERE session_id = @session_id
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      { session_id: sessionId },
+    );
+    const checkpoint = parseJsonOrUndef<ContextCheckpoint>(row?.payload_json as string | null);
+    console.info("[session-database] 已读取最新上下文 checkpoint", {
+      sessionId,
+      checkpointId: checkpoint?.id ?? null,
+    });
+    return checkpoint ?? null;
+  }
+
+  /** 保存上下文压缩 metadata，供后续解释压缩原因和预算使用。 */
+  saveContextCompactionMetadata(metadata: ContextCompactionMetadata): void {
+    this.run(
+      `INSERT INTO context_compaction_metadata (
+        id, session_id, turn_id, created_at, checkpoint_id, budget_used, budget_limit, payload_json
+      ) VALUES (
+        @id, @session_id, @turn_id, @created_at, @checkpoint_id, @budget_used, @budget_limit, @payload_json
+      )
+      ON CONFLICT(id) DO UPDATE SET
+        session_id = excluded.session_id,
+        turn_id = excluded.turn_id,
+        created_at = excluded.created_at,
+        checkpoint_id = excluded.checkpoint_id,
+        budget_used = excluded.budget_used,
+        budget_limit = excluded.budget_limit,
+        payload_json = excluded.payload_json`,
+      {
+        id: metadata.id,
+        session_id: metadata.sessionId,
+        turn_id: metadata.turnId,
+        created_at: metadata.createdAt,
+        checkpoint_id: metadata.checkpointId ?? null,
+        budget_used: metadata.budgetUsed,
+        budget_limit: metadata.budgetLimit,
+        payload_json: JSON.stringify(metadata),
+      },
+    );
+    console.info("[session-database] 已保存上下文压缩 metadata", {
+      sessionId: metadata.sessionId,
+      metadataId: metadata.id,
+      turnId: metadata.turnId,
+      checkpointId: metadata.checkpointId ?? null,
+      budgetUsed: metadata.budgetUsed,
+      budgetLimit: metadata.budgetLimit,
+    });
+    this.scheduleFlush("save-context-compaction-metadata");
+  }
+
+  /** 按会话列出上下文压缩 metadata，最新的排在最前。 */
+  listContextCompactionMetadata(sessionId: string): ContextCompactionMetadata[] {
+    const rows = this.queryAll(
+      `SELECT payload_json
+       FROM context_compaction_metadata
+       WHERE session_id = @session_id
+       ORDER BY created_at DESC`,
+      { session_id: sessionId },
+    );
+    console.info("[session-database] 已读取上下文压缩 metadata 列表", {
+      sessionId,
+      count: rows.length,
+    });
+    return rows
+      .map((row) => parseJsonOrUndef<ContextCompactionMetadata>(row.payload_json as string))
+      .filter((item): item is ContextCompactionMetadata => Boolean(item));
+  }
+
+  /** 获取会话最新上下文压缩 metadata，不存在时返回 null。 */
+  getLatestContextCompactionMetadata(sessionId: string): ContextCompactionMetadata | null {
+    const row = this.queryOne(
+      `SELECT payload_json
+       FROM context_compaction_metadata
+       WHERE session_id = @session_id
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      { session_id: sessionId },
+    );
+    const metadata = parseJsonOrUndef<ContextCompactionMetadata>(row?.payload_json as string | null);
+    console.info("[session-database] 已读取最新上下文压缩 metadata", {
+      sessionId,
+      metadataId: metadata?.id ?? null,
+    });
+    return metadata ?? null;
   }
 
   /** 从旧 JSON 会话批量导入，并合并安排一次数据库落盘。 */

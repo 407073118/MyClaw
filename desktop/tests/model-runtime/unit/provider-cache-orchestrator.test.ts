@@ -40,8 +40,12 @@ describe("provider cache orchestrator", () => {
       cache_creation_input_tokens: 200,
     });
 
+    expect(usage?.promptTokens).toBe(2300);
+    expect(usage?.totalTokens).toBe(2380);
     expect(usage?.cacheReadInputTokens).toBe(900);
     expect(usage?.cacheWriteInputTokens).toBe(200);
     expect(usage?.cacheHitInputTokens).toBe(900);
+    expect(usage?.cacheMissInputTokens).toBe(1400);
+    expect(usage?.cacheEfficiency).toBeCloseTo(900 / 2300);
   });
 });

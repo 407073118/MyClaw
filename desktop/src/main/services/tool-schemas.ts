@@ -47,6 +47,39 @@ function shouldExposeMcpTool(tool: McpTool & { serverId: string }): boolean {
   return preference.enabled !== false && preference.exposedToModel !== false;
 }
 
+export type McpFunctionNameEntry<TTool extends McpTool & { serverId: string } = McpTool & { serverId: string }> = {
+  functionName: string;
+  tool: TTool;
+};
+
+/** 生成 MCP 工具函数名并处理净化后的重名，供 schema 暴露和执行路由共用。 */
+export function buildMcpFunctionNameEntries<TTool extends McpTool & { serverId: string }>(
+  mcpTools?: TTool[],
+): Array<McpFunctionNameEntry<TTool>> {
+  const entries: Array<McpFunctionNameEntry<TTool>> = [];
+  const usedMcpNames = new Set<string>();
+  for (const tool of mcpTools ?? []) {
+    if (!shouldExposeMcpTool(tool)) continue;
+    let functionName = tool.id.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const baseName = functionName;
+    let suffix = 2;
+    while (usedMcpNames.has(functionName)) {
+      functionName = `${baseName}_${suffix}`;
+      suffix++;
+    }
+    usedMcpNames.add(functionName);
+    entries.push({ functionName, tool });
+  }
+  return entries;
+}
+
+/** 构造 MCP 函数名到原始工具定义的映射，避免去重后缀导致执行阶段找不到工具。 */
+export function buildMcpFunctionNameMap<TTool extends McpTool & { serverId: string }>(
+  mcpTools?: TTool[],
+): Map<string, TTool> {
+  return new Map(buildMcpFunctionNameEntries(mcpTools).map((entry) => [entry.functionName, entry.tool]));
+}
+
 /** 读取 bundle MCP 的参数 schema，优先使用冻结的 inputSchema，兼容旧 manifestJson.inputSchema。 */
 function resolveBundleMcpInputSchema(ref: CapabilityBundle["functionNameMap"][string]): Record<string, unknown> {
   if (ref.inputSchema && typeof ref.inputSchema === "object" && !Array.isArray(ref.inputSchema)) {
@@ -582,7 +615,7 @@ export function buildToolSchemas(
       type: "function",
       function: {
         name: "task_create",
-        description: "Create a task as part of your execution plan. When you receive a user request, decompose it into tasks BEFORE starting work. Each task represents one logical step you will execute. Provide subject (imperative: 'Run tests') and activeForm (present continuous: 'Running tests'). Tasks are automatically chained in creation order — each new task is blocked by the previous one, enforcing sequential execution. To create a task with no dependency (e.g., parallel work), pass blockedBy as an empty array.",
+        description: "Create a Task V2 item only when explicit planning/tracking is useful, such as long-running work, complex multi-step implementation, delegated work, or user-requested execution plans. Do not create tasks for ordinary quick Q&A, simple research, or one-shot tool lookups. Each task represents one logical step you will execute. Provide subject (imperative: 'Run tests') and activeForm (present continuous: 'Running tests'). Tasks are automatically chained in creation order — each new task is blocked by the previous one, enforcing sequential execution. To create a task with no dependency (e.g., parallel work), pass blockedBy as an empty array.",
         parameters: {
           type: "object",
           properties: {
@@ -1103,23 +1136,11 @@ export function buildToolSchemas(
 
   // 生成 MCP 工具 schema
   if (!options?.capabilityBundle && mcpTools && mcpTools.length > 0) {
-    const usedMcpNames = new Set<string>();
-    for (const tool of mcpTools) {
-      if (!shouldExposeMcpTool(tool)) continue;
-      // 函数名格式：mcp__<serverId_short>__<toolName>
-      let safeName = tool.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-      // 去重：如果净化后名称冲突，追加数字后缀
-      const baseName = safeName;
-      let suffix = 2;
-      while (usedMcpNames.has(safeName)) {
-        safeName = `${baseName}_${suffix}`;
-        suffix++;
-      }
-      usedMcpNames.add(safeName);
+    for (const { functionName, tool } of buildMcpFunctionNameEntries(mcpTools)) {
       filteredStaticTools.push({
         type: "function",
         function: {
-          name: safeName,
+          name: functionName,
           description: tool.description || `MCP tool: ${tool.name}`,
           parameters: tool.inputSchema ?? {
             type: "object",

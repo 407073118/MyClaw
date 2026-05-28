@@ -10,9 +10,9 @@ import { buildTaskDisplayItems } from "@shared/task-logical";
 
 import type { ActiveSessionRun, RuntimeContext } from "../services/runtime-context";
 import type { ChatMessage as ModelChatMessage, ChatMessageContent, ResolvedToolCall } from "../services/model-client";
-import { saveSession, saveSiliconPerson, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles, saveSettings } from "../services/state-persistence";
+import { getSessionDatabase, saveSession, saveSiliconPerson, saveWorkflowRun, deleteWorkflowRunFile, deleteSessionFiles, saveSettings } from "../services/state-persistence";
 import { trackSave } from "../services/pending-saves";
-import { buildToolSchemas, functionNameToToolId, buildToolLabel } from "../services/tool-schemas";
+import { buildMcpFunctionNameMap, buildToolSchemas, functionNameToToolId, buildToolLabel } from "../services/tool-schemas";
 import { resolveBuiltinToolById } from "../services/builtin-tool-registry";
 import { BuiltinToolExecutor } from "../services/builtin-tool-executor";
 import { PathAccessPolicy, type PathPolicyApprovalCallback, type PathApprovalInput, type PathApprovalResponse } from "../services/path-access-policy";
@@ -28,7 +28,7 @@ import { buildPersonalPromptContext } from "../services/personal-prompt-profile"
 import { extractEnrichedContext, buildEnrichedContextBlock } from "../services/context-enricher";
 import { buildExecutionPlan, resolveSessionRuntimeIntent } from "../services/reasoning-runtime";
 import { buildMemoryWorkingMemory } from "../services/memory-context-injection";
-import { buildCanonicalTurnContent } from "../services/model-runtime/canonical-turn-content";
+import { buildCanonicalTurnContent, prepareLegacyMessagesForCanonicalReplay } from "../services/model-runtime/canonical-turn-content";
 import { createBackgroundTaskManager } from "../services/model-runtime/background-task-manager";
 import type { BackgroundTaskSnapshot } from "../services/model-runtime/background-task-manager";
 import { createComputerActionHarness, getComputerActionToolId, buildComputerActionLabel, getComputerActionRisk } from "../services/model-runtime/computer-action-harness";
@@ -828,7 +828,6 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
-/** 确保旧会话在进入新链路前拥有 runtime version，便于后续做版本化迁移。 */
 /** 向后兼容旧的测试上下文，确保会话运行注册表始终可用。 */
 function getActiveSessionRuns(ctx: RuntimeContext): Map<string, ActiveSessionRun> {
   if (!ctx.state.activeSessionRuns) {
@@ -837,17 +836,65 @@ function getActiveSessionRuns(ctx: RuntimeContext): Map<string, ActiveSessionRun
   return ctx.state.activeSessionRuns;
 }
 
+/** 确保旧会话在进入新链路前拥有 runtime version，便于后续做版本化迁移。 */
 function ensureSessionRuntimeVersion(session: ChatSession): void {
   if (!session.runtimeVersion) {
     session.runtimeVersion = SESSION_RUNTIME_VERSION;
   }
 }
 
-/**
- * 从 legacy message 数组中移除 system 消息，避免 canonical prompt sections 与旧 system prompt 重复下发。
- */
-function stripSystemMessages(messages: ModelChatMessage[]): ModelChatMessage[] {
-  return messages.filter((message) => message.role !== "system");
+/** 为 UI 生成短 checkpoint 预览，避免把完整 JSON 状态塞进事件流。 */
+function buildContextCheckpointPreview(checkpoint: ReturnType<typeof assembleContext>["checkpoint"]): string | null {
+  if (!checkpoint) return null;
+  const parts = [
+    checkpoint.taskGoal ? `目标：${checkpoint.taskGoal}` : null,
+    checkpoint.currentPhase ? `阶段：${checkpoint.currentPhase}` : null,
+    checkpoint.nextGoal ? `下一步：${checkpoint.nextGoal}` : null,
+    checkpoint.touchedFiles.length > 0 ? `文件：${checkpoint.touchedFiles.slice(0, 5).join(", ")}` : null,
+  ].filter(Boolean);
+  return parts.join("；").slice(0, 600) || checkpoint.summary || null;
+}
+
+/** 判断 metadata 是否代表真实压缩事件，避免 within-budget 轮次制造落库噪声。 */
+function shouldPersistContextCompactionMetadata(metadata: ReturnType<typeof assembleContext>["metadata"]): boolean {
+  return Boolean(
+    metadata &&
+    (
+      metadata.reason !== "within-budget" ||
+      metadata.removedMessageIds.length > 0 ||
+      metadata.maskedToolOutputIds.length > 0 ||
+      metadata.checkpointId ||
+      metadata.memoryIds.length > 0 ||
+      metadata.providerNativeCompactionUsed
+    ),
+  );
+}
+
+/** 持久化本轮上下文编译产物，失败时只记录日志，不中断模型主链。 */
+function persistContextCompileArtifacts(sessionId: string, assembled: ReturnType<typeof assembleContext>): void {
+  const shouldPersistMetadata = shouldPersistContextCompactionMetadata(assembled.metadata);
+  if (!shouldPersistMetadata && !assembled.checkpoint) {
+    return;
+  }
+  try {
+    const db = getSessionDatabase();
+    if (assembled.checkpoint) {
+      db.saveContextCheckpoint(assembled.checkpoint);
+    }
+    if (shouldPersistMetadata && assembled.metadata) {
+      db.saveContextCompactionMetadata(assembled.metadata);
+    }
+    console.info("[session:context] 已持久化上下文编译产物", {
+      sessionId,
+      checkpointId: assembled.checkpoint?.id ?? null,
+      metadataId: shouldPersistMetadata ? assembled.metadata?.id ?? null : null,
+    });
+  } catch (error) {
+    console.warn("[session:context] 持久化上下文编译产物失败，主链继续执行", {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 /**
@@ -973,6 +1020,7 @@ function buildSessionPromptSections(input: {
       title: "Memory Evidence",
       layer: "context",
       content: input.memoryContextBlock.trim(),
+      cacheTier: "volatile-tail",
     });
   }
 
@@ -1003,6 +1051,7 @@ function buildSessionPromptSections(input: {
         "If ANY task is waiting_user or has an active interrupt request, the whole task chain is paused for user input. Do not continue pending tasks until the user answers through structured resume; after resume, continue the resumed task before later tasks.",
         ...taskLines,
       ].join("\n"),
+      cacheTier: "volatile-tail",
     });
   }
 
@@ -1013,6 +1062,7 @@ function buildSessionPromptSections(input: {
       title: "Runtime Guidance",
       layer: "guidelines",
       content: input.extraGuidance.trim(),
+      cacheTier: "volatile-tail",
     });
   }
   return sections;
@@ -1323,12 +1373,15 @@ function buildSystemPrompt(
   if (effort === "low") {
     parts.push(`You have task tracking tools (task_create, task_update, task_wait_for_user, etc.) — use them only when explicitly asked.`);
   } else {
-    parts.push(`You have task tools for decomposing and tracking user requests. **This is your primary workflow — use it for every non-trivial request.**`);
-    parts.push(`\n## Mandatory Workflow`);
-    parts.push(`When you receive a user request (except simple Q&A like "what is X?"), you MUST follow this workflow:`);
-    parts.push(`1. **Analyze** — Understand what the user really wants. Identify the logical steps needed.`);
-    parts.push(`2. **Decompose** — Call \`task_create\` for EACH step to build a task list. This shows the user your execution plan BEFORE you start working.`);
-    parts.push(`3. **Execute** — Work through tasks one by one: \`task_update(id, status: "in_progress")\` → do the work → \`task_update(id, status: "completed")\``);
+    parts.push(`You have task tools for decomposing and tracking work when the user explicitly wants a plan, when the task is long-running, or when progress must be visible.`);
+    parts.push(`\n## When To Use Task Tools`);
+    parts.push(`- Use task tools for explicit planning/tracking requests, complex multi-step implementation, delegated work, or long-running workflows.`);
+    parts.push(`- Do not create tasks for ordinary quick Q&A, simple research, single-shot web lookup, or direct tool use; just do the work and answer.`);
+    parts.push(`- If you create tasks, continue executing them in the same turn when safe. Stop only when you truly need the user's structured input.`);
+    parts.push(`\n## Task Workflow`);
+    parts.push(`1. **Create only useful tasks** — Call \`task_create\` for meaningful steps, not for every small answer.`);
+    parts.push(`2. **Execute** — Work through tasks one by one: \`task_update(id, status: "in_progress")\` → do the work → \`task_update(id, status: "completed")\`.`);
+    parts.push(`3. **Complete tracked tasks** — Do not leave tasks pending or in_progress unless \`task_wait_for_user\` has placed a task in waiting_user because the user must answer before work can continue.`);
     parts.push(`\n## Tools`);
     parts.push(`- \`task_create({ subject, description, activeForm })\` — subject: imperative (e.g. "修复登录Bug"), activeForm: present continuous (e.g. "正在修复登录Bug"). Always provide activeForm.`);
     parts.push(`- \`task_update({ id, status })\` — Mark "in_progress" before starting and "completed" immediately after finishing. Use blocked/failed/cancelled only for real blockers or terminal outcomes.`);
@@ -1336,11 +1389,11 @@ function buildSystemPrompt(
     parts.push(`- \`task_list()\` / \`task_get({ id })\` — Check current task state.`);
     parts.push(`- **Status flow**: pending → in_progress → completed. waiting_user is a runtime hard pause created by task_wait_for_user. blocked/failed/cancelled are non-runnable states. Once any task is waiting_user, stop the turn and do not continue other pending tasks. Only ONE task can be in_progress at a time.`);
     parts.push(`\n## Key Rules`);
-    parts.push(`- **Plan first, execute second** — Create ALL tasks before starting the first one. Let the user see the full plan.`);
-    parts.push(`- **Even single-step requests get a task** — Creating a task signals "I understood your request and here's what I'll do."`);
-    parts.push(`- **Discover new steps? Add tasks** — If you find additional work during execution, create new tasks to track it.`);
+    parts.push(`- **Avoid task noise** — A normal request like checking weather, answering a fact, or reading one file should not open a Task V2 chain.`);
+    parts.push(`- **Track real work** — If you start a task chain, keep it accurate and finish every task you created.`);
+    parts.push(`- **Discover new steps? Add tasks** — If substantial new work appears during execution, create a task for it.`);
     parts.push(`- **Clarification UX** — If you need multiple choices, approval, rejection, cancellation, or several fields from the user, call task_wait_for_user with simple choices/inputSchema. Do not rely on prose, markdown checkboxes, or schema defaults for the pause.`);
-    parts.push(`- **Skip tasks ONLY for**: direct factual Q&A, greetings, or clarification questions.`);
+    parts.push(`- **Skip tasks for**: direct factual Q&A, greetings, simple research, ordinary web lookup, or clarification questions.`);
     if (effort === "high") {
       parts.push(`\n## Deep Reasoning Protocol (MANDATORY)`);
       parts.push(`- Before creating tasks, output your analysis: what is the core need? what are the constraints? what could go wrong?`);
@@ -3002,10 +3055,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           }))
         : ctx.tools.resolveMcpTools();
       const mcpTools = resolvedMcpTools.filter((tool) => tool.enabled !== false && tool.exposedToModel !== false);
-      const mcpToolByFunctionName = new Map<string, RuntimeResolvedMcpTool>();
-      for (const tool of mcpTools) {
-        mcpToolByFunctionName.set(tool.id.replace(/[^a-zA-Z0-9_-]/g, "_"), tool);
-      }
+      const mcpToolByFunctionName = buildMcpFunctionNameMap(mcpTools);
       const capabilityBundle = await ctx.services.capabilityBundles?.resolveForSession({
         sessionId,
         globalSkills: allSkills,
@@ -3358,7 +3408,10 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           systemPromptBuilder: boundBuildSystemPrompt,
           workingMemory: memoryWorkingMemory ?? undefined,
           executionPlan,
+          compactTriggerTokens: modelProfile.compactTriggerTokens,
+          turnId: messageId,
         });
+        persistContextCompileArtifacts(sessionId, assembled);
         const turnExecutionPlan = resolveTurnExecutionPlan({
           profile: modelProfile,
           legacyExecutionPlan: executionPlan,
@@ -3392,12 +3445,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           siliconPersonIdentity,
           extraGuidance: buildPlanAnalysisGuidance(input.content),
         });
-        const plannerContent = buildCanonicalTurnContent({
-          systemSections: plannerSections,
-          legacyMessages: stripSystemMessages(assembled.messages as ModelChatMessage[]),
-          tasks: session.tasks,
-          replayPolicy: turnExecutionPlan.legacyExecutionPlan.replayPolicy,
-        });
+          const plannerContent = buildCanonicalTurnContent({
+            systemSections: plannerSections,
+            legacyMessages: prepareLegacyMessagesForCanonicalReplay(assembled.messages as ModelChatMessage[]),
+            tasks: session.tasks,
+            replayPolicy: turnExecutionPlan.legacyExecutionPlan.replayPolicy,
+          });
         logSessionRuntimeDebug("[session:runtime] 已切换 canonical 计划执行入口", {
           sessionId,
           providerFamily: turnExecutionPlan.providerFamily,
@@ -3545,7 +3598,10 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
             workingMemory: memoryWorkingMemory ?? undefined,
             executionPlan,
             priorCompactionCount: compactionCount,
+            compactTriggerTokens: modelProfile.compactTriggerTokens,
+            turnId: `${currentMessageId}:round-${round}`,
           });
+          persistContextCompileArtifacts(sessionId, assembled);
           if (assembled.wasCompacted) {
             compactionCount++;
             console.info(
@@ -3562,6 +3618,12 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               compactionCount,
               removedCount: assembled.removedCount,
               maskedToolOutputCount: assembled.maskedToolOutputCount,
+              compactionReason: assembled.compactionReason,
+              checkpointId: assembled.checkpoint?.id ?? null,
+              checkpointCreatedAt: assembled.checkpoint?.createdAt ?? null,
+              checkpointPreview: buildContextCheckpointPreview(assembled.checkpoint),
+              budgetUsed: assembled.budgetUsed,
+              budgetLimit: assembled.metadata?.budgetLimit,
             });
           }
           const executionGuidance = buildPlanExecutionGuidance(session);
@@ -3599,7 +3661,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
           );
           const canonicalContent = buildCanonicalTurnContent({
             systemSections: canonicalSections,
-            legacyMessages: stripSystemMessages(assembled.messages as ModelChatMessage[]),
+            legacyMessages: prepareLegacyMessagesForCanonicalReplay(assembled.messages as ModelChatMessage[]),
             tasks: session.tasks,
             replayPolicy: turnExecutionPlan.legacyExecutionPlan.replayPolicy,
           });
@@ -4125,10 +4187,7 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
                       );
                     }
                   } else {
-                    const mcpTool = mcpTools.find((t) => {
-                      const safeName = t.id.replace(/[^a-zA-Z0-9_-]/g, "_");
-                      return safeName === toolCall.name;
-                    });
+                    const mcpTool = mcpToolByFunctionName.get(toolCall.name);
                     if (!mcpTool || !activeMcpManager) {
                       throw new Error(`MCP tool not found: ${toolCall.name}`);
                     }
@@ -4649,7 +4708,8 @@ export function registerSessionHandlers(ctx: RuntimeContext): void {
               });
               session.messages.push({
                 id: randomUUID(),
-                role: "system",
+                // 中文注释：Anthropic/Bedrock 不允许请求以 assistant prefill 结尾，续行提示按内部 user turn 写入。
+                role: "user",
                 content: `[任务未完成] 你还有 ${unfinishedV2Tasks.length} 个任务未完成（${pendingCount} 个待执行，${inProgressCount} 个执行中）。请继续按计划推进任务，完成所有任务后再停止。`,
                 createdAt: new Date().toISOString(),
               });

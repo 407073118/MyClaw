@@ -180,6 +180,37 @@ describe("assembleContext", () => {
     expect(nonSystemMessages.length).toBeGreaterThanOrEqual(6);
   });
 
+  it("uses compactTriggerTokens before the full safe input budget", () => {
+    const messages: ChatMessage[] = [];
+    for (let i = 0; i < 18; i++) {
+      messages.push(makeMessage(i % 2 === 0 ? "user" : "assistant", `历史消息 ${i}: ${"x".repeat(120)}`));
+    }
+    const session = makeSession(messages);
+
+    const result = assembleContext({
+      session,
+      capability: defaultCapability,
+      policy: {
+        ...DEFAULT_CONTEXT_BUDGET_POLICY,
+        outputReserveTokens: 128,
+        systemReserveTokens: 64,
+        toolReserveTokens: 64,
+        memoryReserveTokens: 64,
+        safetyMarginTokens: 32,
+        minRecentTurnsToKeep: 4,
+      },
+      workingDir: "/test/project",
+      compactTriggerTokens: 220,
+      turnId: "turn-assembler-trigger",
+      systemPromptBuilder: () => "系统提示",
+    });
+
+    expect(result.wasCompacted).toBe(true);
+    expect(result.removedCount).toBeGreaterThan(0);
+    expect(result.metadata?.budgetLimit).toBeLessThanOrEqual(220);
+    expect(result.checkpoint?.turnId).toBe("turn-assembler-trigger");
+  });
+
   it("preserves assistant reasoning metadata for provider-aware replay", () => {
     const messages = [
       makeMessage("user", "请先分析"),

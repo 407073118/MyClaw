@@ -111,4 +111,33 @@ describe("provider scorecard", () => {
 
     expect(score).toBeGreaterThan(lower);
   });
+
+  it("clamps impossible cache rates from legacy or partial usage records", () => {
+    const outcomes: TurnOutcome[] = [{
+      id: "anthropic-legacy",
+      providerFamily: "anthropic-native",
+      vendorFamily: "anthropic",
+      protocolTarget: "anthropic-messages",
+      modelProfileId: "profile-anthropic",
+      experienceProfileId: "claude-best",
+      retryCount: 0,
+      toolCompileMode: "anthropic-detailed-description",
+      replayMode: "none",
+      startedAt: "2026-05-28T00:00:00.000Z",
+      finishedAt: "2026-05-28T00:00:01.000Z",
+      success: true,
+      latencyMs: 100,
+      usage: {
+        promptTokens: 100,
+        completionTokens: 10,
+        totalTokens: 110,
+        cacheHitInputTokens: 500,
+        cacheWriteInputTokens: 200,
+      },
+    }];
+
+    const [scorecard] = buildProviderScorecards(outcomes);
+    expect(scorecard.cacheHitRate).toBe(1);
+    expect(scorecard.cacheWriteRate).toBe(1);
+  });
 });

@@ -53,14 +53,8 @@ type AdapterExecutionPlan = Pick<ExecutionPlan, "adapterId" | "replayPolicy"> & 
 export type ModelCallOptions = {
   profile: ModelProfile;
   messages: ChatMessage[];
-  tools?: Array<{
-    type: "function";
-    function: {
-      name: string;
-      description: string;
-      parameters: Record<string, unknown>;
-    };
-  }>;
+  tools?: unknown[];
+  protocolTarget?: ProtocolTarget;
   onDelta?: (delta: { content?: string; reasoning?: string }) => void;
   onToolCallDelta?: (delta: { toolCallId: string; name: string; argumentsDelta: string }) => void;
   executionPlan?: AdapterExecutionPlan | null;
@@ -219,6 +213,15 @@ function resolveVolcengineArkProviderApiRoot(
 
 type ProviderFlavor = "anthropic" | "qwen" | "qwen-coding" | "deepseek" | "generic";
 
+/** 识别 Anthropic 官方模型名以及 Claude Code 网关包装后的模型名。 */
+function isAnthropicModelName(model: string): boolean {
+  const lowerModel = model.toLowerCase();
+  return lowerModel.startsWith("claude")
+    || lowerModel.startsWith("global.anthropic.")
+    || lowerModel.startsWith("anthropic/")
+    || lowerModel.includes(".claude-");
+}
+
 /**
  * 根据 profile 判定应使用哪种 URL 与请求头风格。
  *
@@ -238,7 +241,7 @@ function resolveProviderFlavor(profile: ModelProfile): ProviderFlavor {
     return "generic";
   }
 
-  if (profile.provider === "anthropic") {
+  if (profile.provider === "anthropic" || profile.providerFlavor === "anthropic" || isAnthropicModelName(profile.model)) {
     return "anthropic";
   }
 
@@ -387,7 +390,17 @@ export function buildRequestHeaders(
   );
 }
 
-/** 按协议目标构造请求头，DeepSeek/Anthropic Messages 路线使用 x-api-key，其余兼容路线使用 Bearer。 */
+/** 判断 Anthropic Messages 请求是否直连官方 Claude API。 */
+function isOfficialAnthropicApiBaseUrl(baseUrl: string): boolean {
+  try {
+    const host = new URL(normalizeBaseUrl(baseUrl)).hostname.toLowerCase();
+    return host === "api.anthropic.com" || host.endsWith(".anthropic.com");
+  } catch {
+    return normalizeBaseUrl(baseUrl).toLowerCase().includes("anthropic.com");
+  }
+}
+
+/** 按协议目标构造请求头，直连 Anthropic 用 x-api-key，自定义 Claude Code 网关用 Bearer。 */
 export function buildProtocolRequestHeaders(
   profile: Pick<ModelProfile, "provider" | "providerFlavor" | "baseUrl" | "apiKey" | "model" | "headers" | "responsesApiConfig">,
   protocolTarget: ProtocolTarget,
@@ -402,11 +415,12 @@ export function buildProtocolRequestHeaders(
     && (profile.provider === "anthropic" || flavor === "anthropic" || flavor === "deepseek");
 
   if (usesAnthropicNativeHeaders) {
-    base["x-api-key"] = profile.apiKey;
-    base["anthropic-version"] = "2023-06-01";
-    if (profile.provider === "anthropic" || flavor === "anthropic") {
-      base["anthropic-beta"] = "prompt-caching-2024-07-31";
+    if (flavor === "anthropic" && !isOfficialAnthropicApiBaseUrl(profile.baseUrl)) {
+      base["authorization"] = `Bearer ${profile.apiKey}`;
+    } else {
+      base["x-api-key"] = profile.apiKey;
     }
+    base["anthropic-version"] = "2023-06-01";
   } else {
     base["authorization"] = `Bearer ${profile.apiKey}`;
   }
@@ -644,6 +658,7 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     signal,
     timeoutMs = 120_000,
     executionPlan,
+    protocolTarget,
   } = options;
 
   // 契约断言：把 fetch 之前的"配置缺失"失败状态明确出来；
@@ -661,9 +676,9 @@ export async function callModel(options: ModelCallOptions): Promise<ModelCallRes
     throw new Error(`模型配置不完整：profile=${profile.id ?? "(missing)"} apiKey 为空`);
   }
 
-  const url = resolveModelEndpointUrl(profile);
-  const headers = buildRequestHeaders(profile);
-  const adapter = getProviderAdapter(executionPlan?.adapterId ?? profile);
+  const url = resolveModelEndpointUrl(profile, protocolTarget);
+  const headers = buildRequestHeaders(profile, protocolTarget);
+  const adapter = getProviderAdapter(protocolTarget === "anthropic-messages" ? "anthropic-native" : (executionPlan?.adapterId ?? profile));
   const replayPolicy = resolveReplayPolicy(profile, executionPlan ?? null);
 
   // 构建发送给接口的消息列表，并按 replay policy 决定是否保留 reasoning。

@@ -17,6 +17,7 @@ import {
   formatCapabilitySource,
   formatTokenCount,
   buildCapabilitySummary,
+  buildContextLimitWarningViewModel,
   type CapabilitySummary,
 } from "../src/renderer/utils/context-ui-helpers";
 
@@ -114,5 +115,33 @@ describe("buildCapabilitySummary", () => {
     const summary = buildCapabilitySummary(capability);
     expect(summary.contextWindow).toBe("—");
     expect(summary.source).toBe("默认值");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Context limit warning
+// ---------------------------------------------------------------------------
+
+describe("buildContextLimitWarningViewModel", () => {
+  it("builds explainable warning copy from compaction metadata", () => {
+    const viewModel = buildContextLimitWarningViewModel({
+      sessionId: "session-1",
+      compactionCount: 3,
+      removedCount: 12,
+      maskedToolOutputCount: 4,
+      compactionReason: "移除 12 条陈旧消息",
+      checkpointId: "checkpoint-1",
+      checkpointCreatedAt: "2026-05-23T00:00:00.000Z",
+      checkpointPreview: "当前目标：实现 Context Compiler；下一步：接入 UI。",
+    });
+
+    expect(viewModel.primaryText).toContain("已压缩 3 次");
+    expect(viewModel.detailItems).toEqual(expect.arrayContaining([
+      "原因：移除 12 条陈旧消息",
+      "已移除 12 条历史消息",
+      "已折叠 4 条旧工具输出",
+      "保留状态：checkpoint-1",
+    ]));
+    expect(viewModel.checkpointPreview).toContain("实现 Context Compiler");
   });
 });

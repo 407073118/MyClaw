@@ -116,6 +116,8 @@ vi.mock("../src/main/services/model-runtime/execution-gateway", () => ({
 
 vi.mock("../src/main/services/model-runtime/canonical-turn-content", () => ({
   buildCanonicalTurnContent: vi.fn(() => ({ messages: [] })),
+  // 测试保留 legacy 消息原样回放，避免无关 canonical 过滤影响桥接断言。
+  prepareLegacyMessagesForCanonicalReplay: vi.fn((messages) => messages),
 }));
 
 vi.mock("../src/main/services/model-runtime/prompt-composer", () => ({
@@ -157,6 +159,8 @@ vi.mock("../src/main/services/builtin-tool-registry", () => ({
 }));
 
 vi.mock("../src/main/services/tool-schemas", () => ({
+  // 测试默认不暴露 MCP 工具，返回空映射即可覆盖 session 路由依赖。
+  buildMcpFunctionNameMap: vi.fn(() => new Map()),
   buildToolLabel: vi.fn((name: string) => name),
 }));
 

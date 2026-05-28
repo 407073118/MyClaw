@@ -28,6 +28,21 @@ describe("task continuation gating", () => {
     expect(isAssistantWaitingForUserInput("需要用户确认发布窗口。")).toBe(true);
   });
 
+  it("does not treat a normal execution plan summary as waiting for user input", () => {
+    const content = [
+      "我已经把这个需求拆成两步任务啦 ✅",
+      "",
+      "📋 执行计划",
+      "1. 搜索云南各城市 6 月 3-13 日天气预报",
+      "2. 汇总整理成清晰表格输出",
+      "",
+      "我这就开始查 👇",
+    ].join("\n");
+
+    expect(isAssistantWaitingForUserInput(content)).toBe(false);
+    expect(isAssistantWaitingForUserInput("我会根据你的需求继续执行，不需要你补充信息。")).toBe(false);
+  });
+
   it("moves active tasks into a user-waiting state and excludes them from auto continuation", () => {
     const tasks: Task[] = [
       {

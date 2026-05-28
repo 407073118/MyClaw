@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { buildToolSchemas } from "../src/main/services/tool-schemas";
+import { buildMcpFunctionNameMap, buildToolSchemas } from "../src/main/services/tool-schemas";
 import { McpServerManager } from "../src/main/services/mcp-server-manager";
 import type { McpTool } from "../shared/contracts/mcp";
 import { ToolRiskCategory } from "../shared/contracts/events";
@@ -225,6 +225,33 @@ describe("Phase 2: MCP tool schema generation", () => {
       "mcp__s1__tool1",
       "skill_invoke__skill-1",
     ]);
+  });
+
+  it("should expose and resolve de-duplicated MCP function names consistently", () => {
+    const firstTool: McpTool & { serverId: string } = {
+      id: "mcp__server.a__search",
+      serverId: "server-a",
+      name: "search",
+      description: "Search from server A",
+      risk: ToolRiskCategory.Read,
+      inputSchema: null,
+    };
+    const secondTool: McpTool & { serverId: string } = {
+      id: "mcp__server/a__search",
+      serverId: "server-b",
+      name: "search",
+      description: "Search from server B",
+      risk: ToolRiskCategory.Read,
+      inputSchema: null,
+    };
+
+    const tools = buildToolSchemas("/test", undefined, [firstTool, secondTool]);
+    const mcpNames = tools.map((tool) => tool.function.name).filter((name) => name.startsWith("mcp__server_a__search"));
+    const functionNameMap = buildMcpFunctionNameMap([firstTool, secondTool]);
+
+    expect(mcpNames).toEqual(["mcp__server_a__search", "mcp__server_a__search_2"]);
+    expect(functionNameMap.get("mcp__server_a__search")?.serverId).toBe("server-a");
+    expect(functionNameMap.get("mcp__server_a__search_2")?.serverId).toBe("server-b");
   });
 });
 

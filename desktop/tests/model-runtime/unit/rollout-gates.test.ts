@@ -101,6 +101,20 @@ describe("rollout gates", () => {
     });
   });
 
+  it("keeps Anthropic Messages available by default so Claude does not fall back to the legacy shim", () => {
+    expect(resolveVendorProtocolRolloutGate("anthropic", "anthropic-messages")).toMatchObject({
+      enabled: true,
+      state: "stable",
+    });
+    expect(resolveEffectiveExecutionRolloutGate({
+      providerFamily: "anthropic-native",
+      vendorFamily: "anthropic",
+      protocolTarget: "anthropic-messages",
+    })).toMatchObject({
+      enabled: true,
+    });
+  });
+
   it("lets explicit vendor+protocol flags override the disabled family gate", () => {
     expect(resolveEffectiveExecutionRolloutGate({
       providerFamily: "qwen-dashscope",

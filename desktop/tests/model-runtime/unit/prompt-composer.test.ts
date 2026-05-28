@@ -40,9 +40,10 @@ describe("prompt composer", () => {
     expect(rendered).toContain("Reasoning profile: qwen.reasoning.responses");
     expect(rendered).toContain("Map effort into Qwen enable_thinking/thinking_budget and avoid forced tool_choice while thinking is enabled.");
     expect(rendered).toContain("Git branch: main");
-    // Task planning 引导必须包含工具名和强制工作流
+    // Task planning 引导必须包含工具名，但不应强制普通请求先停在计划阶段
     expect(rendered).toContain("task_create");
-    expect(rendered).toContain("Mandatory Workflow");
+    expect(rendered).not.toContain("This is your primary workflow");
+    expect(rendered).not.toContain("Phase 1: Planning");
     expect(rendered).toContain("calendar_event_create");
     expect(rendered).toContain("reminder_create");
     expect(rendered).toContain("schedule_job_create");

@@ -3,7 +3,6 @@ import { useLocation } from "react-router-dom";
 import FallbackAvatar from "../components/FallbackAvatar";
 import { useDialogA11y } from "../hooks/useDialogA11y";
 import { useWorkspaceStore, type CloudProjectSummary, type CloudSkillCategory } from "../stores/workspace";
-import { useShellStore } from "../stores/shell";
 import { AlertCircle, Cloud, Download, Search, X } from "lucide-react";
 
 type CloudHubItemType = "skill" | "mcp" | "employee-package" | "workflow-package" | "project";
@@ -55,7 +54,6 @@ function installActionLabel(type: string) {
 
 export default function HubPage() {
   const workspace = useWorkspaceStore();
-  const shell = useShellStore();
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
   const queryTab = searchParams.get("tab");
@@ -76,9 +74,12 @@ export default function HubPage() {
   const [importFeedback, setImportFeedback] = useState("");
   const [importError, setImportError] = useState("");
   const [cloudError, setCloudError] = useState(false);
+  const [cloudErrorMessage, setCloudErrorMessage] = useState("");
   const [selectedProject, setSelectedProject] = useState<CloudProjectSummary | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryCountRef = useRef(0);
+  const keywordSortEffectReadyRef = useRef(false);
+  const categoryEffectReadyRef = useRef(false);
   const detailPanelRef = useRef<HTMLElement>(null);
   const MAX_RETRIES = 5;
 
@@ -149,6 +150,22 @@ export default function HubPage() {
     retryTimerRef.current = setTimeout(() => void loadData(), delay);
   }
 
+  /** 记录 Cloud 加载成功状态，避免旧错误提示残留在页面上。 */
+  function markCloudLoadSuccess() {
+    setCloudError(false);
+    setCloudErrorMessage("");
+    retryCountRef.current = 0;
+  }
+
+  /** 记录 Cloud 加载失败状态，并保留主进程传回的可读错误。 */
+  function markCloudLoadFailure(error: unknown) {
+    const message = error instanceof Error ? error.message : "Cloud API 请求失败";
+    console.warn("[hub-page] Cloud 数据加载失败", { activeTab, message });
+    setCloudError(true);
+    setCloudErrorMessage(message);
+    scheduleRetry();
+  }
+
   async function loadSkills() {
     setLoading(true);
     try {
@@ -158,11 +175,9 @@ export default function HubPage() {
         ...(sortBy !== "latest" ? { sort: sortBy } : {}),
         ...(selectedTag ? { tag: selectedTag } : {}),
       });
-      setCloudError(false);
-      retryCountRef.current = 0;
-    } catch {
-      setCloudError(true);
-      scheduleRetry();
+      markCloudLoadSuccess();
+    } catch (error) {
+      markCloudLoadFailure(error);
     } finally {
       setLoading(false);
     }
@@ -174,25 +189,25 @@ export default function HubPage() {
     } else if (activeTab === "project") {
       setLoading(true);
       setCloudError(false);
+      setCloudErrorMessage("");
       try {
         await workspace.loadCloudProjects();
         await workspace.loadProjects();
-        retryCountRef.current = 0;
-      } catch {
-        setCloudError(true);
-        scheduleRetry();
+        markCloudLoadSuccess();
+      } catch (error) {
+        markCloudLoadFailure(error);
       } finally {
         setLoading(false);
       }
     } else {
       setLoading(true);
       setCloudError(false);
+      setCloudErrorMessage("");
       try {
         await workspace.loadCloudHubItems(activeTab);
-        retryCountRef.current = 0;
-      } catch {
-        setCloudError(true);
-        scheduleRetry();
+        markCloudLoadSuccess();
+      } catch (error) {
+        markCloudLoadFailure(error);
       } finally {
         setLoading(false);
       }
@@ -212,12 +227,20 @@ export default function HubPage() {
 
   // keyword/sortBy 变化时重新加载 skill 列表
   useEffect(() => {
+    if (!keywordSortEffectReadyRef.current) {
+      keywordSortEffectReadyRef.current = true;
+      return;
+    }
     if (activeTab === "skill") void loadSkills();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadSkills 随 keyword/sortBy 变化重建，此处仅关注这两个触发源
   }, [keyword, sortBy]);
 
   // selectedCategory 变化时重置 tag 并重新加载
   useEffect(() => {
+    if (!categoryEffectReadyRef.current) {
+      categoryEffectReadyRef.current = true;
+      return;
+    }
     setSelectedTag("");
     if (activeTab === "skill") void loadSkills();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅在 selectedCategory 变化时触发
@@ -238,6 +261,7 @@ export default function HubPage() {
     setImportError("");
     setLoading(true);
     setCloudError(false);
+    setCloudErrorMessage("");
     try {
       if (tab === "skill") await workspace.loadCloudSkills({});
       else if (tab === "project") {
@@ -245,9 +269,9 @@ export default function HubPage() {
         await workspace.loadProjects();
       }
       else await workspace.loadCloudHubItems(tab);
-    } catch {
-      setCloudError(true);
-      scheduleRetry();
+      markCloudLoadSuccess();
+    } catch (error) {
+      markCloudLoadFailure(error);
     } finally {
       setLoading(false);
     }
@@ -432,7 +456,7 @@ export default function HubPage() {
           <AlertCircle size={16} />
           <div>
             <p>云端Hub暂时不可用</p>
-            <p className="error-detail">{shell.runtimeBaseUrl}/api/cloud-hub/items</p>
+            <p className="error-detail">{cloudErrorMessage || "请确认 Cloud API 已启动后重试。"}</p>
           </div>
           <button className="btn-toolbar" onClick={() => void loadData()}>重试</button>
         </div>

@@ -105,6 +105,47 @@ describe("anthropic messages driver", () => {
     expect(messages[0]).toMatchObject({ role: "user" });
   });
 
+  it("keeps volatile system sections outside Anthropic cache breakpoints", () => {
+    const request = buildAnthropicMessagesRequestBody({
+      profile: {
+        id: "profile-1",
+        name: "Claude",
+        provider: "anthropic",
+        providerFlavor: "anthropic",
+        baseUrl: "https://api.anthropic.com/v1",
+        apiKey: "key",
+        model: "claude-3-7-sonnet",
+      },
+      plan: {
+        legacyExecutionPlan: {},
+      },
+      content: {
+        ...content,
+        systemSections: [
+          { id: "stable", layer: "identity", title: "Stable", content: "Stable system rules", cacheTier: "stable-prefix" },
+          { id: "time", layer: "environment", title: "Current Time", content: "Date: 2026-05-28 12:00:00", cacheTier: "volatile-tail" },
+        ],
+      },
+      toolBundle: { target: "anthropic-native", compileMode: "anthropic-detailed-description", tools: [] },
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    } as never);
+
+    const system = request.system as Array<Record<string, unknown>>;
+
+    expect(Array.isArray(system)).toBe(true);
+    expect(system).toEqual([
+      {
+        type: "text",
+        text: "# Stable\nStable system rules",
+        cache_control: { type: "ephemeral" },
+      },
+      {
+        type: "text",
+        text: "# Current Time\nDate: 2026-05-28 12:00:00",
+      },
+    ]);
+  });
+
   it("does not add cache_control to the DeepSeek Anthropic-compatible route", () => {
     const request = buildAnthropicMessagesRequestBody({
       profile: {
@@ -128,6 +169,180 @@ describe("anthropic messages driver", () => {
 
     expect(request.system).toContain("Be helpful");
     expect(JSON.stringify(request)).not.toContain("cache_control");
+  });
+
+  it("does not add cache_control to Moonshot Anthropic-compatible routes by default", () => {
+    const request = buildAnthropicMessagesRequestBody({
+      profile: {
+        id: "profile-1",
+        name: "Kimi",
+        provider: "openai-compatible",
+        providerFlavor: "moonshot",
+        baseUrl: "https://api.moonshot.cn/v1",
+        apiKey: "key",
+        model: "kimi-k2-0905-preview",
+      },
+      plan: {
+        providerFamily: "moonshot-native",
+        vendorFamily: "kimi",
+        legacyExecutionPlan: {},
+      },
+      content,
+      toolBundle: {
+        target: "anthropic-native",
+        compileMode: "anthropic-detailed-description",
+        tools: [{
+          name: "search",
+          description: "Search docs",
+          input_schema: { type: "object", properties: {}, required: [] },
+        }],
+      },
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    } as never);
+
+    expect(JSON.stringify(request)).not.toContain("cache_control");
+  });
+
+  it("materializes tool call history as Anthropic tool_use and tool_result blocks", () => {
+    const request = buildAnthropicMessagesRequestBody({
+      profile: {
+        id: "profile-1",
+        name: "Claude",
+        provider: "anthropic",
+        providerFlavor: "anthropic",
+        baseUrl: "https://api.anthropic.com/v1",
+        apiKey: "key",
+        model: "claude-3-7-sonnet",
+      },
+      plan: {
+        legacyExecutionPlan: {},
+      },
+      content: {
+        ...content,
+        messages: [
+          { role: "user", content: "Read the package metadata" },
+          {
+            role: "assistant",
+            content: "I will inspect the file.",
+            toolCalls: [{
+              id: "toolu_01",
+              name: "fs_read",
+              argumentsJson: "{\"path\":\"package.json\"}",
+              input: { path: "package.json" },
+            }],
+          },
+          {
+            role: "tool",
+            content: "{\"name\":\"myclaw\"}",
+            toolCallId: "toolu_01",
+          },
+        ],
+      },
+      toolBundle: { target: "anthropic-native", compileMode: "anthropic-detailed-description", tools: [] },
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    } as never);
+
+    const messages = request.messages as Array<{ role: string; content: unknown; tool_calls?: unknown }>;
+
+    expect(JSON.stringify(messages)).not.toContain("\"role\":\"tool\"");
+    expect(JSON.stringify(messages)).not.toContain("\"tool_calls\"");
+    expect(messages[1]).toEqual({
+      role: "assistant",
+      content: [
+        { type: "text", text: "I will inspect the file." },
+        {
+          type: "tool_use",
+          id: "toolu_01",
+          name: "fs_read",
+          input: { path: "package.json" },
+        },
+      ],
+    });
+    expect(messages[2]).toEqual({
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "toolu_01",
+        content: "{\"name\":\"myclaw\"}",
+      }],
+    });
+  });
+
+  it("keeps runtime system reminders in message order as user turns", () => {
+    const request = buildAnthropicMessagesRequestBody({
+      profile: {
+        id: "profile-1",
+        name: "Claude",
+        provider: "anthropic",
+        providerFlavor: "anthropic",
+        baseUrl: "https://api.anthropic.com/v1",
+        apiKey: "key",
+        model: "claude-3-7-sonnet",
+      },
+      plan: {
+        legacyExecutionPlan: {},
+      },
+      content: {
+        ...content,
+        messages: [
+          { role: "user", content: "开始执行任务" },
+          { role: "assistant", content: "我已经输出了阶段性结果。" },
+          { role: "system", content: "[任务未完成] 请继续按计划推进任务。" },
+        ],
+      },
+      toolBundle: { target: "anthropic-native", compileMode: "anthropic-detailed-description", tools: [] },
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    } as never);
+
+    const messages = request.messages as Array<{ role: string; content: unknown }>;
+
+    expect(messages.at(-1)).toEqual({
+      role: "user",
+      content: "[任务未完成] 请继续按计划推进任务。",
+    });
+    expect(JSON.stringify(request.system)).toContain("Be helpful");
+    expect(JSON.stringify(request.system)).not.toContain("任务未完成");
+  });
+
+  it("adds required max_tokens while preserving safe Anthropic request body options", () => {
+    const request = buildAnthropicMessagesRequestBody({
+      profile: {
+        id: "profile-1",
+        name: "Claude",
+        provider: "anthropic",
+        providerFlavor: "anthropic",
+        baseUrl: "https://api.anthropic.com/v1",
+        apiKey: "key",
+        model: "claude-3-7-sonnet",
+        requestBody: {
+          max_tokens: 1234,
+          temperature: 0.2,
+          messages: [{ role: "user", content: "bad override" }],
+          tools: [{ name: "bad_override" }],
+          stream: false,
+        },
+      },
+      plan: {
+        legacyExecutionPlan: {},
+      },
+      content,
+      toolBundle: {
+        target: "anthropic-native",
+        compileMode: "anthropic-detailed-description",
+        tools: [{
+          name: "fs_read",
+          description: "Read file",
+          input_schema: { type: "object", properties: {}, required: [] },
+        }],
+      },
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    } as never);
+
+    expect(request.max_tokens).toBe(1234);
+    expect(request.temperature).toBe(0.2);
+    expect(request.stream).toBe(true);
+    expect(request.messages).not.toEqual([{ role: "user", content: "bad override" }]);
+    expect(JSON.stringify(request.tools)).not.toContain("bad_override");
   });
 
   it("maps reasoning effort into Anthropic thinking config", () => {
@@ -157,6 +372,40 @@ describe("anthropic messages driver", () => {
         budget_tokens: 32768,
       },
     });
+    expect(Number(request.max_tokens)).toBeGreaterThan(32768);
+  });
+
+  it("uses adaptive thinking and output_config effort for Claude Opus 4.7", () => {
+    const request = buildAnthropicMessagesRequestBody({
+      profile: {
+        id: "profile-1",
+        name: "Claude Code Gateway",
+        provider: "anthropic",
+        providerFlavor: "anthropic",
+        baseUrl: "http://13.250.152.8:3000",
+        apiKey: "key",
+        model: "global.anthropic.claude-opus-4-7",
+      },
+      plan: {
+        legacyExecutionPlan: {
+          reasoningEffort: "xhigh",
+        },
+      },
+      content,
+      toolBundle: { target: "anthropic-native", compileMode: "anthropic-detailed-description", tools: [] },
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    } as never);
+
+    expect(request).toMatchObject({
+      thinking: {
+        type: "adaptive",
+        display: "summarized",
+      },
+      output_config: {
+        effort: "xhigh",
+      },
+    });
+    expect(JSON.stringify(request)).not.toContain("budget_tokens");
   });
 
   it("maps Moonshot anthropic reasoning effort into thinking budgets on the first-class kimi route", () => {
@@ -246,6 +495,124 @@ describe("anthropic messages driver", () => {
     expect(result.citations).toEqual([]);
   });
 
+  it("parses Anthropic cache-aware usage from messages streams", async () => {
+    executeRequestVariantsMock.mockResolvedValueOnce({
+      response: new Response(
+        [
+          "event: message_start",
+          "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_cache\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null}}",
+          "",
+          "event: content_block_delta",
+          "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"cached\"}}",
+          "",
+          "event: message_delta",
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":50,\"cache_read_input_tokens\":100000,\"cache_creation_input_tokens\":0,\"output_tokens\":20}}",
+          "",
+          "event: message_stop",
+          "data: {\"type\":\"message_stop\"}",
+          "",
+        ].join("\n"),
+        {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      ),
+      variant: { id: "anthropic-messages", body: {} },
+      variantIndex: 0,
+      attempt: 0,
+      retryCount: 0,
+      fallbackEvents: [],
+    });
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+    });
+
+    const result = await anthropicMessagesDriver.execute({
+      profile,
+      plan: buildTurnExecutionPlan({
+        profile,
+        legacyExecutionPlan: makeLegacyExecutionPlan(),
+      }),
+      content,
+      toolBundle: new ToolMiddleware().compile([], "anthropic-native"),
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    });
+
+    expect(result.usage).toMatchObject({
+      promptTokens: 100050,
+      completionTokens: 20,
+      totalTokens: 100070,
+      cacheReadInputTokens: 100000,
+      cacheWriteInputTokens: 0,
+      cacheHitInputTokens: 100000,
+      cacheMissInputTokens: 50,
+    });
+    expect(result.usage?.cacheEfficiency).toBeCloseTo(100000 / 100050);
+  });
+
+  it("merges Anthropic cache-aware usage from message_start and output usage from message_delta", async () => {
+    executeRequestVariantsMock.mockResolvedValueOnce({
+      response: new Response(
+        [
+          "event: message_start",
+          "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_cache\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null,\"usage\":{\"input_tokens\":50,\"cache_read_input_tokens\":100000,\"cache_creation_input_tokens\":200}}}",
+          "",
+          "event: content_block_delta",
+          "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"cached\"}}",
+          "",
+          "event: message_delta",
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":20}}",
+          "",
+          "event: message_stop",
+          "data: {\"type\":\"message_stop\"}",
+          "",
+        ].join("\n"),
+        {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      ),
+      variant: { id: "anthropic-messages", body: {} },
+      variantIndex: 0,
+      attempt: 0,
+      retryCount: 0,
+      fallbackEvents: [],
+    });
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+    });
+
+    const result = await anthropicMessagesDriver.execute({
+      profile,
+      plan: buildTurnExecutionPlan({
+        profile,
+        legacyExecutionPlan: makeLegacyExecutionPlan(),
+      }),
+      content,
+      toolBundle: new ToolMiddleware().compile([], "anthropic-native"),
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    });
+
+    expect(result.usage).toMatchObject({
+      promptTokens: 100250,
+      completionTokens: 20,
+      totalTokens: 100270,
+      cacheReadInputTokens: 100000,
+      cacheWriteInputTokens: 200,
+      cacheHitInputTokens: 100000,
+      cacheMissInputTokens: 250,
+    });
+    expect(result.usage?.cacheEfficiency).toBeCloseTo(100000 / 100250);
+  });
+
   it("marks messages streams incomplete when EOF arrives before message_stop", async () => {
     executeRequestVariantsMock.mockResolvedValueOnce({
       response: new Response(
@@ -292,6 +659,45 @@ describe("anthropic messages driver", () => {
 
     expect(result.content).toBe("partial");
     expect(result.streamCompleted).toBe(false);
+  });
+
+  it("throws Anthropic stream error events instead of treating them as empty success", async () => {
+    executeRequestVariantsMock.mockResolvedValueOnce({
+      response: new Response(
+        [
+          "event: error",
+          "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"bad beta flag\"}}",
+          "",
+        ].join("\n"),
+        {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      ),
+      variant: { id: "anthropic-messages", body: {} },
+      variantIndex: 0,
+      attempt: 0,
+      retryCount: 0,
+      fallbackEvents: [],
+    });
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+    });
+
+    await expect(anthropicMessagesDriver.execute({
+      profile,
+      plan: buildTurnExecutionPlan({
+        profile,
+        legacyExecutionPlan: makeLegacyExecutionPlan(),
+      }),
+      content,
+      toolBundle: new ToolMiddleware().compile([], "anthropic-native"),
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    })).rejects.toThrow("invalid_request_error: bad beta flag");
   });
 
   it("preserves Qwen vendor identity in the anthropic-compatible canonical route", async () => {
@@ -402,6 +808,67 @@ describe("anthropic messages driver", () => {
       completionTokens: 4,
       totalTokens: 13,
     });
+  });
+
+  it("does not execute a tool when streamed tool input JSON is incomplete", async () => {
+    executeRequestVariantsMock.mockResolvedValueOnce({
+      response: new Response(
+        [
+          "event: message_start",
+          "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_cutoff\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"stop_reason\":null}}",
+          "",
+          "event: content_block_start",
+          "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"tool_cutoff\",\"name\":\"fs_read\",\"input\":{}}}",
+          "",
+          "event: content_block_delta",
+          "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"package\"}}",
+          "",
+          "event: message_delta",
+          "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}",
+          "",
+          "event: message_stop",
+          "data: {\"type\":\"message_stop\"}",
+          "",
+        ].join("\n"),
+        {
+          headers: {
+            "content-type": "text/event-stream",
+          },
+        },
+      ),
+      variant: { id: "anthropic-messages", body: {} },
+      variantIndex: 0,
+      attempt: 0,
+      retryCount: 0,
+      fallbackEvents: [],
+    });
+
+    const profile = makeProfile({
+      provider: "anthropic",
+      providerFlavor: "anthropic",
+      baseUrl: "https://api.anthropic.com/v1",
+      model: "claude-3-7-sonnet",
+    });
+
+    const result = await anthropicMessagesDriver.execute({
+      profile,
+      plan: buildTurnExecutionPlan({
+        profile,
+        legacyExecutionPlan: makeLegacyExecutionPlan(),
+      }),
+      content,
+      toolBundle: new ToolMiddleware().compile([{
+        id: "fs_read",
+        type: "function",
+        name: "fs_read",
+        description: "Read file",
+        parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+      }], "anthropic-native"),
+      rolloutGate: { enabled: true, rolloutOrder: 1, reason: "test" },
+    });
+
+    expect(result.finishReason).toBe("max_tokens");
+    expect(result.toolCalls).toEqual([]);
   });
 
   it("parses initial text and thinking blocks emitted directly in content_block_start", async () => {

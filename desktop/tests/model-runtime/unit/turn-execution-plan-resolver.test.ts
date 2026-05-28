@@ -31,6 +31,7 @@ describe("turn execution plan resolver", () => {
   it.each([
     [buildProfile({ providerFlavor: "openai", baseUrl: "https://api.openai.com/v1" }), "openai-native", "openai", "openai-responses", "openai-responses"],
     [buildProfile({ provider: "anthropic", providerFlavor: "anthropic", model: "claude-3-7-sonnet" }), "anthropic-native", "anthropic", "anthropic-messages", "anthropic-messages"],
+    [buildProfile({ providerFlavor: "generic-openai-compatible", model: "global.anthropic.claude-opus-4-7", protocolTarget: "anthropic-messages" }), "anthropic-native", "anthropic", "anthropic-messages", "anthropic-messages"],
     [buildProfile({ providerFlavor: "qwen", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-max" }), "qwen-native", "qwen", "openai-responses", "openai-responses"],
     [buildProfile({ providerFlavor: "moonshot", baseUrl: "https://api.moonshot.cn/v1", model: "kimi-k2.5" }), "moonshot-native", "kimi", "anthropic-messages", "anthropic-messages"],
     [buildProfile({ providerFlavor: "br-minimax", baseUrl: "https://api.minimax.chat/v1", model: "minimax-m2-5" }), "br-minimax", "minimax", "openai-chat-compatible", "anthropic-messages"],
